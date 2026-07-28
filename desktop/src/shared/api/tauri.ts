@@ -217,6 +217,8 @@ export type RawInstallRuntimeResult = {
   steps: RawInstallStepResult[];
   restarted_count: number;
   failed_restart_count: number;
+  /** Absent for a run with no log file — Rust serializes `None` as null. */
+  log_path?: string | null;
 };
 
 type RawGitBashPrerequisite = {
@@ -788,6 +790,7 @@ function fromRawInstallRuntimeResult(
     })),
     restartedCount: raw.restarted_count,
     failedRestartCount: raw.failed_restart_count,
+    logPath: raw.log_path ?? null,
   };
 }
 

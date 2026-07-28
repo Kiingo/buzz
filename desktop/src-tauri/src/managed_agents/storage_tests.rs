@@ -698,3 +698,100 @@ fn try_delete_agent_key_returns_result() {
     // team_snapshot::tests::rollback_aggregates_multiple_errors.
     let _: fn(&str) -> Result<(), String> = super::try_delete_agent_key;
 }
+
+// ── install logs ─────────────────────────────────────────────────────────────
+
+/// Install output can carry registry tokens and proxy credentials a failing
+/// installer echoed, and the file is written unattended. `0o600` must come from
+/// the create itself: a post-write `chmod` leaves a window where the umask
+/// decides, and a crash inside it leaves the log readable to other local users.
+#[cfg(unix)]
+#[test]
+fn install_log_is_created_owner_only_without_post_write_chmod() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("install-goose.log");
+
+    let mut file = super::open_install_log_file(&path).expect("open install log");
+    file.write_all(b"npm ERR!\n").expect("write");
+
+    let mode = std::fs::metadata(&path)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "install logs must be owner-only");
+}
+
+/// Reopening appends rather than truncating — a run's later records must not
+/// erase its earlier ones.
+#[test]
+fn install_log_appends_across_opens() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("install-goose.log");
+
+    for record in ["first\n", "second\n"] {
+        let mut file = super::open_install_log_file(&path).expect("open install log");
+        file.write_all(record.as_bytes()).expect("write");
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read back"),
+        "first\nsecond\n"
+    );
+}
+
+/// An oversized install log rotates to `.1` on the next open, so the file
+/// cannot grow without bound across repeated install attempts.
+#[test]
+fn install_log_rotates_when_oversized() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("install-goose.log");
+    std::fs::write(&path, vec![b'x'; (super::MAX_LOG_FILE_SIZE + 1) as usize]).expect("seed");
+
+    let mut file = super::open_install_log_file(&path).expect("open install log");
+    file.write_all(b"fresh\n").expect("write");
+
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read back"),
+        "fresh\n",
+        "the live log must restart after rotation"
+    );
+    let rotated = dir.path().join("install-goose.log.1");
+    assert!(rotated.exists(), "the oversized log must be kept as .1");
+}
+
+/// A runtime id becomes part of a filename. Ids reach this from user-defined
+/// custom harnesses as well as the catalog, so anything that could traverse or
+/// escape the logs directory is rejected rather than sanitized — a rejected id
+/// simply means no log, while a silently rewritten one could collide with
+/// another runtime's log.
+#[test]
+fn install_log_filename_rejects_ids_that_would_escape_the_logs_dir() {
+    for id in [
+        "../../etc/passwd",
+        "goose/../../evil",
+        "sub/dir",
+        "back\\slash",
+        "with.dot",
+        "",
+    ] {
+        assert!(
+            super::install_log_filename(id).is_err(),
+            "id {id:?} must not be accepted as a filename component"
+        );
+    }
+}
+
+/// Ordinary catalog and custom-harness ids are accepted — the guard must not
+/// reject the ids it exists to serve.
+#[test]
+fn install_log_filename_accepts_ordinary_runtime_ids() {
+    for id in ["goose", "claude-code", "buzz_agent", "codex2"] {
+        assert_eq!(
+            super::install_log_filename(id).expect("id must be usable in a log filename"),
+            format!("install-{id}.log")
+        );
+    }
+}

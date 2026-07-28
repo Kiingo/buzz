@@ -286,7 +286,7 @@ fn redact_secrets(s: &str) -> String {
 /// (would match every short token in normal log output). Entries are
 /// applied in decreasing length order so superstrings get scrubbed before
 /// substrings — protects against partial overlap leaks.
-fn redact_secrets_with(s: &str, extras: &[&str]) -> String {
+pub(crate) fn redact_secrets_with(s: &str, extras: &[&str]) -> String {
     let mut result = s.to_string();
 
     // Extras: longest first to avoid partial-overlap leaks. We use

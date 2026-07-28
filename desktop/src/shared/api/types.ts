@@ -586,6 +586,13 @@ export type InstallRuntimeResult = {
   steps: InstallStepResult[];
   restartedCount: number;
   failedRestartCount: number;
+  /**
+   * Install log file for this run, when one was written. `steps` carries only
+   * the last attempt of each step, truncated for display; the log holds every
+   * attempt in full. Null when no log could be written — nothing then points at
+   * a file that does not exist.
+   */
+  logPath: string | null;
 };
 
 export type AcpAuthMethod = {
