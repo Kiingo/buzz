@@ -3631,8 +3631,10 @@ mod agent_draft_prompt_tests {
         let prompt = include_str!("base_prompt.md");
         assert!(prompt.contains("buzz users get --name \"<exact full display name>\""));
         assert!(prompt.contains("If there is no unique exact match, report the ambiguity"));
+        assert!(prompt.contains("empty/invalid `display_name` does not fall back"));
         assert!(prompt.contains("buzz channels members --channel <UUID>"));
         assert!(prompt.contains("buzz channels add-member --channel <UUID> --pubkey <hex>"));
+        assert!(prompt.contains("buzz messages thread --channel <UUID> --event <event-id>"));
         assert!(prompt.contains("A visible `@Name` alone is not a delivered mention."));
     }
 

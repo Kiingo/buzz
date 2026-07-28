@@ -34,8 +34,12 @@ fn nest_skill_contains_safe_mention_and_forum_workflows() {
     assert!(BUZZ_CLI_SKILL_MD.contains("current channel members"));
     assert!(BUZZ_CLI_SKILL_MD.contains("buzz users get --name \"<exact full display name>\""));
     assert!(BUZZ_CLI_SKILL_MD.contains("If there is no unique exact match, report the ambiguity"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("empty/invalid `display_name` does not fall back"));
     assert!(BUZZ_CLI_SKILL_MD.contains("buzz channels members --channel <UUID>"));
     assert!(BUZZ_CLI_SKILL_MD.contains("buzz channels add-member --channel <UUID> --pubkey <hex>"));
+    assert!(
+        BUZZ_CLI_SKILL_MD.contains("buzz messages thread --channel <UUID> --event \"$event_id\"")
+    );
     assert!(BUZZ_CLI_SKILL_MD
         .contains("Visible `@Name` text without that tag does **not** notify anyone."));
     assert!(BUZZ_CLI_SKILL_MD.contains("forum root as kind `45001`"));
