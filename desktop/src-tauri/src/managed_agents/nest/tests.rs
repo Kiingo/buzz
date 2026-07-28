@@ -30,6 +30,20 @@ fn init_nest_dir_prod_sets_buzz() {
 }
 
 #[test]
+fn nest_skill_contains_safe_mention_and_forum_workflows() {
+    assert!(BUZZ_CLI_SKILL_MD.contains("current channel members"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("buzz users get --name \"<exact full display name>\""));
+    assert!(BUZZ_CLI_SKILL_MD.contains("If there is no unique exact match, report the ambiguity"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("buzz channels members --channel <UUID>"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("buzz channels add-member --channel <UUID> --pubkey <hex>"));
+    assert!(BUZZ_CLI_SKILL_MD
+        .contains("Visible `@Name` text without that tag does **not** notify anyone."));
+    assert!(BUZZ_CLI_SKILL_MD.contains("forum root as kind `45001`"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("forum reply as kind `45003`"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("Never use stream kind `9`"));
+}
+
+#[test]
 fn ensure_nest_creates_all_dirs_and_agents_md() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join(".buzz");
