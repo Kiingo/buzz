@@ -42,8 +42,8 @@ export function nextInstallOutputLine(
 
 /**
  * The install command's most recent output line for `runtimeId`, or null when
- * nothing is being shown — either nothing has printed yet, or the backend
- * cleared the line because a new attempt is starting.
+ * nothing is being shown — the install is not running, nothing has printed yet,
+ * or the backend cleared the line because a new attempt is starting.
  *
  * An install runs for up to 15 minutes with no other feedback than a spinner;
  * this turns that wait into observable progress. The backend throttles
@@ -58,11 +58,13 @@ export function useInstallOutputLine(
 ): string | null {
   const [state, setState] = React.useState<InstallOutputState | null>(null);
 
+  // Subscribed for this runtime's whole lifetime, not just while installing.
+  // The install command is invoked from the click handler, so the backend can
+  // emit the attempt-start clear and the first line before React commits
+  // `isInstalling` — and there is no replay, so a subscription that waited for
+  // that commit would lose those events permanently. A fast command's entire
+  // output is exactly what fits in that window.
   React.useEffect(() => {
-    if (!isInstalling) {
-      setState(null);
-      return;
-    }
     let cancelled = false;
     let unlisten: (() => void) | null = null;
     (async () => {
@@ -89,7 +91,18 @@ export function useInstallOutputLine(
       cancelled = true;
       unlisten?.();
     };
-  }, [isInstalling, runtimeId]);
+  }, [runtimeId]);
 
-  return state?.line ?? null;
+  // `seq` is monotonic within one install and restarts at 0 for the next, so
+  // state must not outlive the run that produced it: a retained higher `seq`
+  // would make every event of the following install look superseded. Settling
+  // is the run boundary, so it is where the ordering key resets.
+  React.useEffect(() => {
+    if (!isInstalling) setState(null);
+  }, [isInstalling]);
+
+  // Events that arrive after the install settles — a drain flushing its last
+  // line — must not reappear under a fresh Install button, so the line is
+  // reported only while the install is running.
+  return (isInstalling ? state?.line : null) ?? null;
 }

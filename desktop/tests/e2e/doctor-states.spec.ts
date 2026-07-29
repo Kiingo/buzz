@@ -1031,9 +1031,16 @@ test.describe("Doctor panel state screenshots", () => {
     await expect(installButton).toBeEnabled();
     await installButton.click();
 
-    // The line shows what the install is doing right now, and each new line
-    // replaces the previous one rather than accumulating.
+    // The bridge emits the attempt-start clear and the first line synchronously
+    // with the install invocation — before React commits the pending state — so
+    // observing this line proves the listener was already mounted at the click.
+    // A subscription that waited for the install state would have missed both.
     const outputLine = page.getByTestId("doctor-runtime-install-output-codex");
+    await expect(outputLine).toContainText("npm http fetch", {
+      timeout: 5_000,
+    });
+
+    // Each new line replaces the previous one rather than accumulating.
     await expect(outputLine).toContainText("npm warn deprecated", {
       timeout: 5_000,
     });
@@ -1045,7 +1052,7 @@ test.describe("Doctor panel state screenshots", () => {
     await expect(installError).toBeVisible({ timeout: 5_000 });
     await expect(outputLine).toHaveCount(0);
 
-    // The failure points at the log holding every attempt in full.
+    // The failure points at the log holding bounded output for every attempt.
     await expect(installError).toContainText("npm ERR! code E404");
     await expect(installError).toContainText("/tmp/buzz-install-codex.log");
 
@@ -1053,6 +1060,14 @@ test.describe("Doctor panel state screenshots", () => {
     await waitForAnimations(page);
     await row.screenshot({
       path: `${SHOTS}/09-install-output-line-and-log-pointer.png`,
+    });
+
+    // A second install shows its own output. The backend sequence restarts per
+    // run, so a display that kept the previous run's sequence number would
+    // reject every event of this one and show nothing at all.
+    await installButton.click();
+    await expect(outputLine).toContainText("npm http fetch", {
+      timeout: 5_000,
     });
   });
 });

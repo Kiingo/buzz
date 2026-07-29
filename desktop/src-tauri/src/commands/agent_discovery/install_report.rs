@@ -99,9 +99,13 @@ impl InstallReporter {
     /// failing the install: a user with a broken app-data directory still needs
     /// the install itself to work.
     pub(super) fn for_run(app: &tauri::AppHandle, runtime_id: &str) -> Self {
+        // Read from the app's own package info rather than the frontend's
+        // `getVersion` plugin call: the header is written on the Rust side, and
+        // this cannot fail or be mocked out from under the log.
+        let app_version = app.package_info().version.to_string();
         let log = crate::managed_agents::storage::install_log_path(app, runtime_id)
             .ok()
-            .and_then(|path| InstallLog::start(&path, runtime_id));
+            .and_then(|path| InstallLog::start(&path, runtime_id, &app_version));
         let app = app.clone();
         let emit: EmitEvent = Arc::new(move |event| {
             use tauri::Emitter;
@@ -252,11 +256,17 @@ impl InstallLog {
     /// Rotation happens here, once per run, rather than per record: a run either
     /// gets its own file or it gets no log at all, so two runs are never
     /// interleaved in one file.
-    fn start(path: &Path, runtime_id: &str) -> Option<Self> {
+    ///
+    /// The header identifies the environment the run happened in, not just the
+    /// run: a Windows install failure and a macOS one on the same runtime are
+    /// different bugs, and a stale app version explains a failure that no longer
+    /// reproduces.
+    fn start(path: &Path, runtime_id: &str, app_version: &str) -> Option<Self> {
         let mut file = crate::managed_agents::storage::start_install_log_session(path).ok()?;
         let _ = file.write_all(
             format!(
-                "=== install run runtime={runtime_id} started={}\n",
+                "=== install run runtime={runtime_id} app={app_version} os={} started={}\n",
+                std::env::consts::OS,
                 chrono::Utc::now().to_rfc3339()
             )
             .as_bytes(),

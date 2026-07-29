@@ -2,6 +2,9 @@ use super::*;
 use crate::commands::agent_discovery::install_capture::{drain_into, Capture};
 use std::sync::Mutex;
 
+/// Stands in for the real `app.package_info().version`, which needs a Tauri app.
+const TEST_APP_VERSION: &str = "9.9.9";
+
 /// A reporter with a started log session in a temp dir, and the emitted events
 /// captured.
 struct Harness {
@@ -26,7 +29,11 @@ fn harness_at(dir: Option<tempfile::TempDir>) -> Harness {
         Arc::new(move |event| events.lock().unwrap().push(event))
     };
     Harness {
-        reporter: InstallReporter::new("goose", InstallLog::start(&log, "goose"), Some(emit)),
+        reporter: InstallReporter::new(
+            "goose",
+            InstallLog::start(&log, "goose", TEST_APP_VERSION),
+            Some(emit),
+        ),
         _dir: dir,
         log,
         events,
@@ -164,17 +171,21 @@ fn test_recording_a_synthesized_step_logs_it_and_keeps_it_for_the_ui() {
 
 // ── one file per run ─────────────────────────────────────────────────────────
 
-/// A run opens with a header naming the runtime, so a file holding one run of
-/// several steps is identifiable as that run rather than a stream of records.
+/// A run opens with a header naming the runtime and the environment the run
+/// happened in, so a file holding one run of several steps is identifiable as
+/// that run rather than a stream of records — and a failure report says which
+/// app version and OS produced it without a second round trip to the user.
 #[test]
-fn test_a_run_opens_with_a_header_naming_the_runtime() {
+fn test_a_run_opens_with_a_header_naming_the_runtime_app_version_and_os() {
     let h = harness();
+    let log = h.log_contents();
 
     assert!(
-        h.log_contents()
-            .starts_with("=== install run runtime=goose "),
-        "got: {}",
-        h.log_contents()
+        log.starts_with(&format!(
+            "=== install run runtime=goose app={TEST_APP_VERSION} os={} started=",
+            std::env::consts::OS
+        )),
+        "got: {log}"
     );
 }
 
@@ -319,7 +330,7 @@ fn test_reporter_without_a_log_records_nothing_and_reports_no_path() {
 fn test_an_unopenable_log_degrades_to_no_log() {
     let path = PathBuf::from("/nonexistent-dir-for-test/install-goose.log");
 
-    assert!(InstallLog::start(&path, "goose").is_none());
+    assert!(InstallLog::start(&path, "goose", TEST_APP_VERSION).is_none());
 }
 
 // ── live output line ─────────────────────────────────────────────────────────
