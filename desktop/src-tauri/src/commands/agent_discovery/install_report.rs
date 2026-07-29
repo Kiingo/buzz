@@ -16,7 +16,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -56,7 +56,7 @@ impl InstallOutcome {
 /// `line: None` is the *start signal*: an attempt is beginning and the displayed
 /// line must clear now. It is emitted unthrottled, because the point is that
 /// stale output stops being shown before the new work prints anything.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub(super) struct InstallOutputEvent {
     pub(super) runtime_id: String,
     pub(super) seq: u64,
@@ -85,6 +85,21 @@ pub(super) struct InstallReporter {
     /// reassembly entirely instead of doing it for no one.
     live: Option<Live>,
     secrets: Secrets,
+}
+
+impl Drop for InstallReporter {
+    /// Deactivate the `Live` observer **before** this run's per-runtime
+    /// concurrency guard releases: a drain thread that still holds a cloned
+    /// `Live` and calls `offer` after this point will see `active = false` and
+    /// drop the event rather than emitting it with run 1's high `seq`.  The
+    /// ordering matters — the guard is declared *before* `reporter` in
+    /// `install_acp_runtime_blocking`, so Rust drops `reporter` first in
+    /// reverse-declaration order, which is exactly what we need.
+    fn drop(&mut self) {
+        if let Some(live) = &self.live {
+            live.active.store(false, Ordering::Release);
+        }
+    }
 }
 
 impl InstallReporter {
@@ -123,6 +138,7 @@ impl InstallReporter {
             emit,
             throttle: Arc::new(Throttle::new(LIVE_LINE_INTERVAL)),
             seq: Arc::new(AtomicU64::new(0)),
+            active: Arc::new(AtomicBool::new(true)),
             secrets: Arc::clone(&secrets),
         });
         Self { log, live, secrets }
@@ -213,6 +229,11 @@ struct Live {
     emit: EmitEvent,
     throttle: Arc<Throttle>,
     seq: Arc<AtomicU64>,
+    /// `false` once the reporter has settled. Every drain thread holds a clone
+    /// of this `Live`; checking `active` before publishing prevents a
+    /// detached drain from emitting a late high-`seq` event that would poison
+    /// the next run's restarted sequence.
+    active: Arc<AtomicBool>,
     secrets: Secrets,
 }
 
@@ -220,12 +241,18 @@ impl Live {
     /// Offer one drained line to the rate limiter, emitting it if the window is
     /// open and holding it as the newest pending line if not.
     fn offer(&self, line: &str) {
+        if !self.active.load(Ordering::Acquire) {
+            return;
+        }
         if let Some(line) = self.throttle.offer(line, Instant::now()) {
             self.publish(Some(line));
         }
     }
 
     fn flush_pending(&self) {
+        if !self.active.load(Ordering::Acquire) {
+            return;
+        }
         if let Some(line) = self.throttle.take_pending() {
             self.publish(Some(line));
         }

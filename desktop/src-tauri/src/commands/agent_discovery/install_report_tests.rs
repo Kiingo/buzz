@@ -446,3 +446,156 @@ fn test_both_streams_of_one_attempt_share_the_rate_window() {
 fn test_no_observer_when_nothing_is_listening() {
     assert!(silent_reporter().line_observer().is_none());
 }
+
+// ── late-drain deactivation ──────────────────────────────────────────────────
+
+/// After the reporter is dropped (run settled), a drain thread that still holds
+/// a cloned observer must not be able to emit. The deactivation flag is shared
+/// by reference with every `line_observer` clone, so setting it in `Drop`
+/// silences all outstanding observers immediately.
+///
+/// The test resets the throttle via `start_attempt` before the late emit, so
+/// the late line would be emitted unconditionally if the `active` check were
+/// absent.
+#[test]
+fn test_a_detached_observer_cannot_emit_after_the_reporter_is_dropped() {
+    let h = harness();
+
+    // Simulate a drain thread: `line_observer` clones `Live` (owned, not
+    // borrowed), so the closure outlives the reporter.
+    let observer = h.reporter.line_observer().expect("an observer");
+    observer("before-settle");
+
+    assert_eq!(
+        h.lines(),
+        vec![Some("before-settle".to_string())],
+        "a live observer must emit before the reporter drops"
+    );
+
+    // Open a fresh throttle window so the next offer would emit immediately —
+    // this simulates the drain arriving after the 250ms rate window closed.
+    h.reporter.start_attempt();
+    // Pull the events handle out before moving reporter into drop.
+    let events = Arc::clone(&h.events);
+
+    // Drop the reporter — this is the run boundary, equivalent to
+    // `install_acp_runtime_blocking` returning.
+    drop(h);
+
+    // The detached drain emits a late line. The throttle window is open
+    // (start_attempt reset it), so without the `active` guard this would emit.
+    observer("late-drain-after-settle");
+
+    let lines: Vec<Option<String>> = events
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|e| e.line.clone())
+        .collect();
+    assert_eq!(
+        lines,
+        // before-settle + the clear from start_attempt, no late line
+        vec![Some("before-settle".to_string()), None],
+        "a detached observer must not emit after the reporter is dropped"
+    );
+}
+
+/// The cross-run poison scenario Thufir reproduced: a late run-1 event emitted
+/// after settlement must not prevent run 2's restarted seq=0 output from
+/// reaching the UI state.
+///
+/// Without the deactivation fix, `nextInstallOutputLine` rejects run 2's
+/// `seq=0` because `current.seq` was left at run 1's high value.  With the fix,
+/// the late emit is a no-op, so run 2 starts from `null` state and its events
+/// are accepted.
+///
+/// This test drives the Rust layer only — it confirms that a dropped reporter's
+/// observer is silent.  The E2E spec (`09-install-output-line-and-log-pointer`)
+/// pins the full path by doing a second install after a clean first-run
+/// settlement; here we prove the specific mechanism the fix relies on.
+#[test]
+fn test_late_run1_event_after_settlement_does_not_emit_and_run2_output_is_accepted() {
+    // ── Run 1 ──────────────────────────────────────────────────────────────
+    let events_run1: Arc<Mutex<Vec<InstallOutputEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let events_run2: Arc<Mutex<Vec<InstallOutputEvent>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let dir1 = tempfile::tempdir().expect("tempdir");
+    let log1 = dir1.path().join("install-goose.log");
+    let emit1: EmitEvent = {
+        let captured = Arc::clone(&events_run1);
+        Arc::new(move |event| captured.lock().unwrap().push(event))
+    };
+    let reporter1 = InstallReporter::new(
+        "goose",
+        InstallLog::start(&log1, "goose", "1.0.0"),
+        Some(emit1),
+    );
+
+    // Drain thread gets its own clone of Live.
+    let late_observer = reporter1.line_observer().expect("observer");
+    reporter1.start_attempt();
+    late_observer("run-one-output");
+    // Record the attempt so the observer's pending line is flushed.
+    reporter1.record_attempt(1, &outcome("cli", true, "done"));
+
+    // Run 1's high seq before the reporter drops.
+    let seq_before_drop = {
+        let ev = events_run1.lock().unwrap();
+        ev.last().map(|e| e.seq).unwrap_or(0)
+    };
+
+    // Reset the throttle window so the late emit is not held by the rate
+    // limiter — simulating a drain that arrives after the 250ms window.
+    // Without this reset the throttle would mask the absence of the `active`
+    // guard, and the mutation test would not catch the defect.
+    reporter1.start_attempt();
+
+    // Drop the reporter — deactivates the observer.
+    drop(reporter1);
+
+    // The late drain emits with the run-1 high seq. With the fix this is a
+    // no-op; without it this would set active state with seq > 0 that poisons
+    // run 2.
+    late_observer("late-run-one-drain");
+
+    let events_after_settle = events_run1.lock().unwrap().clone();
+    let late_event_count = events_after_settle
+        .iter()
+        .filter(|e| e.line.as_deref() == Some("late-run-one-drain"))
+        .count();
+    assert_eq!(
+        late_event_count, 0,
+        "the late run-1 drain must not emit after reporter drop (seq at drop was {seq_before_drop})"
+    );
+
+    // ── Run 2 ──────────────────────────────────────────────────────────────
+    // Run 2 has a fresh reporter with seq starting at 0.
+    let dir2 = tempfile::tempdir().expect("tempdir");
+    let log2 = dir2.path().join("install-goose.log");
+    let emit2: EmitEvent = {
+        let captured = Arc::clone(&events_run2);
+        Arc::new(move |event| captured.lock().unwrap().push(event))
+    };
+    let reporter2 = InstallReporter::new(
+        "goose",
+        InstallLog::start(&log2, "goose", "1.0.0"),
+        Some(emit2),
+    );
+
+    reporter2.start_attempt();
+    let observer2 = reporter2.line_observer().expect("observer");
+    observer2("run-two-first-line");
+    reporter2.record_attempt(1, &outcome("cli", true, "done"));
+
+    let ev2 = events_run2.lock().unwrap();
+    // The clear (seq=0) and the first line (seq=1) must both be present.
+    assert!(
+        ev2.iter().any(|e| e.seq == 0 && e.line.is_none()),
+        "run 2 must emit its seq=0 clear; got: {ev2:?}"
+    );
+    assert!(
+        ev2.iter()
+            .any(|e| e.line.as_deref() == Some("run-two-first-line")),
+        "run 2 must emit its first line; got: {ev2:?}"
+    );
+}
