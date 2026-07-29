@@ -192,6 +192,25 @@
         "url": { "type": "string", "pattern": "^(rediss?://.+)?$" }
       }
     },
+    "objectStorage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": { "type": "string", "enum": ["s3", "azure"] },
+        "azure": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "account": { "type": "string" },
+            "workloadIdentityClientId": { "type": "string" },
+            "mediaContainer": { "type": "string", "minLength": 1 },
+            "gitContainer": { "type": "string", "minLength": 1 }
+          },
+          "required": ["account", "workloadIdentityClientId", "mediaContainer", "gitContainer"]
+        }
+      },
+      "required": ["backend", "azure"]
+    },
     "s3": {
       "type": "object",
       "additionalProperties": false,

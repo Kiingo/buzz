@@ -8,6 +8,7 @@
 #![deny(unsafe_code)]
 
 use std::ops::Range;
+use std::path::Path as FilePath;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -15,11 +16,13 @@ use bytes::Bytes;
 use futures_core::Stream;
 use futures_util::TryStreamExt;
 use object_store::azure::{MicrosoftAzure, MicrosoftAzureBuilder};
+use object_store::list::{PaginatedListOptions, PaginatedListStore};
 use object_store::path::Path;
 use object_store::{
     Attribute, Attributes, Error as ObjectStoreError, ObjectMeta, ObjectStore, ObjectStoreExt,
-    PutMode, PutOptions, PutResult, UpdateVersion,
+    PutMode, PutMultipartOptions, PutOptions, PutResult, UpdateVersion, WriteMultipart,
 };
+use tokio::io::AsyncReadExt;
 
 /// A streaming Azure Blob response suitable for an HTTP response body.
 pub type ByteStream =
@@ -31,7 +34,7 @@ pub struct VersionedObject {
     /// Object bytes.
     pub bytes: Bytes,
     /// Version to supply to a subsequent compare-and-swap write.
-    pub version: UpdateVersion,
+    pub version: BlobVersion,
     /// Object attributes returned by Azure, including content type when set.
     pub attributes: Attributes,
 }
@@ -40,9 +43,38 @@ pub struct VersionedObject {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConditionalWrite {
     /// The write committed and returned the new object version.
-    Won(UpdateVersion),
+    Won(BlobVersion),
     /// Another writer won the precondition race.
     LostRace,
+}
+
+/// Opaque Azure object version suitable for a later compare-and-swap write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobVersion {
+    /// Strong ETag returned by the same read or successful write.
+    pub etag: String,
+    /// Optional Azure version identifier when account versioning is enabled.
+    pub version: Option<String>,
+}
+
+/// Backend-neutral object metadata used by Buzz media and sweep paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobObjectMetadata {
+    /// Full object key within the configured container.
+    pub key: String,
+    /// Object size in bytes.
+    pub size: u64,
+    /// Strong ETag when returned by Azure.
+    pub etag: Option<String>,
+}
+
+/// One bounded listing page and an opaque continuation token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobListPage {
+    /// Objects returned in this page.
+    pub objects: Vec<BlobObjectMetadata>,
+    /// Token to pass to the next request, or `None` for the final page.
+    pub continuation_token: Option<String>,
 }
 
 /// Azure Blob adapter failures.
@@ -60,6 +92,13 @@ pub enum AzureStorageError {
         /// Object key whose response was incomplete.
         key: String,
     },
+}
+
+impl AzureStorageError {
+    /// Whether Azure reported that the requested object does not exist.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::Backend(ObjectStoreError::NotFound { .. }))
+    }
 }
 
 /// Azure Blob Storage implementation of the object operations Buzz requires.
@@ -112,9 +151,9 @@ impl AzureBlobStore {
         key: &str,
         bytes: Bytes,
         content_type: &str,
-        version: UpdateVersion,
+        version: BlobVersion,
     ) -> Result<ConditionalWrite, AzureStorageError> {
-        self.conditional_put(key, bytes, content_type, PutMode::Update(version))
+        self.conditional_put(key, bytes, content_type, PutMode::Update(version.into()))
             .await
     }
 
@@ -124,7 +163,7 @@ impl AzureBlobStore {
         key: &str,
         bytes: Bytes,
         content_type: &str,
-    ) -> Result<UpdateVersion, AzureStorageError> {
+    ) -> Result<BlobVersion, AzureStorageError> {
         let path = object_path(key)?;
         let result = self
             .inner
@@ -134,6 +173,57 @@ impl AzureBlobStore {
                 put_options(content_type, PutMode::Overwrite),
             )
             .await?;
+        require_etag(key, result)
+    }
+
+    /// Stream a file to Azure using bounded multipart buffering.
+    pub async fn put_file(
+        &self,
+        key: &str,
+        file_path: &FilePath,
+        content_type: &str,
+    ) -> Result<BlobVersion, AzureStorageError> {
+        const READ_BUFFER_BYTES: usize = 1024 * 1024;
+        const UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
+        const MAX_IN_FLIGHT_PARTS: usize = 2;
+
+        let path = object_path(key)?;
+        let mut attributes = Attributes::new();
+        attributes.insert(Attribute::ContentType, content_type.to_string().into());
+        let upload = self
+            .inner
+            .put_multipart_opts(
+                &path,
+                PutMultipartOptions {
+                    attributes,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        let mut writer = WriteMultipart::new_with_chunk_size(upload, UPLOAD_CHUNK_BYTES);
+        let mut file =
+            tokio::fs::File::open(file_path)
+                .await
+                .map_err(|source| ObjectStoreError::Generic {
+                    store: "MicrosoftAzure",
+                    source: Box::new(source),
+                })?;
+        let mut buffer = vec![0_u8; READ_BUFFER_BYTES];
+        loop {
+            let read =
+                file.read(&mut buffer)
+                    .await
+                    .map_err(|source| ObjectStoreError::Generic {
+                        store: "MicrosoftAzure",
+                        source: Box::new(source),
+                    })?;
+            if read == 0 {
+                break;
+            }
+            writer.wait_for_capacity(MAX_IN_FLIGHT_PARTS).await?;
+            writer.write(&buffer[..read]);
+        }
+        let result = writer.finish().await?;
         require_etag(key, result)
     }
 
@@ -171,10 +261,10 @@ impl AzureBlobStore {
     }
 
     /// Return object metadata, or `None` when the key is absent.
-    pub async fn head(&self, key: &str) -> Result<Option<ObjectMeta>, AzureStorageError> {
+    pub async fn head(&self, key: &str) -> Result<Option<BlobObjectMetadata>, AzureStorageError> {
         let path = object_path(key)?;
         match self.inner.head(&path).await {
-            Ok(meta) => Ok(Some(meta)),
+            Ok(meta) => Ok(Some(metadata(meta))),
             Err(ObjectStoreError::NotFound { .. }) => Ok(None),
             Err(error) => Err(error.into()),
         }
@@ -187,10 +277,50 @@ impl AzureBlobStore {
         Ok(())
     }
 
+    /// Delete an object while treating an absent key as idempotent success.
+    pub async fn delete_if_exists(&self, key: &str) -> Result<(), AzureStorageError> {
+        match self.delete(key).await {
+            Ok(()) | Err(AzureStorageError::Backend(ObjectStoreError::NotFound { .. })) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// List all objects under a prefix, following Azure continuation pages.
-    pub async fn list_prefix(&self, prefix: &str) -> Result<Vec<ObjectMeta>, AzureStorageError> {
+    pub async fn list_prefix(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<BlobObjectMetadata>, AzureStorageError> {
         let path = object_path(prefix)?;
-        Ok(self.inner.list(Some(&path)).try_collect::<Vec<_>>().await?)
+        Ok(self
+            .inner
+            .list(Some(&path))
+            .map_ok(metadata)
+            .try_collect::<Vec<_>>()
+            .await?)
+    }
+
+    /// List one bounded Azure page using Azure's native continuation token.
+    pub async fn list_page(
+        &self,
+        prefix: Option<&str>,
+        continuation_token: Option<String>,
+        max_keys: usize,
+    ) -> Result<BlobListPage, AzureStorageError> {
+        let page = self
+            .inner
+            .list_paginated(
+                prefix,
+                PaginatedListOptions {
+                    max_keys: Some(max_keys),
+                    page_token: continuation_token,
+                    ..Default::default()
+                },
+            )
+            .await?;
+        Ok(BlobListPage {
+            objects: page.result.objects.into_iter().map(metadata).collect(),
+            continuation_token: page.page_token,
+        })
     }
 
     async fn conditional_put(
@@ -229,23 +359,42 @@ fn put_options(content_type: &str, mode: PutMode) -> PutOptions {
     }
 }
 
-fn require_etag(key: &str, result: PutResult) -> Result<UpdateVersion, AzureStorageError> {
-    if result.e_tag.is_none() {
-        return Err(AzureStorageError::MissingEtag {
-            key: key.to_string(),
-        });
-    }
-    Ok(result.into())
+fn require_etag(key: &str, result: PutResult) -> Result<BlobVersion, AzureStorageError> {
+    let etag = result.e_tag.ok_or_else(|| AzureStorageError::MissingEtag {
+        key: key.to_string(),
+    })?;
+    Ok(BlobVersion {
+        etag,
+        version: result.version,
+    })
 }
 
-fn version_from_meta(key: &str, meta: &ObjectMeta) -> Result<UpdateVersion, AzureStorageError> {
-    if meta.e_tag.is_none() {
-        return Err(AzureStorageError::MissingEtag {
+fn version_from_meta(key: &str, meta: &ObjectMeta) -> Result<BlobVersion, AzureStorageError> {
+    let etag = meta
+        .e_tag
+        .clone()
+        .ok_or_else(|| AzureStorageError::MissingEtag {
             key: key.to_string(),
-        });
-    }
-    Ok(UpdateVersion {
-        e_tag: meta.e_tag.clone(),
+        })?;
+    Ok(BlobVersion {
+        etag,
         version: meta.version.clone(),
     })
+}
+
+fn metadata(meta: ObjectMeta) -> BlobObjectMetadata {
+    BlobObjectMetadata {
+        key: meta.location.to_string(),
+        size: meta.size,
+        etag: meta.e_tag,
+    }
+}
+
+impl From<BlobVersion> for UpdateVersion {
+    fn from(value: BlobVersion) -> Self {
+        Self {
+            e_tag: Some(value.etag),
+            version: value.version,
+        }
+    }
 }

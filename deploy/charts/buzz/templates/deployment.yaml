@@ -21,6 +21,9 @@ spec:
     metadata:
       labels:
         {{- include "buzz.relaySelectorLabels" . | nindent 8 }}
+        {{- if eq .Values.objectStorage.backend "azure" }}
+        azure.workload.identity/use: "true"
+        {{- end }}
         {{- with .Values.relay.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -164,12 +167,21 @@ spec:
             - { name: BUZZ_GIT_MAX_REPOS_PER_PUBKEY, value: {{ .Values.git.maxReposPerPubkey | quote }} }
             - { name: BUZZ_GIT_MAX_CONCURRENT_OPS, value: {{ .Values.git.maxConcurrentOps | quote }} }
 
+            - { name: BUZZ_OBJECT_STORAGE_BACKEND, value: {{ .Values.objectStorage.backend | quote }} }
+            {{- if eq .Values.objectStorage.backend "azure" }}
+            - { name: BUZZ_AZURE_STORAGE_ACCOUNT, value: {{ .Values.objectStorage.azure.account | quote }} }
+            - { name: BUZZ_AZURE_MEDIA_CONTAINER, value: {{ .Values.objectStorage.azure.mediaContainer | quote }} }
+            - { name: BUZZ_AZURE_GIT_CONTAINER, value: {{ .Values.objectStorage.azure.gitContainer | quote }} }
+            {{- end }}
+
             # ── S3 (non-secret) ──────────────────────────────────────
+            {{- if eq .Values.objectStorage.backend "s3" }}
             {{- $s3Endpoint := include "buzz.s3Endpoint" . }}
             {{- if $s3Endpoint }}
             - { name: BUZZ_S3_ENDPOINT, value: {{ $s3Endpoint | quote }} }
             {{- end }}
             - { name: BUZZ_S3_BUCKET, value: {{ .Values.s3.bucket | quote }} }
+            {{- end }}
 
             # ── Secrets (from chart-managed or existing) ─────────────
             - name: BUZZ_RELAY_PRIVATE_KEY

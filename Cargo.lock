@@ -1009,6 +1009,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "blurhash",
+ "buzz-azure-storage",
  "buzz-core",
  "bytes",
  "chrono",
@@ -1143,6 +1144,7 @@ dependencies = [
  "base64",
  "buzz-audit",
  "buzz-auth",
+ "buzz-azure-storage",
  "buzz-conformance",
  "buzz-core",
  "buzz-db",

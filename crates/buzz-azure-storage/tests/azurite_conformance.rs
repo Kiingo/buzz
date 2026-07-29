@@ -202,7 +202,14 @@ async fn media_primitives(store: &AzureBlobStore, prefix: &str) {
         .await
         .expect("list media prefix");
     assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].location.as_ref(), key);
+    assert_eq!(listed[0].key, key);
+
+    let page = store
+        .list_page(Some(&format!("{prefix}/media")), None, 1)
+        .await
+        .expect("list bounded media page");
+    assert_eq!(page.objects.len(), 1);
+    assert_eq!(page.objects[0].key, key);
 
     store.delete(&key).await.expect("delete media object");
     assert!(store

@@ -1,0 +1,54 @@
+# Kiingo Buzz Fork Maintenance
+
+Kiingo maintains `Kiingo/buzz` as a narrow Apache-2.0-compatible fork of
+`block/buzz`. The fork keeps the upstream history intact so security fixes and
+product changes can be merged without replaying Kiingo commits.
+
+## Remote contract
+
+```text
+origin   git@github.com:Kiingo/buzz.git
+upstream https://github.com/block/buzz.git
+```
+
+Verify the URLs before synchronizing. Add the `upstream` remote when it is
+absent, fetch both remotes, and review the upstream diff before changing the
+fork branch.
+
+## Synchronization procedure
+
+1. Start from a clean Kiingo worktree and a dedicated branch.
+2. Fetch `origin` and `upstream` without pruning or force-updating local work.
+3. Merge `upstream/main` into the Kiingo branch. Do not rebase published Kiingo
+   commits or force-push the shared branch.
+4. Resolve conflicts by preserving upstream behavior unless a documented
+   Kiingo production requirement intentionally differs.
+5. Keep every commit DCO-compliant with `git commit -s` and retain upstream
+   authorship and commit history.
+6. Run the targeted checks required by the changed crates and deployment
+   surfaces. For Rust changes this includes formatting plus the smallest
+   relevant crate tests.
+7. Open or update the Kiingo pull request with the upstream commit merged,
+   conflict decisions, exact checks, and any operational migration notes.
+8. Merge through the normal protected-branch workflow. Production images must
+   be built from the reviewed merge commit and pinned by digest.
+
+## License and patch boundaries
+
+- Preserve the root `LICENSE`, copyright statements, dependency notices,
+  Apache-2.0 headers, and any `NOTICE` file upstream adds in the future.
+- Keep Kiingo-specific Azure, identity, and bridge seams configurable. Avoid
+  replacing portable upstream behavior when a backend interface or chart value
+  can keep both paths supported.
+- Prefer small upstreamable commits. Submit generally useful fixes upstream
+  when practical, but never make production synchronization depend on upstream
+  accepting a Kiingo-specific change.
+- Record intentional long-lived divergences in the Kiingo implementation plan
+  and in the pull request that introduces them.
+
+## Recovery
+
+If an upstream merge causes a regression, revert the merge or the smallest
+identified follow-up commit through a new signed commit. Do not rewrite the
+published fork history. Restore the last known-good digest in deployment
+configuration while the forward fix is reviewed.

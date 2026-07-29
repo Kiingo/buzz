@@ -437,11 +437,20 @@ async fn main() -> anyhow::Result<()> {
         .media
         .validate()
         .map_err(|e| anyhow::anyhow!("invalid media config: {e}"))?;
-    let media_storage = buzz_media::MediaStorage::new(&config.media)
+    let media_storage = buzz_media::MediaStorage::from_runtime_env(&config.media)
         .map_err(|e| anyhow::anyhow!("failed to initialize media storage: {e}"))?;
     info!("Media storage connected");
+    let git_store = buzz_relay::api::git::store::GitStore::from_runtime_env(
+        &config.media.s3_endpoint,
+        &config.media.s3_access_key,
+        &config.media.s3_secret_key,
+        &config.media.s3_bucket,
+        &config.media.s3_region,
+    )
+    .map_err(|e| anyhow::anyhow!("failed to initialize git object storage: {e}"))?;
+    info!("Git object storage connected");
 
-    let (app_state, audit_shutdown) = AppState::new(
+    let (app_state, audit_shutdown) = AppState::new_with_git_store(
         config.clone(),
         db,
         redis_health_pool,
@@ -452,6 +461,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&workflow_engine),
         relay_keypair,
         media_storage,
+        git_store,
     );
     let state = Arc::new(app_state);
 
@@ -483,7 +493,7 @@ async fn main() -> anyhow::Result<()> {
         info!(runtime_id = %runtime_id, "Inter-relay mesh started");
     }
 
-    // Git-on-object-storage: admit the configured S3/MinIO backend against the
+    // Git-on-object-storage: admit the configured backend against the
     // linearizable conditional-write axiom (A3) before serving git traffic.
     // Failure is fatal: a backend that cannot satisfy pointer CAS invalidates
     // the manifest-pointer protocol. This is a deployment gate, not a proof.

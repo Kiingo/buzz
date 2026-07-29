@@ -66,3 +66,15 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "S3/object-storage source missing"
+
+  - it: fails when Azure workload identity client ID is missing
+    set:
+      relayUrl: wss://buzz.example.com
+      ownerPubkey: "0000000000000000000000000000000000000000000000000000000000000000"
+      externalPostgresql.url: postgres://u:p@h:5432/d
+      objectStorage.backend: azure
+      objectStorage.azure.account: buzzstorage
+      objectStorage.azure.workloadIdentityClientId: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "objectStorage.azure.workloadIdentityClientId is required"

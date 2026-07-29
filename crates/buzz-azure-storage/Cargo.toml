@@ -11,9 +11,9 @@ description = "Azure Blob Storage adapter and conformance surface for Buzz"
 bytes = "1"
 futures-core = "0.3"
 futures-util = "0.3"
-object_store = { version = "0.14.1", default-features = false, features = ["azure"] }
+object_store = { version = "0.14.1", default-features = false, features = ["azure", "tokio"] }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
-tokio = { workspace = true }
 uuid = { workspace = true }
