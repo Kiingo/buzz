@@ -113,6 +113,12 @@ struct AcceptedTurn {
     receipt_id: String,
 }
 
+#[derive(Debug, Clone)]
+enum TurnAdmission {
+    Execution(AcceptedTurn),
+    EnrollmentCompleted(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TerminalState {
     Completed,
@@ -352,7 +358,13 @@ async fn run_prompt(context: PromptContext) {
 }
 
 async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
-    let accepted = accept_turn(context).await?;
+    let accepted = match accept_turn(context).await? {
+        TurnAdmission::Execution(accepted) => accepted,
+        TurnAdmission::EnrollmentCompleted(message) => {
+            emit_message_chunk(&context.writer, &context.session_id, &message).await;
+            return Ok("end_turn");
+        }
+    };
     *context.receipt_id.lock().await = Some(accepted.receipt_id.clone());
     publish_status(
         context,
@@ -477,7 +489,7 @@ async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
     }
 }
 
-async fn accept_turn(context: &PromptContext) -> Result<AcceptedTurn, String> {
+async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
     let url = format!("{}/api/buzz-bridge/events", context.config.api_base_url);
     let response = context
         .http
@@ -510,6 +522,25 @@ async fn accept_turn(context: &PromptContext) -> Result<AcceptedTurn, String> {
             .unwrap_or("unknown");
         return Err(actionable_ingress_error(status, code));
     }
+    if body.get("enrollment_completed").and_then(Value::as_bool) == Some(true) {
+        let message = body
+            .get("enrollment_message")
+            .and_then(Value::as_str)
+            .unwrap_or("Your Buzz identity is linked to Kiingo.")
+            .to_string();
+        let enrollment_url = body.get("enrollment_url").and_then(Value::as_str);
+        return Ok(TurnAdmission::EnrollmentCompleted(match enrollment_url {
+            Some(url)
+                if !body
+                    .get("codex_connected")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false) =>
+            {
+                format!("{message} {url}")
+            }
+            _ => message,
+        }));
+    }
     let receipt_id = required_json_string(&body, "receipt_id")?;
     required_json_string(&body, "conversation_id")?;
     if body.get("selected_harness").and_then(Value::as_str) != Some("codex")
@@ -517,16 +548,19 @@ async fn accept_turn(context: &PromptContext) -> Result<AcceptedTurn, String> {
     {
         return Err("Kiingo ingress violated the Codex no-cold-start contract".to_string());
     }
-    Ok(AcceptedTurn { receipt_id })
+    Ok(TurnAdmission::Execution(AcceptedTurn { receipt_id }))
 }
 
 fn actionable_ingress_error(status: StatusCode, code: &str) -> String {
     match code {
         "buzz_identity_not_verified"
+        | "buzz_identity_ambiguous"
         | "buzz_identity_endpoint_not_eligible"
+        | "buzz_identity_enrollment_invalid"
+        | "buzz_identity_enrollment_conflict"
         | "buzz_codex_subscription_not_connected"
         | "buzz_codex_subscription_routing_ambiguous" => format!(
-            "Buzz identity or Codex access is not active. Verify the identity mapping and connect this user's ChatGPT account at /team/harness-connections?provider=codex ({code})."
+            "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect ({code})."
         ),
         _ => format!("Kiingo rejected the Buzz event with HTTP {} ({code})", status.as_u16()),
     }
