@@ -25,7 +25,7 @@ Assertion '__n < this->size()' failed.
 
 **Root cause:** WebKitGTK's bundled Skia has an out-of-bounds bug when rendering COLRv1 color-format emoji fonts. Fedora's default emoji font (`/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf`) triggers it on every startup that renders emoji.
 
-**Fix (AppImage, shipped automatically):** The AppImage's launch shim sets `FONTCONFIG_FILE` to a bundled configuration that rejects color-format fonts from the font-match candidates presented to WebKit. This prevents the COLRv1 rendering path from being reached. Color emoji degrade to a non-COLRv1 fallback (CBDT or SVG format) when one is installed; otherwise they render as monochrome glyphs. The fix applies only to the Buzz process — your system emoji font is unaffected elsewhere.
+**Fix (AppImage, shipped automatically):** The AppImage's launch shim sets `FONTCONFIG_FILE` to a bundled configuration that rejects color-format fonts from the font-match candidates presented to WebKit. This prevents the COLRv1 rendering path from being reached. Color emoji render as monochrome glyphs inside Buzz — fontconfig's `FC_COLOR` property is true for all color emoji formats (COLR v0/v1, CBDT/CBLC, sbix, SVG-in-OT), so the rejection covers all of them and no color fallback exists within the Buzz process. Your system emoji font is unaffected elsewhere.
 
 This fix ships as part of `fix-appimage.sh` and is included in release AppImages starting with the version that merges this change.
 

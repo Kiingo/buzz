@@ -155,8 +155,9 @@ cat > "$APP_BIN" <<'SHIM'
 # colrv1_configure_skpaint() when rendering COLRv1 color emoji fonts (e.g.,
 # Fedora's Noto-COLRv1.ttf — issues #2548, #2982). If the user has not set
 # FONTCONFIG_FILE, point fontconfig at our config that rejects color-format
-# fonts, preventing the abort. Cost: color emoji fall back to a non-color
-# variant (CBDT/SVG) if one is installed, or render as monochrome glyphs.
+# fonts, preventing the abort. Cost: all color emoji (COLRv1, CBDT/CBLC, sbix,
+# SVG-in-OT) share FC_COLOR=true and are rejected together — emoji render as
+# monochrome glyphs inside Buzz. System emoji outside Buzz are not affected.
 # A user-set FONTCONFIG_FILE is preserved and this workaround is skipped.
 here="$(dirname "$(readlink -f "$0")")"
 appdir="$(readlink -f "$here/../..")"
@@ -184,8 +185,10 @@ echo "==> Installing fontconfig rule to block COLRv1 color-format fonts"
 # config only when the user hasn't already set one — so a user with a custom
 # fontconfig override is not affected.
 #
-# Cost: color emoji degrade to a non-color fallback (CBDT, SVG, or monochrome
-# glyph) in the Buzz window. System emoji outside Buzz are not affected.
+# Cost: color emoji render as monochrome glyphs in the Buzz window. Fontconfig's
+# FC_COLOR property is true for all color emoji formats (COLR v0/v1, CBDT/CBLC,
+# sbix, SVG-in-OT) — there is no color fallback within this rejection rule.
+# System emoji outside Buzz are not affected.
 FONTCONFIG_DIR="$WORKDIR/squashfs-root/usr/share/buzz"
 mkdir -p "$FONTCONFIG_DIR"
 cat > "$FONTCONFIG_DIR/fontconfig.conf" <<'FONTCONF'
@@ -193,22 +196,24 @@ cat > "$FONTCONFIG_DIR/fontconfig.conf" <<'FONTCONF'
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <!--
   Buzz AppImage fontconfig override.
-  Rejects COLRv1 color-format fonts from the font-match candidates presented to
+  Rejects color-format fonts from the font-match candidates presented to
   WebKitGTK. WebKitGTK's bundled Skia aborts in colrv1_configure_skpaint() on
   certain COLRv1 fonts (e.g. Fedora's Noto-COLRv1.ttf), causing a SIGABRT on
   startup and a blank window (#2548, #2982). Rejecting color-format fonts here
   prevents that code path from being reached. The system emoji font remains
   available to all other applications; only the Buzz process sees this config.
-  Cost: color emoji in Buzz fall back to a non-COLRv1 variant (CBDT or SVG)
-  when one is installed, or render as monochrome glyphs when none is.
+  Cost: color emoji in Buzz render as monochrome glyphs. Fontconfig's FC_COLOR
+  property is true for all color emoji formats (COLR v0/v1, CBDT/CBLC, sbix,
+  SVG-in-OT) — the rejection covers all of them and no color fallback exists.
 -->
 <fontconfig>
   <!-- Include standard system font directories and per-user fonts. -->
   <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
   <include ignore_missing="yes">/etc/fonts/conf.d</include>
   <include ignore_missing="yes" prefix="xdg">fontconfig/conf.d</include>
-  <!-- Reject any font whose color-format property is set (COLRv1 / SVG-in-OT).
-       Fonts that carry no color-format property (CBDT, monochrome) are kept. -->
+  <!-- Reject any font whose color-format property is set. FC_COLOR=true covers
+       all color emoji formats: COLR v0/v1, CBDT/CBLC, sbix, and SVG-in-OT.
+       There is no color fallback: emoji render as monochrome glyphs in Buzz. -->
   <selectfont>
     <rejectfont>
       <pattern>
