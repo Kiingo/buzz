@@ -99,6 +99,11 @@ pub fn load_text_to_speech(model_dir: &str) -> Result<PocketTts, String> {
 impl PocketTts {
     /// Split text into synthesis units that satisfy the bundle's exact
     /// 50-token input limit.
+    ///
+    /// Chunks are contiguous substrings of the prepared model prompt and may
+    /// retain boundary whitespace. Concatenating them with `chunks.concat()`
+    /// reconstructs that prompt exactly, and each chunk's prepared token count
+    /// is at most 50.
     pub fn split_text_into_chunks(&self, text: &str) -> Result<Vec<String>, String> {
         let Some(prepared) = prepare_april_prompt(text) else {
             return Ok(Vec::new());
