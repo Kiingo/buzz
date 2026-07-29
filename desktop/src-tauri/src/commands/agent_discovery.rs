@@ -4,8 +4,8 @@ use crate::{
     app_state::AppState,
     managed_agents::{
         command_availability, is_npm_global_install, AcpRuntimeCatalogEntry,
-        DiscoverManagedAgentPrereqsRequest, InstallRuntimeResult, InstallStepResult,
-        ManagedAgentPrereqsInfo, RelayAgentInfo, DEFAULT_ACP_COMMAND,
+        DiscoverManagedAgentPrereqsRequest, InstallRuntimeResult, ManagedAgentPrereqsInfo,
+        RelayAgentInfo, DEFAULT_ACP_COMMAND,
     },
     nostr_convert,
     relay::query_relay,
@@ -235,10 +235,10 @@ pub async fn install_acp_runtime(
     // active_installs guard is dropped when install_acp_runtime_blocking
     // returns (Guard impl Drop) — so Phase 2's restart path runs outside
     // the guard and cannot re-enter the mutex.
-    let reporter = InstallReporter::for_command(&app, &runtime_id);
     let runtime_id_clone = runtime_id.clone();
+    let app_clone = app.clone();
     let install_result = tokio::task::spawn_blocking(move || {
-        install_acp_runtime_blocking(&runtime_id_clone, &reporter)
+        install_acp_runtime_blocking(&runtime_id_clone, &app_clone)
     })
     .await
     .map_err(|e| format!("install task panicked: {e}"))??;
@@ -267,9 +267,14 @@ pub async fn install_acp_runtime(
 
 /// Err(_) = infrastructure failure (panic, concurrency guard).
 /// Ok({success: false}) = an install step failed (stderr captured in steps).
+///
+/// The reporter is built here rather than by the caller so this run's log
+/// session starts only once the concurrency guard is held and the runtime id is
+/// resolved to its canonical catalog form: a rejected install must not rotate a
+/// running one's log, and the log filename is derived from that id.
 fn install_acp_runtime_blocking(
     runtime_id: &str,
-    reporter: &InstallReporter,
+    app: &tauri::AppHandle,
 ) -> Result<InstallRuntimeResult, String> {
     // Re-fetch the login-shell PATH so a Node.js installation that happened
     // after app launch (or after a previous failed install) is visible to this
@@ -303,6 +308,8 @@ fn install_acp_runtime_blocking(
     let runtime = crate::managed_agents::known_acp_runtime_exact(runtime_id)
         .ok_or_else(|| format!("unknown runtime: {runtime_id}"))?;
 
+    let reporter = InstallReporter::for_run(app, runtime.id);
+
     let mut steps = Vec::new();
 
     // Phase 1: Install CLI if missing and commands are available.
@@ -312,11 +319,11 @@ fn install_acp_runtime_blocking(
     if let Some(cli) = runtime.underlying_cli {
         if crate::managed_agents::resolve_command(cli).is_none() {
             for cmd in runtime.cli_install_commands_for_os() {
-                let result = run_install_command_with_retry("cli", cmd, reporter);
+                let result = run_install_command_with_retry("cli", cmd, &reporter);
                 let success = result.success;
                 steps.push(result);
                 if !success {
-                    return Ok(failed_install(steps, reporter));
+                    return Ok(reporter.failed(steps));
                 }
             }
         }
@@ -342,7 +349,7 @@ fn install_acp_runtime_blocking(
         if use_managed_npm {
             if let Err(step) = ensure_managed_node_runtime_blocking() {
                 reporter.record_step(&mut steps, *step);
-                return Ok(failed_install(steps, reporter));
+                return Ok(reporter.failed(steps));
             }
         }
 
@@ -356,23 +363,23 @@ fn install_acp_runtime_blocking(
                 Ok(None) => cmd.to_string(),
                 Err(step) => {
                     reporter.record_step(&mut steps, *step);
-                    return Ok(failed_install(steps, reporter));
+                    return Ok(reporter.failed(steps));
                 }
             };
 
-            let mut result = run_install_command_with_retry("adapter", &planned, reporter);
+            let mut result = run_install_command_with_retry("adapter", &planned, &reporter);
             if !result.success && result.hint.is_none() && is_npm_global_install(cmd) {
                 result.hint = npm_eacces_hint(&result.stderr, cmd);
             }
             let success = result.success;
             steps.push(result);
             if !success {
-                return Ok(failed_install(steps, reporter));
+                return Ok(reporter.failed(steps));
             }
         }
     }
 
-    post_install_verification::run(runtime_id, &mut steps, reporter);
+    post_install_verification::run(runtime_id, &mut steps, &reporter);
 
     Ok(InstallRuntimeResult {
         success: steps.iter().all(|step| step.success),
@@ -381,22 +388,6 @@ fn install_acp_runtime_blocking(
         failed_restart_count: 0,
         log_path: reporter.log_path(),
     })
-}
-
-/// A failed install, carrying the steps recorded so far and the log holding
-/// their full history. Every early return in the install builds its result
-/// here, so none can forget the log pointer the failure message needs.
-fn failed_install(
-    steps: Vec<InstallStepResult>,
-    reporter: &InstallReporter,
-) -> InstallRuntimeResult {
-    InstallRuntimeResult {
-        success: false,
-        steps,
-        restarted_count: 0,
-        failed_restart_count: 0,
-        log_path: reporter.log_path(),
-    }
 }
 
 // ── Post-install auto-restart (Phase 2 of install_acp_runtime) ───────────────

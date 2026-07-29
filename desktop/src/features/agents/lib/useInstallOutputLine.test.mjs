@@ -3,56 +3,80 @@ import test from "node:test";
 
 import { nextInstallOutputLine } from "./useInstallOutputLine.ts";
 
-function event(runtimeId, attempt, line) {
-  return { runtime_id: runtimeId, attempt, line };
+function event(runtimeId, seq, line) {
+  return { runtime_id: runtimeId, seq, line };
 }
 
 test("nextInstallOutputLine: adopts the first line for the watched runtime", () => {
   assert.deepEqual(
-    nextInstallOutputLine(null, event("goose", 1, "downloading"), "goose"),
-    { attempt: 1, line: "downloading" },
+    nextInstallOutputLine(null, event("goose", 0, "downloading"), "goose"),
+    { seq: 0, line: "downloading" },
   );
 });
 
-test("nextInstallOutputLine: replaces the line within the same attempt", () => {
-  const current = { attempt: 1, line: "downloading" };
+test("nextInstallOutputLine: a later line replaces the current one", () => {
+  const current = { seq: 4, line: "downloading" };
 
   assert.deepEqual(
-    nextInstallOutputLine(current, event("goose", 1, "unpacking"), "goose"),
-    { attempt: 1, line: "unpacking" },
+    nextInstallOutputLine(current, event("goose", 5, "unpacking"), "goose"),
+    { seq: 5, line: "unpacking" },
   );
 });
 
 test("nextInstallOutputLine: ignores a line from another runtime", () => {
-  const current = { attempt: 1, line: "downloading" };
+  const current = { seq: 1, line: "downloading" };
 
   assert.equal(
-    nextInstallOutputLine(current, event("codex", 1, "other work"), "goose"),
+    nextInstallOutputLine(current, event("codex", 2, "other work"), "goose"),
     current,
   );
 });
 
-test("nextInstallOutputLine: ignores a line from a superseded attempt", () => {
-  const current = { attempt: 2, line: "retrying" };
+test("nextInstallOutputLine: ignores an out-of-order line", () => {
+  const current = { seq: 7, line: "retrying" };
 
   assert.equal(
-    nextInstallOutputLine(current, event("goose", 1, "stale line"), "goose"),
+    nextInstallOutputLine(current, event("goose", 6, "stale line"), "goose"),
     current,
   );
 });
 
-test("nextInstallOutputLine: adopts the first line of a new attempt", () => {
-  const current = { attempt: 1, line: "download failed" };
+test("nextInstallOutputLine: ignores a replay of the current sequence number", () => {
+  const current = { seq: 7, line: "retrying" };
 
-  assert.deepEqual(
-    nextInstallOutputLine(current, event("goose", 2, "downloading"), "goose"),
-    { attempt: 2, line: "downloading" },
+  assert.equal(
+    nextInstallOutputLine(current, event("goose", 7, "duplicate"), "goose"),
+    current,
   );
 });
 
-test("nextInstallOutputLine: a first event from a later attempt is adopted", () => {
+test("nextInstallOutputLine: a null line clears the display", () => {
+  const current = { seq: 3, line: "download failed" };
+
   assert.deepEqual(
-    nextInstallOutputLine(null, event("goose", 3, "downloading"), "goose"),
-    { attempt: 3, line: "downloading" },
+    nextInstallOutputLine(current, event("goose", 4, null), "goose"),
+    { seq: 4, line: null },
+  );
+});
+
+test("nextInstallOutputLine: a later step's first line is adopted after a higher attempt", () => {
+  // The seq is install-wide: step 2 attempt 1 always follows step 1 attempt 2,
+  // which is exactly what an attempt-keyed comparison got wrong.
+  const current = { seq: 9, line: "step one, attempt two" };
+
+  assert.deepEqual(
+    nextInstallOutputLine(
+      current,
+      event("goose", 10, "step two, attempt one"),
+      "goose",
+    ),
+    { seq: 10, line: "step two, attempt one" },
+  );
+});
+
+test("nextInstallOutputLine: a first event mid-install is adopted", () => {
+  assert.deepEqual(
+    nextInstallOutputLine(null, event("goose", 42, "downloading"), "goose"),
+    { seq: 42, line: "downloading" },
   );
 });

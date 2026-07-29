@@ -66,7 +66,11 @@ pub(super) fn run_install_command_with_retry(
     run_install_with_retry(
         INSTALL_MAX_ATTEMPTS,
         |attempt| {
-            let outcome = run_install_command(step, command, reporter.line_observer(attempt));
+            // Before the command spawns, so the previous attempt's last line
+            // stops being displayed for the whole backoff rather than until the
+            // new attempt happens to print something.
+            reporter.start_attempt();
+            let outcome = run_install_command(step, command, reporter.line_observer());
             reporter.record_attempt(attempt, &outcome);
             outcome.step
         },
@@ -200,28 +204,32 @@ fn await_install_child(
     let stderr_capture = Arc::new(Capture::new());
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();
-    let (drained_tx, drained_rx) = std::sync::mpsc::channel();
 
-    let stdout_thread = std::thread::spawn({
+    // One event stream carries every input the ceiling waits on, so the exit
+    // and the drains are governed by the same deadline instead of the exit
+    // releasing the drains from it.
+    let (events_tx, events) = std::sync::mpsc::channel();
+
+    std::thread::spawn({
         let (capture, done, observer) = (
             Arc::clone(&stdout_capture),
-            drained_tx.clone(),
+            events_tx.clone(),
             observer.clone(),
         );
         move || {
             if let Some(pipe) = stdout_pipe {
                 drain_into(pipe, &capture, observer.as_ref());
             }
-            let _ = done.send(());
+            let _ = done.send(Settled::Drained);
         }
     });
-    let stderr_thread = std::thread::spawn({
-        let (capture, done) = (Arc::clone(&stderr_capture), drained_tx);
+    std::thread::spawn({
+        let (capture, done) = (Arc::clone(&stderr_capture), events_tx.clone());
         move || {
             if let Some(pipe) = stderr_pipe {
                 drain_into(pipe, &capture, observer.as_ref());
             }
-            let _ = done.send(());
+            let _ = done.send(Settled::Drained);
         }
     });
 
@@ -229,31 +237,37 @@ fn await_install_child(
     // kill the process on timeout.
     let child_pid = child.id();
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    let wait_thread = std::thread::spawn(move || {
-        let status = child.wait();
-        let _ = tx.send(status);
+    std::thread::spawn(move || {
+        let _ = events_tx.send(Settled::Exited(child.wait()));
     });
 
-    let deadline = Instant::now() + timeout;
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            // Ceiling reached: kill the install's whole process group — the
-            // install shell is a session leader (`setsid` in its `pre_exec`), so
-            // signalling only the leader would leave descendants running and
-            // holding the output pipes open.
-            terminate_install_group(child_pid);
-            // Reaping the child and finishing the drains share one bound. Both
-            // normally complete within microseconds of the kill, which closes
-            // the pipes; when they don't — a process that escaped the group
-            // still holding a pipe, or a termination that failed outright —
-            // waiting would defeat the very ceiling that fired and keep the
-            // per-runtime install guard behind it closed. Stragglers are
-            // detached instead; the sinks are read under the lock either way.
-            let settle_by = Instant::now() + POST_KILL_GRACE;
-            await_messages(&rx, 1, settle_by);
-            await_messages(&drained_rx, 2, settle_by);
+    // No thread is ever joined. Each sends its one event before exiting, so a
+    // join after a complete settle would add nothing — and a join before one
+    // would reintroduce the unbounded wait this loop exists to prevent.
+    let mut settle = Settle::default();
+    let ended = settle.collect(&events, Instant::now() + timeout);
+    if ended == Collected::Deadline {
+        // Ceiling reached: kill the install's whole process group — the install
+        // shell is a session leader (`setsid` in its `pre_exec`), so signalling
+        // only the leader would leave descendants running and holding the
+        // output pipes open.
+        //
+        // Whether the leader had already exited decides the verdict. If it had,
+        // only a descendant was holding a drain open: the install genuinely
+        // finished and its real status stands. If it had not, the install itself
+        // was still running and this is a timeout — the status the kill produces
+        // moments later describes the kill, not the install, so it is discarded.
+        let install_finished = settle.status.is_some();
+        terminate_install_group(child_pid);
+        // Reaping the child and finishing the drains share one bound. Both
+        // normally complete within microseconds of the kill, which closes the
+        // pipes; when they don't — a process that escaped the group still
+        // holding a pipe, or a termination that failed outright — waiting would
+        // defeat the very ceiling that fired and keep the per-runtime install
+        // guard behind it closed. Stragglers are detached instead; the captures
+        // are read under the lock either way.
+        settle.collect(&events, Instant::now() + POST_KILL_GRACE);
+        if !install_finished {
             return failed_with_capture(
                 step,
                 command,
@@ -262,56 +276,99 @@ fn await_install_child(
                 &stderr_capture,
             );
         }
+    }
 
-        match rx.recv_timeout(Duration::from_millis(200).min(remaining)) {
-            Ok(Ok(status)) => {
-                let _ = wait_thread.join();
-                let _ = stdout_thread.join();
-                let _ = stderr_thread.join();
-                return InstallOutcome {
-                    step: InstallStepResult {
-                        step: step.to_string(),
-                        command: command.to_string(),
-                        success: status.success(),
-                        stdout: stdout_capture.ui(),
-                        stderr: stderr_capture.ui(),
-                        exit_code: status.code(),
-                        hint: None,
-                    },
-                    log_stdout: stdout_capture.log(),
-                    log_stderr: stderr_capture.log(),
-                };
-            }
-            Ok(Err(e)) => {
-                let _ = wait_thread.join();
-                let _ = stdout_thread.join();
-                let _ = stderr_thread.join();
-                return failed_with_capture(
-                    step,
-                    command,
-                    format!("failed to check process status: {e}"),
-                    &stdout_capture,
-                    &stderr_capture,
-                );
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // Still running; loop and check deadline again.
-                continue;
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                // wait_thread dropped sender without sending — shouldn't happen.
-                let _ = wait_thread.join();
-                let _ = stdout_thread.join();
-                let _ = stderr_thread.join();
-                return failed_with_capture(
-                    step,
-                    command,
-                    "internal error: wait thread disconnected".to_string(),
-                    &stdout_capture,
-                    &stderr_capture,
-                );
+    match settle.status {
+        Some(Ok(status)) => InstallOutcome {
+            step: InstallStepResult {
+                step: step.to_string(),
+                command: command.to_string(),
+                success: status.success(),
+                stdout: stdout_capture.ui(),
+                stderr: stderr_capture.ui(),
+                exit_code: status.code(),
+                hint: None,
+            },
+            log_stdout: stdout_capture.log(),
+            log_stderr: stderr_capture.log(),
+        },
+        Some(Err(e)) => failed_with_capture(
+            step,
+            command,
+            format!("failed to check process status: {e}"),
+            &stdout_capture,
+            &stderr_capture,
+        ),
+        // Every sender is gone without an exit ever arriving.
+        None => failed_with_capture(
+            step,
+            command,
+            "internal error: install wait ended without a status".to_string(),
+            &stdout_capture,
+            &stderr_capture,
+        ),
+    }
+}
+
+/// One input the ceiling waits on.
+enum Settled {
+    Exited(std::io::Result<std::process::ExitStatus>),
+    Drained,
+}
+
+/// How a bounded [`Settle::collect`] ended.
+#[derive(PartialEq, Debug)]
+enum Collected {
+    /// The child exited and both drains reached EOF.
+    Complete,
+    /// The deadline passed first.
+    Deadline,
+    /// Every sender is gone — a thread died without reporting.
+    Disconnected,
+}
+
+/// What the install has settled so far: the child's exit status once it is
+/// known, and how many of the two drains have reached EOF.
+///
+/// Collecting is resumable, so the ceiling can fold more events into the same
+/// state under a second, post-kill deadline.
+#[derive(Default)]
+struct Settle {
+    status: Option<std::io::Result<std::process::ExitStatus>>,
+    drained: usize,
+}
+
+impl Settle {
+    const DRAINS: usize = 2;
+
+    fn is_complete(&self) -> bool {
+        self.status.is_some() && self.drained >= Self::DRAINS
+    }
+
+    /// Fold events until the install has fully settled or `deadline` passes.
+    ///
+    /// The exit and the drains share one deadline deliberately: a shell can exit
+    /// while a descendant it left behind still holds the inherited output pipes,
+    /// and waiting on those drains outside the deadline would let such a
+    /// descendant outlast the ceiling — holding the per-runtime install guard,
+    /// which is the very failure the ceiling exists to prevent.
+    fn collect(
+        &mut self,
+        events: &std::sync::mpsc::Receiver<Settled>,
+        deadline: Instant,
+    ) -> Collected {
+        while !self.is_complete() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match events.recv_timeout(remaining) {
+                Ok(Settled::Exited(status)) => self.status = Some(status),
+                Ok(Settled::Drained) => self.drained += 1,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return Collected::Deadline,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Collected::Disconnected
+                }
             }
         }
+        Collected::Complete
     }
 }
 
@@ -377,18 +434,6 @@ fn signal_reaches(target: i32) -> bool {
 #[cfg(not(unix))]
 fn terminate_install_group(pid: u32) {
     let _ = crate::managed_agents::terminate_process(pid);
-}
-
-/// Wait for `count` messages on `done`, giving up at `deadline` and leaving any
-/// straggler detached. Used only after the ceiling's kill, where a sender that
-/// never arrives is precisely the case that must not extend the ceiling.
-fn await_messages<T>(done: &std::sync::mpsc::Receiver<T>, count: usize, deadline: Instant) {
-    for _ in 0..count {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if done.recv_timeout(remaining).is_err() {
-            return;
-        }
-    }
 }
 
 /// A failure carrying whatever the drains captured, with `reason` leading
@@ -688,12 +733,13 @@ mod tests {
     /// A sender that never arrives — the shape of a failed termination, whose
     /// child is never reaped — must not extend the wait past its deadline.
     #[test]
-    fn test_awaiting_a_message_that_never_arrives_stops_at_the_deadline() {
-        let (_tx, rx) = std::sync::mpsc::channel::<()>();
+    fn test_settling_on_a_message_that_never_arrives_stops_at_the_deadline() {
+        let (_tx, events) = std::sync::mpsc::channel::<Settled>();
 
         let started = Instant::now();
-        await_messages(&rx, 1, started + Duration::from_millis(200));
+        let ended = Settle::default().collect(&events, started + Duration::from_millis(200));
 
+        assert_eq!(ended, Collected::Deadline);
         assert!(
             started.elapsed() < Duration::from_secs(1),
             "the wait must end at its deadline, took {:?}",
@@ -701,21 +747,95 @@ mod tests {
         );
     }
 
-    /// The deadline is shared across the whole settle, not restarted per
-    /// message: two waits behind one deadline still end at that deadline.
+    /// An exit alone is not a settle: the drains are inputs to the same wait, so
+    /// a shell that exited while a descendant holds a pipe still hits the
+    /// deadline instead of being released from it.
     #[test]
-    fn test_awaiting_several_messages_shares_one_deadline() {
-        let (_tx, rx) = std::sync::mpsc::channel::<()>();
+    fn test_exit_without_drains_still_hits_the_deadline() {
+        let (tx, events) = std::sync::mpsc::channel();
+        tx.send(Settled::Exited(Ok(exit_status_zero()))).unwrap();
 
         let started = Instant::now();
-        let settle_by = started + Duration::from_millis(200);
-        await_messages(&rx, 1, settle_by);
-        await_messages(&rx, 2, settle_by);
+        let mut settle = Settle::default();
+        let ended = settle.collect(&events, started + Duration::from_millis(200));
+
+        assert_eq!(
+            ended,
+            Collected::Deadline,
+            "a leader exit must not complete the settle while a drain is outstanding"
+        );
+        assert!(settle.status.is_some(), "the exit status must be retained");
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    /// The settle completes only when the exit and both drains have arrived, and
+    /// it is resumable: state folded under the first deadline carries into the
+    /// post-kill one.
+    #[test]
+    fn test_settle_completes_on_exit_plus_both_drains_and_resumes() {
+        let (tx, events) = std::sync::mpsc::channel();
+        tx.send(Settled::Drained).unwrap();
+
+        let mut settle = Settle::default();
+        assert_eq!(
+            settle.collect(&events, Instant::now() + Duration::from_millis(50)),
+            Collected::Deadline
+        );
+
+        tx.send(Settled::Exited(Ok(exit_status_zero()))).unwrap();
+        tx.send(Settled::Drained).unwrap();
+
+        assert_eq!(
+            settle.collect(&events, Instant::now() + Duration::from_secs(5)),
+            Collected::Complete,
+            "the second collect must build on the first's state, not restart it"
+        );
+    }
+
+    /// Exit status of a trivially successful command, for driving `Settle`
+    /// without a real install.
+    fn exit_status_zero() -> std::process::ExitStatus {
+        std::process::Command::new("true")
+            .status()
+            .expect("run `true`")
+    }
+
+    /// A shell can exit while a descendant it left behind still holds the
+    /// inherited output pipes. If the exit released the drains from the
+    /// deadline, that descendant would hold the install — and the per-runtime
+    /// concurrency guard behind it — open indefinitely, which is exactly the
+    /// failure the ceiling exists to prevent. The leader here exits in
+    /// milliseconds; only the descendant outlives the ceiling.
+    #[cfg(unix)]
+    #[test]
+    fn test_promptly_exited_leader_with_a_pipe_holding_descendant_still_obeys_the_ceiling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pidfile = dir.path().join("lingering.pid");
+        let child = spawn_group_leader(&format!(
+            "sh -c 'echo $$ > {pid}; sleep 120' & exit 3",
+            pid = pidfile.display()
+        ));
+
+        let started = Instant::now();
+        let outcome = await_install_child("cli", "install", child, Duration::from_secs(2), None);
 
         assert!(
-            started.elapsed() < Duration::from_secs(1),
-            "a shared deadline must not compound per wait, took {:?}",
+            started.elapsed() < Duration::from_secs(30),
+            "a descendant holding the pipe must not outlast the ceiling, took {:?}",
             started.elapsed()
+        );
+        assert_eq!(
+            outcome.step.exit_code,
+            Some(3),
+            "the leader's real status outranks the ceiling's verdict once it is known"
+        );
+        // The deadline must still reach the kill on this path: a leader exit that
+        // skipped termination would leave the descendant running with the pipes
+        // open, which is the defect itself rather than a detail of it.
+        let pid = recorded_pid(&pidfile);
+        assert!(
+            await_death(pid),
+            "descendant {pid} survived — a leader exit must not skip the ceiling's kill"
         );
     }
 

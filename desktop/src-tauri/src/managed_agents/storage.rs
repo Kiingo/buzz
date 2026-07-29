@@ -660,7 +660,37 @@ pub(crate) fn open_log_file(path: &Path) -> Result<File, String> {
         .map_err(|error| format!("failed to open log file {}: {error}", path.display()))
 }
 
-/// Open an install log for appending, creating it owner-only.
+/// Start a new install-log session at `path`: keep the previous run as
+/// `<path>.1` and return a freshly created, empty current file.
+///
+/// Rotating per *run* rather than by size is what bounds this file. A run
+/// writes one record per executed attempt, each capped by the log-scale
+/// capture, so one run's file is bounded by steps × attempts × cap and the
+/// history on disk is bounded at two runs. Size-triggered rotation could not
+/// promise either: it never replaced an existing `.1`, and on Windows —
+/// where rename does not replace its destination — it stopped working
+/// altogether once `.1` existed, leaving the current file to grow.
+///
+/// The old `.1` is therefore *removed* before the rename rather than renamed
+/// over. Every step is best-effort: a rotation that fails must not cost the
+/// user the install, so the session continues with a truncated current file.
+pub(crate) fn start_install_log_session(path: &Path) -> Result<File, String> {
+    if path.exists() {
+        let mut previous = path.as_os_str().to_owned();
+        previous.push(".1");
+        let previous = PathBuf::from(previous);
+        let _ = fs::remove_file(&previous);
+        let _ = fs::rename(path, &previous);
+    }
+    open_install_log(path, /* truncate */ true)
+}
+
+/// Open an install log for appending one more record to the current session.
+pub(crate) fn open_install_log_file(path: &Path) -> Result<File, String> {
+    open_install_log(path, /* truncate */ false)
+}
+
+/// Open an install log owner-only.
 ///
 /// The mode is set *in the create* rather than chmod'd afterwards, so the file
 /// is never briefly group/world-readable. Install output can carry registry
@@ -668,10 +698,14 @@ pub(crate) fn open_log_file(path: &Path) -> Result<File, String> {
 /// matters even though it is short. An existing file's mode is left as-is —
 /// `OpenOptions::mode` only applies on creation, and silently re-tightening a
 /// file the user relaxed is not this function's call to make.
-pub(crate) fn open_install_log_file(path: &Path) -> Result<File, String> {
-    maybe_rotate_log(path);
+fn open_install_log(path: &Path, truncate: bool) -> Result<File, String> {
     let mut options = OpenOptions::new();
-    options.create(true).append(true);
+    options.create(true);
+    if truncate {
+        options.write(true).truncate(true);
+    } else {
+        options.append(true);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;

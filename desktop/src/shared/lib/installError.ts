@@ -6,8 +6,8 @@ import type { InstallRuntimeResult } from "@/shared/api/types";
  * followed by the raw step failure detail.
  *
  * The step detail is truncated for display, so the message ends with a pointer
- * to the install log — which holds every attempt of every step in full — when
- * one was written.
+ * to the install log — which holds every attempt of every step, each record
+ * bounded far above the display truncation — when one was written.
  */
 export function getInstallErrorMessage(result: InstallRuntimeResult): string {
   const { steps, logPath } = result;

@@ -724,13 +724,68 @@ fn install_log_is_created_owner_only_without_post_write_chmod() {
     assert_eq!(mode, 0o600, "install logs must be owner-only");
 }
 
-/// Reopening appends rather than truncating — a run's later records must not
-/// erase its earlier ones.
+/// A run starts a new current file and keeps the previous run as `.1`, so the
+/// two runs are never mixed and the history on disk stays bounded at two.
 #[test]
-fn install_log_appends_across_opens() {
+fn install_log_session_keeps_the_previous_run_as_dot_one() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("install-goose.log");
 
+    let mut first = super::start_install_log_session(&path).expect("first session");
+    first.write_all(b"run-one\n").expect("write");
+    let mut second = super::start_install_log_session(&path).expect("second session");
+    second.write_all(b"run-two\n").expect("write");
+
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read current"),
+        "run-two\n",
+        "the current file must hold only the newest run"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("install-goose.log.1")).expect("read .1"),
+        "run-one\n",
+        "the previous run must be preserved as .1"
+    );
+}
+
+/// The third run must still rotate when `.1` already exists. Windows `rename`
+/// does not replace its destination, so a rename-only rotation silently stops
+/// working here and leaves the current file to grow across every later run —
+/// the old `.1` is removed first precisely so this cannot happen. Runs on the
+/// Windows target too: this is the path that fails there.
+#[test]
+fn install_log_session_replaces_an_existing_dot_one() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("install-goose.log");
+    let rotated = dir.path().join("install-goose.log.1");
+    // Seed the state a rename-only rotation cannot get out of: both files exist.
+    std::fs::write(&path, b"previous-run\n").expect("seed current");
+    std::fs::write(&rotated, b"ancient-run\n").expect("seed .1");
+
+    let mut file = super::start_install_log_session(&path).expect("session");
+    file.write_all(b"fresh-run\n").expect("write");
+
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read current"),
+        "fresh-run\n",
+        "the current file must restart even when .1 was already present"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&rotated).expect("read .1"),
+        "previous-run\n",
+        ".1 must be replaced by the run that just ended, not kept"
+    );
+}
+
+/// Records written after the session starts append to it — a run's later
+/// records must not erase its earlier ones.
+#[test]
+fn install_log_appends_within_a_session() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("install-goose.log");
+
+    let mut session = super::start_install_log_session(&path).expect("session");
+    session.write_all(b"header\n").expect("write");
     for record in ["first\n", "second\n"] {
         let mut file = super::open_install_log_file(&path).expect("open install log");
         file.write_all(record.as_bytes()).expect("write");
@@ -738,28 +793,8 @@ fn install_log_appends_across_opens() {
 
     assert_eq!(
         std::fs::read_to_string(&path).expect("read back"),
-        "first\nsecond\n"
+        "header\nfirst\nsecond\n"
     );
-}
-
-/// An oversized install log rotates to `.1` on the next open, so the file
-/// cannot grow without bound across repeated install attempts.
-#[test]
-fn install_log_rotates_when_oversized() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join("install-goose.log");
-    std::fs::write(&path, vec![b'x'; (super::MAX_LOG_FILE_SIZE + 1) as usize]).expect("seed");
-
-    let mut file = super::open_install_log_file(&path).expect("open install log");
-    file.write_all(b"fresh\n").expect("write");
-
-    assert_eq!(
-        std::fs::read_to_string(&path).expect("read back"),
-        "fresh\n",
-        "the live log must restart after rotation"
-    );
-    let rotated = dir.path().join("install-goose.log.1");
-    assert!(rotated.exists(), "the oversized log must be kept as .1");
 }
 
 /// A runtime id becomes part of a filename. Ids reach this from user-defined

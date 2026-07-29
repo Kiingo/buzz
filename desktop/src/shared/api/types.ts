@@ -571,29 +571,10 @@ export type AcpRuntime = AcpRuntimeCatalogEntry & {
   binaryPath: string;
 };
 
-export type InstallStepResult = {
-  step: string;
-  command: string;
-  success: boolean;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  hint?: string;
-};
-
-export type InstallRuntimeResult = {
-  success: boolean;
-  steps: InstallStepResult[];
-  restartedCount: number;
-  failedRestartCount: number;
-  /**
-   * Install log file for this run, when one was written. `steps` carries only
-   * the last attempt of each step, truncated for display; the log holds every
-   * attempt in full. Null when no log could be written — nothing then points at
-   * a file that does not exist.
-   */
-  logPath: string | null;
-};
+export type {
+  InstallRuntimeResult,
+  InstallStepResult,
+} from "./installTypes";
 
 export type AcpAuthMethod = {
   id: string;

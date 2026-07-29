@@ -229,41 +229,209 @@ fn test_drain_captures_without_an_observer() {
 
 // ── throttle ─────────────────────────────────────────────────────────────────
 
-/// The first line always goes out, and a second inside the window is dropped
-/// rather than queued: the UI wants the newest line, not a replay.
+/// The first line goes out immediately, and one arriving inside the window is
+/// *held* rather than dropped: it becomes the pending line, so the newest output
+/// survives the rate limit instead of vanishing.
 #[test]
-fn test_throttle_allows_the_first_line_and_drops_the_next_in_window() {
+fn test_throttle_emits_the_first_line_and_holds_the_next_in_window() {
     let throttle = Throttle::new(Duration::from_millis(250));
     let start = Instant::now();
 
-    assert!(throttle.allows(start));
-    assert!(!throttle.allows(start + Duration::from_millis(100)));
+    assert_eq!(throttle.offer("first", start), Some("first".to_string()));
+    assert_eq!(
+        throttle.offer("second", start + Duration::from_millis(100)),
+        None
+    );
+    assert_eq!(
+        throttle.take_pending(),
+        Some("second".to_string()),
+        "the line inside the window must be retained, not dropped"
+    );
 }
 
-/// Once the window passes, emission resumes — a long install keeps showing
-/// progress.
+/// A burst inside one window collapses to its newest line: the display shows a
+/// single line, so an older held line has no value once a newer one exists.
 #[test]
-fn test_throttle_allows_again_after_the_window() {
+fn test_throttle_keeps_only_the_newest_held_line() {
     let throttle = Throttle::new(Duration::from_millis(250));
     let start = Instant::now();
+    throttle.offer("emitted", start);
 
-    assert!(throttle.allows(start));
+    throttle.offer("held-then-superseded", start + Duration::from_millis(50));
+    throttle.offer("newest", start + Duration::from_millis(100));
 
-    assert!(throttle.allows(start + Duration::from_millis(300)));
+    assert_eq!(throttle.take_pending(), Some("newest".to_string()));
 }
 
-/// The window is measured from the last *emitted* line, not the last attempt:
-/// a stream of dropped lines must not extend the silence.
+/// Once the window passes, emission resumes and nothing is left pending — the
+/// emitted line *is* the newest, so holding it too would emit it twice.
+#[test]
+fn test_throttle_emits_again_after_the_window_and_clears_the_held_line() {
+    let throttle = Throttle::new(Duration::from_millis(250));
+    let start = Instant::now();
+    throttle.offer("first", start);
+    throttle.offer("held", start + Duration::from_millis(50));
+
+    assert_eq!(
+        throttle.offer("later", start + Duration::from_millis(300)),
+        Some("later".to_string())
+    );
+
+    assert_eq!(
+        throttle.take_pending(),
+        None,
+        "a line emitted after the window supersedes the held one"
+    );
+}
+
+/// The window is measured from the last *emitted* line, not the last offer: a
+/// stream of held lines must not extend the silence.
 #[test]
 fn test_throttle_window_runs_from_the_last_emission() {
     let throttle = Throttle::new(Duration::from_millis(250));
     let start = Instant::now();
-    assert!(throttle.allows(start));
+    throttle.offer("first", start);
 
-    assert!(!throttle.allows(start + Duration::from_millis(200)));
+    assert_eq!(
+        throttle.offer("held", start + Duration::from_millis(200)),
+        None
+    );
 
-    assert!(
-        throttle.allows(start + Duration::from_millis(260)),
-        "a dropped line must not restart the window"
+    assert_eq!(
+        throttle.offer("next", start + Duration::from_millis(260)),
+        Some("next".to_string()),
+        "a held line must not restart the window"
+    );
+}
+
+/// A pending line is taken once. Taking it twice would re-emit a line the
+/// display already shows.
+#[test]
+fn test_throttle_yields_a_held_line_only_once() {
+    let throttle = Throttle::new(Duration::from_millis(250));
+    let start = Instant::now();
+    throttle.offer("first", start);
+    throttle.offer("held", start + Duration::from_millis(50));
+
+    assert_eq!(throttle.take_pending(), Some("held".to_string()));
+
+    assert_eq!(throttle.take_pending(), None);
+}
+
+/// Restarting opens the window immediately, which is what lets a new attempt's
+/// first line go out even when it arrives inside the previous attempt's window.
+/// It also discards a held line: that line belongs to the attempt that just
+/// ended, and the new attempt is about to clear the display.
+#[test]
+fn test_throttle_restart_opens_the_window_and_discards_the_held_line() {
+    let throttle = Throttle::new(Duration::from_millis(250));
+    let start = Instant::now();
+    throttle.offer("previous attempt", start);
+    throttle.offer("held", start + Duration::from_millis(10));
+
+    throttle.restart();
+
+    assert_eq!(throttle.take_pending(), None);
+    assert_eq!(
+        throttle.offer("new attempt", start + Duration::from_millis(20)),
+        Some("new attempt".to_string())
+    );
+}
+
+// ── cut-edge erosion ─────────────────────────────────────────────────────────
+
+/// A secret cut in half by the head cap must not survive as a fragment.
+/// Redaction matches whole tokens — a prefixed secret up to the next whitespace
+/// — so `nsec1qqq…` cut mid-value would still be scrubbed, but the *tail* of
+/// that same value, having lost its prefix, would not be. Both cut edges drop
+/// their partial token for that reason.
+#[test]
+fn test_capture_drops_the_partial_token_at_each_cut_edge() {
+    // Positioned so the head cap lands inside the first secret and the tail cap
+    // inside the second.
+    let head_secret = "nsec1headsecretvalue";
+    let tail_secret = "nsec1tailsecretvalue";
+    let input = format!(
+        "{} {head_secret} {} {tail_secret} {}",
+        "h".repeat(500),
+        "m".repeat(4000),
+        "t".repeat(1010)
+    );
+
+    let out = ui(&[input.as_bytes()]);
+
+    assert!(out.contains("bytes omitted"), "input must exceed the cap");
+    for fragment in ["nsec1head", "secretvalue"] {
+        assert!(
+            !out.contains(fragment),
+            "a fragment of a cut token must not survive: {out}"
+        );
+    }
+}
+
+/// Erosion stops at the nearest whitespace, so it costs one partial token and
+/// not the surrounding output — the head's earlier lines and the tail's later
+/// ones are what make a truncated capture readable.
+#[test]
+fn test_capture_erosion_keeps_the_complete_tokens_around_the_cut() {
+    let input = format!(
+        "opening line
+{}
+cut-here-head{}cut-here-tail
+{}
+closing line
+",
+        "h".repeat(480),
+        "m".repeat(4000),
+        "t".repeat(980)
+    );
+
+    let out = ui(&[input.as_bytes()]);
+
+    assert!(out.starts_with("opening line\n"), "got: {out}");
+    assert!(out.ends_with("closing line\n"), "got: {out}");
+}
+
+/// A cut inside a whitespace-free run longer than the erosion window is left
+/// intact. Erosion is bounded on purpose: erasing kilobytes of a single-token
+/// stream — `npm` progress bars and base64 payloads both look like this — would
+/// cost more diagnostics than a fragment of one could leak.
+#[test]
+fn test_capture_of_one_giant_token_keeps_its_cut_edges() {
+    let input = "x".repeat(4000);
+
+    let out = ui(&[input.as_bytes()]);
+
+    assert!(out.starts_with(&"x".repeat(512)), "got: {out}");
+    assert!(out.ends_with(&"x".repeat(1024)), "got: {out}");
+}
+
+/// The marker's byte count stays honest across erosion: what it names as omitted
+/// must equal the input minus what is actually shown, or a reader cannot trust
+/// the file to say how much is missing.
+#[test]
+fn test_capture_marker_counts_the_bytes_erosion_dropped() {
+    let input = format!(
+        "{} {} {}",
+        "h".repeat(600),
+        "m".repeat(4000),
+        "t".repeat(1100)
+    );
+
+    let out = ui(&[input.as_bytes()]);
+
+    let (head, rest) = out.split_once('\n').expect("a marker line");
+    let (marker, tail) = rest.split_once('\n').expect("a marker line");
+    let omitted: usize = marker
+        .trim_start_matches("... (")
+        .split_once(' ')
+        .expect("a byte count")
+        .0
+        .parse()
+        .expect("a byte count");
+    assert_eq!(
+        head.len() + omitted + tail.len(),
+        input.len(),
+        "shown + omitted must account for every input byte"
     );
 }

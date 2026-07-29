@@ -84,10 +84,11 @@ impl BoundedOutput {
             return decode(&whole);
         }
         // Both ends are cut at arbitrary byte offsets, so trim any partial
-        // character rather than emitting replacement chars. The marker counts
-        // every dropped byte, including those trims.
-        let head = utf8_prefix(&self.head);
-        let tail = utf8_suffix(&tail);
+        // character rather than emitting replacement chars, then drop the
+        // partial *token* each cut left behind. The marker counts every dropped
+        // byte, including both trims.
+        let head = erode_head(utf8_prefix(&self.head));
+        let tail = erode_tail(utf8_suffix(&tail));
         let omitted = self.total - head.len() - tail.len();
         format!(
             "{}\n{}\n{}",
@@ -192,30 +193,64 @@ impl LineSplitter {
 }
 
 /// Rate limiter for the live output line: at most one event per
-/// `min_interval`. Lines arriving inside the window are dropped rather than
-/// buffered — the UI shows the latest line, so a stale backlog has no value.
+/// `min_interval`.
+///
+/// A line arriving inside the window is *held* rather than dropped, and the
+/// newest held line replaces any older one. Dropping was wrong at two points:
+/// the last line of an attempt — typically the failure that caused the retry —
+/// vanished if it landed inside the window, and so did a new attempt's first
+/// line when it arrived within 250ms of the previous attempt's last.
 pub(super) struct Throttle {
     min_interval: Duration,
-    last: Mutex<Option<Instant>>,
+    state: Mutex<ThrottleState>,
+}
+
+#[derive(Default)]
+struct ThrottleState {
+    last_emitted: Option<Instant>,
+    pending: Option<String>,
 }
 
 impl Throttle {
     pub(super) fn new(min_interval: Duration) -> Self {
         Self {
             min_interval,
-            last: Mutex::new(None),
+            state: Mutex::new(ThrottleState::default()),
         }
     }
 
-    pub(super) fn allows(&self, now: Instant) -> bool {
-        let Ok(mut last) = self.last.lock() else {
-            return false;
+    /// Offer one line. `Some` means emit it now; `None` means it is held as the
+    /// newest pending line, to be emitted by [`Throttle::take_pending`] or
+    /// replaced by a line that supersedes it.
+    pub(super) fn offer(&self, line: &str, now: Instant) -> Option<String> {
+        let Ok(mut state) = self.state.lock() else {
+            return None;
         };
-        if last.is_some_and(|prev| now.duration_since(prev) < self.min_interval) {
-            return false;
+        if state
+            .last_emitted
+            .is_some_and(|prev| now.duration_since(prev) < self.min_interval)
+        {
+            state.pending = Some(line.to_string());
+            return None;
         }
-        *last = Some(now);
-        true
+        state.last_emitted = Some(now);
+        // Emitting a newer line makes the held one obsolete: the display shows
+        // one line, and it must be the latest.
+        state.pending = None;
+        Some(line.to_string())
+    }
+
+    /// Take the held line, if the window closed on one.
+    pub(super) fn take_pending(&self) -> Option<String> {
+        self.state.lock().ok()?.pending.take()
+    }
+
+    /// Open the window for a new attempt, so its first line is emitted
+    /// immediately instead of waiting out the previous attempt's window.
+    pub(super) fn restart(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            *state = ThrottleState::default();
+        }
     }
 }
 
@@ -242,6 +277,41 @@ fn utf8_suffix(bytes: &[u8]) -> &[u8] {
         .take_while(|b| *b & 0b1100_0000 == 0b1000_0000)
         .count();
     &bytes[start..]
+}
+
+/// How far a cut edge looks for a token boundary. Sized past any credential
+/// shape worth protecting (an `nsec1` key is 63 bytes, registry tokens are
+/// shorter) and short enough that erosion costs a token rather than a chunk of
+/// output. A cut inside a longer whitespace-free run is left alone: erasing
+/// kilobytes of a single-token stream would cost more diagnostics than the
+/// fragment could leak.
+const MAX_ERODED_TOKEN: usize = 256;
+
+/// Drop the partial token a head cut left at its end.
+///
+/// Redaction runs on the rendered text and matches whole tokens: a prefixed
+/// secret up to the next whitespace, or an exact env value. A cut through the
+/// middle of a secret leaves a fragment that matches neither and therefore
+/// survives scrubbing, so the fragment is removed here instead — at the cut,
+/// where it is still identifiable as partial. The omitted-byte marker counts
+/// what this drops.
+fn erode_head(bytes: &[u8]) -> &[u8] {
+    let window = bytes.len().saturating_sub(MAX_ERODED_TOKEN);
+    match bytes[window..].iter().rposition(u8::is_ascii_whitespace) {
+        Some(last) => &bytes[..=window + last],
+        None => bytes,
+    }
+}
+
+/// Drop the partial token a tail cut left at its start — the direction that
+/// matters most, since a fragment there has lost the `nsec1`-style prefix the
+/// scrubber keys on. See [`erode_head`].
+fn erode_tail(bytes: &[u8]) -> &[u8] {
+    let window = MAX_ERODED_TOKEN.min(bytes.len());
+    match bytes[..window].iter().position(u8::is_ascii_whitespace) {
+        Some(first) => &bytes[first..],
+        None => bytes,
+    }
 }
 
 #[cfg(test)]

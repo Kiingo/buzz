@@ -4,16 +4,26 @@
 //! Both destinations hang off the same drain seam in
 //! [`super::install_capture`], and both are best-effort: an install must never
 //! fail because a log write or an event emit did.
+//!
+//! [`InstallReporter`] owns two explicit lifecycles, because both the log and
+//! the live line are meaningless without a notion of "this run":
+//!
+//! * a **log session**, started once per run, which keeps the previous run's
+//!   file as `.1` and writes this run's header; and
+//! * a **live-event sequence**, monotonic across the whole install, which is
+//!   what lets the UI drop a superseded line. A per-command retry number
+//!   cannot do that job — it restarts at 1 for every step.
 
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
 use super::install_capture::{LineObserver, Throttle};
-use crate::managed_agents::InstallStepResult;
+use crate::managed_agents::{InstallRuntimeResult, InstallStepResult};
 
 /// One install command's result: what the UI shows, and the log-scale copy of
 /// the same output for the log file.
@@ -37,88 +47,134 @@ impl InstallOutcome {
 
 /// Payload of the `acp-install-output` event.
 ///
-/// `attempt` lets the UI drop a line that belongs to a superseded retry:
-/// without it, a line emitted just before attempt 2 starts can sit under the
-/// spinner while attempt 2 runs.
+/// `seq` is monotonic across the entire install, so the UI can drop a line a
+/// later step or attempt has already superseded. The retry number cannot serve
+/// as that key: it restarts at 1 for every step, so a step that succeeded on
+/// attempt 2 would make the next step's attempt-1 output look stale and freeze
+/// the display.
+///
+/// `line: None` is the *start signal*: an attempt is beginning and the displayed
+/// line must clear now. It is emitted unthrottled, because the point is that
+/// stale output stops being shown before the new work prints anything.
 #[derive(Serialize, Clone)]
 pub(super) struct InstallOutputEvent {
     pub(super) runtime_id: String,
-    pub(super) attempt: u32,
-    pub(super) line: String,
+    pub(super) seq: u64,
+    pub(super) line: Option<String>,
 }
 
 /// Emits one live output event. Boxed rather than holding an `AppHandle` so the
 /// reporter is constructible — and assertable — without a Tauri app.
 type EmitEvent = Arc<dyn Fn(InstallOutputEvent) + Send + Sync>;
 
-/// At most four live-output events per second. Coalescing is by dropping, not
-/// buffering: the UI shows only the newest line, so a queued backlog would
-/// display stale progress.
+/// Literal secret values scrubbed out of everything this module publishes, in
+/// addition to the shapes [`crate::managed_agents::redact_secrets_with`]
+/// recognises on its own.
+type Secrets = Arc<Vec<String>>;
+
+/// At most four live-output events per second. Coalescing *holds* the newest
+/// line rather than dropping it: a burst that ends just before the window
+/// closes would otherwise leave the display showing a line the install had
+/// already moved past.
 const LIVE_LINE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(super) struct InstallReporter {
-    runtime_id: String,
-    log_path: Option<PathBuf>,
-    emit: Option<EmitEvent>,
-    throttle: Arc<Throttle>,
+    log: Option<InstallLog>,
+    /// `None` when nothing is listening, which is also what makes
+    /// [`InstallReporter::line_observer`] `None` — the drain then skips line
+    /// reassembly entirely instead of doing it for no one.
+    live: Option<Live>,
+    secrets: Secrets,
 }
 
 impl InstallReporter {
-    /// The reporter a real install command uses: it writes the install log and
-    /// emits live output events through `app`.
+    /// The reporter a real install run uses: it starts this run's log session
+    /// and emits live output events through `app`.
     ///
-    /// A log path that cannot be resolved degrades to no log rather than failing
-    /// the install — a user with a broken app-data directory still needs the
-    /// install itself to work.
-    pub(super) fn for_command(app: &tauri::AppHandle, runtime_id: &str) -> Self {
-        let log_path = crate::managed_agents::storage::install_log_path(app, runtime_id).ok();
+    /// `runtime_id` must already be the canonical id from the runtime catalog —
+    /// the log path is built from it, so resolving it first is what keeps a raw
+    /// command argument out of a filename.
+    ///
+    /// A log that cannot be resolved or opened degrades to no log rather than
+    /// failing the install: a user with a broken app-data directory still needs
+    /// the install itself to work.
+    pub(super) fn for_run(app: &tauri::AppHandle, runtime_id: &str) -> Self {
+        let log = crate::managed_agents::storage::install_log_path(app, runtime_id)
+            .ok()
+            .and_then(|path| InstallLog::start(&path, runtime_id));
         let app = app.clone();
         let emit: EmitEvent = Arc::new(move |event| {
             use tauri::Emitter;
             let _ = app.emit("acp-install-output", event);
         });
-        Self::new(runtime_id, log_path, Some(emit))
+        Self::new(runtime_id, log, Some(emit))
     }
 
-    pub(super) fn new(
-        runtime_id: &str,
-        log_path: Option<PathBuf>,
-        emit: Option<EmitEvent>,
-    ) -> Self {
-        Self {
-            runtime_id: runtime_id.to_string(),
-            log_path,
+    fn new(runtime_id: &str, log: Option<InstallLog>, emit: Option<EmitEvent>) -> Self {
+        // Snapshot the environment's secrets once, at construction: the install
+        // inherits this environment, so anything it echoes came from here.
+        let secrets: Secrets = Arc::new(env_secret_values());
+        let live = emit.map(|emit| Live {
+            runtime_id: Arc::from(runtime_id),
             emit,
             throttle: Arc::new(Throttle::new(LIVE_LINE_INTERVAL)),
+            seq: Arc::new(AtomicU64::new(0)),
+            secrets: Arc::clone(&secrets),
+        });
+        Self { log, live, secrets }
+    }
+
+    /// The log file to point the user at, or `None` when this run has no log —
+    /// the failure message then omits the pointer rather than naming a file
+    /// that does not exist.
+    pub(super) fn log_path(&self) -> Option<String> {
+        Some(self.log.as_ref()?.path.display().to_string())
+    }
+
+    /// A failed install carrying the steps recorded so far and the log holding
+    /// their full history. Every early return in the install shapes its result
+    /// here, so none can forget the log pointer the failure message needs.
+    pub(super) fn failed(&self, steps: Vec<InstallStepResult>) -> InstallRuntimeResult {
+        InstallRuntimeResult {
+            success: false,
+            steps,
+            restarted_count: 0,
+            failed_restart_count: 0,
+            log_path: self.log_path(),
         }
     }
 
-    /// The log file to point the user at, once something has been written to it.
-    /// `None` when this install has no log — the failure message then omits the
-    /// pointer rather than naming a file that does not exist.
-    pub(super) fn log_path(&self) -> Option<String> {
-        let path = self.log_path.as_ref()?;
-        path.exists().then(|| path.display().to_string())
+    /// Mark the start of one executed attempt: clear whatever line the previous
+    /// attempt left on screen, and start this attempt's clock.
+    ///
+    /// The clear is emitted unthrottled and reopens the rate window, so the new
+    /// attempt's first line cannot be swallowed by the previous attempt's.
+    /// Without this signal the prior attempt's last line — typically the failure
+    /// that caused the retry — sits under the spinner through the backoff and
+    /// through a silent next attempt.
+    pub(super) fn start_attempt(&self) {
+        if let Some(log) = &self.log {
+            log.mark_attempt_start();
+        }
+        if let Some(live) = &self.live {
+            live.throttle.restart();
+            live.publish(None);
+        }
     }
 
     /// Observer for one attempt's drains, or `None` when nothing is listening.
-    pub(super) fn line_observer(&self, attempt: u32) -> Option<LineObserver> {
-        let emit = Arc::clone(self.emit.as_ref()?);
-        let throttle = Arc::clone(&self.throttle);
-        let runtime_id = self.runtime_id.clone();
-        Some(Arc::new(move |line: &str| {
-            if throttle.allows(Instant::now()) {
-                emit(InstallOutputEvent {
-                    runtime_id: runtime_id.clone(),
-                    attempt,
-                    line: line.to_string(),
-                });
-            }
-        }))
+    pub(super) fn line_observer(&self) -> Option<LineObserver> {
+        let live = self.live.clone()?;
+        Some(Arc::new(move |line: &str| live.offer(line)))
     }
 
     /// Record one executed attempt of a step.
     pub(super) fn record_attempt(&self, attempt: u32, outcome: &InstallOutcome) {
+        // The drains are finished, so a line the throttle is still holding is
+        // this attempt's last and nothing is coming to replace it.
+        if let Some(live) = &self.live {
+            live.flush_pending();
+        }
         self.write_record(Some(attempt), outcome);
     }
 
@@ -133,11 +189,98 @@ impl InstallReporter {
     /// Append one record. Best-effort by contract: a full disk or a revoked
     /// permission degrades the diagnostics, it does not fail the install.
     fn write_record(&self, attempt: Option<u32>, outcome: &InstallOutcome) {
-        let Some(path) = self.log_path.as_ref() else {
+        let Some(log) = &self.log else {
             return;
         };
-        let record = render_record(attempt, outcome);
-        if let Ok(mut file) = crate::managed_agents::storage::open_install_log_file(path) {
+        log.append(&render_record(
+            attempt,
+            log.take_attempt_elapsed(),
+            outcome,
+            &self.secrets,
+        ));
+    }
+}
+
+/// The shared half of the reporter — everything a drain thread's observer needs,
+/// owned rather than borrowed so an observer can outlive the call that made it.
+#[derive(Clone)]
+struct Live {
+    runtime_id: Arc<str>,
+    emit: EmitEvent,
+    throttle: Arc<Throttle>,
+    seq: Arc<AtomicU64>,
+    secrets: Secrets,
+}
+
+impl Live {
+    /// Offer one drained line to the rate limiter, emitting it if the window is
+    /// open and holding it as the newest pending line if not.
+    fn offer(&self, line: &str) {
+        if let Some(line) = self.throttle.offer(line, Instant::now()) {
+            self.publish(Some(line));
+        }
+    }
+
+    fn flush_pending(&self) {
+        if let Some(line) = self.throttle.take_pending() {
+            self.publish(Some(line));
+        }
+    }
+
+    /// Emit `line` now, bypassing the rate window. `None` clears the display.
+    fn publish(&self, line: Option<String>) {
+        (self.emit)(InstallOutputEvent {
+            runtime_id: self.runtime_id.to_string(),
+            seq: self.seq.fetch_add(1, Ordering::Relaxed),
+            line: line.map(|line| redact(&line, &self.secrets)),
+        });
+    }
+}
+
+/// This run's log file: one session, opened once, appended to per record.
+struct InstallLog {
+    path: PathBuf,
+    /// When the attempt currently running started, so its record can name its
+    /// own duration. A 15-minute ceiling is only diagnosable if the file says
+    /// how long each attempt actually took.
+    attempt_start: Mutex<Option<Instant>>,
+}
+
+impl InstallLog {
+    /// Start this run's session, or `None` if the file cannot be opened.
+    ///
+    /// Rotation happens here, once per run, rather than per record: a run either
+    /// gets its own file or it gets no log at all, so two runs are never
+    /// interleaved in one file.
+    fn start(path: &Path, runtime_id: &str) -> Option<Self> {
+        let mut file = crate::managed_agents::storage::start_install_log_session(path).ok()?;
+        let _ = file.write_all(
+            format!(
+                "=== install run runtime={runtime_id} started={}\n",
+                chrono::Utc::now().to_rfc3339()
+            )
+            .as_bytes(),
+        );
+        Some(Self {
+            path: path.to_path_buf(),
+            attempt_start: Mutex::new(None),
+        })
+    }
+
+    fn mark_attempt_start(&self) {
+        if let Ok(mut start) = self.attempt_start.lock() {
+            *start = Some(Instant::now());
+        }
+    }
+
+    /// How long the attempt being recorded ran, consumed so a later record
+    /// cannot reuse it. `None` for a synthesized step, which never ran.
+    fn take_attempt_elapsed(&self) -> Option<Duration> {
+        Some(self.attempt_start.lock().ok()?.take()?.elapsed())
+    }
+
+    fn append(&self, record: &str) {
+        if let Ok(mut file) = crate::managed_agents::storage::open_install_log_file(&self.path) {
             let _ = file.write_all(record.as_bytes());
         }
     }
@@ -147,38 +290,86 @@ impl InstallReporter {
 /// capture that produced it, so an early attempt that printed megabytes cannot
 /// push a later attempt — or the verification step that explains the failure —
 /// out of the file.
-fn render_record(attempt: Option<u32>, outcome: &InstallOutcome) -> String {
+fn render_record(
+    attempt: Option<u32>,
+    elapsed: Option<Duration>,
+    outcome: &InstallOutcome,
+    secrets: &Secrets,
+) -> String {
     let step = &outcome.step;
     let attempt = attempt.map_or_else(|| "-".to_string(), |n| n.to_string());
     let exit = step
         .exit_code
         .map_or_else(|| "none".to_string(), |code| code.to_string());
+    let elapsed = elapsed.map_or_else(
+        || "-".to_string(),
+        |elapsed| format!("{:.1}s", elapsed.as_secs_f64()),
+    );
     let mut record = format!(
-        "=== {} step={} attempt={attempt} success={} exit={exit}\n$ {}\n",
+        "=== {} step={} attempt={attempt} success={} exit={exit} elapsed={elapsed}\n$ {}\n",
         chrono::Utc::now().to_rfc3339(),
         step.step,
         step.success,
-        redact(&step.command),
+        redact(&step.command, secrets),
     );
     for (label, text) in [
         ("stdout", &outcome.log_stdout),
         ("stderr", &outcome.log_stderr),
     ] {
         if !text.trim().is_empty() {
-            record.push_str(&format!("--- {label} ---\n{}\n", redact(text)));
+            record.push_str(&format!("--- {label} ---\n{}\n", redact(text, secrets)));
         }
     }
     if let Some(hint) = &step.hint {
-        record.push_str(&format!("--- hint ---\n{}\n", redact(hint)));
+        record.push_str(&format!("--- hint ---\n{}\n", redact(hint, secrets)));
     }
     record
 }
 
-/// Scrub known secret shapes before anything reaches disk. Install output can
-/// echo a registry token or a signing key from the environment it ran in, and
-/// this file is written unattended.
-fn redact(text: &str) -> String {
-    crate::managed_agents::redact_secrets_with(text, &[])
+/// Scrub secrets before anything reaches disk or the UI. The log is written
+/// unattended and the live line is rendered verbatim, so scrubbing happens at
+/// the write, not at the read.
+fn redact(text: &str, secrets: &Secrets) -> String {
+    let extras: Vec<&str> = secrets.iter().map(String::as_str).collect();
+    crate::managed_agents::redact_secrets_with(text, &extras)
+}
+
+/// Values of environment variables whose *name* marks them as secret.
+///
+/// An install inherits Buzz's environment and installers echo it back — npm
+/// prints the resolved registry config on an auth failure, and a shell that
+/// traces its commands prints every expansion. Without this, only the two
+/// hard-coded key shapes would be scrubbed, so a plain `NPM_TOKEN` or
+/// `ANTHROPIC_API_KEY` would land in the file in clear text.
+///
+/// Keyed on the name because a secret's *value* has no reliable shape. Two
+/// filters keep ordinary output readable: a value under 8 bytes is skipped
+/// (more likely a flag like `true` or a version than a credential), and the
+/// markers avoid substrings that occur in non-secret names — `AUTH` is left out
+/// because it matches `GIT_AUTHOR_NAME`, whose value is a person's name.
+fn env_secret_values() -> Vec<String> {
+    const SECRET_NAME_MARKERS: &[&str] = &[
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "APIKEY",
+        "API_KEY",
+        "PRIVATE_KEY",
+        "ACCESS_KEY",
+        "CREDENTIAL",
+    ];
+    std::env::vars()
+        .filter(|(name, value)| {
+            value.len() >= 8 && {
+                let name = name.to_ascii_uppercase();
+                SECRET_NAME_MARKERS
+                    .iter()
+                    .any(|marker| name.contains(marker))
+            }
+        })
+        .map(|(_, value)| value)
+        .collect()
 }
 
 #[cfg(test)]

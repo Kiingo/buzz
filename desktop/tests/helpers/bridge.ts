@@ -187,6 +187,10 @@ type MockBridgeOptions = {
   connectAcpRuntimeDelayMs?: number;
   connectAcpRuntimeError?: string;
   installAcpRuntimeDelayMs?: number;
+  /** Live output lines the mocked install emits before it settles, in order.
+   *  Each arrives as an `acp-install-output` event, preceded by the clear
+   *  signal the backend sends at the start of an attempt. */
+  installAcpRuntimeOutputLines?: string[];
   /** Override the result returned by the `install_acp_runtime` mock command.
    *  Pass `{ success: false, steps: [...] }` to exercise error/Retry states. */
   installAcpRuntimeResult?: MockInstallRuntimeResult;
