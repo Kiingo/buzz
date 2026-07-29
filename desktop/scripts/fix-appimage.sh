@@ -141,15 +141,23 @@ fi
 mv "$APP_BIN" "$APP_BIN.bin"
 cat > "$APP_BIN" <<'SHIM'
 #!/usr/bin/env bash
-# GStreamer shim installed by desktop/scripts/fix-appimage.sh.
+# GStreamer + fontconfig shim installed by desktop/scripts/fix-appimage.sh.
 #
-# linuxdeploy's AppRun.wrapped force-sets GST_PLUGIN_SYSTEM_PATH_1_0 to an empty
-# in-bundle dir ($APPDIR/usr/lib/gstreamer-1.0). A set path *replaces* the host's
-# default GStreamer search path, so the app finds zero plugins and WebKit aborts
-# (blank window). Drop the bundle-pointing GST_PLUGIN_* overrides so the system
-# GStreamer — which we use, having removed the bundled core libs — resolves
-# plugins via its own default path on any distro. Values that don't point into
-# this AppImage are the user's own and are preserved.
+# GStreamer: linuxdeploy's AppRun.wrapped force-sets GST_PLUGIN_SYSTEM_PATH_1_0
+# to an empty in-bundle dir ($APPDIR/usr/lib/gstreamer-1.0). A set path
+# *replaces* the host's default GStreamer search path, so the app finds zero
+# plugins and WebKit aborts (blank window). Drop the bundle-pointing GST_PLUGIN_*
+# overrides so the system GStreamer resolves plugins via its own default path on
+# any distro. Values that don't point into this AppImage are the user's own and
+# are preserved.
+#
+# Fontconfig / COLRv1: WebKitGTK's bundled Skia aborts in
+# colrv1_configure_skpaint() when rendering COLRv1 color emoji fonts (e.g.,
+# Fedora's Noto-COLRv1.ttf — issues #2548, #2982). If the user has not set
+# FONTCONFIG_FILE, point fontconfig at our config that rejects color-format
+# fonts, preventing the abort. Cost: color emoji fall back to a non-color
+# variant (CBDT/SVG) if one is installed, or render as monochrome glyphs.
+# A user-set FONTCONFIG_FILE is preserved and this workaround is skipped.
 here="$(dirname "$(readlink -f "$0")")"
 appdir="$(readlink -f "$here/../..")"
 for var in GST_PLUGIN_SYSTEM_PATH_1_0 GST_PLUGIN_SYSTEM_PATH \
@@ -160,9 +168,56 @@ for var in GST_PLUGIN_SYSTEM_PATH_1_0 GST_PLUGIN_SYSTEM_PATH \
     unset "$var"
   fi
 done
+if [[ -z "${FONTCONFIG_FILE:-}" ]]; then
+  export FONTCONFIG_FILE="$here/../share/buzz/fontconfig.conf"
+fi
 exec -a "buzz-desktop" "$here/buzz-desktop.bin" "$@"
 SHIM
 chmod +x "$APP_BIN"
+
+echo "==> Installing fontconfig rule to block COLRv1 color-format fonts"
+# WebKitGTK's bundled Skia (as of WebKit2GTK 2.44 and earlier) aborts in
+# colrv1_configure_skpaint() on an out-of-bounds vector assertion when it
+# encounters a COLRv1 color emoji font (e.g., Fedora's Noto-COLRv1.ttf).
+# Rejecting color-format fonts from the fontconfig view that Buzz presents to
+# WebKit prevents the abort. The shim (above) exports FONTCONFIG_FILE to this
+# config only when the user hasn't already set one — so a user with a custom
+# fontconfig override is not affected.
+#
+# Cost: color emoji degrade to a non-color fallback (CBDT, SVG, or monochrome
+# glyph) in the Buzz window. System emoji outside Buzz are not affected.
+FONTCONFIG_DIR="$WORKDIR/squashfs-root/usr/share/buzz"
+mkdir -p "$FONTCONFIG_DIR"
+cat > "$FONTCONFIG_DIR/fontconfig.conf" <<'FONTCONF'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<!--
+  Buzz AppImage fontconfig override.
+  Rejects COLRv1 color-format fonts from the font-match candidates presented to
+  WebKitGTK. WebKitGTK's bundled Skia aborts in colrv1_configure_skpaint() on
+  certain COLRv1 fonts (e.g. Fedora's Noto-COLRv1.ttf), causing a SIGABRT on
+  startup and a blank window (#2548, #2982). Rejecting color-format fonts here
+  prevents that code path from being reached. The system emoji font remains
+  available to all other applications; only the Buzz process sees this config.
+  Cost: color emoji in Buzz fall back to a non-COLRv1 variant (CBDT or SVG)
+  when one is installed, or render as monochrome glyphs when none is.
+-->
+<fontconfig>
+  <!-- Include standard system font directories and per-user fonts. -->
+  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+  <include ignore_missing="yes">/etc/fonts/conf.d</include>
+  <include ignore_missing="yes" prefix="xdg">fontconfig/conf.d</include>
+  <!-- Reject any font whose color-format property is set (COLRv1 / SVG-in-OT).
+       Fonts that carry no color-format property (CBDT, monochrome) are kept. -->
+  <selectfont>
+    <rejectfont>
+      <pattern>
+        <patelt name="color"><bool>true</bool></patelt>
+      </pattern>
+    </rejectfont>
+  </selectfont>
+</fontconfig>
+FONTCONF
 
 echo "==> Repacking AppImage"
 # Pass a pinned type2 runtime when provided (CI sets APPIMAGETOOL_RUNTIME_FILE);
