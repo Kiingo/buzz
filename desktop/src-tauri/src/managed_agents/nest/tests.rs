@@ -31,17 +31,11 @@ fn init_nest_dir_prod_sets_buzz() {
 
 #[test]
 fn nest_skill_contains_safe_mention_and_forum_workflows() {
-    assert!(BUZZ_CLI_SKILL_MD.contains("current channel members"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("buzz users get --name \"<exact full display name>\""));
-    assert!(BUZZ_CLI_SKILL_MD.contains("If there is no unique exact match, report the ambiguity"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("empty/invalid `display_name` does not fall back"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("buzz channels members --channel <UUID>"));
-    assert!(BUZZ_CLI_SKILL_MD.contains("buzz channels add-member --channel <UUID> --pubkey <hex>"));
-    assert!(
-        BUZZ_CLI_SKILL_MD.contains("buzz messages thread --channel <UUID> --event \"$event_id\"")
-    );
-    assert!(BUZZ_CLI_SKILL_MD
-        .contains("Visible `@Name` text without that tag does **not** notify anyone."));
+    assert!(BUZZ_CLI_SKILL_MD.contains("--mention <hex-or-npub>"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("signed event's `mention_pubkeys`"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("no follow-up verification command is needed"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("--allow-non-member-mentions"));
+    assert!(BUZZ_CLI_SKILL_MD.contains("never changes membership automatically"));
     assert!(BUZZ_CLI_SKILL_MD.contains("forum root as kind `45001`"));
     assert!(BUZZ_CLI_SKILL_MD.contains("forum reply as kind `45003`"));
     assert!(BUZZ_CLI_SKILL_MD.contains("Never use stream kind `9`"));

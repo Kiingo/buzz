@@ -3627,15 +3627,14 @@ mod agent_draft_prompt_tests {
     }
 
     #[test]
-    fn shared_base_prompt_requires_membership_and_p_tag_verification_for_mentions() {
+    fn shared_base_prompt_teaches_single_command_mentions_and_preflight() {
         let prompt = include_str!("base_prompt.md");
-        assert!(prompt.contains("buzz users get --name \"<exact full display name>\""));
-        assert!(prompt.contains("If there is no unique exact match, report the ambiguity"));
-        assert!(prompt.contains("empty/invalid `display_name` does not fall back"));
-        assert!(prompt.contains("buzz channels members --channel <UUID>"));
-        assert!(prompt.contains("buzz channels add-member --channel <UUID> --pubkey <hex>"));
-        assert!(prompt.contains("buzz messages thread --channel <UUID> --event <event-id>"));
-        assert!(prompt.contains("A visible `@Name` alone is not a delivered mention."));
+        assert!(prompt.contains("--mention <hex-or-npub>"));
+        assert!(prompt.contains("success JSON's `mention_pubkeys`"));
+        assert!(prompt.contains("no follow-up verification command is needed"));
+        assert!(prompt.contains("stops before sending"));
+        assert!(prompt.contains("--allow-non-member-mentions"));
+        assert!(prompt.contains("never changes membership automatically"));
     }
 
     #[test]

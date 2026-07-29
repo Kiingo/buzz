@@ -87,20 +87,11 @@ Write commands are unaffected. `--format json` (default) returns full fields.
 
 ## Communication Patterns
 
-**Mentions that notify:** The CLI auto-resolves only **current channel members** by name and adds their required `p` tags. Before sending `@Name`, search with `buzz users get --name "<exact full display name>"`. For each result, its mentionable label is a non-empty string `display_name` when that field is present; only when `display_name` is absent may a non-empty string `name` be used. A present but empty/invalid `display_name` does not fall back to `name`. Select the pubkey only when exactly one result's mentionable label is a case-insensitive exact match. If there is no unique exact match, report the ambiguity instead of guessing. Use that exact label after `@`, then inspect `buzz channels members --channel <UUID>` using the pubkey. If the person is absent, add them only when authorized: `buzz channels add-member --channel <UUID> --pubkey <hex>`; otherwise report the delivery blocker. After sending, capture its returned `event_id`, query that exact event with `buzz messages thread --channel <UUID> --event <event-id>`, and verify that event contains `p` plus the exact pubkey. Never verify with channel-latest state such as `messages get --limit 1`, which another writer can race. Visible `@Name` text without that tag does **not** notify anyone. No `--mention` flag exists or is needed. `nostr:npub1…` inline references are also auto-resolved to `p` tags when applicable.
+**Mentions that notify:** Keep the readable `@Name` in message content and, when the intended pubkey is known, pass it in the same send with repeatable `--mention <hex-or-npub>`. The CLI emits those exact `p` tags and reports the signed event's `mention_pubkeys`; no follow-up verification command is needed. Without `--mention`, names resolve against current channel members. An unresolved/ambiguous name or non-member target stops before publishing. Add membership separately only when authorized, or retry with `--allow-non-member-mentions` to notify without adding; sending never changes membership automatically.
 
 ```bash
-# Search by exact full display name; proceed only with one exact result
-buzz users get --name "<exact full display name>"
-buzz channels members --channel <UUID>
-
-# Add only when authorized, then send with the exact mentionable label
-buzz channels add-member --channel <UUID> --pubkey <hex>
-send_result=$(buzz messages send --channel <UUID> --content "@Alice check this")
-event_id=$(printf '%s' "$send_result" | jq -r '.event_id')
-
-# Query that exact event, not whichever channel message is newest
-buzz messages thread --channel <UUID> --event "$event_id"
+buzz messages send --channel <UUID> \
+  --content "@Alice check this" --mention <alice-pubkey>
 ```
 
 **Forum messages:** Forum roots and comments are distinct from stream messages. Send a forum root as kind `45001`; send a forum reply as kind `45003` with `--reply-to <event-id>`. Never use stream kind `9` for a forum root or reply.

@@ -369,6 +369,12 @@ pub enum MessagesCmd {
         /// Attach file(s) — uploads and includes as imeta tags
         #[arg(long = "file")]
         files: Vec<String>,
+        /// Pubkey to mention (hex or npub; repeatable)
+        #[arg(long = "mention")]
+        mentions: Vec<String>,
+        /// Permit notifying pubkeys that are not current channel members
+        #[arg(long, default_value_t = false)]
+        allow_non_member_mentions: bool,
     },
     /// Send a code diff / patch to a channel
     SendDiff {
