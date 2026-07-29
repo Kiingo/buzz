@@ -50,6 +50,7 @@ export const EmojiAutocomplete = React.memo(function EmojiAutocomplete({
             : "origin-bottom slide-in-from-bottom-1",
           POPOVER_SURFACE_CLASS,
         )}
+        data-testid="emoji-autocomplete"
         ref={listRef}
         style={POPOVER_SHADOW_STYLE}
       >
