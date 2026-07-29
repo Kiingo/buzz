@@ -13,12 +13,19 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 
+use crate::kiingo_publication::{KiingoPublicationIntent, LocalPublicationPublisher};
 use crate::observer::{ObserverContext, ObserverHandle};
 use crate::usage::{TurnUsage, UsageTracker};
 
 /// Maximum allowed size of a single NDJSON line from the agent's stdout.
 /// Lines exceeding this limit are rejected to prevent OOM from rogue agents.
 const MAX_LINE_SIZE: usize = 10_000_000; // 10 MB
+
+fn is_kiingo_publication_update(msg: &serde_json::Value) -> bool {
+    msg.pointer("/params/update/sessionUpdate")
+        .and_then(|value| value.as_str())
+        == Some("kiingo_buzz_publication")
+}
 
 /// An MCP server configuration passed to `session/new`.
 ///
@@ -211,6 +218,14 @@ pub struct AcpClient {
     /// deltas. Both goose and buzz-agent emit this notification; goose gates
     /// on client capability advertisement, buzz-agent emits unconditionally.
     goose_usage: UsageTracker,
+    /// Optional, explicitly enabled publisher for the Kiingo ACP extension.
+    /// It holds the Buzz signer in this parent process; the child only emits
+    /// validated publication intents and never receives private key material.
+    kiingo_publication_publisher: Option<LocalPublicationPublisher>,
+    /// Structured Buzz envelope attached to the next `session/prompt` as a
+    /// namespaced ACP extension. Custom agents can consume this instead of
+    /// parsing the human-readable prompt; legacy agents ignore it.
+    buzz_prompt_metadata: Option<serde_json::Value>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -550,7 +565,23 @@ impl AcpClient {
             steering_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
+            kiingo_publication_publisher: None,
+            buzz_prompt_metadata: None,
         })
+    }
+
+    /// Install (or clear) the local Kiingo publication boundary for this
+    /// process. Production enables it explicitly with
+    /// `BUZZ_ACP_KIINGO_PUBLICATION_ENABLED=true`.
+    pub(crate) fn set_kiingo_publication_publisher(
+        &mut self,
+        publisher: Option<LocalPublicationPublisher>,
+    ) {
+        self.kiingo_publication_publisher = publisher;
+    }
+
+    pub(crate) fn set_buzz_prompt_metadata(&mut self, metadata: Option<serde_json::Value>) {
+        self.buzz_prompt_metadata = metadata;
     }
 
     /// Attach a local observer feed to this ACP client.
@@ -584,6 +615,36 @@ impl AcpClient {
                 payload,
             );
         }
+    }
+
+    /// The publication extension carries user-authored output to a strictly
+    /// local signer. Keep that body out of debug wire logs and observer frames;
+    /// correlation identifiers and byte length remain observable.
+    fn observe_acp_read(&self, msg: &serde_json::Value) {
+        if is_kiingo_publication_update(msg) {
+            let mut redacted = msg.clone();
+            if let Some(update) = redacted.pointer_mut("/params/update") {
+                let content_bytes = update
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .map(str::len)
+                    .unwrap_or(0);
+                update["content"] = serde_json::json!("[redacted local publication content]");
+                update["contentBytes"] = serde_json::json!(content_bytes);
+            }
+            tracing::debug!(
+                target: "acp::wire",
+                "received redacted kiingo_buzz_publication update"
+            );
+            self.observe("acp_read", redacted);
+            return;
+        }
+        tracing::debug!(
+            target: "acp::wire",
+            "← {}",
+            serde_json::to_string(msg).unwrap_or_default()
+        );
+        self.observe("acp_read", msg.clone());
     }
 
     /// Send the `initialize` request and return the agent's response result value.
@@ -751,7 +812,8 @@ impl AcpClient {
         idle_timeout: std::time::Duration,
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
-        let params = build_prompt_params(session_id, prompt_blocks);
+        let params =
+            build_prompt_params(session_id, prompt_blocks, self.buzz_prompt_metadata.take());
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
 
@@ -1177,9 +1239,6 @@ impl AcpClient {
                 continue;
             }
 
-            // Only log and reset idle after we have a valid non-empty line.
-            tracing::debug!(target: "acp::wire", "← {trimmed}");
-
             let msg: serde_json::Value = match serde_json::from_str(trimmed) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1197,7 +1256,7 @@ impl AcpClient {
                     continue;
                 }
             };
-            self.observe("acp_read", msg.clone());
+            self.observe_acp_read(&msg);
 
             // Check if this is a response to our expected request (has matching id
             // AND no `method` field — a `method` field means it's an agent-initiated
@@ -1501,8 +1560,6 @@ impl AcpClient {
                         continue;
                     }
 
-                    tracing::debug!(target: "acp::wire", "← {trimmed}");
-
                     let msg: serde_json::Value = match serde_json::from_str(trimmed) {
                         Ok(v) => v,
                         Err(e) => {
@@ -1520,7 +1577,7 @@ impl AcpClient {
                             continue;
                         }
                     };
-                    self.observe("acp_read", msg.clone());
+                    self.observe_acp_read(&msg);
 
                     let activity_now = Instant::now();
                     idle_deadline = activity_now + idle_timeout;
@@ -1712,6 +1769,24 @@ impl AcpClient {
             .unwrap_or("unknown");
 
         match update_type {
+            "kiingo_buzz_publication" => {
+                let Some(publisher) = &self.kiingo_publication_publisher else {
+                    tracing::warn!(
+                        target: "kiingo::publication",
+                        "discarded Kiingo publication update because the local publisher is disabled"
+                    );
+                    return false;
+                };
+                match serde_json::from_value::<KiingoPublicationIntent>(update.clone()) {
+                    Ok(intent) => publisher.enqueue(intent),
+                    Err(error) => tracing::warn!(
+                        target: "kiingo::publication",
+                        error = %error,
+                        "discarded malformed Kiingo publication update"
+                    ),
+                }
+                false
+            }
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
                     tracing::info!(target: "acp::stream", "{text}");
@@ -1950,15 +2025,23 @@ impl AcpClient {
 }
 
 /// Build `session/prompt` params from one or more text content blocks.
-fn build_prompt_params(session_id: &str, prompt_blocks: &[&str]) -> serde_json::Value {
+fn build_prompt_params(
+    session_id: &str,
+    prompt_blocks: &[&str],
+    buzz_metadata: Option<serde_json::Value>,
+) -> serde_json::Value {
     let blocks: Vec<serde_json::Value> = prompt_blocks
         .iter()
         .map(|text| serde_json::json!({ "type": "text", "text": text }))
         .collect();
-    serde_json::json!({
+    let mut params = serde_json::json!({
         "sessionId": session_id,
         "prompt": blocks,
-    })
+    });
+    if let Some(metadata) = buzz_metadata {
+        params["_meta"] = serde_json::json!({ "buzz": metadata });
+    }
+    params
 }
 
 /// Build `_goose/unstable/session/steer` params from one or more text
@@ -2456,6 +2539,7 @@ mod tests {
                 "/goal ship it",
                 "[Buzz event: @mention]\nContent: @Eva /goal ship it",
             ],
+            None,
         );
         let prompt = params["prompt"].as_array().unwrap();
         assert_eq!(prompt.len(), 2);

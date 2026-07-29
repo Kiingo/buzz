@@ -69,14 +69,18 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --locked -p buzz-relay --bin buzz-relay \
                                    -p buzz-admin --bin buzz-admin \
-                                   -p buzz-pair-relay --bin buzz-pair-relay
+                                   -p buzz-pair-relay --bin buzz-pair-relay \
+                                   -p buzz-acp --bin buzz-acp \
+                                   -p kiingo-compute-acp --bin kiingo-compute-acp
 
 # Derive the normal release binaries from the same optimized ELF files as the
 # debug image so the two variants cannot drift at code-generation time.
 FROM builder AS stripped-binaries
 RUN strip target/release/buzz-relay \
     && strip target/release/buzz-admin \
-    && strip target/release/buzz-pair-relay
+    && strip target/release/buzz-pair-relay \
+    && strip target/release/buzz-acp \
+    && strip target/release/kiingo-compute-acp
 
 # ─── Stage 4: web bundle (pnpm + vite) ──────────────────────────────────────
 # Independent of the Rust layers so a CSS change doesn't bust Rust cache and
@@ -169,6 +173,29 @@ FROM runtime-base AS runtime-debug
 COPY --from=builder /build/target/release/buzz-relay /usr/local/bin/buzz-relay
 COPY --from=builder /build/target/release/buzz-admin /usr/local/bin/buzz-admin
 COPY --from=builder /build/target/release/buzz-pair-relay /usr/local/bin/buzz-pair-relay
+
+# Kiingo production agent listener image. The custom ACP child carries only a
+# narrowly scoped bridge credential; `buzz-acp` retains the Nostr signer and
+# performs every Buzz write locally. Build with `--target agent-runtime`.
+FROM debian:${DEBIAN_VERSION}-slim AS agent-runtime
+LABEL org.opencontainers.image.title="Buzz Kiingo Compute Agent" \
+      org.opencontainers.image.description="Buzz ACP listener with an exact-user Kiingo Compute adapter" \
+      org.opencontainers.image.source="https://github.com/Kiingo/buzz" \
+      org.opencontainers.image.licenses="Apache-2.0"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 1000 buzz \
+    && useradd --system --uid 1000 --gid 1000 --home-dir /var/lib/buzz \
+               --create-home --shell /usr/sbin/nologin buzz
+COPY --from=stripped-binaries /build/target/release/buzz-acp /usr/local/bin/buzz-acp
+COPY --from=stripped-binaries /build/target/release/kiingo-compute-acp /usr/local/bin/kiingo-compute-acp
+ENV BUZZ_ACP_AGENT_COMMAND=/usr/local/bin/kiingo-compute-acp \
+    BUZZ_ACP_AGENT_ARGS="" \
+    BUZZ_ACP_KIINGO_PUBLICATION_ENABLED=true
+USER buzz:buzz
+WORKDIR /var/lib/buzz
+ENTRYPOINT ["/usr/local/bin/buzz-acp"]
 
 # Keep the stripped runtime as the final/default Dockerfile target so existing
 # `docker build .` callers and release tags retain their current behavior.

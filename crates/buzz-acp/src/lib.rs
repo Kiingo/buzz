@@ -4,6 +4,7 @@ mod acp;
 mod config;
 mod engram_fetch;
 mod filter;
+mod kiingo_publication;
 mod observer;
 mod pool;
 mod pool_lifecycle;
