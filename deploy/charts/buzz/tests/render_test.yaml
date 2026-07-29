@@ -8,6 +8,24 @@ templates:
   - templates/service.yaml
   - templates/pvc-git.yaml
 tests:
+  - it: renders an immutable digest reference when configured
+    set:
+      image.repository: acr.example.com/buzz-relay
+      image.tag: ignored
+      image.digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      relayUrl: wss://buzz.example.com
+      ownerPubkey: "0000000000000000000000000000000000000000000000000000000000000000"
+      externalPostgresql.url: postgres://u:p@h:5432/d
+      externalRedis.url: redis://h:6379
+      s3.endpoint: http://minio:9000
+      s3.accessKey: a
+      s3.secretKey: s
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: acr.example.com/buzz-relay@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        template: templates/deployment.yaml
+
   - it: renders cleanly in production profile (external pg/redis)
     set:
       relayUrl: wss://buzz.example.com

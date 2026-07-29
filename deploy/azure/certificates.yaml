@@ -1,0 +1,35 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-buzz-prod
+spec:
+  acme:
+    email: ross@kiingo.com
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-buzz-prod-account
+    solvers:
+      - dns01:
+          azureDNS:
+            subscriptionID: __AZURE_SUBSCRIPTION_ID__
+            resourceGroupName: rg-kiingo-website
+            hostedZoneName: kiingo.com
+            environment: AzurePublicCloud
+            managedIdentity:
+              clientID: __CERT_MANAGER_IDENTITY_CLIENT_ID__
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: buzz-origin
+  namespace: buzz
+spec:
+  secretName: buzz-origin-tls
+  issuerRef:
+    name: letsencrypt-buzz-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - buzz-origin.kiingo.com
+  privateKey:
+    rotationPolicy: Always
+  renewBefore: 360h
