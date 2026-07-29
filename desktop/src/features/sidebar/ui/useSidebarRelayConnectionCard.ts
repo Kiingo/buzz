@@ -79,7 +79,6 @@ export function useSidebarRelayConnectionCard(
     relayConnectionState === "stalled" ||
     (relayConnectionState === "disconnected" && !hasNonUnreachableError);
   const isRelayConnectionConnected = relayConnectionState === "connected";
-  const isRelayConnectionDisconnected = relayConnectionState === "disconnected";
   const [isDismissed, setIsDismissed] = React.useState(false);
   const hasSuccess = React.useSyncExternalStore(
     subscribeRelayConnectivitySuccess,
@@ -95,6 +94,8 @@ export function useSidebarRelayConnectionCard(
   const isRelayConnectionSuccess = hasSuccess && isRelayConnectionConnected;
   const canShow = isRelayConnectionActuallyDegraded || isRelayConnectionSuccess;
   const show = canShow && !isDismissed;
+  const outageActiveRef = React.useRef(false);
+  const outageRelayKeyRef = React.useRef(relaySuccessKey(relayUrl));
   const wasProblemCardVisibleRef = React.useRef(false);
   const {
     isPending: isReconnectPending,
@@ -111,27 +112,29 @@ export function useSidebarRelayConnectionCard(
     isReconnectPending || connectivityAction === "relay-connection";
 
   React.useEffect(() => {
-    if (!isRelayConnectionActuallyDegraded && !isRelayConnectionSuccess) {
+    const nextRelayKey = relaySuccessKey(relayUrl);
+    if (outageRelayKeyRef.current !== nextRelayKey) {
+      outageRelayKeyRef.current = nextRelayKey;
+      outageActiveRef.current = false;
       setIsDismissed(false);
     }
-  }, [isRelayConnectionSuccess, isRelayConnectionActuallyDegraded]);
 
-  React.useEffect(() => {
-    if (isRelayConnectionStateDegraded || isRelayConnectionDisconnected) {
-      setRelayConnectivitySuccess(relayUrl, false);
-      setIsDismissed(false);
-    }
-  }, [isRelayConnectionDisconnected, isRelayConnectionStateDegraded, relayUrl]);
-
-  React.useEffect(() => {
     if (isRelayConnectionActuallyDegraded) {
+      if (!outageActiveRef.current) {
+        outageActiveRef.current = true;
+        setRelayConnectivitySuccess(relayUrl, false);
+        setIsDismissed(false);
+      }
       wasProblemCardVisibleRef.current = show && !isRelayConnectionSuccess;
       return;
     }
 
-    if (wasProblemCardVisibleRef.current && isRelayConnectionConnected) {
-      wasProblemCardVisibleRef.current = false;
-      setRelayConnectivitySuccess(relayUrl, true);
+    if (outageActiveRef.current && isRelayConnectionConnected) {
+      outageActiveRef.current = false;
+      if (wasProblemCardVisibleRef.current) {
+        wasProblemCardVisibleRef.current = false;
+        setRelayConnectivitySuccess(relayUrl, true);
+      }
     }
   }, [
     isRelayConnectionSuccess,
