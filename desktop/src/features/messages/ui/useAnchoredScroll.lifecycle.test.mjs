@@ -329,6 +329,46 @@ test("channel change attaches pinned-center observers after refs mount", async (
   });
 });
 
+test("arrival at the physical floor does not preserve a stale unread state", async () => {
+  const refs = {
+    container: { current: null },
+    content: { current: null },
+  };
+  const root = createRoot(document.createElement("div"));
+  const nodes = makePinnedCenterNodes();
+  refs.container.current = nodes.container;
+  refs.content.current = nodes.content;
+  let state = null;
+  const render = (messages) =>
+    root.render(
+      React.createElement(BottomStateHarness, {
+        messages,
+        onState: (nextState) => {
+          state = nextState;
+        },
+        refs,
+      }),
+    );
+
+  await act(async () => render([{ id: "first" }]));
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  nodes.container.scrollTop = 100;
+  await act(async () => state.onScroll());
+  nodes.container.scrollTop = 100;
+  await act(async () => state.onScroll());
+  assert.equal(state.isAtBottom, false);
+
+  // Native anchoring can return the viewport to the floor without a scroll or
+  // resize callback, leaving only the hook's cached message anchor stale.
+  nodes.container.scrollTop =
+    nodes.container.scrollHeight - nodes.container.clientHeight;
+  await act(async () => render([{ id: "first" }, { id: "second" }]));
+
+  assert.equal(state.isAtBottom, true);
+  assert.equal(state.newMessageCount, 0);
+  await act(async () => root.unmount());
+});
+
 test("container resize clears a stale new-message state at the physical floor", async () => {
   const refs = {
     container: { current: null },
