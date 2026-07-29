@@ -50,7 +50,7 @@ XML
 FONTCONFIG_FILE=~/.config/buzz-fontconfig/fonts.conf ./Buzz_*.AppImage
 ```
 
-**Native packages (`deb`/`rpm`):** Not affected. Native packages use the system WebKitGTK, which handles COLRv1 fonts correctly on supported distros.
+**Native packages (`deb`/`rpm`):** The reported COLRv1 crashes ([#2548](https://github.com/block/buzz/issues/2548), [#2982](https://github.com/block/buzz/issues/2982)) are AppImage-only reproductions. This AppImage-specific workaround is not applied to native packages.
 
 ---
 
@@ -62,7 +62,7 @@ FONTCONFIG_FILE=~/.config/buzz-fontconfig/fonts.conf ./Buzz_*.AppImage
 
 **Root cause:** WebKitGTK's dmabuf zero-copy buffer path is incompatible with some GPU/driver/compositor combinations. The WebKit child process silently fails to paint.
 
-**Fix (shipped automatically since v0.5.0):** Buzz sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` automatically before WebKit initializes when it detects an NVIDIA GPU (`/sys/class/drm` vendor ID `0x10de`) or when running as an AppImage. This restores a slightly slower shared-memory rendering path that works universally.
+**Fix (shipped automatically starting with the first release containing [#3271](https://github.com/block/buzz/pull/3271) (v0.5.1)):** Buzz sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` automatically before WebKit initializes when it detects an NVIDIA GPU (`/sys/class/drm` vendor ID `0x10de`) or when running as an AppImage. This restores a slightly slower shared-memory rendering path that works universally.
 
 **If automatic detection doesn't help (`--safe-rendering`):** Pass `--safe-rendering` to force both `WEBKIT_DISABLE_DMABUF_RENDERER=1` and `WEBKIT_DISABLE_COMPOSITING_MODE=1` for that launch:
 
@@ -92,15 +92,19 @@ export WEBKIT_DISABLE_DMABUF_RENDERER=1
 **Workaround (verified by reporter):** Set these three variables before launching Buzz:
 
 ```bash
+export GDK_BACKEND=x11
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
-export WEBKIT_FORCE_SANDBOX=0
-export GSK_RENDERER=cairo
+export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
 ./Buzz_*.AppImage
 # or for native:
 buzz-desktop
 ```
 
-`GSK_RENDERER=cairo` switches GTK's scene kit renderer to the software path; `WEBKIT_FORCE_SANDBOX=0` is required for certain Mesa/radv driver combinations. A dedicated fix for RDNA4 detection is being tracked in [#2643](https://github.com/block/buzz/issues/2643).
+- `WEBKIT_SKIA_ENABLE_CPU_RENDERING=1` forces Skia to use CPU rendering, bypassing the RDNA4 Skia/radv paint failure.
+- `GDK_BACKEND=x11` avoids the blank window that appears when running under a Plasma-Wayland compositor.
+- `WEBKIT_DISABLE_DMABUF_RENDERER=1` prevents post-first-paint transparency from the dmabuf renderer.
+
+A dedicated fix for RDNA4 detection is being tracked in [#2643](https://github.com/block/buzz/issues/2643).
 
 ---
 
