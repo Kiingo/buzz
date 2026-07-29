@@ -156,6 +156,27 @@ test("relay outage notification stays dismissed through retries and re-arms afte
   await expectGenericReconnectCard(page);
 });
 
+test("relay outage notification re-arms after same-URL lifecycle teardown", async ({
+  page,
+}) => {
+  await installMockBridge(page, { channelsReadError: CONNECT_ERROR });
+  await page.goto("/");
+  await setRelayConnectionState(page, "disconnected");
+
+  const card = await expectGenericReconnectCard(page);
+  await card
+    .getByRole("button", { name: "Dismiss relay notification" })
+    .click({ force: true });
+  await expect(card).toBeHidden();
+
+  // Community switches and reconnectCommunity() tear down the singleton to
+  // idle before applying the next lifecycle. The next lifecycle may reuse the
+  // same relay URL, so URL identity alone must not preserve the old dismissal.
+  await emitRelayConnectionState(page, "idle");
+  await emitRelayConnectionState(page, "disconnected");
+  await expectGenericReconnectCard(page);
+});
+
 test("sidebar proxy sign-in failures use the reconnect card", async ({
   page,
 }) => {
