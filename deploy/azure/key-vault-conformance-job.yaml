@@ -1,0 +1,78 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: buzz-key-vault-conformance
+  namespace: buzz
+  labels:
+    app.kubernetes.io/name: buzz-key-vault-conformance
+    app.kubernetes.io/part-of: buzz
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: buzz-key-vault-conformance
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: buzz-relay
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: verify
+          image: mcr.microsoft.com/azure-cli@sha256:ca3aac93457acc608b5b37f770f1c8a63714183b2cb42344580e2185d005b0f2
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+            - |
+              for name in \
+                buzz-relay-private-key \
+                buzz-agent-private-key \
+                buzz-agent-public-key \
+                buzz-relay-owner-pubkey \
+                buzz-git-hook-hmac-secret \
+                buzz-database-url \
+                buzz-postgres-admin-password \
+                buzz-database-password \
+                buzz-postgres-host \
+                buzz-redis-password \
+                buzz-redis-url \
+                buzz-bridge-internal-token \
+                buzz-front-door-origin-secret
+              do
+                test -s "/mnt/secrets-store/${name}"
+              done
+
+              grep -Eq '^[a-f0-9]{64}$' /mnt/secrets-store/buzz-relay-owner-pubkey
+              grep -Eq '^[A-Za-z0-9_-]{32,128}$' /mnt/secrets-store/buzz-front-door-origin-secret
+              echo "Azure Key Vault CSI conformance passed for all 13 Buzz runtime secrets."
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: buzz-runtime

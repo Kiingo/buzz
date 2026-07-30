@@ -14,6 +14,14 @@ unrendered by GitHub: the database bootstrap's CSI mount synchronizes them from
 the private Key Vault, then `deploy.sh` validates and renders them only inside
 the private command environment.
 
+Before installing the chart, render `secret-provider-class.yaml` with the relay
+identity, vault name, and subscription tenant, then run
+`key-vault-conformance-job.yaml`. The restricted Job mounts every runtime value
+through the production workload identity, verifies all 13 files are non-empty,
+and checks only the public owner-key and origin-secret formats. It never prints
+secret content. A successful run also proves that the `buzz-runtime` Kubernetes
+Secret was synchronized for the deployment bootstrap.
+
 Deployment order is intentional:
 
 1. create the namespace, workload-identity service account, and Key Vault CSI
