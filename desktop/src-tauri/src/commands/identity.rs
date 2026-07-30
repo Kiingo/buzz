@@ -59,6 +59,14 @@ pub fn auto_connect_default_relay_enabled() -> bool {
     option_env!("BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY").is_some()
 }
 
+#[tauri::command]
+pub fn get_codex_enrollment_url() -> Option<String> {
+    option_env!("BUZZ_DESKTOP_BUILD_CODEX_ENROLLMENT_URL")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod auto_connect_default_relay_tests {
     use super::auto_connect_default_relay_enabled;

@@ -26,6 +26,7 @@ const outputConfigPath = resolve(
 
 const updaterPubkey = process.env.BUZZ_UPDATER_PUBLIC_KEY;
 const updaterEndpoint = process.env.BUZZ_UPDATER_ENDPOINT;
+const windowsSignCommand = process.env.BUZZ_WINDOWS_SIGN_COMMAND?.trim();
 
 const missing = [];
 if (!updaterPubkey) missing.push("BUZZ_UPDATER_PUBLIC_KEY");
@@ -43,6 +44,13 @@ const releaseConfig = {
       minimumSystemVersion: "10.15",
     },
     createUpdaterArtifacts: true,
+    ...(windowsSignCommand
+      ? {
+          windows: {
+            signCommand: windowsSignCommand,
+          },
+        }
+      : {}),
   },
   plugins: {
     updater: {

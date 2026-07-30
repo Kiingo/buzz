@@ -10393,6 +10393,8 @@ export function maybeInstallE2eTauriMocks() {
         return getRelayWsUrl(activeConfig);
       case "auto_connect_default_relay_enabled":
         return activeConfig?.autoConnectDefaultRelay ?? false;
+      case "get_codex_enrollment_url":
+        return null;
       case "get_legacy_workspace_storage":
         return {
           workspaces: null,
