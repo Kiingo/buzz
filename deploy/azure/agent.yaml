@@ -96,11 +96,45 @@ spec:
         - name: agent
           image: __AGENT_IMAGE_REPOSITORY__@__AGENT_IMAGE_DIGEST__
           imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              umask 077
+              bootstrap_response=/tmp/buzz-endpoint-bootstrap.json
+              trap 'rm -f "${bootstrap_response}"' EXIT
+              curl \
+                --fail-with-body \
+                --silent \
+                --show-error \
+                --retry 5 \
+                --retry-delay 2 \
+                --retry-all-errors \
+                --connect-timeout 5 \
+                --max-time 20 \
+                --output "${bootstrap_response}" \
+                --config - <<EOF
+              url = "https://api.kiingo.com/api/buzz-bridge/endpoints/register"
+              request = "POST"
+              header = "Authorization: Bearer ${BUZZ_BRIDGE_INTERNAL_TOKEN}"
+              header = "Content-Type: application/json"
+              data = "{\"community_id\":\"${BUZZ_COMMUNITY_ID}\",\"agent_public_key\":\"${BUZZ_AGENT_PUBLIC_KEY}\",\"relay_url\":\"${BUZZ_CANONICAL_RELAY_URL}\",\"organization_id\":\"${BUZZ_ORGANIZATION_ID}\",\"owner_user_id\":\"${BUZZ_OWNER_USER_ID}\"}"
+              EOF
+              grep -q '"registered":true' "${bootstrap_response}"
+              rm -f "${bootstrap_response}"
+              trap - EXIT
+              exec /usr/local/bin/buzz-acp
           env:
             - name: BUZZ_RELAY_URL
               value: wss://buzz-preview.kiingo.com
             - name: BUZZ_COMMUNITY_ID
               value: chat.kiingo.com
+            - name: BUZZ_CANONICAL_RELAY_URL
+              value: wss://chat.kiingo.com
+            - name: BUZZ_ORGANIZATION_ID
+              value: __BUZZ_ORGANIZATION_ID__
+            - name: BUZZ_OWNER_USER_ID
+              value: __BUZZ_OWNER_USER_ID__
             - name: BUZZ_AGENT_PUBLIC_KEY
               valueFrom:
                 secretKeyRef:
