@@ -1174,7 +1174,7 @@ fn parse_prompt_envelope(params: &Value) -> Result<BuzzEnvelope, String> {
         .iter()
         .filter_map(|block| block.get("text").and_then(Value::as_str))
         .filter_map(last_event_segment)
-        .last()
+        .next_back()
         .ok_or_else(|| "prompt does not contain an upstream Buzz event block".to_string())?;
     parse_event_block(event_block)
 }

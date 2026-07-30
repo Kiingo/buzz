@@ -7,7 +7,7 @@ import {
   useGitBashPrerequisiteQuery,
 } from "@/features/agents/hooks";
 import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
-import { getCodexEnrollmentUrl } from "@/shared/api/tauri";
+import { getCodexEnrollmentUrl } from "@/shared/api/codexEnrollment";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { SectionHeader } from "@/shared/ui/PageHeader";

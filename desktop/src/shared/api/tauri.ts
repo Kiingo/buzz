@@ -374,10 +374,6 @@ export function autoConnectDefaultRelayEnabled(): Promise<boolean> {
   return invokeTauri<boolean>("auto_connect_default_relay_enabled");
 }
 
-export function getCodexEnrollmentUrl(): Promise<string | null> {
-  return invokeTauri<string | null>("get_codex_enrollment_url");
-}
-
 export function isSharedIdentity(): Promise<boolean> {
   return invokeTauri<boolean>("is_shared_identity");
 }

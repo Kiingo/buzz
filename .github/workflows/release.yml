@@ -155,16 +155,11 @@ jobs:
       - name: Build mesh llama native libraries
         if: steps.llama_cache.outputs.cache-hit != 'true'
         env:
-          MESH_REV_SHORT: ${{ steps.mesh_rev.outputs.short }}
+          MESH_REV: ${{ steps.mesh_rev.outputs.rev }}
         run: |
           set -euo pipefail
           cargo fetch --manifest-path desktop/src-tauri/Cargo.toml
-          SHORT="$MESH_REV_SHORT"
-          MESH_ROOT=$(find "${CARGO_HOME:-$HOME/.cargo}/git/checkouts" -path "*/$SHORT" -type d -name "$SHORT" | head -1)
-          if [[ -z "$MESH_ROOT" ]]; then
-            echo "::error::mesh-llm checkout for $SHORT not found after cargo fetch"
-            exit 1
-          fi
+          MESH_ROOT="$(bash scripts/resolve-mesh-llm-checkout.sh "$MESH_REV")"
           export LLAMA_STAGE_BACKEND=metal
           export LLAMA_STAGE_BUILD_DIR="$GITHUB_WORKSPACE/.cache/mesh-llama/build-stage-abi-metal"
           export CMAKE_OSX_DEPLOYMENT_TARGET=10.15
