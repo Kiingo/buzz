@@ -22,6 +22,7 @@ concurrency:
 
 env:
   BUZZ_RELAY_URL: wss://chat.kiingo.com
+  BUZZ_CANONICAL_RELAY_URL: wss://chat.kiingo.com
   BUZZ_RELAY_HTTP: https://chat.kiingo.com
   BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY: '1'
   BUZZ_BUILD_CODEX_ENROLLMENT_URL: https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect
