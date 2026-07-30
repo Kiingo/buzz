@@ -34,13 +34,19 @@ relay:
       type: RuntimeDefault
   resources:
     requests:
-      cpu: 250m
+      # Leave enough requested CPU for one relay replica on each of the two
+      # launch nodes after AKS system add-ons reserve their capacity. The
+      # one-core limit still permits short relay bursts.
+      cpu: 200m
       memory: 512Mi
     limits:
       cpu: "1"
       memory: 1Gi
   topologySpreadConstraints:
     - maxSkew: 1
+      # Fail visibly with one available replica if fewer than two schedulable
+      # node domains exist instead of silently co-locating both relay replicas.
+      minDomains: 2
       topologyKey: kubernetes.io/hostname
       whenUnsatisfiable: DoNotSchedule
       labelSelector:
