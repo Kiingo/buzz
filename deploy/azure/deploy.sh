@@ -72,6 +72,7 @@ if [[ ! "${origin_verification_secret}" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
   exit 1
 fi
 replace_literal prod-values.yaml '__RELAY_OWNER_PUBKEY__' "${relay_owner_pubkey}"
+replace_literal prod-values.yaml '__ORIGIN_VERIFICATION_SECRET__' "${origin_verification_secret}"
 replace_literal health-ingress.yaml '__ORIGIN_VERIFICATION_SECRET__' "${origin_verification_secret}"
 unset relay_owner_pubkey origin_verification_secret
 for file in prod-values.yaml health-ingress.yaml; do
