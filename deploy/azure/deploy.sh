@@ -52,6 +52,11 @@ kubectl apply -f secret-provider-class.yaml
 helm repo add jetstack https://charts.jetstack.io
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
+# The dependency archives are intentionally gitignored. Build them from the
+# tracked Chart.lock inside the command-invoke environment before Helm validates
+# the production chart, even though the production values disable both
+# subcharts in favor of external PostgreSQL and Redis.
+helm dependency build ./chart
 helm upgrade --install cert-manager jetstack/cert-manager --version v1.21.1 --namespace cert-manager --create-namespace --values cert-manager-values.yaml --atomic --wait --timeout 10m
 kubectl apply -f certificates.yaml
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx --version 4.15.1 --namespace ingress-nginx --create-namespace --values ingress-values.yaml --atomic --wait --timeout 10m
