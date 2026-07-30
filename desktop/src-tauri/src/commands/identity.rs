@@ -8,7 +8,9 @@ use crate::{
     app_state::AppState,
     models::IdentityInfo,
     nostr_bind,
-    relay::{self, relay_api_base_url_with_override, relay_ws_url_with_override},
+    relay::{
+        self, nip42_auth_relay_url, relay_api_base_url_with_override, relay_ws_url_with_override,
+    },
 };
 
 /// Encode `pubkey` as npub bech32 and truncate it for display: first 10 chars
@@ -458,10 +460,11 @@ pub async fn create_auth_event(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let keys = state.signing_keys()?;
+    let auth_relay_url = nip42_auth_relay_url(&relay_url);
 
     tauri::async_runtime::spawn_blocking(move || {
         let tags = vec![
-            Tag::parse(vec!["relay", &relay_url])
+            Tag::parse(vec!["relay", &auth_relay_url])
                 .map_err(|error| format!("relay tag failed: {error}"))?,
             Tag::parse(vec!["challenge", &challenge])
                 .map_err(|error| format!("challenge tag failed: {error}"))?,
