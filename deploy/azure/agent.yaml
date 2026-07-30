@@ -126,7 +126,7 @@ spec:
               exec /usr/local/bin/buzz-acp
           env:
             - name: BUZZ_RELAY_URL
-              value: wss://chat.kiingo.com
+              value: __BUZZ_RUNTIME_RELAY_URL__
             - name: BUZZ_COMMUNITY_ID
               value: chat.kiingo.com
             - name: BUZZ_CANONICAL_RELAY_URL
