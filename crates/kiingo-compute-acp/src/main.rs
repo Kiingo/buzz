@@ -7,12 +7,15 @@
 //! parent `buzz-acp` process.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -22,6 +25,8 @@ const POLL_LIMIT: u64 = 100;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 150;
 const DEFAULT_TURN_TIMEOUT_SECS: u64 = 1_800;
 const MAX_PROMPT_BYTES: usize = 2 * 1024 * 1024;
+const LOCAL_ACTION_TIMEOUT_SECS: u64 = 75;
+const MAX_LOCAL_ACTION_OUTPUT_BYTES: usize = 128 * 1024;
 
 type SharedWriter = Arc<Mutex<tokio::io::Stdout>>;
 
@@ -97,6 +102,53 @@ fn read_u64_env(name: &str, default: u64, min: u64, max: u64) -> Result<u64, Str
     Ok(value)
 }
 
+fn read_local_buzz_runtime(params: &Value) -> Option<LocalBuzzRuntime> {
+    let servers = params.get("mcpServers")?.as_array()?;
+    for server in servers {
+        let Some(command) = server.get("command").and_then(Value::as_str) else {
+            continue;
+        };
+        let command = command.trim();
+        let Some(env_values) = server.get("env").and_then(Value::as_array) else {
+            continue;
+        };
+        let mut relay_url = None;
+        let mut private_key = None;
+        let mut auth_tag = None;
+        for entry in env_values {
+            let name = entry.get("name").and_then(Value::as_str).unwrap_or("");
+            let value = entry.get("value").and_then(Value::as_str).unwrap_or("");
+            match name {
+                "BUZZ_RELAY_URL" if !value.trim().is_empty() => {
+                    relay_url = Some(value.trim().to_string())
+                }
+                "BUZZ_PRIVATE_KEY" if !value.trim().is_empty() => {
+                    private_key = Some(value.trim().to_string())
+                }
+                "BUZZ_AUTH_TAG" if !value.trim().is_empty() => {
+                    auth_tag = Some(value.trim().to_string())
+                }
+                _ => {}
+            }
+        }
+        let (Some(relay_url), Some(private_key)) = (relay_url, private_key) else {
+            continue;
+        };
+        let configured = Path::new(command);
+        let buzz_command = configured
+            .parent()
+            .map(|parent| parent.join("buzz"))
+            .unwrap_or_else(|| PathBuf::from("buzz"));
+        return Some(LocalBuzzRuntime {
+            command: buzz_command,
+            relay_url,
+            private_key,
+            auth_tag,
+        });
+    }
+    None
+}
+
 #[derive(Debug, Clone)]
 struct BuzzEnvelope {
     event_id: String,
@@ -116,7 +168,20 @@ struct AcceptedTurn {
 #[derive(Debug, Clone)]
 enum TurnAdmission {
     Execution(AcceptedTurn),
-    EnrollmentCompleted(String),
+    ControlCompleted(String),
+}
+
+#[derive(Clone)]
+struct LocalBuzzRuntime {
+    command: PathBuf,
+    relay_url: String,
+    private_key: String,
+    auth_tag: Option<String>,
+}
+
+#[derive(Clone, Default)]
+struct SessionState {
+    local_buzz: Option<LocalBuzzRuntime>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,7 +201,7 @@ struct App {
     config: Config,
     http: reqwest::Client,
     writer: SharedWriter,
-    sessions: HashMap<String, ()>,
+    sessions: HashMap<String, SessionState>,
     active: HashMap<String, ActivePrompt>,
     completed_tx: mpsc::UnboundedSender<String>,
 }
@@ -238,7 +303,12 @@ async fn handle_line(app: &mut App, line: &str) {
         "session/new" => {
             let Some(id) = id else { return };
             let session_id = format!("kiingo_{}", Uuid::new_v4());
-            app.sessions.insert(session_id.clone(), ());
+            app.sessions.insert(
+                session_id.clone(),
+                SessionState {
+                    local_buzz: read_local_buzz_runtime(&params),
+                },
+            );
             send_result(&app.writer, id, json!({"sessionId": session_id})).await;
         }
         "session/prompt" => {
@@ -247,10 +317,10 @@ async fn handle_line(app: &mut App, line: &str) {
                 send_error(&app.writer, id, -32602, "sessionId is required").await;
                 return;
             };
-            if !app.sessions.contains_key(session_id) {
+            let Some(session) = app.sessions.get(session_id).cloned() else {
                 send_error(&app.writer, id, -32602, "unknown sessionId").await;
                 return;
-            }
+            };
             if app.active.contains_key(session_id) {
                 send_error(
                     &app.writer,
@@ -284,6 +354,7 @@ async fn handle_line(app: &mut App, line: &str) {
                 session_id: session_id.clone(),
                 request_id: id,
                 envelope,
+                local_buzz: session.local_buzz,
                 cancellation,
                 receipt_id,
             };
@@ -318,6 +389,7 @@ struct PromptContext {
     session_id: String,
     request_id: Value,
     envelope: BuzzEnvelope,
+    local_buzz: Option<LocalBuzzRuntime>,
     cancellation: CancellationToken,
     receipt_id: Arc<Mutex<Option<String>>>,
 }
@@ -360,7 +432,7 @@ async fn run_prompt(context: PromptContext) {
 async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
     let accepted = match accept_turn(context).await? {
         TurnAdmission::Execution(accepted) => accepted,
-        TurnAdmission::EnrollmentCompleted(message) => {
+        TurnAdmission::ControlCompleted(message) => {
             emit_message_chunk(&context.writer, &context.session_id, &message).await;
             return Ok("end_turn");
         }
@@ -401,6 +473,8 @@ async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
             }
             _ = tokio::time::sleep(context.config.poll_interval) => {}
         }
+
+        process_next_action(context, &accepted.receipt_id).await?;
 
         let replay = fetch_events(context, &accepted.receipt_id, after_sequence).await?;
         after_sequence = replay
@@ -529,7 +603,7 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
             .unwrap_or("Your Buzz identity is linked to Kiingo.")
             .to_string();
         let enrollment_url = body.get("enrollment_url").and_then(Value::as_str);
-        return Ok(TurnAdmission::EnrollmentCompleted(match enrollment_url {
+        return Ok(TurnAdmission::ControlCompleted(match enrollment_url {
             Some(url)
                 if !body
                     .get("codex_connected")
@@ -540,6 +614,14 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
             }
             _ => message,
         }));
+    }
+    if body.get("control_completed").and_then(Value::as_bool) == Some(true) {
+        let message = body
+            .get("control_message")
+            .and_then(Value::as_str)
+            .unwrap_or("The Buzz control request was applied.")
+            .to_string();
+        return Ok(TurnAdmission::ControlCompleted(message));
     }
     let receipt_id = required_json_string(&body, "receipt_id")?;
     required_json_string(&body, "conversation_id")?;
@@ -600,6 +682,329 @@ async fn fetch_events(
         ));
     }
     Ok(body)
+}
+
+async fn fetch_next_action(
+    context: &PromptContext,
+    receipt_id: &str,
+    worker_id: &str,
+) -> Result<Option<Value>, String> {
+    let url = format!(
+        "{}/api/buzz-bridge/receipts/{}/actions/next",
+        context.config.api_base_url, receipt_id
+    );
+    let response = context
+        .http
+        .get(url)
+        .header("x-kiingo-internal-token", &context.config.internal_token)
+        .query(&[
+            ("community_id", context.config.community_id.as_str()),
+            ("agent_public_key", context.config.agent_public_key.as_str()),
+            ("worker_id", worker_id),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("Buzz action poll failed: {error}"))?;
+    if response.status() == StatusCode::NO_CONTENT {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(format!(
+            "Buzz action poll returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+    response
+        .json()
+        .await
+        .map(Some)
+        .map_err(|error| format!("Buzz action poll response was invalid: {error}"))
+}
+
+async fn complete_action(
+    context: &PromptContext,
+    receipt_id: &str,
+    action_id: &str,
+    worker_id: &str,
+    ok: bool,
+    result: Value,
+    error_code: Option<&str>,
+) -> Result<(), String> {
+    let url = format!(
+        "{}/api/buzz-bridge/receipts/{}/actions/{}/complete",
+        context.config.api_base_url, receipt_id, action_id
+    );
+    let response = context
+        .http
+        .post(url)
+        .header("x-kiingo-internal-token", &context.config.internal_token)
+        .json(&json!({
+            "community_id": context.config.community_id,
+            "agent_public_key": context.config.agent_public_key,
+            "worker_id": worker_id,
+            "ok": ok,
+            "result": result,
+            "error_code": error_code
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("Buzz action completion failed: {error}"))?;
+    if response.status().is_success() || response.status() == StatusCode::CONFLICT {
+        Ok(())
+    } else {
+        Err(format!(
+            "Buzz action completion returned HTTP {}",
+            response.status().as_u16()
+        ))
+    }
+}
+
+fn action_arguments(action: &Value) -> Value {
+    action
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}))
+}
+
+fn string_list(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn render_checkpoint(arguments: &Value) -> String {
+    let summary = arguments
+        .get("summary")
+        .and_then(Value::as_str)
+        .unwrap_or("Task checkpoint recorded.");
+    let partial = string_list(arguments.get("partial_results"));
+    let remaining = string_list(arguments.get("remaining_work"));
+    let mut lines = vec![format!("**Task checkpoint**\n\n{summary}")];
+    if !partial.is_empty() {
+        lines.push(format!(
+            "**Partial results**\n{}",
+            partial
+                .iter()
+                .map(|item| format!("- {item}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !remaining.is_empty() {
+        lines.push(format!(
+            "**Remaining work**\n{}",
+            remaining
+                .iter()
+                .map(|item| format!("- {item}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    lines.join("\n\n")
+}
+
+fn render_approval(action_id: &str, operation: &str, arguments: &Value) -> String {
+    let reason = arguments
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("The agent requested a high-impact Buzz action.");
+    let argv = arguments.get("argv").cloned().unwrap_or_else(|| json!([]));
+    format!(
+        "**Approval required**\n\nOperation: `{operation}`\n\nReason: {reason}\n\nExact arguments: `{}`\n\nApprove: `/kiingo approve {action_id}`\n\nReject: `/kiingo reject {action_id}`",
+        argv
+    )
+}
+
+fn truncate_action_output(bytes: &[u8], runtime: &LocalBuzzRuntime) -> String {
+    let end = bytes.len().min(MAX_LOCAL_ACTION_OUTPUT_BYTES);
+    let mut output = String::from_utf8_lossy(&bytes[..end]).to_string();
+    output = output.replace(&runtime.private_key, "[REDACTED_BUZZ_PRIVATE_KEY]");
+    if let Some(auth_tag) = &runtime.auth_tag {
+        output = output.replace(auth_tag, "[REDACTED_BUZZ_AUTH_TAG]");
+    }
+    if bytes.len() > end {
+        output.push_str("\n[output truncated by Kiingo Buzz action bridge]");
+    }
+    output
+}
+
+async fn execute_local_buzz_action(
+    runtime: Option<&LocalBuzzRuntime>,
+    arguments: &Value,
+) -> (bool, Value, Option<&'static str>) {
+    let Some(runtime) = runtime else {
+        return (
+            false,
+            json!({"error": "local_buzz_runtime_unavailable"}),
+            Some("buzz_action_local_runtime_unavailable"),
+        );
+    };
+    let Some(argv_values) = arguments.get("argv").and_then(Value::as_array) else {
+        return (
+            false,
+            json!({"error": "invalid_action_argv"}),
+            Some("buzz_action_argv_invalid"),
+        );
+    };
+    let mut argv = Vec::with_capacity(argv_values.len());
+    for value in argv_values {
+        let Some(argument) = value.as_str() else {
+            return (
+                false,
+                json!({"error": "invalid_action_argv"}),
+                Some("buzz_action_argv_invalid"),
+            );
+        };
+        argv.push(argument);
+    }
+    let mut command = Command::new(&runtime.command);
+    command
+        .args(argv)
+        .env_clear()
+        .env("BUZZ_RELAY_URL", &runtime.relay_url)
+        .env("BUZZ_PRIVATE_KEY", &runtime.private_key)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(auth_tag) = &runtime.auth_tag {
+        command.env("BUZZ_AUTH_TAG", auth_tag);
+    } else {
+        command.env_remove("BUZZ_AUTH_TAG");
+    }
+    match tokio::time::timeout(
+        Duration::from_secs(LOCAL_ACTION_TIMEOUT_SECS),
+        command.output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => {
+            let ok = output.status.success();
+            let result = json!({
+                "exit_code": output.status.code(),
+                "stdout": truncate_action_output(&output.stdout, runtime),
+                "stderr": truncate_action_output(&output.stderr, runtime)
+            });
+            (
+                ok,
+                result,
+                if ok {
+                    None
+                } else {
+                    Some("buzz_action_command_failed")
+                },
+            )
+        }
+        Ok(Err(_)) => (
+            false,
+            json!({"error": "local_buzz_command_failed_to_start"}),
+            Some("buzz_action_command_start_failed"),
+        ),
+        Err(_) => (
+            false,
+            json!({"error": "local_buzz_command_timed_out"}),
+            Some("buzz_action_command_timeout"),
+        ),
+    }
+}
+
+async fn process_next_action(context: &PromptContext, receipt_id: &str) -> Result<(), String> {
+    let worker_id = format!("kiingo-compute-acp:{}", context.session_id);
+    let Some(action) = fetch_next_action(context, receipt_id, &worker_id).await? else {
+        return Ok(());
+    };
+    let action_id = required_json_string(&action, "action_id")?;
+    let action_kind = required_json_string(&action, "action_kind")?;
+    let operation = required_json_string(&action, "operation")?;
+    let arguments = action_arguments(&action);
+    let outcome = match action_kind.as_str() {
+        "progress" => {
+            let message = arguments
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("Codex reported progress.");
+            match publish_status(
+                context,
+                receipt_id,
+                "action",
+                &format!("progress:{action_id}"),
+                message,
+            )
+            .await
+            {
+                Ok(()) => (true, json!({"published": true}), None),
+                Err(error) => (
+                    false,
+                    json!({"error": error}),
+                    Some("buzz_action_progress_publish_failed"),
+                ),
+            }
+        }
+        "complete" => {
+            let content = render_checkpoint(&arguments);
+            match publish_status(
+                context,
+                receipt_id,
+                "action",
+                &format!("completion:{action_id}"),
+                &content,
+            )
+            .await
+            {
+                Ok(()) => (true, json!({"published": true}), None),
+                Err(error) => (
+                    false,
+                    json!({"error": error}),
+                    Some("buzz_action_completion_publish_failed"),
+                ),
+            }
+        }
+        "approval_proposal" => {
+            let content = render_approval(&action_id, &operation, &arguments);
+            match publish_status(
+                context,
+                receipt_id,
+                "action",
+                &format!("approval:{action_id}"),
+                &content,
+            )
+            .await
+            {
+                Ok(()) => (
+                    true,
+                    json!({
+                        "proposal_id": action_id,
+                        "approval_command": format!("/kiingo approve {action_id}"),
+                        "rejection_command": format!("/kiingo reject {action_id}"),
+                        "published": true
+                    }),
+                    None,
+                ),
+                Err(error) => (
+                    false,
+                    json!({"error": error}),
+                    Some("buzz_action_approval_publish_failed"),
+                ),
+            }
+        }
+        "execute" => execute_local_buzz_action(context.local_buzz.as_ref(), &arguments).await,
+        _ => (
+            false,
+            json!({"error": "unsupported_action_kind"}),
+            Some("buzz_action_kind_unsupported"),
+        ),
+    };
+    complete_action(
+        context, receipt_id, &action_id, &worker_id, outcome.0, outcome.1, outcome.2,
+    )
+    .await
 }
 
 async fn cancel_turn(context: &PromptContext, receipt_id: &str) -> Result<(), String> {
@@ -1066,5 +1471,62 @@ mod tests {
     fn provides_actionable_enrollment_guidance() {
         let error = actionable_ingress_error(StatusCode::FORBIDDEN, "buzz_identity_not_verified");
         assert!(error.contains("/team/harness-connections?provider=codex"));
+    }
+
+    #[test]
+    fn extracts_only_the_local_buzz_runtime_from_acp_mcp_config() {
+        let runtime = read_local_buzz_runtime(&json!({
+            "mcpServers": [{
+                "name": "buzz-dev-mcp",
+                "command": "/usr/local/bin/buzz-dev-mcp",
+                "args": [],
+                "env": [
+                    {"name": "BUZZ_RELAY_URL", "value": "wss://chat.kiingo.com"},
+                    {"name": "BUZZ_PRIVATE_KEY", "value": "nsec_test_secret"},
+                    {"name": "UNRELATED_SECRET", "value": "must-not-be-forwarded"}
+                ]
+            }]
+        }))
+        .expect("local runtime");
+        assert_eq!(runtime.command, PathBuf::from("/usr/local/bin/buzz"));
+        assert_eq!(runtime.relay_url, "wss://chat.kiingo.com");
+        assert_eq!(runtime.private_key, "nsec_test_secret");
+        assert!(runtime.auth_tag.is_none());
+    }
+
+    #[test]
+    fn renders_explicit_partial_completion_and_signed_approval_commands() {
+        let checkpoint = render_checkpoint(&json!({
+            "summary": "Completed the safe portion.",
+            "partial_results": ["Created the draft"],
+            "remaining_work": ["Wait for approval"]
+        }));
+        assert!(checkpoint.contains("**Partial results**"));
+        assert!(checkpoint.contains("**Remaining work**"));
+
+        let proposal_id = "11111111-1111-4111-8111-111111111111";
+        let approval = render_approval(
+            proposal_id,
+            "channels.delete",
+            &json!({"reason": "Requested cleanup", "argv": ["channels", "delete", "abc"]}),
+        );
+        assert!(approval.contains(&format!("/kiingo approve {proposal_id}")));
+        assert!(approval.contains(&format!("/kiingo reject {proposal_id}")));
+    }
+
+    #[test]
+    fn redacts_local_signing_material_from_action_results() {
+        let runtime = LocalBuzzRuntime {
+            command: PathBuf::from("/usr/local/bin/buzz"),
+            relay_url: "wss://chat.kiingo.com".to_string(),
+            private_key: "nsec_test_secret".to_string(),
+            auth_tag: Some("auth-tag-secret".to_string()),
+        };
+        let output =
+            truncate_action_output(b"failed nsec_test_secret with auth-tag-secret", &runtime);
+        assert!(!output.contains("nsec_test_secret"));
+        assert!(!output.contains("auth-tag-secret"));
+        assert!(output.contains("[REDACTED_BUZZ_PRIVATE_KEY]"));
+        assert!(output.contains("[REDACTED_BUZZ_AUTH_TAG]"));
     }
 }

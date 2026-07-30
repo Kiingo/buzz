@@ -71,6 +71,8 @@ RUN cargo build --release --locked -p buzz-relay --bin buzz-relay \
                                    -p buzz-admin --bin buzz-admin \
                                    -p buzz-pair-relay --bin buzz-pair-relay \
                                    -p buzz-acp --bin buzz-acp \
+                                   -p buzz-cli --bin buzz \
+                                   -p buzz-dev-mcp --bin buzz-dev-mcp \
                                    -p kiingo-compute-acp --bin kiingo-compute-acp
 
 # Derive the normal release binaries from the same optimized ELF files as the
@@ -80,6 +82,8 @@ RUN strip target/release/buzz-relay \
     && strip target/release/buzz-admin \
     && strip target/release/buzz-pair-relay \
     && strip target/release/buzz-acp \
+    && strip target/release/buzz \
+    && strip target/release/buzz-dev-mcp \
     && strip target/release/kiingo-compute-acp
 
 # ─── Stage 4: web bundle (pnpm + vite) ──────────────────────────────────────
@@ -190,9 +194,12 @@ RUN apt-get update \
     && useradd --system --uid 1000 --gid 1000 --home-dir /var/lib/buzz \
                --create-home --shell /usr/sbin/nologin buzz
 COPY --from=stripped-binaries /build/target/release/buzz-acp /usr/local/bin/buzz-acp
+COPY --from=stripped-binaries /build/target/release/buzz-dev-mcp /usr/local/bin/buzz-dev-mcp
+COPY --from=stripped-binaries /build/target/release/buzz /usr/local/bin/buzz
 COPY --from=stripped-binaries /build/target/release/kiingo-compute-acp /usr/local/bin/kiingo-compute-acp
 ENV BUZZ_ACP_AGENT_COMMAND=/usr/local/bin/kiingo-compute-acp \
     BUZZ_ACP_AGENT_ARGS="" \
+    BUZZ_ACP_MCP_COMMAND=/usr/local/bin/buzz-dev-mcp \
     BUZZ_ACP_KIINGO_PUBLICATION_ENABLED=true
 USER buzz:buzz
 WORKDIR /var/lib/buzz
