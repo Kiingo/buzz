@@ -14,7 +14,7 @@ spec:
         app.kubernetes.io/component: database-bootstrap
         azure.workload.identity/use: "true"
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       serviceAccountName: buzz-relay
       securityContext:
         runAsNonRoot: true
@@ -36,15 +36,12 @@ spec:
               postgres_host="$(cat /mnt/secrets-store/buzz-postgres-host)"
               psql "host=$postgres_host port=5432 dbname=buzz user=buzzadmin sslmode=require" \
                 --set=ON_ERROR_STOP=1 --set=app_password="$app_password" <<'SQL'
-              DO $$
-              BEGIN
-                CREATE ROLE buzz_app LOGIN;
-              EXCEPTION
-                WHEN duplicate_object THEN NULL;
-              END
-              $$;
+              SELECT 'CREATE ROLE buzz_app LOGIN'
+              WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'buzz_app') \gexec
               SELECT format('ALTER ROLE buzz_app LOGIN PASSWORD %L', :'app_password') \gexec
               ALTER DATABASE buzz OWNER TO buzz_app;
+              ALTER SCHEMA public OWNER TO buzz_app;
+              GRANT ALL ON SCHEMA public TO buzz_app;
               SQL
           resources:
             requests:
@@ -75,6 +72,9 @@ metadata:
   name: buzz-database-migrate
   namespace: buzz
 spec:
+  # Applying both manifests must not race the app-role bootstrap. The deploy
+  # script unsuspends this job only after bootstrap completes successfully.
+  suspend: true
   backoffLimit: 3
   activeDeadlineSeconds: 600
   ttlSecondsAfterFinished: 86400
@@ -84,7 +84,7 @@ spec:
         app.kubernetes.io/part-of: buzz
         app.kubernetes.io/component: database-migrate
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       serviceAccountName: buzz-relay
       securityContext:
         runAsNonRoot: true
