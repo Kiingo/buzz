@@ -59,6 +59,12 @@ is used for relay membership and the ACP author gate. Production permits only
 `owner-only` or `allowlist` response modes; `anyone` cannot be selected through
 runtime configuration.
 
+Kiingo's human client is the signed desktop application. The upstream runtime
+image includes a default `BUZZ_WEB_DIR`, so `prod-values.yaml` explicitly clears
+that variable and disables the Git web GUI. The production HTTPS authority
+therefore exposes only relay-required media and health/support endpoints, not a
+hosted browser chat client.
+
 The agent listener must not start until the Kiingo API has idempotently
 registered the exact `(community_id, agent_public_key)` endpoint. `agent.yaml`
 calls the internal-token-only endpoint bootstrap route before `buzz-acp`; the

@@ -16,6 +16,15 @@ relay:
   allowNipOaAuth: true
   pubkeyAllowlist: false
   huddleAudioAvailable: false
+  # The runtime image carries BUZZ_WEB_DIR=/srv/buzz/web for upstream's
+  # all-in-one deployment. Kiingo is desktop-only: an explicit empty value
+  # disables the hosted browser client while preserving relay, media, and
+  # health/support endpoints.
+  extraEnv:
+    - name: BUZZ_WEB_DIR
+      value: ""
+    - name: BUZZ_SERVE_GIT_WEB_GUI
+      value: "false"
   securityContext:
     runAsNonRoot: true
     runAsUser: 1000
