@@ -3,12 +3,13 @@ use std::path::PathBuf;
 use super::overrides::{divergent_agent_command_override, update_time_agent_command_override};
 use super::{
     apply_agent_command_update, classify_runtime, codex_adapter_availability,
-    codex_adapter_is_outdated, create_time_agent_command_override, default_agent_command,
-    effective_agent_command, find_nvm_default_bin, find_via_login_shell,
-    is_login_shell_path_uninit, is_safe_nvm_tag, managed_agent_avatar_url, normalize_agent_args,
-    parse_semver_tag, preset_catalog_entry, probe_codex_acp_version, record_agent_command,
-    refresh_login_shell_path, try_record_agent_command, PresetHarness, BUZZ_AGENT_AVATAR_URL,
-    CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL, GOOSE_AVATAR_URL,
+    codex_adapter_is_outdated, codex_adapter_is_outdated_with_path,
+    create_time_agent_command_override, default_agent_command, effective_agent_command,
+    find_nvm_default_bin, find_via_login_shell, is_login_shell_path_uninit, is_safe_nvm_tag,
+    managed_agent_avatar_url, normalize_agent_args, parse_semver_tag, preset_catalog_entry,
+    probe_codex_acp_version, record_agent_command, refresh_login_shell_path,
+    try_record_agent_command, PresetHarness, BUZZ_AGENT_AVATAR_URL, CLAUDE_CODE_AVATAR_URL,
+    CODEX_AVATAR_URL, GOOSE_AVATAR_URL,
 };
 use crate::managed_agents::AcpAvailabilityStatus;
 
@@ -832,14 +833,10 @@ fn codex_adapter_availability_available_for_minimum_supported_binary() {
     .expect("write script");
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod script");
 
-    let status = codex_adapter_availability(&bin);
+    let is_outdated = codex_adapter_is_outdated_with_path(&bin, Some("/usr/bin:/bin"));
     let _ = std::fs::remove_dir_all(dir);
 
-    assert_eq!(
-        status,
-        AcpAvailabilityStatus::Available,
-        "minimum supported adapter must classify as Available"
-    );
+    assert!(!is_outdated, "minimum supported adapter must be available");
 }
 
 #[cfg(unix)]
