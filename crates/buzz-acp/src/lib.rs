@@ -4217,6 +4217,17 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
                     });
                 }
             }
+            // Preserve the canonical auth authority when the harness dials a
+            // restricted edge alias. Child MCP tools can use the same trusted
+            // community identity instead of treating the alias as a tenant.
+            if let Ok(canonical_relay_url) = std::env::var("BUZZ_CANONICAL_RELAY_URL") {
+                if !canonical_relay_url.trim().is_empty() {
+                    env.push(EnvVar {
+                        name: "BUZZ_CANONICAL_RELAY_URL".into(),
+                        value: canonical_relay_url,
+                    });
+                }
+            }
             // Forward the agent's display name so dev-mcp can use it as the git
             // author name instead of the raw npub. Read from the process env
             // rather than Config: this is a pass-through of a contract owned
@@ -5086,6 +5097,24 @@ mod build_mcp_servers_tests {
         let server = &servers[0];
         let has_auth_tag = server.env.iter().any(|e| e.name == "BUZZ_AUTH_TAG");
         assert!(!has_auth_tag, "empty BUZZ_AUTH_TAG should not be forwarded");
+    }
+
+    #[test]
+    fn session_new_mcp_server_forwards_canonical_relay_url() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("BUZZ_CANONICAL_RELAY_URL", "wss://chat.kiingo.com");
+        let config = test_config();
+        let servers = build_mcp_servers(&config);
+        std::env::remove_var("BUZZ_CANONICAL_RELAY_URL");
+
+        let canonical_env = servers[0]
+            .env
+            .iter()
+            .find(|entry| entry.name == "BUZZ_CANONICAL_RELAY_URL");
+        assert_eq!(
+            canonical_env.map(|entry| entry.value.as_str()),
+            Some("wss://chat.kiingo.com")
+        );
     }
 
     #[test]

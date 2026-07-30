@@ -3426,6 +3426,13 @@ fn extract_h_tag_uuid(event: &nostr::Event) -> Option<Uuid> {
     })
 }
 
+fn resolve_nip42_relay_url<'a>(dial_url: &'a str, canonical_url: Option<&'a str>) -> &'a str {
+    canonical_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(dial_url)
+}
+
 /// Build and send a NIP-42 AUTH response event.
 ///
 /// If `auth_tag` is provided (NIP-OA owner attestation), it is included in the
@@ -3437,13 +3444,18 @@ async fn send_auth_response(
     keys: &Keys,
     auth_tag: Option<&nostr::Tag>,
 ) -> Result<(), RelayError> {
-    let relay_nostr_url = RelayUrl::parse(relay_url)
+    // A restricted preview may dial an edge alias while ingress binds that
+    // request to the canonical community host. NIP-42 must be signed for the
+    // canonical host the relay verifies, not necessarily the network dial URL.
+    let canonical_url = std::env::var("BUZZ_CANONICAL_RELAY_URL").ok();
+    let nip42_relay_url = resolve_nip42_relay_url(relay_url, canonical_url.as_deref());
+    let relay_nostr_url = RelayUrl::parse(nip42_relay_url)
         .map_err(|e| RelayError::Http(format!("invalid relay URL: {e}")))?;
 
     let auth_event = if let Some(tag) = auth_tag {
         // Cannot use EventBuilder::auth() shortcut — it doesn't accept extra tags.
         let tags = vec![
-            nostr::Tag::parse(["relay", relay_url])
+            nostr::Tag::parse(["relay", nip42_relay_url])
                 .map_err(|e| RelayError::Http(format!("tag parse error: {e}")))?,
             nostr::Tag::parse(["challenge", challenge])
                 .map_err(|e| RelayError::Http(format!("tag parse error: {e}")))?,
@@ -3994,6 +4006,29 @@ async fn wait_for_any_ok(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nip42_uses_canonical_relay_url_when_edge_alias_is_configured() {
+        assert_eq!(
+            resolve_nip42_relay_url(
+                "wss://buzz-preview.kiingo.com",
+                Some(" wss://chat.kiingo.com ")
+            ),
+            "wss://chat.kiingo.com"
+        );
+    }
+
+    #[test]
+    fn nip42_falls_back_to_dial_url_without_canonical_override() {
+        assert_eq!(
+            resolve_nip42_relay_url("wss://relay.example.com", None),
+            "wss://relay.example.com"
+        );
+        assert_eq!(
+            resolve_nip42_relay_url("wss://relay.example.com", Some("  ")),
+            "wss://relay.example.com"
+        );
+    }
 
     #[test]
     fn relay_ws_to_http_plain() {

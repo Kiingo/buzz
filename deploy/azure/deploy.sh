@@ -25,6 +25,44 @@ wait_for_job() {
   return 1
 }
 
+wait_for_origin_ingress() {
+  local timeout_seconds="$1"
+  local deadline=$((SECONDS + timeout_seconds))
+  local pods
+  local pod
+  local ready
+
+  while ((SECONDS < deadline)); do
+    pods="$(kubectl -n ingress-nginx get pods \
+      -l app.kubernetes.io/component=controller \
+      -o name 2>/dev/null || true)"
+    ready=true
+    if [[ -z "${pods}" ]]; then
+      ready=false
+    else
+      while IFS= read -r pod; do
+        if ! kubectl -n ingress-nginx exec "${pod}" -- /bin/sh -c \
+          "grep -Fq 'buzz-origin.kiingo.com' /etc/nginx/nginx.conf && nginx -t >/dev/null 2>&1"; then
+          ready=false
+          break
+        fi
+      done <<<"${pods}"
+    fi
+    if [[ "${ready}" == 'true' ]]; then
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo 'ingress-nginx did not accept the Buzz origin configuration.' >&2
+  kubectl -n ingress-nginx logs \
+    -l app.kubernetes.io/component=controller \
+    --all-containers=true \
+    --since="${timeout_seconds}s" \
+    --prefix=true || true
+  return 1
+}
+
 replace_literal() {
   local path="$1"
   local token="$2"
@@ -89,9 +127,10 @@ done
 
 helm upgrade --install buzz ./chart --namespace buzz --values prod-values.yaml --atomic --wait --timeout 15m
 kubectl apply -f health-ingress.yaml
+wait_for_origin_ingress 120
 kubectl -n buzz delete job buzz-agent-membership --ignore-not-found
 kubectl apply -f agent.yaml
-kubectl -n buzz wait --for=condition=complete job/buzz-agent-membership --timeout=5m
+wait_for_job buzz-agent-membership 300
 kubectl -n buzz rollout status deployment/buzz-kiingo-agent --timeout=10m
 kubectl -n buzz wait --for=condition=Ready certificate/buzz-origin --timeout=10m
 kubectl -n buzz get deployment,statefulset,pod,job,ingress,certificate

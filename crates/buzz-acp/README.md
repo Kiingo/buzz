@@ -100,7 +100,7 @@ treats both Claude ACP command names as the same zero-arg runtime.
 
 ## Configuration
 
-All configuration is via environment variables (or CLI flags — every env var has a matching flag).
+Core configuration is available through environment variables and matching CLI flags. Advanced deployment-only variables are noted explicitly below.
 
 ### Core
 
@@ -108,6 +108,7 @@ All configuration is via environment variables (or CLI flags — every env var h
 |----------|----------|---------|-------------|
 | `BUZZ_PRIVATE_KEY` | **yes** | — | Agent's Nostr private key (`nsec1...`). Used for relay auth and agent identity. |
 | `BUZZ_RELAY_URL` | no | `ws://localhost:3000` | Relay WebSocket URL. |
+| `BUZZ_CANONICAL_RELAY_URL` | no | `BUZZ_RELAY_URL` | Deployment-only NIP-42 signing authority when `BUZZ_RELAY_URL` is an edge alias for the same canonical community. |
 | `BUZZ_ACP_AGENT_COMMAND` | no | `goose` | Agent binary to spawn. |
 | `BUZZ_ACP_AGENT_ARGS` | no | `acp` | Agent arguments (comma-separated). |
 | `BUZZ_ACP_KIINGO_PUBLICATION_ENABLED` | no | `false` | Enables the fenced, locally signed Kiingo publication extension. Use only with `kiingo-compute-acp`. |
