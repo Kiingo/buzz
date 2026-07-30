@@ -370,18 +370,24 @@ impl RestClient {
         path: &str,
         body_bytes: &[u8],
     ) -> Result<reqwest::Response, RelayError> {
-        let url = format!("{}{}", self.base_url, path);
+        let request_url = format!("{}{}", self.base_url, path);
+        let canonical_relay_url = std::env::var("BUZZ_CANONICAL_RELAY_URL").ok();
+        let auth_base_url =
+            resolve_nip98_http_base_url(&self.base_url, canonical_relay_url.as_deref());
+        let auth_url = format!("{auth_base_url}{path}");
         let body_owned = body_bytes.to_vec();
         let auth_tag_header = self.auth_tag_json.clone();
         self.request_with_retry("POST", path, || {
             // NIP-98 is re-signed each attempt (fresh created_at).
-            // sign_nip98 is infallible in practice (key is always valid).
+            // A restricted preview can dial an edge alias while the relay's
+            // tenant boundary remains the canonical community host. Sign for
+            // that canonical host, but send over the configured dial URL.
             let auth = self
-                .nip98_header("POST", &url, Some(&body_owned))
+                .nip98_header("POST", &auth_url, Some(&body_owned))
                 .unwrap_or_default();
             let mut req = self
                 .http
-                .post(&url)
+                .post(&request_url)
                 .header("Authorization", auth)
                 .header("Content-Type", "application/json");
             if let Some(ref tag) = auth_tag_header {
@@ -3486,6 +3492,14 @@ pub(crate) fn relay_ws_to_http(url: &str) -> String {
         .to_string()
 }
 
+fn resolve_nip98_http_base_url(dial_base_url: &str, canonical_relay_url: Option<&str>) -> String {
+    canonical_relay_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(relay_ws_to_http)
+        .unwrap_or_else(|| dial_base_url.trim_end_matches('/').to_string())
+}
+
 /// Build the subscription ID for a channel: `ch-<uuid>`.
 pub(crate) fn channel_sub_id(channel_id: Uuid) -> String {
     format!("ch-{channel_id}")
@@ -4027,6 +4041,29 @@ mod tests {
         assert_eq!(
             resolve_nip42_relay_url("wss://relay.example.com", Some("  ")),
             "wss://relay.example.com"
+        );
+    }
+
+    #[test]
+    fn nip98_uses_canonical_http_url_when_edge_alias_is_configured() {
+        assert_eq!(
+            resolve_nip98_http_base_url(
+                "https://buzz-preview.kiingo.com",
+                Some(" wss://chat.kiingo.com/ ")
+            ),
+            "https://chat.kiingo.com"
+        );
+    }
+
+    #[test]
+    fn nip98_falls_back_to_http_dial_url_without_canonical_override() {
+        assert_eq!(
+            resolve_nip98_http_base_url("https://buzz-preview.kiingo.com/", None),
+            "https://buzz-preview.kiingo.com"
+        );
+        assert_eq!(
+            resolve_nip98_http_base_url("http://localhost:3000", Some("  ")),
+            "http://localhost:3000"
         );
     }
 
