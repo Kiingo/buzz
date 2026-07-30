@@ -1,6 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+wait_for_job() {
+  local job_name="$1"
+  local timeout_seconds="$2"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while ((SECONDS < deadline)); do
+    if [[ "$(kubectl -n buzz get job "${job_name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)" == '1' ]]; then
+      return 0
+    fi
+    if [[ "$(kubectl -n buzz get job "${job_name}" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)" == 'True' ]]; then
+      echo "Job ${job_name} failed." >&2
+      kubectl -n buzz logs -l "job-name=${job_name}" --all-containers=true --prefix=true || true
+      kubectl -n buzz describe job "${job_name}" || true
+      return 1
+    fi
+    sleep 5
+  done
+
+  echo "Job ${job_name} did not complete within ${timeout_seconds} seconds." >&2
+  kubectl -n buzz logs -l "job-name=${job_name}" --all-containers=true --prefix=true || true
+  kubectl -n buzz describe job "${job_name}" || true
+  return 1
+}
+
+replace_literal() {
+  local path="$1"
+  local token="$2"
+  local value="$3"
+  local content
+
+  content="$(<"${path}")"
+  if [[ "${content}" != *"${token}"* ]]; then
+    echo "Expected deployment token ${token} is absent from ${path}." >&2
+    return 1
+  fi
+  content="${content//"${token}"/"${value}"}"
+  printf '%s\n' "${content}" >"${path}"
+}
+
 for file in namespace.yaml secret-provider-class.yaml ingress-values.yaml cert-manager-values.yaml certificates.yaml database-jobs.yaml agent.yaml; do
   if grep -q '__[A-Z0-9_][A-Z0-9_]*__' "$file"; then
     echo "unrendered deployment token in $file" >&2
@@ -18,8 +57,9 @@ kubectl apply -f certificates.yaml
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx --version 4.15.1 --namespace ingress-nginx --create-namespace --values ingress-values.yaml --atomic --wait --timeout 10m
 kubectl -n buzz delete job buzz-database-bootstrap buzz-database-migrate --ignore-not-found
 kubectl apply -f database-jobs.yaml
-kubectl -n buzz wait --for=condition=complete job/buzz-database-bootstrap --timeout=10m
-kubectl -n buzz wait --for=condition=complete job/buzz-database-migrate --timeout=10m
+wait_for_job buzz-database-bootstrap 600
+kubectl -n buzz patch job buzz-database-migrate --type=merge --patch '{"spec":{"suspend":false}}'
+wait_for_job buzz-database-migrate 600
 
 relay_owner_pubkey="$(kubectl -n buzz get secret buzz-runtime -o jsonpath='{.data.RELAY_OWNER_PUBKEY}' | base64 -d)"
 origin_verification_secret="$(kubectl -n buzz get secret buzz-runtime -o jsonpath='{.data.BUZZ_FRONT_DOOR_ORIGIN_SECRET}' | base64 -d)"
@@ -31,24 +71,9 @@ if [[ ! "${origin_verification_secret}" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
   echo 'Key Vault origin verification secret does not satisfy the header-safe contract.' >&2
   exit 1
 fi
-RELAY_OWNER_PUBKEY="${relay_owner_pubkey}" \
-ORIGIN_VERIFICATION_SECRET="${origin_verification_secret}" \
-python3 - <<'PY'
-import os
-from pathlib import Path
-
-replacements = {
-    "__RELAY_OWNER_PUBKEY__": os.environ["RELAY_OWNER_PUBKEY"],
-    "__ORIGIN_VERIFICATION_SECRET__": os.environ["ORIGIN_VERIFICATION_SECRET"],
-}
-for name in ("prod-values.yaml", "health-ingress.yaml"):
-    path = Path(name)
-    text = path.read_text(encoding="utf-8")
-    for token, value in replacements.items():
-        text = text.replace(token, value)
-    path.write_text(text, encoding="utf-8")
-PY
-unset relay_owner_pubkey origin_verification_secret RELAY_OWNER_PUBKEY ORIGIN_VERIFICATION_SECRET
+replace_literal prod-values.yaml '__RELAY_OWNER_PUBKEY__' "${relay_owner_pubkey}"
+replace_literal health-ingress.yaml '__ORIGIN_VERIFICATION_SECRET__' "${origin_verification_secret}"
+unset relay_owner_pubkey origin_verification_secret
 for file in prod-values.yaml health-ingress.yaml; do
   if grep -q '__[A-Z0-9_][A-Z0-9_]*__' "$file"; then
     echo "unrendered deployment token in $file" >&2

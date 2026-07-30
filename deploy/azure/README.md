@@ -27,11 +27,18 @@ Deployment order is intentional:
 1. create the namespace, workload-identity service account, and Key Vault CSI
    projection;
 2. install digest-pinned cert-manager and ingress-nginx charts;
-3. create or rotate the least-privilege Buzz database role and run migrations;
+3. create or rotate the least-privilege Buzz database role, then unsuspend and
+   run migrations only after that bootstrap job succeeds;
 4. install the relay and disposable Redis with the local chart;
 5. register the local-signing agent identity, bootstrap its organization-owned
    Kiingo communication endpoint, and start one 12-worker listener;
 6. verify Kubernetes readiness before Front Door cutover.
+
+Database jobs retain failed pods long enough for `deploy.sh` to print their
+non-secret logs and job conditions, and deterministic failures stop the rollout
+immediately. The deployment script uses only Bash plus the `kubectl`/`helm`
+utilities guaranteed by the minimal Azure Run Command environment; it does not
+depend on Python, `gzip`, or other optional tools.
 
 Before the first relay deployment, build
 `Dockerfile.storage-conformance`, pin the resulting digest in
