@@ -8,9 +8,8 @@ use crate::{
     app_state::AppState,
     models::IdentityInfo,
     nostr_bind,
-    relay::{
-        self, nip42_auth_relay_url, relay_api_base_url_with_override, relay_ws_url_with_override,
-    },
+    relay::{self, relay_api_base_url_with_override, relay_ws_url_with_override},
+    relay_auth::nip42_auth_relay_url,
 };
 
 /// Encode `pubkey` as npub bech32 and truncate it for display: first 10 chars
