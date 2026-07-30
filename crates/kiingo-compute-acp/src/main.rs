@@ -113,6 +113,7 @@ fn read_local_buzz_runtime(params: &Value) -> Option<LocalBuzzRuntime> {
             continue;
         };
         let mut relay_url = None;
+        let mut canonical_relay_url = None;
         let mut private_key = None;
         let mut auth_tag = None;
         for entry in env_values {
@@ -121,6 +122,9 @@ fn read_local_buzz_runtime(params: &Value) -> Option<LocalBuzzRuntime> {
             match name {
                 "BUZZ_RELAY_URL" if !value.trim().is_empty() => {
                     relay_url = Some(value.trim().to_string())
+                }
+                "BUZZ_CANONICAL_RELAY_URL" if !value.trim().is_empty() => {
+                    canonical_relay_url = Some(value.trim().to_string())
                 }
                 "BUZZ_PRIVATE_KEY" if !value.trim().is_empty() => {
                     private_key = Some(value.trim().to_string())
@@ -142,6 +146,7 @@ fn read_local_buzz_runtime(params: &Value) -> Option<LocalBuzzRuntime> {
         return Some(LocalBuzzRuntime {
             command: buzz_command,
             relay_url,
+            canonical_relay_url,
             private_key,
             auth_tag,
         });
@@ -175,6 +180,7 @@ enum TurnAdmission {
 struct LocalBuzzRuntime {
     command: PathBuf,
     relay_url: String,
+    canonical_relay_url: Option<String>,
     private_key: String,
     auth_tag: Option<String>,
 }
@@ -888,6 +894,30 @@ fn truncate_action_output(bytes: &[u8], runtime: &LocalBuzzRuntime) -> String {
     output
 }
 
+fn build_local_buzz_command(runtime: &LocalBuzzRuntime, argv: &[&str]) -> Command {
+    let mut command = Command::new(&runtime.command);
+    command
+        .args(argv)
+        .env_clear()
+        .env("BUZZ_RELAY_URL", &runtime.relay_url)
+        .env("BUZZ_PRIVATE_KEY", &runtime.private_key)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(canonical_relay_url) = &runtime.canonical_relay_url {
+        command.env("BUZZ_CANONICAL_RELAY_URL", canonical_relay_url);
+    } else {
+        command.env_remove("BUZZ_CANONICAL_RELAY_URL");
+    }
+    if let Some(auth_tag) = &runtime.auth_tag {
+        command.env("BUZZ_AUTH_TAG", auth_tag);
+    } else {
+        command.env_remove("BUZZ_AUTH_TAG");
+    }
+    command
+}
+
 async fn execute_local_buzz_action(
     runtime: Option<&LocalBuzzRuntime>,
     arguments: &Value,
@@ -917,21 +947,7 @@ async fn execute_local_buzz_action(
         };
         argv.push(argument);
     }
-    let mut command = Command::new(&runtime.command);
-    command
-        .args(argv)
-        .env_clear()
-        .env("BUZZ_RELAY_URL", &runtime.relay_url)
-        .env("BUZZ_PRIVATE_KEY", &runtime.private_key)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(auth_tag) = &runtime.auth_tag {
-        command.env("BUZZ_AUTH_TAG", auth_tag);
-    } else {
-        command.env_remove("BUZZ_AUTH_TAG");
-    }
+    let mut command = build_local_buzz_command(runtime, &argv);
     match tokio::time::timeout(
         Duration::from_secs(LOCAL_ACTION_TIMEOUT_SECS),
         command.output(),
@@ -1549,7 +1565,8 @@ mod tests {
                 "command": "/usr/local/bin/buzz-dev-mcp",
                 "args": [],
                 "env": [
-                    {"name": "BUZZ_RELAY_URL", "value": "wss://chat.kiingo.com"},
+                    {"name": "BUZZ_RELAY_URL", "value": "wss://buzz-preview.kiingo.com"},
+                    {"name": "BUZZ_CANONICAL_RELAY_URL", "value": "wss://chat.kiingo.com"},
                     {"name": "BUZZ_PRIVATE_KEY", "value": "nsec_test_secret"},
                     {"name": "UNRELATED_SECRET", "value": "must-not-be-forwarded"}
                 ]
@@ -1557,9 +1574,54 @@ mod tests {
         }))
         .expect("local runtime");
         assert_eq!(runtime.command, PathBuf::from("/usr/local/bin/buzz"));
-        assert_eq!(runtime.relay_url, "wss://chat.kiingo.com");
+        assert_eq!(runtime.relay_url, "wss://buzz-preview.kiingo.com");
+        assert_eq!(
+            runtime.canonical_relay_url.as_deref(),
+            Some("wss://chat.kiingo.com")
+        );
         assert_eq!(runtime.private_key, "nsec_test_secret");
         assert!(runtime.auth_tag.is_none());
+    }
+
+    #[test]
+    fn forwards_preview_dial_and_canonical_auth_urls_to_local_buzz_actions() {
+        let runtime = LocalBuzzRuntime {
+            command: PathBuf::from("/usr/local/bin/buzz"),
+            relay_url: "wss://buzz-preview.kiingo.com".to_string(),
+            canonical_relay_url: Some("wss://chat.kiingo.com".to_string()),
+            private_key: "nsec_test_secret".to_string(),
+            auth_tag: Some("auth-tag-secret".to_string()),
+        };
+        let command = build_local_buzz_command(&runtime, &["channels", "list"]);
+        let env: std::collections::HashMap<String, Option<String>> = command
+            .as_std()
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            env.get("BUZZ_RELAY_URL").and_then(Option::as_deref),
+            Some("wss://buzz-preview.kiingo.com")
+        );
+        assert_eq!(
+            env.get("BUZZ_CANONICAL_RELAY_URL")
+                .and_then(Option::as_deref),
+            Some("wss://chat.kiingo.com")
+        );
+        assert_eq!(
+            env.get("BUZZ_PRIVATE_KEY").and_then(Option::as_deref),
+            Some("nsec_test_secret")
+        );
+        assert_eq!(
+            env.get("BUZZ_AUTH_TAG").and_then(Option::as_deref),
+            Some("auth-tag-secret")
+        );
+        assert!(!env.contains_key("UNRELATED_SECRET"));
     }
 
     #[test]
@@ -1587,6 +1649,7 @@ mod tests {
         let runtime = LocalBuzzRuntime {
             command: PathBuf::from("/usr/local/bin/buzz"),
             relay_url: "wss://chat.kiingo.com".to_string(),
+            canonical_relay_url: None,
             private_key: "nsec_test_secret".to_string(),
             auth_tag: Some("auth-tag-secret".to_string()),
         };
