@@ -6,6 +6,7 @@ use base64::Engine as _;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=BUZZ_RELAY_URL");
+    println!("cargo:rerun-if-env-changed=BUZZ_CANONICAL_RELAY_URL");
     println!("cargo:rerun-if-env-changed=BUZZ_RELAY_HTTP");
     println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_PUBLIC_KEY");
     println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_ENDPOINT");
@@ -21,6 +22,10 @@ fn main() {
 
     if let Ok(relay_url) = std::env::var("BUZZ_RELAY_URL") {
         println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_RELAY_URL={relay_url}");
+    }
+
+    if let Ok(relay_url) = std::env::var("BUZZ_CANONICAL_RELAY_URL") {
+        println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_CANONICAL_RELAY_URL={relay_url}");
     }
 
     if let Ok(relay_http) = std::env::var("BUZZ_RELAY_HTTP") {
