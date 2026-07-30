@@ -27,6 +27,12 @@ workload identity. It executes the reviewed adapter contract against the
 private `buzz-conformance` container without a storage key. The Job is
 disposable and is not part of steady-state production.
 
+After conformance, render and run `storage-recovery-job.yaml` through the same
+private-cluster command path. It uses the same workload identity to create two
+versions, restore the first version, delete the current logical blob, and
+reconstruct it from the retained version. The Azure CLI image must be pinned to
+the reviewed platform digest; no storage account key or SAS is used.
+
 `__BUZZ_USER_PUBKEY_ALLOWLIST__` is mandatory and must render to a non-empty,
 comma-separated list of approved 64-character Nostr public keys. The same list
 is used for relay membership and the ACP author gate. Production permits only
