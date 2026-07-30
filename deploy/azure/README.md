@@ -29,7 +29,8 @@ Deployment order is intentional:
 2. install digest-pinned cert-manager and ingress-nginx charts;
 3. create or rotate the least-privilege Buzz database role and run migrations;
 4. install the relay and disposable Redis with the local chart;
-5. register the local-signing agent identity and start one 12-worker listener;
+5. register the local-signing agent identity, bootstrap its organization-owned
+   Kiingo communication endpoint, and start one 12-worker listener;
 6. verify Kubernetes readiness before Front Door cutover.
 
 Before the first relay deployment, build
@@ -50,6 +51,19 @@ comma-separated list of approved 64-character Nostr public keys. The same list
 is used for relay membership and the ACP author gate. Production permits only
 `owner-only` or `allowlist` response modes; `anyone` cannot be selected through
 runtime configuration.
+
+The agent listener must not start until the Kiingo API has idempotently
+registered the exact `(community_id, agent_public_key)` endpoint. `agent.yaml`
+calls the internal-token-only endpoint bootstrap route before `buzz-acp`; the
+request is pinned to the rendered production organization and owner IDs and to
+the canonical `wss://chat.kiingo.com` relay URL. The bridge token is supplied to
+curl over standard input rather than an argument, the response file is private
+and removed on success or failure, and only an explicit
+`{"registered":true}` response permits listener startup. The API verifies that
+the owner is an active member of the active organization, refuses conflicting
+agent or endpoint ownership, and repairs only same-scope endpoint state. A
+restart therefore returns the same endpoint, agent, and ownership boundary; it
+does not create another agent or store a provider credential.
 
 The ingress load balancer accepts only the Azure Front Door backend service
 tag. NGINX additionally validates the exact Front Door resource ID and a
