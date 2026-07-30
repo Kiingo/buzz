@@ -24,6 +24,7 @@ mod prevent_sleep;
 mod ptt_shortcut;
 mod relay;
 mod relay_admission;
+mod relay_auth;
 mod reset;
 mod secret_store;
 mod shutdown;
