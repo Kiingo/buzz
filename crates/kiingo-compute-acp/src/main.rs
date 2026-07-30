@@ -192,6 +192,12 @@ enum TerminalState {
     Cancelled,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TurnOutcome {
+    stop_reason: &'static str,
+    terminal_reason: String,
+}
+
 #[derive(Debug, Clone)]
 struct ActivePrompt {
     cancellation: CancellationToken,
@@ -397,11 +403,14 @@ struct PromptContext {
 async fn run_prompt(context: PromptContext) {
     let outcome = tokio::time::timeout(context.config.turn_timeout, execute_turn(&context)).await;
     match outcome {
-        Ok(Ok(stop_reason)) => {
+        Ok(Ok(outcome)) => {
             send_result(
                 &context.writer,
                 context.request_id,
-                json!({"stopReason": stop_reason}),
+                json!({
+                    "stopReason": outcome.stop_reason,
+                    "_meta": {"kiingo": {"terminal_reason": outcome.terminal_reason}}
+                }),
             )
             .await;
         }
@@ -417,24 +426,37 @@ async fn run_prompt(context: PromptContext) {
         Err(_) => {
             if let Some(receipt_id) = context.receipt_id.lock().await.clone() {
                 let _ = cancel_turn(&context, &receipt_id).await;
+                let _ = publish_status(
+                    &context,
+                    &receipt_id,
+                    "cancelled",
+                    "timeout",
+                    "This Codex turn reached its time limit and was stopped.",
+                )
+                .await;
             }
-            send_error(
+            send_result(
                 &context.writer,
                 context.request_id,
-                -32001,
-                "Kiingo turn timed out",
+                json!({
+                    "stopReason": "cancelled",
+                    "_meta": {"kiingo": {"terminal_reason": "turn_timeout"}}
+                }),
             )
             .await;
         }
     }
 }
 
-async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
+async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
     let accepted = match accept_turn(context).await? {
         TurnAdmission::Execution(accepted) => accepted,
         TurnAdmission::ControlCompleted(message) => {
             emit_message_chunk(&context.writer, &context.session_id, &message).await;
-            return Ok("end_turn");
+            return Ok(TurnOutcome {
+                stop_reason: "end_turn",
+                terminal_reason: "control_completed".to_string(),
+            });
         }
     };
     *context.receipt_id.lock().await = Some(accepted.receipt_id.clone());
@@ -458,6 +480,7 @@ async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
     let mut final_text: Option<String> = None;
     let mut output_observed = false;
     let mut terminal: Option<TerminalState> = None;
+    let mut terminal_reason: Option<String> = None;
     loop {
         tokio::select! {
             _ = context.cancellation.cancelled() => {
@@ -469,7 +492,10 @@ async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
                     "cancelled",
                     "Stopped this Codex turn.",
                 ).await?;
-                return Ok("cancelled");
+                return Ok(TurnOutcome {
+                    stop_reason: "cancelled",
+                    terminal_reason: "user_cancelled_turn".to_string(),
+                });
             }
             _ = tokio::time::sleep(context.config.poll_interval) => {}
         }
@@ -507,7 +533,12 @@ async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
                         .await?;
                         last_status = Some(status.to_string());
                     }
-                    terminal = terminal.or_else(|| terminal_state(event, status));
+                    if terminal.is_none() {
+                        if let Some(state) = terminal_state(event, status) {
+                            terminal_reason = Some(event_terminal_reason(event, state));
+                            terminal = Some(state);
+                        }
+                    }
                 }
                 if event.get("eventType").and_then(Value::as_str)
                     == Some("executor.dispatch.blocked")
@@ -522,7 +553,11 @@ async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
                         )
                         .await?;
                     }
-                    terminal = Some(TerminalState::Blocked);
+                    if terminal.is_none() {
+                        terminal_reason =
+                            Some(event_terminal_reason(event, TerminalState::Blocked));
+                        terminal = Some(TerminalState::Blocked);
+                    }
                 }
             }
         }
@@ -533,9 +568,18 @@ async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
                         .as_deref()
                         .unwrap_or("Codex completed the turn without returning a text response.");
                     publish_status(context, &accepted.receipt_id, "final", "final", text).await?;
-                    return Ok("end_turn");
+                    return Ok(TurnOutcome {
+                        stop_reason: "end_turn",
+                        terminal_reason: terminal_reason.unwrap_or_else(|| "completed".to_string()),
+                    });
                 }
-                TerminalState::Cancelled => return Ok("cancelled"),
+                TerminalState::Cancelled => {
+                    return Ok(TurnOutcome {
+                        stop_reason: "cancelled",
+                        terminal_reason: terminal_reason
+                            .unwrap_or_else(|| "user_cancelled_turn".to_string()),
+                    })
+                }
                 TerminalState::Blocked | TerminalState::Failed => {
                     let text = latest_terminal_text(&replay).unwrap_or_else(|| {
                         if state == TerminalState::Blocked {
@@ -556,7 +600,16 @@ async fn execute_turn(context: &PromptContext) -> Result<&'static str, String> {
                         &text,
                     )
                     .await?;
-                    return Ok("end_turn");
+                    return Ok(TurnOutcome {
+                        stop_reason: "end_turn",
+                        terminal_reason: terminal_reason.unwrap_or_else(|| {
+                            if state == TerminalState::Blocked {
+                                "capacity_blocked".to_string()
+                            } else {
+                                "provider_failed".to_string()
+                            }
+                        }),
+                    });
                 }
             }
         }
@@ -1297,6 +1350,21 @@ fn terminal_state(event: &Value, status: &str) -> Option<TerminalState> {
     }
 }
 
+fn event_terminal_reason(event: &Value, state: TerminalState) -> String {
+    event
+        .pointer("/payload/metadata/reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| match state {
+            TerminalState::Completed => "completed".to_string(),
+            TerminalState::Failed => "provider_failed".to_string(),
+            TerminalState::Blocked => "capacity_blocked".to_string(),
+            TerminalState::Cancelled => "user_cancelled_turn".to_string(),
+        })
+}
+
 fn is_visible_progress(status: &str) -> bool {
     matches!(
         status,
@@ -1528,5 +1596,25 @@ mod tests {
         assert!(!output.contains("auth-tag-secret"));
         assert!(output.contains("[REDACTED_BUZZ_PRIVATE_KEY]"));
         assert!(output.contains("[REDACTED_BUZZ_AUTH_TAG]"));
+    }
+
+    #[test]
+    fn preserves_provider_and_worker_terminal_reasons_from_public_events() {
+        let event = json!({
+            "eventType": "executor.dispatch.failed",
+            "kind": "activity",
+            "payload": {
+                "status": "failed",
+                "metadata": {"reason": "pool_parent_forced_drain"}
+            }
+        });
+        assert_eq!(
+            event_terminal_reason(&event, TerminalState::Failed),
+            "pool_parent_forced_drain"
+        );
+        assert_eq!(
+            event_terminal_reason(&json!({}), TerminalState::Blocked),
+            "capacity_blocked"
+        );
     }
 }
