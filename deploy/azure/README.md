@@ -20,6 +20,13 @@ Deployment order is intentional:
 5. register the local-signing agent identity and start one 12-worker listener;
 6. verify Kubernetes readiness before Front Door cutover.
 
+Before the first relay deployment, build
+`Dockerfile.storage-conformance`, pin the resulting digest in
+`storage-conformance-job.yaml`, and run that Job with the same `buzz-relay`
+workload identity. It executes the reviewed adapter contract against the
+private `buzz-conformance` container without a storage key. The Job is
+disposable and is not part of steady-state production.
+
 `__BUZZ_USER_PUBKEY_ALLOWLIST__` is mandatory and must render to a non-empty,
 comma-separated list of approved 64-character Nostr public keys. The same list
 is used for relay membership and the ACP author gate. Production permits only
