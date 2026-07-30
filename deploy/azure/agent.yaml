@@ -158,6 +158,11 @@ spec:
               value: "12"
             - name: BUZZ_ACP_RESPOND_TO
               value: allowlist
+            - name: BUZZ_ACP_AGENT_OWNER
+              valueFrom:
+                secretKeyRef:
+                  name: buzz-runtime
+                  key: RELAY_OWNER_PUBKEY
             - name: BUZZ_ACP_RESPOND_TO_ALLOWLIST
               value: __BUZZ_USER_PUBKEY_ALLOWLIST__
             - name: BUZZ_ACP_ALLOWED_RESPOND_TO
