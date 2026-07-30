@@ -9,6 +9,10 @@ The checked-in YAML contains placeholder tokens. The deployment workflow
 renders them into a temporary directory, archives the rendered chart and
 manifests, and sends that archive to the private AKS cluster with Azure Run
 Command. Rendered files are never committed or uploaded as artifacts.
+The relay owner key and Front Door verification secret are deliberately left
+unrendered by GitHub: the database bootstrap's CSI mount synchronizes them from
+the private Key Vault, then `deploy.sh` validates and renders them only inside
+the private command environment.
 
 Deployment order is intentional:
 
