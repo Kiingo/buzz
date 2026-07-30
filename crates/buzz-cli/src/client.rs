@@ -521,6 +521,12 @@ fn advance_query_cursor(
 pub struct BuzzClient {
     http: reqwest::Client,
     relay_url: String, // base URL, no trailing slash, e.g. "https://relay.buzz.place"
+    /// Relay base URL embedded in NIP-98, NIP-42, and Blossom auth events.
+    ///
+    /// This normally equals `relay_url`. A restricted edge alias can instead be
+    /// used for network traffic while auth remains bound to the canonical
+    /// community host.
+    auth_relay_url: String,
     keys: Keys,
     /// Optional NIP-OA auth tag injected into every signed event.
     auth_tag: Option<Tag>,
@@ -544,6 +550,18 @@ impl BuzzClient {
         auth_tag: Option<Tag>,
         auth_tag_json: Option<String>,
     ) -> Result<Self, CliError> {
+        Self::new_with_auth_relay_url(relay_url.clone(), relay_url, keys, auth_tag, auth_tag_json)
+    }
+
+    /// Create a client that dials `relay_url` but signs relay authentication
+    /// for `auth_relay_url`.
+    pub fn new_with_auth_relay_url(
+        relay_url: String,
+        auth_relay_url: String,
+        keys: Keys,
+        auth_tag: Option<Tag>,
+        auth_tag_json: Option<String>,
+    ) -> Result<Self, CliError> {
         let http = reqwest::Client::builder()
             .timeout(env_duration_secs("BUZZ_TIMEOUT_SECS", 30))
             .connect_timeout(env_duration_secs("BUZZ_CONNECT_TIMEOUT_SECS", 15))
@@ -552,6 +570,7 @@ impl BuzzClient {
         Ok(Self {
             http,
             relay_url,
+            auth_relay_url,
             keys,
             auth_tag,
             auth_tag_json,
@@ -567,6 +586,15 @@ impl BuzzClient {
     #[allow(dead_code)]
     pub fn relay_url(&self) -> &str {
         &self.relay_url
+    }
+
+    /// Map a relay request URL from the network dial base to the canonical
+    /// authentication base. Request path and query are preserved exactly.
+    fn auth_url(&self, request_url: &str) -> String {
+        request_url
+            .strip_prefix(&self.relay_url)
+            .map(|suffix| format!("{}{suffix}", self.auth_relay_url))
+            .unwrap_or_else(|| request_url.to_string())
     }
 
     /// Return the owner pubkey carried by the NIP-OA auth tag, if any.
@@ -780,7 +808,8 @@ impl BuzzClient {
             let body = body.clone();
             let url = url.clone();
             async move {
-                let auth = sign_nip98(&self.keys, "POST", &url, Some(&body))?;
+                let auth_url = self.auth_url(&url);
+                let auth = sign_nip98(&self.keys, "POST", &auth_url, Some(&body))?;
                 let resp = self
                     .with_auth_tag(
                         self.http
@@ -810,7 +839,8 @@ impl BuzzClient {
             let body = body.clone();
             let url = url.clone();
             async move {
-                let auth = sign_nip98(&self.keys, "POST", &url, Some(&body))?;
+                let auth_url = self.auth_url(&url);
+                let auth = sign_nip98(&self.keys, "POST", &auth_url, Some(&body))?;
                 let resp = self
                     .with_auth_tag(
                         self.http
@@ -838,7 +868,8 @@ impl BuzzClient {
         self.with_retry_body(|| {
             let url = url.clone();
             async move {
-                let auth = sign_nip98(&self.keys, "GET", &url, None)?;
+                let auth_url = self.auth_url(&url);
+                let auth = sign_nip98(&self.keys, "GET", &auth_url, None)?;
                 let resp = self
                     .with_auth_tag(self.http.get(&url).header("Authorization", auth))
                     .send()
@@ -882,7 +913,8 @@ impl BuzzClient {
 
             // Re-sign NIP-98 each attempt: the nonce tag generates a fresh
             // event ID, keeping retries safe against the relay's replay guard.
-            let auth = sign_nip98(&self.keys, "POST", &url, Some(&body))?;
+            let auth_url = self.auth_url(&url);
+            let auth = sign_nip98(&self.keys, "POST", &auth_url, Some(&body))?;
             let send_result: Result<reqwest::Response, CliError> = self
                 .with_auth_tag(
                     self.http
@@ -1034,7 +1066,8 @@ impl BuzzClient {
                 async move {
                     // Re-sign NIP-98 each attempt: the nonce tag generates a fresh
                     // event ID, keeping retries safe against the relay's replay guard.
-                    let auth = sign_nip98(&self.keys, "POST", &url, Some(&body))?;
+                    let auth_url = self.auth_url(&url);
+                    let auth = sign_nip98(&self.keys, "POST", &auth_url, Some(&body))?;
                     let resp = self
                         .with_auth_tag(
                             self.http
@@ -1072,14 +1105,21 @@ impl BuzzClient {
     /// EVENT send, OK wait, and graceful close.
     pub async fn publish_ephemeral_event(&self, event: nostr::Event) -> Result<String, CliError> {
         let ws_url = to_ws_url(&self.relay_url);
+        let auth_ws_url = to_ws_url(&self.auth_relay_url);
         // Hard cap — inner wait ceilings sum to 70 s; connect time and network RTT are
         // additional overhead absorbed by this budget.
         // See buzz_ws_client::{AUTH_CHALLENGE_TIMEOUT_SECS, AUTH_OK_TIMEOUT_SECS,
         // PUBLISH_OK_TIMEOUT_SECS} for the inner ceilings.
-        let ok =
-            buzz_ws_client::publish_event(&ws_url, event, &self.keys, self.auth_tag.as_ref(), 75)
-                .await
-                .map_err(|e| CliError::Other(e.to_string()))?;
+        let ok = buzz_ws_client::publish_event_with_auth_url(
+            &ws_url,
+            &auth_ws_url,
+            event,
+            &self.keys,
+            self.auth_tag.as_ref(),
+            75,
+        )
+        .await
+        .map_err(|e| CliError::Other(e.to_string()))?;
 
         if !ok.accepted {
             return Err(CliError::Relay {
@@ -1155,7 +1195,7 @@ impl BuzzClient {
                 let sha256 = sha256.clone();
                 async move {
                     let auth_header =
-                        sign_blossom_upload(&self.keys, &sha256, &mime, &self.relay_url)?;
+                        sign_blossom_upload(&self.keys, &sha256, &mime, &self.auth_relay_url)?;
                     let resp = self
                         .with_auth_tag(
                             self.http
@@ -1201,7 +1241,8 @@ impl BuzzClient {
             let mime = mime.clone();
             let sha256 = sha256.clone();
             async move {
-                let auth_header = sign_blossom_upload(&self.keys, &sha256, &mime, &self.relay_url)?;
+                let auth_header =
+                    sign_blossom_upload(&self.keys, &sha256, &mime, &self.auth_relay_url)?;
                 let resp = self
                     .with_auth_tag(
                         self.http
@@ -1239,7 +1280,8 @@ impl BuzzClient {
             let url = url.clone();
             let client = client.clone();
             async move {
-                let auth_header = sign_blossom_get(&self.keys, &url)?;
+                let auth_url = self.auth_url(&url);
+                let auth_header = sign_blossom_get(&self.keys, &auth_url)?;
                 let resp = self
                     .with_auth_tag(client.get(&url).header("Authorization", auth_header))
                     .send()
@@ -2297,9 +2339,75 @@ mod retry_policy_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_query_cursor, create_response_with_id, extract_relay_response_field, BuzzClient,
+        advance_query_cursor, create_response_with_id, extract_relay_response_field, sign_nip98,
+        BuzzClient,
     };
-    use nostr::{EventBuilder, Keys, Kind, Tag};
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine;
+    use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind, Tag};
+
+    #[test]
+    fn canonical_auth_url_preserves_request_path_and_query() {
+        let client = BuzzClient::new_with_auth_relay_url(
+            "https://buzz-preview.kiingo.com".into(),
+            "https://chat.kiingo.com".into(),
+            Keys::generate(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            client.auth_url("https://buzz-preview.kiingo.com/query?limit=20"),
+            "https://chat.kiingo.com/query?limit=20"
+        );
+        assert_eq!(
+            client.auth_url("https://buzz-preview.kiingo.com/media/abc"),
+            "https://chat.kiingo.com/media/abc"
+        );
+    }
+
+    #[test]
+    fn default_auth_url_matches_network_dial_url() {
+        let client =
+            BuzzClient::new("https://relay.example".into(), Keys::generate(), None, None).unwrap();
+
+        assert_eq!(
+            client.auth_url("https://relay.example/query"),
+            "https://relay.example/query"
+        );
+    }
+
+    #[test]
+    fn nip98_auth_event_uses_canonical_url_not_preview_dial_url() {
+        let client = BuzzClient::new_with_auth_relay_url(
+            "https://buzz-preview.kiingo.com".into(),
+            "https://chat.kiingo.com".into(),
+            Keys::generate(),
+            None,
+            None,
+        )
+        .unwrap();
+        let request_url = "https://buzz-preview.kiingo.com/query";
+        let auth_url = client.auth_url(request_url);
+        let header = sign_nip98(client.keys(), "POST", &auth_url, Some(b"[]")).unwrap();
+        let encoded = header.strip_prefix("Nostr ").unwrap();
+        let json = B64.decode(encoded).unwrap();
+        let event = Event::from_json(std::str::from_utf8(&json).unwrap()).unwrap();
+        let tags: Vec<Vec<String>> = event
+            .tags
+            .iter()
+            .map(|tag| tag.as_slice().to_vec())
+            .collect();
+
+        assert!(tags
+            .iter()
+            .any(|tag| tag.as_slice() == ["u", "https://chat.kiingo.com/query"]));
+        assert!(!tags
+            .iter()
+            .any(|tag| { tag.as_slice() == ["u", "https://buzz-preview.kiingo.com/query"] }));
+        assert_eq!(request_url, format!("{}/query", client.relay_url()));
+    }
 
     #[test]
     fn query_cursor_uses_last_events_composite_sort_key() {
