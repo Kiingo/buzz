@@ -7,6 +7,7 @@ import {
   useGitBashPrerequisiteQuery,
 } from "@/features/agents/hooks";
 import type { AcpRuntimeCatalogEntry } from "@/shared/api/types";
+import { getCodexEnrollmentUrl } from "@/shared/api/codexEnrollment";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { SectionHeader } from "@/shared/ui/PageHeader";
@@ -14,6 +15,36 @@ import { SectionHeader } from "@/shared/ui/PageHeader";
 import { HarnessCatalogDialog } from "./HarnessCatalogDialog";
 import { HarnessRow } from "./HarnessRow";
 import { stableRowOrder, yourHarnessEntries } from "./harnessCatalogLogic";
+
+function CodexSubscriptionCard({ enrollmentUrl }: { enrollmentUrl: string }) {
+  return (
+    <div
+      className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-4"
+      data-testid="kiingo-codex-subscription-card"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">ChatGPT-powered Codex</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Connect your own eligible ChatGPT account through Kiingo. Buzz never
+            uses another employee&apos;s subscription or an administrator API
+            key.
+          </p>
+        </div>
+        <Button
+          className="shrink-0 gap-2"
+          data-testid="kiingo-codex-enrollment"
+          onClick={() => void openUrl(enrollmentUrl)}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          <ExternalLink className="h-4 w-4" /> Connect ChatGPT
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function GitBashCard({
   prerequisite,
@@ -90,6 +121,23 @@ export function HarnessesSettingsPanel() {
   // Incremented each time the user clicks "Check again" so HarnessRow
   // useEffect clears stale install results from before the refresh.
   const [resetEpoch, setResetEpoch] = React.useState(0);
+  const [codexEnrollmentUrl, setCodexEnrollmentUrl] = React.useState<
+    string | null
+  >(null);
+
+  React.useEffect(() => {
+    let active = true;
+    void getCodexEnrollmentUrl()
+      .then((url) => {
+        if (active) setCodexEnrollmentUrl(url);
+      })
+      .catch(() => {
+        if (active) setCodexEnrollmentUrl(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const entries = React.useMemo(
     () => yourHarnessEntries(runtimesQuery.data ?? []),
@@ -136,6 +184,9 @@ export function HarnessesSettingsPanel() {
       />
 
       <div className="space-y-8">
+        {codexEnrollmentUrl ? (
+          <CodexSubscriptionCard enrollmentUrl={codexEnrollmentUrl} />
+        ) : null}
         {gitBashQuery.data ? (
           <section>
             <div className="mb-3 text-sm">

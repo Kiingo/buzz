@@ -75,10 +75,30 @@ surface at template time regardless of which manifest helm renders first.
   {{- fail "Postgres source missing: enable postgresql.enabled=true, set externalPostgresql.url, or provide secrets.existingSecret with key DATABASE_URL." -}}
 {{- end -}}
 
-{{/* S3 / object-storage source must exist somewhere (relay hard-fails its
-     startup conformance probe without a reachable bucket). */}}
-{{- if not (or .Values.minio.enabled .Values.s3.endpoint .Values.secrets.existingSecret) -}}
-  {{- fail "S3/object-storage source missing: enable minio.enabled=true (quickstart in-cluster), set s3.endpoint + s3.bucket + credentials, or provide secrets.existingSecret with keys BUZZ_S3_ACCESS_KEY + BUZZ_S3_SECRET_KEY. The relay runs a startup S3 conformance probe and exits if storage is unreachable." -}}
+{{/* Object-storage source must exist somewhere (relay hard-fails its startup
+     conformance probe without a reachable backend). */}}
+{{- if eq .Values.objectStorage.backend "azure" -}}
+  {{- if .Values.minio.enabled -}}
+    {{- fail "objectStorage.backend=azure is incompatible with minio.enabled=true" -}}
+  {{- end -}}
+  {{- if not .Values.objectStorage.azure.account -}}
+    {{- fail "objectStorage.azure.account is required when objectStorage.backend=azure" -}}
+  {{- end -}}
+  {{- if not .Values.objectStorage.azure.workloadIdentityClientId -}}
+    {{- fail "objectStorage.azure.workloadIdentityClientId is required when objectStorage.backend=azure" -}}
+  {{- end -}}
+  {{- if not .Values.objectStorage.azure.mediaContainer -}}
+    {{- fail "objectStorage.azure.mediaContainer is required when objectStorage.backend=azure" -}}
+  {{- end -}}
+  {{- if not .Values.objectStorage.azure.gitContainer -}}
+    {{- fail "objectStorage.azure.gitContainer is required when objectStorage.backend=azure" -}}
+  {{- end -}}
+{{- else if eq .Values.objectStorage.backend "s3" -}}
+  {{- if not (or .Values.minio.enabled .Values.s3.endpoint .Values.secrets.existingSecret) -}}
+    {{- fail "S3/object-storage source missing: enable minio.enabled=true (quickstart in-cluster), set s3.endpoint + s3.bucket + credentials, or provide secrets.existingSecret with keys BUZZ_S3_ACCESS_KEY + BUZZ_S3_SECRET_KEY." -}}
+  {{- end -}}
+{{- else -}}
+  {{- fail "objectStorage.backend must be one of: s3, azure" -}}
 {{- end -}}
 
 {{- end -}}

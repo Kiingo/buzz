@@ -224,6 +224,33 @@ pub fn build_message(
     broadcast: bool,
     media_tags: &[Vec<String>],
 ) -> Result<EventBuilder, SdkError> {
+    build_message_with_extra_tags(
+        channel_id,
+        content,
+        thread_ref,
+        mentions,
+        broadcast,
+        media_tags,
+        &[],
+    )
+}
+
+/// Build a stream message (kind 9) with additional caller-owned tags.
+///
+/// This is intended for durable integration identifiers that must survive a
+/// process restart (for example an idempotency fence). The normal Buzz tags
+/// are still constructed and validated here; every extra tag is parsed by the
+/// Nostr library before it is attached. Callers should use a namespaced value
+/// and must not use this to replace the canonical `h`, `e`, or `p` tags.
+pub fn build_message_with_extra_tags(
+    channel_id: Uuid,
+    content: &str,
+    thread_ref: Option<&ThreadRef>,
+    mentions: &[&str],
+    broadcast: bool,
+    media_tags: &[Vec<String>],
+    extra_tags: &[Vec<String>],
+) -> Result<EventBuilder, SdkError> {
     check_content(content, 64 * 1024)?;
     let mut tags = vec![tag(&["h", &channel_id.to_string()])?];
     if let Some(tr) = thread_ref {
@@ -234,6 +261,10 @@ pub fn build_message(
         tags.push(tag(&["broadcast", "1"])?);
     }
     imeta_tags(media_tags, &mut tags)?;
+    for extra_tag in extra_tags {
+        let parts: Vec<&str> = extra_tag.iter().map(String::as_str).collect();
+        tags.push(Tag::parse(parts).map_err(|e| SdkError::InvalidTag(e.to_string()))?);
+    }
     Ok(EventBuilder::new(Kind::Custom(9), content).tags(tags))
 }
 
@@ -1892,6 +1923,19 @@ mod tests {
         let ev = sign(build_message(cid, "hello", None, &[], false, &[]).unwrap());
         assert_eq!(ev.kind.as_u16(), 9);
         assert_eq!(ev.content, "hello");
+        assert!(has_tag(&ev, "h", &cid.to_string()));
+    }
+
+    #[test]
+    fn message_with_extra_tags_preserves_durable_fence() {
+        let cid = uuid();
+        let extra = vec![vec![
+            "d".to_string(),
+            "kiingo-publication:fence-123".to_string(),
+        ]];
+        let ev =
+            sign(build_message_with_extra_tags(cid, "hi", None, &[], false, &[], &extra).unwrap());
+        assert!(has_tag(&ev, "d", "kiingo-publication:fence-123"));
         assert!(has_tag(&ev, "h", &cid.to_string()));
     }
 

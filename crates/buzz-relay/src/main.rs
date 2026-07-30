@@ -102,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
     // spans under the correct service identity.
     let resource = telemetry::service_resource();
     let tracer_init = telemetry::try_init_tracer(resource.clone());
+    let otel_enabled = matches!(&tracer_init, telemetry::TracerInit::Enabled(_));
     let otel_layer = match &tracer_init {
         telemetry::TracerInit::Enabled(p) => {
             use opentelemetry::trace::TracerProvider as _;
@@ -109,12 +110,18 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => None,
     };
+    let trace_context_lookup = telemetry::TraceContextLookup::default();
+    let trace_context_lookup_layer = otel_enabled.then(|| {
+        trace_context_lookup
+            .clone()
+            .with_filter(tracing_subscriber::filter::LevelFilter::OFF)
+    });
 
     tracing_subscriber::registry()
         .with(
             fmt::layer()
                 .json()
-                .flatten_event(true)
+                .event_format(trace_context_lookup.json_formatter(otel_enabled))
                 .with_filter(log_env_filter(std::env::var("RUST_LOG").ok().as_deref())),
         )
         .with(otel_layer.map(|layer| {
@@ -122,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
                 std::env::var("BUZZ_OTEL_FILTER").ok().as_deref(),
             ))
         }))
+        .with(trace_context_lookup_layer)
         .init();
 
     // Log any exporter-build failure now that the subscriber is installed.
@@ -429,11 +437,20 @@ async fn main() -> anyhow::Result<()> {
         .media
         .validate()
         .map_err(|e| anyhow::anyhow!("invalid media config: {e}"))?;
-    let media_storage = buzz_media::MediaStorage::new(&config.media)
+    let media_storage = buzz_media::MediaStorage::from_runtime_env(&config.media)
         .map_err(|e| anyhow::anyhow!("failed to initialize media storage: {e}"))?;
     info!("Media storage connected");
+    let git_store = buzz_relay::api::git::store::GitStore::from_runtime_env(
+        &config.media.s3_endpoint,
+        &config.media.s3_access_key,
+        &config.media.s3_secret_key,
+        &config.media.s3_bucket,
+        &config.media.s3_region,
+    )
+    .map_err(|e| anyhow::anyhow!("failed to initialize git object storage: {e}"))?;
+    info!("Git object storage connected");
 
-    let (app_state, audit_shutdown) = AppState::new(
+    let (app_state, audit_shutdown) = AppState::new_with_git_store(
         config.clone(),
         db,
         redis_health_pool,
@@ -444,6 +461,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&workflow_engine),
         relay_keypair,
         media_storage,
+        git_store,
     );
     let state = Arc::new(app_state);
 
@@ -475,7 +493,7 @@ async fn main() -> anyhow::Result<()> {
         info!(runtime_id = %runtime_id, "Inter-relay mesh started");
     }
 
-    // Git-on-object-storage: admit the configured S3/MinIO backend against the
+    // Git-on-object-storage: admit the configured backend against the
     // linearizable conditional-write axiom (A3) before serving git traffic.
     // Failure is fatal: a backend that cannot satisfy pointer CAS invalidates
     // the manifest-pointer protocol. This is a deployment gate, not a proof.

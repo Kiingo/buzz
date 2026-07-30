@@ -1358,6 +1358,9 @@ pub async fn run_prompt_task(
         turn_id.clone(),
         turn_started_at.clone(),
     ));
+    agent.acp.set_kiingo_publication_publisher(
+        crate::kiingo_publication::LocalPublicationPublisher::from_env(ctx.rest_client.clone()),
+    );
     let triggering_event_ids: Vec<String> = batch
         .as_ref()
         .map(|b| b.events.iter().map(|be| be.event.id.to_hex()).collect())
@@ -1803,6 +1806,7 @@ pub async fn run_prompt_task(
     // follows as a second block.
     let mut slash_command: Option<String> = None;
     let prompt_sections: Vec<String> = if let Some(text) = prompt_text {
+        agent.acp.set_buzz_prompt_metadata(None);
         // Heartbeats create their session before this point, so a Goose method-not-found
         // probe has already selected the correct framing for this process.
         let text = prepend_base_for_legacy(
@@ -1819,6 +1823,34 @@ pub async fn run_prompt_task(
         // Build prompt from batch with context enrichment.
         // Try startup cache first; lazy-fetch via REST for dynamic channels.
         let channel_info = ctx.channel_info.resolve(b.channel_id).await;
+
+        if let Some(trigger) = b.events.last() {
+            let thread = crate::queue::parse_thread_tags(&trigger.event);
+            let tags: Vec<&[String]> = trigger
+                .event
+                .tags
+                .iter()
+                .map(|tag| tag.as_slice())
+                .collect();
+            agent.acp.set_buzz_prompt_metadata(Some(serde_json::json!({
+                "contractVersion": 1,
+                "eventId": trigger.event.id.to_hex(),
+                "channelId": b.channel_id.to_string(),
+                "channelName": channel_info.as_ref().map(|info| info.name.as_str()),
+                "kind": trigger.event.kind.as_u16() as u32,
+                "authorPublicKey": trigger.event.pubkey.to_hex(),
+                "authoredAt": chrono::DateTime::from_timestamp(
+                    trigger.event.created_at.as_secs() as i64,
+                    0,
+                ).map(|time| time.to_rfc3339()),
+                "text": trigger.event.content,
+                "tags": tags,
+                "threadRootEventId": thread.root_event_id,
+                "replyToEventId": trigger.event.id.to_hex(),
+            })));
+        } else {
+            agent.acp.set_buzz_prompt_metadata(None);
+        }
 
         let conversation_context = if ctx.context_message_limit > 0 {
             fetch_conversation_context(b, &channel_info, &ctx).await

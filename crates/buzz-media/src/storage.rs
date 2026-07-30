@@ -1,8 +1,10 @@
-//! S3/MinIO storage client.
+//! Backend-neutral media object storage for S3/MinIO and Azure Blob.
 
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::Arc;
 
+use buzz_azure_storage::AzureBlobStore;
 use buzz_core::tenant::{CommunityId, TenantContext};
 
 use crate::config::MediaConfig;
@@ -12,12 +14,19 @@ use s3::creds::Credentials;
 use s3::{Bucket, Region};
 use serde::{Deserialize, Serialize};
 
-/// A stream of byte chunks from S3, usable with `axum::body::Body::from_stream()`.
+/// A stream of object bytes usable with `axum::body::Body::from_stream()`.
 pub type ByteStream = Pin<Box<dyn futures_core::Stream<Item = Result<Bytes, MediaError>> + Send>>;
 
-/// S3-compatible object storage client.
+#[derive(Clone)]
+enum MediaBackend {
+    S3(Arc<Bucket>),
+    Azure(AzureBlobStore),
+}
+
+/// Object storage client selected explicitly from the runtime configuration.
+#[derive(Clone)]
 pub struct MediaStorage {
-    bucket: Box<Bucket>,
+    backend: MediaBackend,
 }
 
 impl MediaStorage {
@@ -63,7 +72,39 @@ impl MediaStorage {
         let bucket = Bucket::new(&config.s3_bucket, region, creds)
             .map_err(|e| MediaError::StorageError(e.to_string()))?
             .with_path_style();
-        Ok(Self { bucket })
+        Ok(Self {
+            backend: MediaBackend::S3(Arc::from(bucket)),
+        })
+    }
+
+    /// Create the configured production backend.
+    ///
+    /// `BUZZ_OBJECT_STORAGE_BACKEND` defaults to `s3`. Azure requires
+    /// `BUZZ_AZURE_STORAGE_ACCOUNT` and `BUZZ_AZURE_MEDIA_CONTAINER`; the
+    /// Azure SDK then authenticates through workload identity.
+    pub fn from_runtime_env(config: &MediaConfig) -> Result<Self, MediaError> {
+        match std::env::var("BUZZ_OBJECT_STORAGE_BACKEND")
+            .unwrap_or_else(|_| "s3".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "s3" => Self::new(config),
+            "azure" => {
+                let account = required_env("BUZZ_AZURE_STORAGE_ACCOUNT")?;
+                let container = required_env("BUZZ_AZURE_MEDIA_CONTAINER")?;
+                Self::new_azure(&account, &container)
+            }
+            backend => Err(MediaError::StorageError(format!(
+                "unsupported BUZZ_OBJECT_STORAGE_BACKEND '{backend}'; expected s3 or azure"
+            ))),
+        }
+    }
+
+    /// Create an Azure media backend using the Azure credential environment.
+    pub fn new_azure(account: &str, container: &str) -> Result<Self, MediaError> {
+        Ok(Self {
+            backend: MediaBackend::Azure(AzureBlobStore::from_env(account, container)?),
+        })
     }
 
     /// Store an object from a byte slice.
@@ -71,9 +112,18 @@ impl MediaStorage {
     /// Used for images, sidecars, and thumbnails. For large video files use
     /// [`put_file`] to avoid loading the entire blob into RAM.
     pub async fn put(&self, key: &str, bytes: &[u8], content_type: &str) -> Result<(), MediaError> {
-        self.bucket
-            .put_object_with_content_type(key, bytes, content_type)
-            .await?;
+        match &self.backend {
+            MediaBackend::S3(bucket) => {
+                bucket
+                    .put_object_with_content_type(key, bytes, content_type)
+                    .await?;
+            }
+            MediaBackend::Azure(store) => {
+                store
+                    .put(key, Bytes::copy_from_slice(bytes), content_type)
+                    .await?;
+            }
+        }
         Ok(())
     }
 
@@ -90,23 +140,32 @@ impl MediaStorage {
     ) -> Result<(), MediaError> {
         const BUF: usize = 8 * 1024 * 1024; // 8 MiB read buffer
 
-        let file = tokio::fs::File::open(path)
-            .await
-            .map_err(|e| MediaError::Io(e.to_string()))?;
-        let mut reader = tokio::io::BufReader::with_capacity(BUF, file);
-
-        self.bucket
-            .put_object_stream_with_content_type(&mut reader, key, content_type)
-            .await?;
+        match &self.backend {
+            MediaBackend::S3(bucket) => {
+                let file = tokio::fs::File::open(path)
+                    .await
+                    .map_err(|e| MediaError::Io(e.to_string()))?;
+                let mut reader = tokio::io::BufReader::with_capacity(BUF, file);
+                bucket
+                    .put_object_stream_with_content_type(&mut reader, key, content_type)
+                    .await?;
+            }
+            MediaBackend::Azure(store) => {
+                store.put_file(key, path, content_type).await?;
+            }
+        }
         Ok(())
     }
 
     /// Retrieve an object's bytes.
     pub async fn get(&self, key: &str) -> Result<Vec<u8>, MediaError> {
-        match self.bucket.get_object(key).await {
-            Ok(response) => Ok(response.to_vec()),
-            Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Err(MediaError::NotFound),
-            Err(e) => Err(MediaError::StorageError(e.to_string())),
+        match &self.backend {
+            MediaBackend::S3(bucket) => match bucket.get_object(key).await {
+                Ok(response) => Ok(response.to_vec()),
+                Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Err(MediaError::NotFound),
+                Err(e) => Err(MediaError::StorageError(e.to_string())),
+            },
+            MediaBackend::Azure(store) => Ok(store.get(key).await?.bytes.to_vec()),
         }
     }
 
@@ -116,10 +175,20 @@ impl MediaStorage {
     /// is transferred from S3 — the full object is never loaded into RAM.
     /// Intended for HTTP 206 range responses on large video blobs.
     pub async fn get_range(&self, key: &str, start: u64, end: u64) -> Result<Vec<u8>, MediaError> {
-        match self.bucket.get_object_range(key, start, Some(end)).await {
-            Ok(response) => Ok(response.to_vec()),
-            Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Err(MediaError::NotFound),
-            Err(e) => Err(MediaError::StorageError(e.to_string())),
+        match &self.backend {
+            MediaBackend::S3(bucket) => {
+                match bucket.get_object_range(key, start, Some(end)).await {
+                    Ok(response) => Ok(response.to_vec()),
+                    Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Err(MediaError::NotFound),
+                    Err(e) => Err(MediaError::StorageError(e.to_string())),
+                }
+            }
+            MediaBackend::Azure(store) => {
+                let end_exclusive = end.checked_add(1).ok_or_else(|| {
+                    MediaError::StorageError("invalid inclusive range end".to_string())
+                })?;
+                Ok(store.get_range(key, start..end_exclusive).await?.to_vec())
+            }
         }
     }
 
@@ -129,48 +198,68 @@ impl MediaStorage {
     /// The full object is never buffered — intended for streaming large
     /// blobs (video) directly into HTTP responses via `Body::from_stream()`.
     pub async fn get_stream(&self, key: &str) -> Result<ByteStream, MediaError> {
-        let response = self
-            .bucket
-            .get_object_stream(key)
-            .await
-            .map_err(|e| MediaError::StorageError(e.to_string()))?;
-
-        if response.status_code == 404 {
-            return Err(MediaError::NotFound);
+        match &self.backend {
+            MediaBackend::S3(bucket) => {
+                let response = bucket
+                    .get_object_stream(key)
+                    .await
+                    .map_err(|e| MediaError::StorageError(e.to_string()))?;
+                if response.status_code == 404 {
+                    return Err(MediaError::NotFound);
+                }
+                let stream = futures_util::StreamExt::map(response.bytes, |chunk| {
+                    chunk.map_err(|e| MediaError::StorageError(e.to_string()))
+                });
+                Ok(Box::pin(stream))
+            }
+            MediaBackend::Azure(store) => {
+                let stream = store.get_stream(key).await?;
+                Ok(Box::pin(futures_util::StreamExt::map(stream, |chunk| {
+                    chunk.map_err(MediaError::from)
+                })))
+            }
         }
-
-        let stream = futures_util::StreamExt::map(response.bytes, |chunk| {
-            chunk.map_err(|e| MediaError::StorageError(e.to_string()))
-        });
-        Ok(Box::pin(stream))
     }
 
     /// Check if an object exists. Returns false on 404.
     pub async fn head(&self, key: &str) -> Result<bool, MediaError> {
-        match self.bucket.head_object(key).await {
-            Ok(_) => Ok(true),
-            Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Ok(false),
-            Err(e) => Err(MediaError::StorageError(e.to_string())),
+        match &self.backend {
+            MediaBackend::S3(bucket) => match bucket.head_object(key).await {
+                Ok(_) => Ok(true),
+                Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Ok(false),
+                Err(e) => Err(MediaError::StorageError(e.to_string())),
+            },
+            MediaBackend::Azure(store) => Ok(store.head(key).await?.is_some()),
         }
     }
 
     /// Delete an object. Returns an error on failure — callers decide whether to propagate.
     pub async fn delete(&self, key: &str) -> Result<(), MediaError> {
-        self.bucket
-            .delete_object(key)
-            .await
-            .map_err(|e| MediaError::StorageError(e.to_string()))?;
+        match &self.backend {
+            MediaBackend::S3(bucket) => {
+                bucket
+                    .delete_object(key)
+                    .await
+                    .map_err(|e| MediaError::StorageError(e.to_string()))?;
+            }
+            MediaBackend::Azure(store) => store.delete_if_exists(key).await?,
+        }
         Ok(())
     }
 
     /// HEAD with metadata — returns Content-Length (size).
     pub async fn head_with_metadata(&self, key: &str) -> Result<Option<BlobHeadMeta>, MediaError> {
-        match self.bucket.head_object(key).await {
-            Ok((result, _)) => Ok(Some(BlobHeadMeta {
-                size: result.content_length.unwrap_or(0) as u64,
+        match &self.backend {
+            MediaBackend::S3(bucket) => match bucket.head_object(key).await {
+                Ok((result, _)) => Ok(Some(BlobHeadMeta {
+                    size: result.content_length.unwrap_or(0) as u64,
+                })),
+                Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Ok(None),
+                Err(e) => Err(MediaError::StorageError(e.to_string())),
+            },
+            MediaBackend::Azure(store) => Ok(store.head(key).await?.map(|metadata| BlobHeadMeta {
+                size: metadata.size,
             })),
-            Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Ok(None),
-            Err(e) => Err(MediaError::StorageError(e.to_string())),
         }
     }
 
@@ -196,8 +285,8 @@ impl MediaStorage {
         sha256: &str,
     ) -> Result<BlobMeta, MediaError> {
         let key = Self::ctx_sidecar_key(ctx, sha256);
-        let resp = self.bucket.get_object(&key).await?;
-        let meta: BlobMeta = serde_json::from_slice(&resp.to_vec())?;
+        let bytes = self.get(&key).await?;
+        let meta: BlobMeta = serde_json::from_slice(&bytes)?;
         Ok(meta)
     }
 
@@ -244,26 +333,53 @@ impl MediaStorage {
         continuation_token: Option<String>,
         max_keys: usize,
     ) -> Result<crate::bucket_index::Page, MediaError> {
-        let (result, _status) = self
-            .bucket
-            .list_page(
-                String::new(),
-                None,
-                continuation_token,
-                None,
-                Some(max_keys),
-            )
-            .await?;
-        Ok(crate::bucket_index::Page {
-            objects: result
-                .contents
-                .into_iter()
-                .map(|obj| (obj.key, obj.size))
-                .collect(),
-            next_continuation_token: result.next_continuation_token,
-            is_truncated: result.is_truncated,
-        })
+        match &self.backend {
+            MediaBackend::S3(bucket) => {
+                let (result, _status) = bucket
+                    .list_page(
+                        String::new(),
+                        None,
+                        continuation_token,
+                        None,
+                        Some(max_keys),
+                    )
+                    .await?;
+                Ok(crate::bucket_index::Page {
+                    objects: result
+                        .contents
+                        .into_iter()
+                        .map(|obj| (obj.key, obj.size))
+                        .collect(),
+                    next_continuation_token: result.next_continuation_token,
+                    is_truncated: result.is_truncated,
+                })
+            }
+            MediaBackend::Azure(store) => {
+                let page = store.list_page(None, continuation_token, max_keys).await?;
+                let is_truncated = page.continuation_token.is_some();
+                Ok(crate::bucket_index::Page {
+                    objects: page
+                        .objects
+                        .into_iter()
+                        .map(|object| (object.key, object.size))
+                        .collect(),
+                    next_continuation_token: page.continuation_token,
+                    is_truncated,
+                })
+            }
+        }
     }
+}
+
+fn required_env(name: &str) -> Result<String, MediaError> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            MediaError::StorageError(format!(
+                "{name} is required when BUZZ_OBJECT_STORAGE_BACKEND=azure"
+            ))
+        })
 }
 
 #[cfg(test)]
@@ -303,9 +419,12 @@ mod tests {
     fn static_keys_build_client_with_configured_region() {
         let storage = MediaStorage::new(&storage_config("buzz_dev", "buzz_dev_secret"))
             .expect("static creds should build a client");
-        match storage.bucket.region {
-            Region::Custom { ref region, .. } => assert_eq!(region, "us-west-2"),
-            other => panic!("expected Custom region, got {other:?}"),
+        match &storage.backend {
+            MediaBackend::S3(bucket) => match &bucket.region {
+                Region::Custom { region, .. } => assert_eq!(region, "us-west-2"),
+                other => panic!("expected Custom region, got {other:?}"),
+            },
+            MediaBackend::Azure(_) => panic!("expected S3 backend"),
         }
     }
 
