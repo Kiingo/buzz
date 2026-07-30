@@ -2,6 +2,10 @@ controller:
   replicaCount: 2
   allowSnippetAnnotations: true
   config:
+    # This is a dedicated Buzz cluster: only the release pipeline can create
+    # Ingress objects. The origin-verification rules below use the upstream
+    # ModSecurity snippet annotation, which ingress-nginx classifies Critical.
+    annotations-risk-level: "Critical"
     enable-modsecurity: "true"
     use-forwarded-headers: "true"
     proxy-real-ip-cidr: "147.243.0.0/16"
