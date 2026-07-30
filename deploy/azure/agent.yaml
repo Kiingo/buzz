@@ -47,6 +47,8 @@ spec:
             - secretRef:
                 name: buzz-runtime
           env:
+            - name: RELAY_URL
+              value: wss://chat.kiingo.com
             - name: BUZZ_USER_PUBKEY_ALLOWLIST
               value: __BUZZ_USER_PUBKEY_ALLOWLIST__
           resources:

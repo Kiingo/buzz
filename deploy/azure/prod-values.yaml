@@ -73,14 +73,25 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Preview and production edge hostnames are aliases for one canonical Buzz
+    # community. Preserve row-zero tenant binding by normalizing the upstream
+    # Host before the relay reads it.
+    nginx.ingress.kubernetes.io/upstream-vhost: "chat.kiingo.com"
     nginx.ingress.kubernetes.io/enable-modsecurity: "true"
     nginx.ingress.kubernetes.io/modsecurity-snippet: |
       SecRuleEngine On
-      SecRule &REQUEST_HEADERS:X-Azure-FDID "@eq 0" "id:106,phase:1,deny,status:403,log,msg:'Front Door ID missing'"
-      SecRule REQUEST_HEADERS:X-Azure-FDID "!@streq __FRONT_DOOR_ID__" "id:107,phase:1,deny,status:403,log,msg:'Front Door ID invalid'"
-      SecRule REQUEST_HEADERS:X-Buzz-Origin-Verify "!@streq __ORIGIN_VERIFICATION_SECRET__" "id:108,phase:1,deny,status:403,log,msg:'Origin verification invalid'"
+      SecRule &REQUEST_HEADERS:X-Azure-FDID "@eq 0" "id:106,phase:1,deny,status:403,log"
+      SecRule REQUEST_HEADERS:X-Azure-FDID "!@streq __FRONT_DOOR_ID__" "id:107,phase:1,deny,status:403,log"
+      SecRule REQUEST_HEADERS:X-Buzz-Origin-Verify "!@streq __ORIGIN_VERIFICATION_SECRET__" "id:108,phase:1,deny,status:403,log"
   hosts:
     - host: chat.kiingo.com
+      paths:
+        - path: /
+          pathType: Prefix
+    # Front Door establishes TLS to the dedicated origin hostname. A matching
+    # ingress rule is required so nginx loads buzz-origin-tls instead of
+    # presenting its default self-signed certificate for that SNI name.
+    - host: buzz-origin.kiingo.com
       paths:
         - path: /
           pathType: Prefix
