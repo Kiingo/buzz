@@ -65,6 +65,14 @@ agent or endpoint ownership, and repairs only same-scope endpoint state. A
 restart therefore returns the same endpoint, agent, and ownership boundary; it
 does not create another agent or store a provider credential.
 
+The checked-in steady-state listener connects to the canonical
+`wss://chat.kiingo.com` endpoint. During the one-time route cutover, deploy the
+reviewed preview revision first and verify it through
+`wss://buzz-preview.kiingo.com`; after Front Door attaches `chat.kiingo.com` to
+`buzz-route`, deploy this canonical revision and prove the listener reconnects
+without creating another endpoint. The disposable preview hostname is not a
+steady-state listener dependency.
+
 The ingress load balancer accepts only the Azure Front Door backend service
 tag. NGINX additionally validates the exact Front Door resource ID and a
 deployment-specific origin header. The relay sees chat.kiingo.com as the Host
