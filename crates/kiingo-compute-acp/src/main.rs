@@ -528,7 +528,8 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
                         output_observed = true;
                     }
                 }
-                if let Some((status, label)) = activity_status(event) {
+                let projected_activity = activity_status(event);
+                if let Some((status, label)) = projected_activity {
                     if last_status.as_deref() != Some(status) && is_visible_progress(status) {
                         publish_status(
                             context,
@@ -540,11 +541,13 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
                         .await?;
                         last_status = Some(status.to_string());
                     }
-                    if terminal.is_none() {
-                        if let Some(state) = terminal_state(event, status) {
-                            terminal_reason = Some(event_terminal_reason(event, state));
-                            terminal = Some(state);
-                        }
+                }
+                if terminal.is_none() {
+                    if let Some(state) =
+                        terminal_state(event, projected_activity.map(|(status, _)| status))
+                    {
+                        terminal_reason = Some(event_terminal_reason(event, state));
+                        terminal = Some(state);
                     }
                 }
                 if event.get("eventType").and_then(Value::as_str)
@@ -1361,9 +1364,13 @@ fn activity_status(event: &Value) -> Option<(&str, &str)> {
     ))
 }
 
-fn terminal_state(event: &Value, status: &str) -> Option<TerminalState> {
+fn terminal_state(event: &Value, status: Option<&str>) -> Option<TerminalState> {
     match (event.get("eventType").and_then(Value::as_str), status) {
-        (Some("executor.dispatch.completed"), "completed") => Some(TerminalState::Completed),
+        (Some("agent_completion"), _) => Some(TerminalState::Completed),
+        (Some("agent_failure" | "platform_unavailable"), _) => Some(TerminalState::Failed),
+        (Some("agent_blocked"), _) => Some(TerminalState::Blocked),
+        (Some("platform_canceled"), _) => Some(TerminalState::Cancelled),
+        (Some("executor.dispatch.completed"), Some("completed")) => Some(TerminalState::Completed),
         (Some("executor.dispatch.failed" | "turn.execution.dead_lettered"), _) => {
             Some(TerminalState::Failed)
         }
@@ -1690,8 +1697,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn recognizes_canonical_and_legacy_terminal_events() {
+        assert_eq!(
+            terminal_state(
+                &json!({"eventType": "agent_completion", "kind": "message"}),
+                None
+            ),
+            Some(TerminalState::Completed)
+        );
+        assert_eq!(
+            terminal_state(
+                &json!({"eventType": "executor.dispatch.completed"}),
+                Some("completed")
+            ),
+            Some(TerminalState::Completed)
+        );
+        assert_eq!(
+            terminal_state(
+                &json!({"eventType": "executor.dispatch.completed"}),
+                Some("working")
+            ),
+            None
+        );
+    }
+
     #[tokio::test]
-    async fn terminal_replay_finishes_before_the_optional_action_poll() {
+    async fn canonical_terminal_replay_finishes_before_the_optional_action_poll() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -1730,24 +1762,15 @@ mod tests {
                         "200 OK",
                         "application/json",
                         json!({
-                            "next_sequence": 2,
+                            "next_sequence": 1,
                             "events": [
                                 {
                                     "sequence": 1,
+                                    "eventType": "agent_completion",
                                     "kind": "message",
                                     "payload": {
                                         "role": "assistant",
                                         "text": "terminal answer"
-                                    }
-                                },
-                                {
-                                    "sequence": 2,
-                                    "kind": "activity",
-                                    "eventType": "executor.dispatch.completed",
-                                    "payload": {
-                                        "status": "completed",
-                                        "label": "Completed",
-                                        "metadata": {"reason": "completed"}
                                     }
                                 }
                             ]
