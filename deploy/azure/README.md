@@ -78,6 +78,14 @@ agent or endpoint ownership, and repairs only same-scope endpoint state. A
 restart therefore returns the same endpoint, agent, and ownership boundary; it
 does not create another agent or store a provider credential.
 
+The listener and membership Job run as the tokenless `buzz-kiingo-agent`
+service account. They consume only the Kubernetes `buzz-runtime` keys projected
+and synchronized by the already-ready relay workload; they do not mount the
+Key Vault CSI provider, receive an Azure workload-identity token, or inherit the
+relay identity's Blob/Key Vault permissions. Image pulls remain the AKS kubelet
+identity's responsibility. This keeps Codex/tool execution outside the
+canonical-storage identity boundary.
+
 `__BUZZ_RUNTIME_RELAY_URL__` separates the listener's transport endpoint from
 the canonical relay URL registered with Kiingo. Render it as the private AKS
 service URL (`ws://buzz:3000`) so listener traffic does not depend on Front
