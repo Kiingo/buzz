@@ -238,7 +238,7 @@ fn validate_intent(intent: &KiingoPublicationIntent, rest: &RestClient) -> Resul
     }
     if !matches!(
         intent.publication_kind.as_str(),
-        "receipt" | "progress" | "capacity" | "final" | "error" | "cancelled"
+        "receipt" | "progress" | "capacity" | "final" | "error" | "cancelled" | "action"
     ) {
         return Err("publication kind is not allowed".to_string());
     }
@@ -299,5 +299,15 @@ mod tests {
         let mut invalid = intent(keys.public_key().to_hex());
         invalid.publication_kind = "arbitrary_write".to_string();
         assert!(validate_intent(&invalid, &rest(keys)).is_err());
+    }
+
+    #[test]
+    fn accepts_scoped_action_publications_claimed_by_the_bridge() {
+        let keys = Keys::generate();
+        let rest = rest(keys.clone());
+        let mut action = intent(keys.public_key().to_hex());
+        action.publication_kind = "action".to_string();
+
+        assert!(validate_intent(&action, &rest).is_ok());
     }
 }
