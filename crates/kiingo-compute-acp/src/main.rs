@@ -22,7 +22,10 @@ use uuid::Uuid;
 
 const JSON_RPC_VERSION: &str = "2.0";
 const POLL_LIMIT: u64 = 100;
-const DEFAULT_POLL_INTERVAL_MS: u64 = 150;
+// Each cycle performs both an event replay and, while non-terminal, an action
+// poll. Keep the default sub-second without creating enough sustained traffic
+// for a long-running provider turn to trip the shared API edge rate limit.
+const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
 const DEFAULT_TURN_TIMEOUT_SECS: u64 = 1_800;
 const MAX_PROMPT_BYTES: usize = 2 * 1024 * 1024;
 const LOCAL_ACTION_TIMEOUT_SECS: u64 = 75;
