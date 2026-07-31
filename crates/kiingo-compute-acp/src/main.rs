@@ -22,7 +22,10 @@ use uuid::Uuid;
 
 const JSON_RPC_VERSION: &str = "2.0";
 const POLL_LIMIT: u64 = 100;
-const DEFAULT_POLL_INTERVAL_MS: u64 = 150;
+// Each cycle performs both an event replay and, while non-terminal, an action
+// poll. Keep the default sub-second without creating enough sustained traffic
+// for a long-running provider turn to trip the shared API edge rate limit.
+const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
 const DEFAULT_TURN_TIMEOUT_SECS: u64 = 1_800;
 const MAX_PROMPT_BYTES: usize = 2 * 1024 * 1024;
 const LOCAL_ACTION_TIMEOUT_SECS: u64 = 75;
@@ -506,8 +509,6 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
             _ = tokio::time::sleep(context.config.poll_interval) => {}
         }
 
-        process_next_action(context, &accepted.receipt_id).await?;
-
         let replay = fetch_events(context, &accepted.receipt_id, after_sequence).await?;
         after_sequence = replay
             .get("next_sequence")
@@ -619,6 +620,12 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
                 }
             }
         }
+        // Terminal replay is authoritative and must be observed before polling
+        // the optional action queue. Terminalization revokes action grants, so
+        // an action poll can legitimately be rejected after the model finishes;
+        // letting that rejection run first would strand the receipt in
+        // `running` and suppress the final Buzz publication.
+        process_next_action(context, &accepted.receipt_id).await?;
     }
 }
 
@@ -730,16 +737,16 @@ async fn fetch_events(
         .await
         .map_err(|error| format!("Kiingo event replay failed: {error}"))?;
     let status = response.status();
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("Kiingo event replay response was invalid: {error}"))?;
     if !status.is_success() {
         return Err(format!(
             "Kiingo event replay returned HTTP {}",
             status.as_u16()
         ));
     }
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("Kiingo event replay response was invalid: {error}"))?;
     Ok(body)
 }
 
@@ -1476,6 +1483,8 @@ async fn send_value(writer: &SharedWriter, value: Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::AsyncReadExt;
 
     const EVENT_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const ROOT_ID: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -1679,5 +1688,175 @@ mod tests {
             event_terminal_reason(&json!({}), TerminalState::Blocked),
             "capacity_blocked"
         );
+    }
+
+    #[tokio::test]
+    async fn terminal_replay_finishes_before_the_optional_action_poll() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let action_requests = Arc::new(AtomicUsize::new(0));
+        let observed_action_requests = action_requests.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.expect("accept request");
+                let mut request = [0_u8; 8192];
+                let read = stream.read(&mut request).await.expect("read request");
+                let request = String::from_utf8_lossy(&request[..read]);
+                let (status, content_type, body) = if request
+                    .starts_with("POST /api/buzz-bridge/events ")
+                {
+                    (
+                        "200 OK",
+                        "application/json",
+                        json!({
+                            "receipt_id": "test-receipt",
+                            "conversation_id": "11111111-1111-4111-8111-111111111111",
+                            "selected_harness": "codex",
+                            "cold_fallback": false
+                        })
+                        .to_string(),
+                    )
+                } else if request.contains("/publications/claim ") {
+                    (
+                        "200 OK",
+                        "application/json",
+                        json!({"status": "published", "should_publish": false}).to_string(),
+                    )
+                } else if request.starts_with("GET /api/buzz-bridge/receipts/test-receipt/events?")
+                {
+                    (
+                        "200 OK",
+                        "application/json",
+                        json!({
+                            "next_sequence": 2,
+                            "events": [
+                                {
+                                    "sequence": 1,
+                                    "kind": "message",
+                                    "payload": {
+                                        "role": "assistant",
+                                        "text": "terminal answer"
+                                    }
+                                },
+                                {
+                                    "sequence": 2,
+                                    "kind": "activity",
+                                    "eventType": "executor.dispatch.completed",
+                                    "payload": {
+                                        "status": "completed",
+                                        "label": "Completed",
+                                        "metadata": {"reason": "completed"}
+                                    }
+                                }
+                            ]
+                        })
+                        .to_string(),
+                    )
+                } else if request.contains("/actions/next?") {
+                    observed_action_requests.fetch_add(1, Ordering::SeqCst);
+                    ("403 Forbidden", "text/html", "forbidden".to_string())
+                } else {
+                    ("404 Not Found", "text/plain", "not found".to_string())
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write response");
+            }
+        });
+        let context = PromptContext {
+            config: Config {
+                api_base_url: format!("http://{address}"),
+                internal_token: "test-internal-token".to_string(),
+                community_id: "chat.kiingo.com".to_string(),
+                agent_public_key: AUTHOR.to_string(),
+                poll_interval: Duration::from_millis(1),
+                turn_timeout: Duration::from_secs(1),
+            },
+            http: reqwest::Client::new(),
+            writer: Arc::new(Mutex::new(tokio::io::stdout())),
+            session_id: "test-session".to_string(),
+            request_id: json!(1),
+            envelope: BuzzEnvelope {
+                event_id: EVENT_ID.to_string(),
+                channel_id: "4d3f6928-9bf5-43f7-87e4-55f4eeadcb03".to_string(),
+                channel_name: Some("general".to_string()),
+                author_public_key: AUTHOR.to_string(),
+                authored_at: "2026-07-29T17:03:02+00:00".to_string(),
+                thread_root_event_id: None,
+                text: "test".to_string(),
+            },
+            local_buzz: None,
+            cancellation: CancellationToken::new(),
+            receipt_id: Arc::new(Mutex::new(None)),
+        };
+
+        let outcome = execute_turn(&context).await.expect("turn completes");
+        assert_eq!(
+            outcome,
+            TurnOutcome {
+                stop_reason: "end_turn",
+                terminal_reason: "completed".to_string()
+            }
+        );
+        assert_eq!(action_requests.load(Ordering::SeqCst), 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn reports_non_json_replay_failures_by_http_status() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).await.expect("read request");
+            stream
+                .write_all(
+                    b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/html\r\nContent-Length: 9\r\nConnection: close\r\n\r\nforbidden",
+                )
+                .await
+                .expect("write response");
+        });
+        let context = PromptContext {
+            config: Config {
+                api_base_url: format!("http://{address}"),
+                internal_token: "test-internal-token".to_string(),
+                community_id: "chat.kiingo.com".to_string(),
+                agent_public_key: AUTHOR.to_string(),
+                poll_interval: Duration::from_millis(1),
+                turn_timeout: Duration::from_secs(1),
+            },
+            http: reqwest::Client::new(),
+            writer: Arc::new(Mutex::new(tokio::io::stdout())),
+            session_id: "test-session".to_string(),
+            request_id: json!(1),
+            envelope: BuzzEnvelope {
+                event_id: EVENT_ID.to_string(),
+                channel_id: "4d3f6928-9bf5-43f7-87e4-55f4eeadcb03".to_string(),
+                channel_name: Some("general".to_string()),
+                author_public_key: AUTHOR.to_string(),
+                authored_at: "2026-07-29T17:03:02+00:00".to_string(),
+                thread_root_event_id: None,
+                text: "test".to_string(),
+            },
+            local_buzz: None,
+            cancellation: CancellationToken::new(),
+            receipt_id: Arc::new(Mutex::new(None)),
+        };
+
+        let error = fetch_events(&context, "test-receipt", 15)
+            .await
+            .expect_err("non-success response must fail");
+        assert_eq!(error, "Kiingo event replay returned HTTP 403");
+        server.await.expect("test server completes");
     }
 }
