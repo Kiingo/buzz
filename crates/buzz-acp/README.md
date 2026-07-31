@@ -108,7 +108,7 @@ Core configuration is available through environment variables and matching CLI f
 |----------|----------|---------|-------------|
 | `BUZZ_PRIVATE_KEY` | **yes** | — | Agent's Nostr private key (`nsec1...`). Used for relay auth and agent identity. |
 | `BUZZ_RELAY_URL` | no | `ws://localhost:3000` | Relay WebSocket URL. |
-| `BUZZ_CANONICAL_RELAY_URL` | no | `BUZZ_RELAY_URL` | Deployment-only NIP-42 signing authority when `BUZZ_RELAY_URL` is an edge alias for the same canonical community. |
+| `BUZZ_CANONICAL_RELAY_URL` | no | `BUZZ_RELAY_URL` | Deployment-only community authority when `BUZZ_RELAY_URL` is a private transport address or edge alias. It supplies the WebSocket `Host` header and NIP-42/NIP-98 signing authority while the connection still dials `BUZZ_RELAY_URL`. Must be a credential-free `ws://` or `wss://` URL for the same relay. |
 | `BUZZ_ACP_AGENT_COMMAND` | no | `goose` | Agent binary to spawn. |
 | `BUZZ_ACP_AGENT_ARGS` | no | `acp` | Agent arguments (comma-separated). |
 | `BUZZ_ACP_KIINGO_PUBLICATION_ENABLED` | no | `false` | Enables the fenced, locally signed Kiingo publication extension. Use only with `kiingo-compute-acp`. |
