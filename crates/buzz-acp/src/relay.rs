@@ -383,6 +383,12 @@ impl RestClient {
         let auth_base_url =
             resolve_nip98_http_base_url(&self.base_url, canonical_relay_url.as_deref());
         let auth_url = format!("{auth_base_url}{path}");
+        let canonical_authority = canonical_relay_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(canonical_relay_authority)
+            .transpose()?;
         let body_owned = body_bytes.to_vec();
         let auth_tag_header = self.auth_tag_json.clone();
         self.request_with_retry("POST", path, || {
@@ -398,6 +404,10 @@ impl RestClient {
                 .post(&request_url)
                 .header("Authorization", auth)
                 .header("Content-Type", "application/json");
+            // Keep the TCP request on the private service while selecting the
+            // same host-derived community as the canonical edge URL. NIP-98
+            // already signs auth_url for this authority.
+            req = with_canonical_http_host(req, canonical_authority.as_deref());
             if let Some(ref tag) = auth_tag_header {
                 req = req.header("x-auth-tag", tag);
             }
@@ -3447,32 +3457,7 @@ fn resolve_nip42_relay_url<'a>(dial_url: &'a str, canonical_url: Option<&'a str>
         .unwrap_or(dial_url)
 }
 
-/// Build the WebSocket upgrade request while keeping transport routing and
-/// community authority separate.
-///
-/// `BUZZ_RELAY_URL` remains the URI used by `connect_async` for DNS and the TCP
-/// connection. When a canonical relay URL is configured, only the HTTP `Host`
-/// header is replaced with that URL's authority so host-bound relays select the
-/// same community they expose at the edge.
-fn relay_connect_request(
-    dial_url: &str,
-    canonical_url: Option<&str>,
-) -> Result<Request<()>, RelayError> {
-    let parsed_dial = dial_url
-        .parse::<url::Url>()
-        .map_err(|e| RelayError::Http(format!("invalid relay URL: {e}")))?;
-    let mut request = parsed_dial
-        .as_str()
-        .into_client_request()
-        .map_err(|e| RelayError::WebSocket(Box::new(e)))?;
-
-    let Some(canonical_url) = canonical_url
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(request);
-    };
-
+fn canonical_relay_authority(canonical_url: &str) -> Result<String, RelayError> {
     let canonical = canonical_url
         .parse::<url::Url>()
         .map_err(|e| RelayError::Http(format!("invalid canonical relay URL: {e}")))?;
@@ -3503,10 +3488,49 @@ fn relay_connect_request(
         "wss" => 443,
         _ => unreachable!("canonical scheme validated above"),
     };
-    let authority = match canonical.port() {
+    Ok(match canonical.port() {
         Some(port) if port != default_port => format!("{host}:{port}"),
         _ => host,
+    })
+}
+
+fn with_canonical_http_host(
+    request: reqwest::RequestBuilder,
+    canonical_authority: Option<&str>,
+) -> reqwest::RequestBuilder {
+    match canonical_authority {
+        Some(authority) => request.header(reqwest::header::HOST, authority),
+        None => request,
+    }
+}
+
+/// Build the WebSocket upgrade request while keeping transport routing and
+/// community authority separate.
+///
+/// `BUZZ_RELAY_URL` remains the URI used by `connect_async` for DNS and the TCP
+/// connection. When a canonical relay URL is configured, only the HTTP `Host`
+/// header is replaced with that URL's authority so host-bound relays select the
+/// same community they expose at the edge.
+fn relay_connect_request(
+    dial_url: &str,
+    canonical_url: Option<&str>,
+) -> Result<Request<()>, RelayError> {
+    let parsed_dial = dial_url
+        .parse::<url::Url>()
+        .map_err(|e| RelayError::Http(format!("invalid relay URL: {e}")))?;
+    let mut request = parsed_dial
+        .as_str()
+        .into_client_request()
+        .map_err(|e| RelayError::WebSocket(Box::new(e)))?;
+
+    let Some(canonical_url) = canonical_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(request);
     };
+
+    let authority = canonical_relay_authority(canonical_url)?;
     let host_header = HeaderValue::from_str(&authority)
         .map_err(|e| RelayError::Http(format!("invalid canonical relay authority: {e}")))?;
     request.headers_mut().insert(HOST, host_header);
@@ -4138,6 +4162,27 @@ mod tests {
         assert_eq!(
             resolve_nip98_http_base_url("http://localhost:3000", Some("  ")),
             "http://localhost:3000"
+        );
+    }
+
+    #[test]
+    fn http_request_dials_private_url_with_canonical_host() {
+        let authority = canonical_relay_authority("wss://chat.kiingo.com")
+            .expect("canonical authority should be valid");
+        let request = with_canonical_http_host(
+            reqwest::Client::new().post("http://buzz:3000/query"),
+            Some(&authority),
+        )
+        .build()
+        .expect("HTTP request should be valid");
+
+        assert_eq!(request.url().as_str(), "http://buzz:3000/query");
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::HOST)
+                .and_then(|value| value.to_str().ok()),
+            Some("chat.kiingo.com")
         );
     }
 
