@@ -398,3 +398,60 @@ impl From<BlobVersion> for UpdateVersion {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn retries_an_azure_throttle_response_before_surfacing_an_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind throttle test server");
+        let address = listener.local_addr().expect("throttle test address");
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed_requests = Arc::clone(&requests);
+        let server = tokio::spawn(async move {
+            for expected_request in 1..=2 {
+                let (mut stream, _) = listener.accept().await.expect("accept request");
+                let mut request = [0_u8; 4096];
+                let read = stream.read(&mut request).await.expect("read request");
+                assert!(
+                    String::from_utf8_lossy(&request[..read]).starts_with("HEAD "),
+                    "adapter should retry the original Azure metadata operation"
+                );
+                observed_requests.fetch_add(1, Ordering::SeqCst);
+                let response = if expected_request == 1 {
+                    "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                } else {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                };
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write response");
+            }
+        });
+        let inner = MicrosoftAzureBuilder::new()
+            .with_account("buzzthrottletest")
+            .with_container_name("buzz-conformance")
+            .with_endpoint(format!("http://{address}"))
+            .with_allow_http(true)
+            .with_skip_signature(true)
+            .build()
+            .expect("build unsigned loopback Azure client");
+        let store = AzureBlobStore {
+            inner: Arc::new(inner),
+        };
+
+        let object = store
+            .head("throttle/probe")
+            .await
+            .expect("429 should be retried and the second response should be classified");
+        assert!(object.is_none());
+        server.await.expect("throttle test server completes");
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+    }
+}
