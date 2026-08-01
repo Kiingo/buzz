@@ -48,7 +48,7 @@ function textWithoutAttachments(event: LiveTtsEvent): string {
     .join("\n");
   const lines = withoutMedia.split("\n");
   const retained: string[] = [];
-  for (let index = 0; index < lines.length;) {
+  for (let index = 0; index < lines.length; ) {
     if (lines[index]?.trim() === "||") {
       let closingIndex = index + 1;
       while (
