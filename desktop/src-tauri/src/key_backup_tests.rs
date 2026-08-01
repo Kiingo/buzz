@@ -211,12 +211,17 @@ fn generated_passphrase_respects_word_count_and_separator() {
 
 #[test]
 fn generated_passphrase_clamps_word_count() {
+    // Use a delimiter that cannot occur inside the EFF wordlist. Several valid
+    // words contain hyphens, so splitting on "-" makes the randomized test
+    // occasionally over-count even when the generator clamps correctly.
+    const TEST_SEPARATOR: &str = "|";
+
     // Below the floor: clamped up to MIN_PASSPHRASE_WORDS, never shorter.
-    let phrase = generate_passphrase(1, "-").unwrap();
-    assert_eq!(phrase.split('-').count(), MIN_PASSPHRASE_WORDS);
+    let phrase = generate_passphrase(1, TEST_SEPARATOR).unwrap();
+    assert_eq!(phrase.split(TEST_SEPARATOR).count(), MIN_PASSPHRASE_WORDS);
     // Above the ceiling: clamped down to MAX_PASSPHRASE_WORDS.
-    let phrase = generate_passphrase(50, "-").unwrap();
-    assert_eq!(phrase.split('-').count(), MAX_PASSPHRASE_WORDS);
+    let phrase = generate_passphrase(50, TEST_SEPARATOR).unwrap();
+    assert_eq!(phrase.split(TEST_SEPARATOR).count(), MAX_PASSPHRASE_WORDS);
 }
 
 #[test]
