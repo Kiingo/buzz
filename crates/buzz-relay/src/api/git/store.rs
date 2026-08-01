@@ -185,7 +185,9 @@ pub struct GitStore {
 impl GitStore {
     /// Build a client against an S3-compatible endpoint (e.g. MinIO).
     ///
-    /// Uses path-style addressing for MinIO compatibility; AWS S3 accepts both.
+    /// `addressing_style` is shared with media storage so both paths sign and
+    /// route requests consistently. Path style supports the bundled MinIO DNS;
+    /// virtual-hosted style supports standard S3 and providers such as Railway.
     ///
     /// Credential selection mirrors [`buzz_media::MediaStorage::new`]:
     /// - both `access_key` and `secret_key` non-empty → static credentials
@@ -201,6 +203,7 @@ impl GitStore {
         secret_key: &str,
         bucket_name: &str,
         region: &str,
+        addressing_style: buzz_media::config::S3AddressingStyle,
     ) -> Result<Self, StoreError> {
         let region = Region::Custom {
             region: region.into(),
@@ -220,9 +223,11 @@ impl GitStore {
             }
         }
         .map_err(|e| StoreError::Backend(S3Error::Credentials(e)))?;
-        let bucket = Bucket::new(bucket_name, region, creds)
-            .map_err(StoreError::Backend)?
-            .with_path_style();
+        let bucket = Bucket::new(bucket_name, region, creds).map_err(StoreError::Backend)?;
+        let bucket = match addressing_style {
+            buzz_media::config::S3AddressingStyle::Path => bucket.with_path_style(),
+            buzz_media::config::S3AddressingStyle::Virtual => bucket,
+        };
         Ok(Self {
             backend: GitBackend::S3(Arc::from(bucket)),
         })
@@ -238,13 +243,21 @@ impl GitStore {
         secret_key: &str,
         bucket_name: &str,
         region: &str,
+        addressing_style: buzz_media::config::S3AddressingStyle,
     ) -> Result<Self, StoreError> {
         match std::env::var("BUZZ_OBJECT_STORAGE_BACKEND")
             .unwrap_or_else(|_| "s3".to_string())
             .to_ascii_lowercase()
             .as_str()
         {
-            "s3" => Self::new(endpoint, access_key, secret_key, bucket_name, region),
+            "s3" => Self::new(
+                endpoint,
+                access_key,
+                secret_key,
+                bucket_name,
+                region,
+                addressing_style,
+            ),
             "azure" => {
                 let account = required_env("BUZZ_AZURE_STORAGE_ACCOUNT")?;
                 let container = required_env("BUZZ_AZURE_GIT_CONTAINER")?;
@@ -1131,11 +1144,41 @@ mod tests {
             "buzz_dev_secret",
             "buzz-git",
             "us-west-2",
+            buzz_media::config::S3AddressingStyle::Path,
         )
         .expect("static creds should build a git store");
         match store.s3_bucket().expect("S3 constructor").region {
             Region::Custom { ref region, .. } => assert_eq!(region, "us-west-2"),
             ref other => panic!("expected Custom region, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn constructor_applies_both_addressing_styles() {
+        for (style, expected_url, path_style) in [
+            (
+                buzz_media::config::S3AddressingStyle::Path,
+                "https://storage.example/buzz-git",
+                true,
+            ),
+            (
+                buzz_media::config::S3AddressingStyle::Virtual,
+                "https://buzz-git.storage.example",
+                false,
+            ),
+        ] {
+            let store = GitStore::new(
+                "https://storage.example",
+                "buzz_dev",
+                "buzz_dev_secret",
+                "buzz-git",
+                "us-east-1",
+                style,
+            )
+            .expect("construct git store");
+            let bucket = store.s3_bucket().expect("S3 constructor");
+            assert_eq!(bucket.url(), expected_url);
+            assert_eq!(bucket.is_path_style(), path_style);
         }
     }
 
@@ -1148,6 +1191,7 @@ mod tests {
                 secret,
                 "buzz-git",
                 "us-east-1",
+                buzz_media::config::S3AddressingStyle::Path,
             ) {
                 Ok(_) => {
                     panic!("partial static creds must not silently use the credential chain")
@@ -1198,14 +1242,29 @@ mod probe {
     }
 
     fn store() -> GitStore {
+        // This is the dedicated backend conformance path, so all connection and
+        // signing inputs are overridable for a real provider such as Railway.
+        // The hydrate/CAS live tests use explicit local MinIO fixtures instead.
+        let endpoint =
+            std::env::var("BUZZ_S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".into());
+        let access_key = std::env::var("BUZZ_S3_ACCESS_KEY").unwrap_or_else(|_| "buzz_dev".into());
+        let secret_key =
+            std::env::var("BUZZ_S3_SECRET_KEY").unwrap_or_else(|_| "buzz_dev_secret".into());
+        let bucket = std::env::var("BUZZ_S3_BUCKET").unwrap_or_else(|_| "buzz-git".into());
+        let region = std::env::var("BUZZ_S3_REGION").unwrap_or_else(|_| "us-east-1".into());
+        let addressing_style = std::env::var("BUZZ_S3_ADDRESSING_STYLE")
+            .unwrap_or_else(|_| "path".into())
+            .parse()
+            .expect("BUZZ_S3_ADDRESSING_STYLE must be path or virtual");
         GitStore::new(
-            "http://localhost:9000",
-            "buzz_dev",
-            "buzz_dev_secret",
-            "buzz-git",
-            "us-east-1",
+            &endpoint,
+            &access_key,
+            &secret_key,
+            &bucket,
+            &region,
+            addressing_style,
         )
-        .expect("connect minio")
+        .expect("connect S3-compatible storage")
     }
 
     fn sha256_hex(b: &[u8]) -> String {
