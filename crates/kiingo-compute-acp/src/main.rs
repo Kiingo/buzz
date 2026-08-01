@@ -174,6 +174,7 @@ struct BuzzEnvelope {
 #[derive(Debug, Clone)]
 struct AcceptedTurn {
     receipt_id: String,
+    event_cursor: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -559,7 +560,7 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
     )
     .await;
 
-    let mut after_sequence = 0_u64;
+    let mut after_sequence = accepted.event_cursor;
     let mut last_status: Option<String> = None;
     let mut final_text: Option<String> = None;
     let mut output_observed = false;
@@ -769,12 +770,16 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
     }
     let receipt_id = required_json_string(&body, "receipt_id")?;
     required_json_string(&body, "conversation_id")?;
+    let event_cursor = required_json_u64(&body, "event_cursor")?;
     if body.get("selected_harness").and_then(Value::as_str) != Some("codex")
         || body.get("cold_fallback").and_then(Value::as_bool) != Some(false)
     {
         return Err("Kiingo ingress violated the Codex no-cold-start contract".to_string());
     }
-    Ok(TurnAdmission::Execution(AcceptedTurn { receipt_id }))
+    Ok(TurnAdmission::Execution(AcceptedTurn {
+        receipt_id,
+        event_cursor,
+    }))
 }
 
 fn actionable_ingress_error(status: StatusCode, code: &str) -> String {
@@ -1527,6 +1532,13 @@ fn required_json_string(value: &Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("Kiingo response is missing {key}"))
 }
 
+fn required_json_u64(value: &Value, key: &str) -> Result<u64, String> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("Kiingo response is missing {key}"))
+}
+
 async fn emit_message_chunk(writer: &SharedWriter, session_id: &str, text: &str) {
     send_value(
         writer,
@@ -1890,6 +1902,7 @@ mod tests {
                         json!({
                             "receipt_id": "test-receipt",
                             "conversation_id": "11111111-1111-4111-8111-111111111111",
+                            "event_cursor": 41,
                             "selected_harness": "codex",
                             "cold_fallback": false
                         })
@@ -1902,6 +1915,7 @@ mod tests {
                         json!({"status": "published", "should_publish": false}).to_string(),
                     )
                 } else if request.starts_with("GET /api/buzz-bridge/receipts/test-receipt/events?")
+                    && request.contains("after_sequence=41")
                 {
                     (
                         "200 OK",
