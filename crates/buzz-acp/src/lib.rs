@@ -2054,13 +2054,17 @@ async fn tokio_main() -> Result<()> {
                                 // contain "!shutdown" from a non-owner.
                             }
 
-                            // Mirrors !shutdown: kind:9, content "!cancel", from
-                            // owner, mentions THIS agent. Must be BEFORE
-                            // queue.push() — the event content is moved by push.
+                            // Mirrors !shutdown: kind:9, content "!cancel",
+                            // mentions THIS agent. Must be BEFORE queue.push()
+                            // — the event content is moved by push.
                             //
                             // Mode-independent: !cancel fires regardless of
                             // --multiple-event-handling. It is explicit user
-                            // intent, not an automatic policy decision.
+                            // intent, not an automatic policy decision. Owners
+                            // retain channel-wide cancellation authority here.
+                            // Other authorized members are handled after the
+                            // inbound author gate and may cancel only a turn
+                            // triggered by their own event.
                             let is_cancel = is_owner_control_command(
                                 &buzz_event.event,
                                 kind_u32,
@@ -2084,7 +2088,8 @@ async fn tokio_main() -> Result<()> {
                                         continue; // consume event — do NOT push to queue
                                     }
                                 }
-                                // Not from owner — fall through to normal prompt handling.
+                                // Non-owner control commands continue through
+                                // the author gate, then are consumed below.
                             }
 
                             // Mirrors !shutdown / !cancel: kind:9, content
@@ -2169,6 +2174,24 @@ async fn tokio_main() -> Result<()> {
                                     );
                                     continue;
                                 }
+                            }
+
+                            if is_cancel {
+                                let author = buzz_event.event.pubkey.to_hex();
+                                let fired = signal_in_flight_task_for_author(
+                                    &mut pool,
+                                    buzz_event.channel_id,
+                                    &author,
+                                    ControlSignal::Cancel,
+                                );
+                                if !fired {
+                                    tracing::warn!(
+                                        channel_id = %buzz_event.channel_id,
+                                        author = %author,
+                                        "!cancel received but no in-flight turn from this author — no-op"
+                                    );
+                                }
+                                continue; // consume control event; never queue as a prompt
                             }
 
                             let matched = filter::match_event(&buzz_event.event, buzz_event.channel_id, &rules, &pubkey_hex).await;
@@ -2798,6 +2821,38 @@ fn signal_in_flight_task(
     false
 }
 
+/// Send a control signal only when the in-flight turn was triggered by an
+/// event from `author_pubkey`. This lets an authorized community member cancel
+/// their own turn without granting channel-wide cancellation authority.
+fn signal_in_flight_task_for_author(
+    pool: &mut AgentPool,
+    channel_id: uuid::Uuid,
+    author_pubkey: &str,
+    mode: ControlSignal,
+) -> bool {
+    let entry = pool.task_map_mut().values_mut().find(|meta| {
+        meta.channel_id == Some(channel_id)
+            && meta
+                .prompt_author_pubkeys
+                .iter()
+                .any(|pubkey| pubkey == author_pubkey)
+    });
+
+    if let Some(meta) = entry {
+        if let Some(tx) = meta.control_tx.take() {
+            tracing::info!(
+                channel = %channel_id,
+                author = %author_pubkey,
+                ?mode,
+                "author-scoped control signal sent to in-flight task"
+            );
+            let _ = tx.send(mode);
+            return true;
+        }
+    }
+    false
+}
+
 /// Attempt the non-cancelling (ACP) steer for a freshly-queued event.
 ///
 /// Caller invariants:
@@ -2938,6 +2993,14 @@ fn dispatch_pending(
         };
         tracing::debug!(agent = agent.index, channel = %channel_id, affinity_hit, "agent_claimed");
 
+        let prompt_author_pubkeys = batch
+            .events
+            .iter()
+            .chain(batch.cancelled_events.iter())
+            .map(|entry| entry.event.pubkey.to_hex())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         let recoverable_batch = match ctx.dedup_mode {
             DedupMode::Queue => Some(batch.clone()),
             DedupMode::Drop => None,
@@ -2984,6 +3047,7 @@ fn dispatch_pending(
             pool::TaskMeta {
                 agent_index,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys,
                 turn_id,
                 recoverable_batch,
                 control_tx: Some(control_tx),
@@ -3597,6 +3661,7 @@ fn dispatch_heartbeat(
         pool::TaskMeta {
             agent_index,
             channel_id: None,
+            prompt_author_pubkeys: Vec::new(),
             turn_id,
             recoverable_batch: None,
             control_tx: None,
@@ -4379,6 +4444,7 @@ mod owner_control_command_tests {
             pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys: vec!["author-a".to_string()],
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
@@ -4401,6 +4467,50 @@ mod owner_control_command_tests {
             &mut pool,
             channel_id,
             ControlSignal::Rotate
+        ));
+    }
+
+    #[tokio::test]
+    async fn author_scoped_cancel_only_signals_the_triggering_author() {
+        let mut pool = AgentPool::from_slots(vec![]);
+        let channel_id = Uuid::new_v4();
+        let (control_tx, control_rx) = tokio::sync::oneshot::channel();
+
+        let abort_handle = pool.join_set.spawn(async {});
+        pool.task_map_mut().insert(
+            abort_handle.id(),
+            pool::TaskMeta {
+                agent_index: 0,
+                channel_id: Some(channel_id),
+                prompt_author_pubkeys: vec!["author-a".to_string()],
+                turn_id: "author-scoped-turn".to_string(),
+                recoverable_batch: None,
+                control_tx: Some(control_tx),
+                steer_tx: None,
+            },
+        );
+
+        assert!(
+            !signal_in_flight_task_for_author(
+                &mut pool,
+                channel_id,
+                "author-b",
+                ControlSignal::Cancel,
+            ),
+            "another authorized member must not cancel this author's turn"
+        );
+        assert!(signal_in_flight_task_for_author(
+            &mut pool,
+            channel_id,
+            "author-a",
+            ControlSignal::Cancel,
+        ));
+        assert_eq!(control_rx.await.unwrap(), ControlSignal::Cancel);
+        assert!(!signal_in_flight_task_for_author(
+            &mut pool,
+            channel_id,
+            "author-a",
+            ControlSignal::Cancel,
         ));
     }
 }
@@ -5342,6 +5452,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -5418,6 +5529,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "panic-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -5510,6 +5622,7 @@ mod error_outcome_emission_tests {
                 crate::pool::TaskMeta {
                     agent_index: 0,
                     channel_id: None,
+                    prompt_author_pubkeys: Vec::new(),
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -5601,6 +5714,7 @@ mod error_outcome_emission_tests {
                 crate::pool::TaskMeta {
                     agent_index: 0,
                     channel_id: None,
+                    prompt_author_pubkeys: Vec::new(),
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -5706,6 +5820,7 @@ mod error_outcome_emission_tests {
                 crate::pool::TaskMeta {
                     agent_index: 0,
                     channel_id: None,
+                    prompt_author_pubkeys: Vec::new(),
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -5782,6 +5897,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -5876,6 +5992,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -5992,6 +6109,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -6131,6 +6249,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -6319,6 +6438,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -6404,6 +6524,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
