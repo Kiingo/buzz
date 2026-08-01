@@ -52,6 +52,10 @@ const RECENT_ACTIVITY_WINDOW: Duration = Duration::from_secs(60);
 pub struct TaskMeta {
     pub agent_index: usize,
     pub channel_id: Option<Uuid>,
+    /// Authors whose events are part of this prompt turn. Exact control
+    /// commands from an authorized community member may only cancel a turn
+    /// when that member owns at least one triggering event.
+    pub prompt_author_pubkeys: Vec<String>,
     /// Identifies terminal events when the task panics before returning a result.
     pub turn_id: String,
     /// Clone of batch for Queue mode panic recovery.
