@@ -906,10 +906,18 @@ fn truncate_action_output(bytes: &[u8], runtime: &LocalBuzzRuntime) -> String {
 
 fn build_local_buzz_command(runtime: &LocalBuzzRuntime, argv: &[&str]) -> Command {
     let mut command = Command::new(&runtime.command);
+    // Buzz HTTP actions bind their community from the request Host header.
+    // The long-lived ACP connection may dial an internal Kubernetes service,
+    // but a one-shot CLI action must dial the canonical community authority or
+    // the relay correctly rejects that internal service host as unmapped.
+    let action_relay_url = runtime
+        .canonical_relay_url
+        .as_deref()
+        .unwrap_or(&runtime.relay_url);
     command
         .args(argv)
         .env_clear()
-        .env("BUZZ_RELAY_URL", &runtime.relay_url)
+        .env("BUZZ_RELAY_URL", action_relay_url)
         .env("BUZZ_PRIVATE_KEY", &runtime.private_key)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1600,7 +1608,7 @@ mod tests {
     }
 
     #[test]
-    fn forwards_preview_dial_and_canonical_auth_urls_to_local_buzz_actions() {
+    fn dials_the_canonical_community_authority_for_local_buzz_actions() {
         let runtime = LocalBuzzRuntime {
             command: PathBuf::from("/usr/local/bin/buzz"),
             relay_url: "wss://buzz-preview.kiingo.com".to_string(),
@@ -1622,7 +1630,7 @@ mod tests {
 
         assert_eq!(
             env.get("BUZZ_RELAY_URL").and_then(Option::as_deref),
-            Some("wss://buzz-preview.kiingo.com")
+            Some("wss://chat.kiingo.com")
         );
         assert_eq!(
             env.get("BUZZ_CANONICAL_RELAY_URL")
@@ -1638,6 +1646,37 @@ mod tests {
             Some("auth-tag-secret")
         );
         assert!(!env.contains_key("UNRELATED_SECRET"));
+    }
+
+    #[test]
+    fn falls_back_to_the_physical_relay_when_no_canonical_authority_is_set() {
+        let runtime = LocalBuzzRuntime {
+            command: PathBuf::from("/usr/local/bin/buzz"),
+            relay_url: "ws://buzz:3000".to_string(),
+            canonical_relay_url: None,
+            private_key: "nsec_test_secret".to_string(),
+            auth_tag: None,
+        };
+        let command = build_local_buzz_command(&runtime, &["channels", "list"]);
+        let env: std::collections::HashMap<String, Option<String>> = command
+            .as_std()
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            env.get("BUZZ_RELAY_URL").and_then(Option::as_deref),
+            Some("ws://buzz:3000")
+        );
+        assert!(
+            !env.contains_key("BUZZ_CANONICAL_RELAY_URL"),
+            "the scrubbed environment must not inherit a canonical authority"
+        );
     }
 
     #[test]
