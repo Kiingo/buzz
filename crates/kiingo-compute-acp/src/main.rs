@@ -30,6 +30,9 @@ const DEFAULT_TURN_TIMEOUT_SECS: u64 = 1_800;
 const MAX_PROMPT_BYTES: usize = 2 * 1024 * 1024;
 const LOCAL_ACTION_TIMEOUT_SECS: u64 = 75;
 const MAX_LOCAL_ACTION_OUTPUT_BYTES: usize = 128 * 1024;
+const ACP_STEERING_METHOD: &str = "_session/steering";
+const STEERING_OUTCOME_INJECTED: &str = "injected";
+const STEERING_OUTCOME_REJECTED: &str = "rejected";
 
 type SharedWriter = Arc<Mutex<tokio::io::Stdout>>;
 
@@ -309,6 +312,7 @@ async fn handle_line(app: &mut App, line: &str) {
                             "promptCapabilities": {"image": false, "audio": false, "embeddedContext": false},
                             "mcpCapabilities": {"http": false, "sse": false}
                         },
+                        "_meta": {"steering": {"supported": true}},
                         "agentInfo": {"name": "kiingo-compute-acp", "version": env!("CARGO_PKG_VERSION")}
                     }),
                 )
@@ -378,6 +382,77 @@ async fn handle_line(app: &mut App, line: &str) {
                 run_prompt(context).await;
                 let _ = completed_tx.send(session_id);
             });
+        }
+        ACP_STEERING_METHOD => {
+            let Some(id) = id else { return };
+            let Some(session_id) = params.get("sessionId").and_then(Value::as_str) else {
+                send_error(&app.writer, id, -32602, "sessionId is required").await;
+                return;
+            };
+            if !app.sessions.contains_key(session_id) || !app.active.contains_key(session_id) {
+                send_result(
+                    &app.writer,
+                    id,
+                    json!({"outcome": STEERING_OUTCOME_REJECTED}),
+                )
+                .await;
+                return;
+            }
+            let envelope = match parse_prompt_envelope(&params) {
+                Ok(envelope) => envelope,
+                Err(error) => {
+                    send_error(&app.writer, id, -32602, &error).await;
+                    return;
+                }
+            };
+            if !is_signed_buzz_action_control(&envelope.text) {
+                // Ordinary follow-up messages still use Buzz ACP's established
+                // cancel-and-merge handoff. Only signed approval/rejection
+                // controls are safe to inject without replacing the active
+                // model turn.
+                send_result(
+                    &app.writer,
+                    id,
+                    json!({"outcome": STEERING_OUTCOME_REJECTED}),
+                )
+                .await;
+                return;
+            }
+            let control_context = PromptContext {
+                config: app.config.clone(),
+                http: app.http.clone(),
+                writer: Arc::clone(&app.writer),
+                session_id: session_id.to_string(),
+                request_id: id.clone(),
+                envelope,
+                local_buzz: None,
+                cancellation: CancellationToken::new(),
+                receipt_id: Arc::new(Mutex::new(None)),
+            };
+            match accept_turn(&control_context).await {
+                Ok(TurnAdmission::ControlCompleted(_)) => {
+                    send_result(
+                        &app.writer,
+                        id,
+                        json!({"outcome": STEERING_OUTCOME_INJECTED}),
+                    )
+                    .await;
+                }
+                Ok(TurnAdmission::Execution(_)) => {
+                    // The local exact-command gate above must never admit a
+                    // model execution. Fail closed and let Buzz ACP release
+                    // the withheld event instead of silently dropping it.
+                    send_result(
+                        &app.writer,
+                        id,
+                        json!({"outcome": STEERING_OUTCOME_REJECTED}),
+                    )
+                    .await;
+                }
+                Err(error) => {
+                    send_error(&app.writer, id, -32000, &error).await;
+                }
+            }
         }
         "session/cancel" => {
             if let Some(session_id) = params.get("sessionId").and_then(Value::as_str) {
@@ -1213,6 +1288,17 @@ fn parse_prompt_envelope(params: &Value) -> Result<BuzzEnvelope, String> {
     parse_event_block(event_block)
 }
 
+fn is_signed_buzz_action_control(text: &str) -> bool {
+    let mut parts = text.split_whitespace();
+    let command = parts.next().unwrap_or_default().trim_start_matches('/');
+    let decision = parts.next().unwrap_or_default();
+    let proposal_id = parts.next().unwrap_or_default();
+    parts.next().is_none()
+        && command.eq_ignore_ascii_case("kiingo")
+        && (decision.eq_ignore_ascii_case("approve") || decision.eq_ignore_ascii_case("reject"))
+        && Uuid::parse_str(proposal_id).is_ok()
+}
+
 fn parse_structured_buzz_metadata(metadata: &Value) -> Result<BuzzEnvelope, String> {
     if metadata.get("contractVersion").and_then(Value::as_u64) != Some(1) {
         return Err("unsupported structured Buzz metadata contract".to_string());
@@ -1697,6 +1783,26 @@ mod tests {
         );
         assert!(approval.contains(&format!("/kiingo approve {proposal_id}")));
         assert!(approval.contains(&format!("/kiingo reject {proposal_id}")));
+    }
+
+    #[test]
+    fn injects_only_exact_signed_buzz_approval_controls() {
+        let proposal_id = "11111111-1111-4111-8111-111111111111";
+        assert!(is_signed_buzz_action_control(&format!(
+            "/kiingo approve {proposal_id}"
+        )));
+        assert!(is_signed_buzz_action_control(&format!(
+            "kiingo reject {proposal_id}"
+        )));
+        assert!(!is_signed_buzz_action_control(&format!(
+            "/kiingo approve {proposal_id} please"
+        )));
+        assert!(!is_signed_buzz_action_control(
+            "/kiingo approve not-a-proposal"
+        ));
+        assert!(!is_signed_buzz_action_control(
+            "continue with the approved action"
+        ));
     }
 
     #[test]

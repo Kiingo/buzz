@@ -350,6 +350,105 @@ fn format_events(normalized: &str, format: &crate::OutputFormat) -> String {
     }
 }
 
+const MESSAGE_EDIT_KIND: u64 = 40003;
+const NIP09_DELETE_KIND: u64 = 5;
+const BUZZ_DELETE_KIND: u64 = 9005;
+
+fn event_kind(event: &serde_json::Value) -> u64 {
+    event
+        .get("kind")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn event_id(event: &serde_json::Value) -> &str {
+    event
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+}
+
+fn event_target_id(event: &serde_json::Value) -> Option<&str> {
+    event
+        .get("tags")
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .filter_map(serde_json::Value::as_array)
+        .find(|tag| tag.first().and_then(serde_json::Value::as_str) == Some("e"))
+        .and_then(|tag| tag.get(1))
+        .and_then(serde_json::Value::as_str)
+        .filter(|target| target.len() == 64 && target.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+fn event_created_at(event: &serde_json::Value) -> u64 {
+    event
+        .get("created_at")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn is_message_content_kind(kind: u64) -> bool {
+    matches!(kind, 9 | 40002 | 40008 | 45001 | 45003)
+}
+
+/// Reduce raw message, edit, and deletion events to the current logical
+/// messages an agent should observe. The relay remains the authorization
+/// authority for stored edits/deletions; this layer only applies their
+/// already-validated semantics.
+fn reconcile_message_mutations(events: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let deleted: std::collections::HashSet<String> = events
+        .iter()
+        .filter(|event| matches!(event_kind(event), NIP09_DELETE_KIND | BUZZ_DELETE_KIND))
+        .filter_map(event_target_id)
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let mut edits: std::collections::HashMap<String, (u64, String, String)> =
+        std::collections::HashMap::new();
+    for edit in events
+        .iter()
+        .filter(|event| event_kind(event) == MESSAGE_EDIT_KIND)
+        .filter(|event| !deleted.contains(&event_id(event).to_ascii_lowercase()))
+    {
+        let Some(target) = event_target_id(edit) else {
+            continue;
+        };
+        let target = target.to_ascii_lowercase();
+        let revision = (
+            event_created_at(edit),
+            event_id(edit).to_string(),
+            edit.get("content")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        );
+        if edits.get(&target).is_none_or(|current| {
+            (revision.0, revision.1.as_str()) > (current.0, current.1.as_str())
+        }) {
+            edits.insert(target, revision);
+        }
+    }
+
+    let mut logical = Vec::new();
+    for mut event in events
+        .into_iter()
+        .filter(|event| is_message_content_kind(event_kind(event)))
+        .filter(|event| !deleted.contains(&event_id(event).to_ascii_lowercase()))
+    {
+        if let Some((_, _, content)) = edits.get(&event_id(&event).to_ascii_lowercase()) {
+            if let Some(object) = event.as_object_mut() {
+                object.insert("content".to_string(), serde_json::json!(content));
+            }
+        }
+        logical.push(event);
+    }
+    logical.sort_by(|left, right| {
+        event_created_at(left)
+            .cmp(&event_created_at(right))
+            .then_with(|| event_id(left).cmp(event_id(right)))
+    });
+    logical
+}
+
 pub async fn cmd_get_messages(
     client: &BuzzClient,
     channel_id: &str,
@@ -361,6 +460,7 @@ pub async fn cmd_get_messages(
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     let limit = limit.unwrap_or(50).min(200);
+    let semantic_default = kinds.is_none();
 
     let mut filter = serde_json::json!({
         "kinds": [9, 40002, 40008, 45001, 45003],
@@ -385,7 +485,31 @@ pub async fn cmd_get_messages(
 
     let resp = client.query(&filter).await?;
     let mut events: Vec<serde_json::Value> = serde_json::from_str(&resp).unwrap_or_default();
-    events.sort_by_key(|e| e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0));
+    if semantic_default {
+        let target_ids: Vec<&str> = events
+            .iter()
+            .map(event_id)
+            .filter(|id| !id.is_empty())
+            .collect();
+        if !target_ids.is_empty() {
+            let auxiliary_filter = serde_json::json!({
+                "kinds": [5, 9005, 40003],
+                "#h": [channel_id],
+                "#e": target_ids,
+                "limit": (target_ids.len().saturating_mul(4)).min(500)
+            });
+            let auxiliary = client.query(&auxiliary_filter).await?;
+            let mut auxiliary_events: Vec<serde_json::Value> =
+                serde_json::from_str(&auxiliary).unwrap_or_default();
+            events.append(&mut auxiliary_events);
+        }
+        events = reconcile_message_mutations(events);
+        if events.len() > limit as usize {
+            events.drain(..events.len() - limit as usize);
+        }
+    } else {
+        events.sort_by_key(|e| e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0));
+    }
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
     Ok(())
@@ -993,9 +1117,9 @@ pub async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::{
-        event_mention_pubkeys, find_root_from_tags, match_profiles_by_name, merge_message_mentions,
-        missing_members, normalize_explicit_mentions, parse_member_pubkeys,
-        resolve_names_to_pubkeys,
+        event_id, event_mention_pubkeys, find_root_from_tags, match_profiles_by_name,
+        merge_message_mentions, missing_members, normalize_explicit_mentions, parse_member_pubkeys,
+        reconcile_message_mutations, resolve_names_to_pubkeys,
     };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
@@ -1371,5 +1495,66 @@ mod tests {
             profile_event(PK_VALID_A, Some("Aaron"), None),
         ];
         assert_eq!(match_profiles_by_name(&events, "Aaron").len(), 1);
+    }
+
+    #[test]
+    fn ordinary_message_reads_apply_latest_edits_and_deletions() {
+        let kept_id = "a".repeat(64);
+        let deleted_id = "b".repeat(64);
+        let old_edit_id = "c".repeat(64);
+        let new_edit_id = "d".repeat(64);
+        let delete_id = "e".repeat(64);
+        let events = vec![
+            json!({
+                "id": kept_id,
+                "pubkey": PK_VALID_A,
+                "kind": 9,
+                "content": "original",
+                "created_at": 10,
+                "tags": [["h", "channel"]]
+            }),
+            json!({
+                "id": deleted_id,
+                "pubkey": PK_VALID_A,
+                "kind": 9,
+                "content": "remove me",
+                "created_at": 11,
+                "tags": [["h", "channel"]]
+            }),
+            json!({
+                "id": old_edit_id,
+                "pubkey": PK_VALID_A,
+                "kind": 40003,
+                "content": "older edit",
+                "created_at": 12,
+                "tags": [["h", "channel"], ["e", kept_id]]
+            }),
+            json!({
+                "id": new_edit_id,
+                "pubkey": PK_VALID_A,
+                "kind": 40003,
+                "content": "current value",
+                "created_at": 13,
+                "tags": [["h", "channel"], ["e", kept_id]]
+            }),
+            json!({
+                "id": delete_id,
+                "pubkey": PK_VALID_A,
+                "kind": 9005,
+                "content": "",
+                "created_at": 14,
+                "tags": [["h", "channel"], ["e", deleted_id]]
+            }),
+        ];
+
+        let logical = reconcile_message_mutations(events);
+        assert_eq!(logical.len(), 1);
+        assert_eq!(event_id(&logical[0]), kept_id);
+        assert_eq!(
+            logical[0]
+                .get("content")
+                .and_then(serde_json::Value::as_str),
+            Some("current value")
+        );
     }
 }
