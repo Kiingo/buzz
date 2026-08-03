@@ -60,10 +60,11 @@ is used for relay membership and the ACP author gate. Production permits only
 runtime configuration.
 
 Kiingo's human client is the signed desktop application. The upstream runtime
-image includes a default `BUZZ_WEB_DIR`, so `prod-values.yaml` explicitly clears
-that variable and disables the Git web GUI. The production HTTPS authority
-therefore exposes only relay-required media and health/support endpoints, not a
-hosted browser chat client.
+image's default `BUZZ_WEB_DIR` remains enabled only so `/invite/{code}` and its
+static assets can hand off enrollment to that desktop client.
+`BUZZ_SERVE_GIT_WEB_GUI=false` keeps the root and repository-browser routes
+disabled, so the production HTTPS authority does not expose a hosted browser
+chat client.
 
 The agent listener must not start until the Kiingo API has idempotently
 registered the exact `(community_id, agent_public_key)` endpoint. `agent.yaml`
