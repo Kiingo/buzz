@@ -4406,7 +4406,9 @@ impl Db {
         archived_identities::list_archived(&self.pool, community_id).await
     }
 
-    /// Soft-delete NIP-29 discovery events for a channel created by a specific relay pubkey.
+    /// Soft-delete relay-authored discovery events for a channel.
+    ///
+    /// This includes NIP-29 group state and the kind:41001 DM confirmation event.
     pub async fn soft_delete_discovery_events(
         &self,
         community_id: CommunityId,
@@ -4415,7 +4417,7 @@ impl Db {
     ) -> Result<u64> {
         let result = sqlx::query(
             "UPDATE events SET deleted_at = NOW() \
-             WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3 AND deleted_at IS NULL AND kind IN (39000, 39001, 39002)",
+             WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3 AND deleted_at IS NULL AND kind IN (39000, 39001, 39002, 41001)",
         )
         .bind(community_id.as_uuid())
         .bind(channel_id)
@@ -4426,7 +4428,8 @@ impl Db {
     }
 
     /// Atomically replace a replaceable event: NIP-16 kinds (0, 3, 41, 10000–19999)
-    /// and NIP-29 discovery state (39000–39002, called from side_effects.rs).
+    /// and relay-authored discovery state (39000–39002 and 41001, called from
+    /// side_effects.rs).
     ///
     /// Keeps only the event with the highest `created_at` per (kind, pubkey, channel_id).
     /// Same-second ties are broken by lowest event `id` (NIP-16 deterministic ordering).

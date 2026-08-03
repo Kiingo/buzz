@@ -809,6 +809,7 @@ pub const fn is_relay_only_kind(kind: u32) -> bool {
         KIND_NIP43_MEMBERSHIP_LIST
             | KIND_CHANNEL_SUMMARY
             | KIND_PRESENCE_SNAPSHOT
+            | KIND_DM_CREATED
             | KIND_DM_VISIBILITY
             | KIND_THREAD_SUMMARY
             | KIND_WINDOW_BOUNDS
@@ -882,9 +883,11 @@ mod tests {
     }
 
     #[test]
-    fn nip43_membership_snapshot_is_relay_only() {
+    fn relay_authored_state_is_relay_only() {
         assert!(is_relay_only_kind(KIND_NIP43_MEMBERSHIP_LIST));
+        assert!(is_relay_only_kind(KIND_DM_CREATED));
         assert!(!is_relay_only_kind(KIND_NIP43_LEAVE_REQUEST));
+        assert!(!is_relay_only_kind(KIND_DM_OPEN));
     }
 
     #[test]
