@@ -7,11 +7,11 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use buzz_core::kind::{
-    event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE, KIND_DM_VISIBILITY,
-    KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
-    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION,
-    KIND_THREAD_SUMMARY,
+    event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE, KIND_DM_CREATED,
+    KIND_DM_VISIBILITY, KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST,
+    KIND_IA_UNARCHIVED, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
+    KIND_NIP29_GROUP_ADMINS, KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA,
+    KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION, KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -1035,6 +1035,8 @@ async fn emit_addressable_discovery_event(
 }
 
 /// Emit NIP-29 group discovery events (39000, 39001, 39002) signed by the relay keypair.
+/// DMs also receive kind:41001, the relay-confirmed conversation event consumed by
+/// `buzz dms list`. It is channel-scoped so only active DM participants can read it.
 /// Called after group creation, metadata changes, or membership changes.
 /// Events are stored channel-scoped (`channel_id = Some(...)`) so that existing
 /// access control applies — private channel member lists are only visible to members.
@@ -1149,6 +1151,23 @@ pub async fn emit_group_discovery_events(
             state,
             channel_id,
             KIND_NIP29_GROUP_MEMBERS,
+            tags,
+            &relay_pubkey_hex,
+        )
+        .await?;
+    }
+
+    if channel.channel_type == "dm" {
+        let mut tags: Vec<Tag> = vec![Tag::parse(["d", &group_id])?, Tag::parse(["h", &group_id])?];
+        for member in &members {
+            let pubkey_hex = hex::encode(&member.pubkey);
+            tags.push(Tag::parse(["p", &pubkey_hex])?);
+        }
+        emit_addressable_discovery_event(
+            tenant,
+            state,
+            channel_id,
+            KIND_DM_CREATED,
             tags,
             &relay_pubkey_hex,
         )
@@ -3034,14 +3053,15 @@ pub async fn publish_nip43_member_removed(
     publish_nip43_delta(tenant, state, 8001, target_pubkey_hex, "member-removed").await
 }
 
-/// Reconcile channels that exist in the DB but don't have kind:39000 events.
+/// Reconcile channels that are missing relay-authored discovery events.
 ///
 /// This handles the case where channels were created via direct SQL inserts
 /// (e.g. test seed scripts) rather than through the Nostr event pipeline.
-/// Emits kind:39000 (metadata) and kind:39002 (members) for each channel
-/// that is missing its discovery events.
+/// Emits the NIP-29 discovery set for channels missing kind:39000. DMs are also
+/// reconciled when their kind:41001 confirmation event is absent, which repairs
+/// conversations created by relay versions that declared but never emitted it.
 ///
-/// Idempotent: checks for existing kind:39000 events before emitting.
+/// Idempotent: checks the current event set before emitting.
 pub async fn reconcile_channel_events(
     tenant: &TenantContext,
     state: &Arc<AppState>,
@@ -3078,8 +3098,33 @@ pub async fn reconcile_channel_events(
             }
         };
 
-        if existing.is_empty() {
-            // No discovery event — emit one.
+        let dm_confirmation_missing = if channel.channel_type == "dm" {
+            match state
+                .db
+                .query_events(&EventQuery {
+                    kinds: Some(vec![KIND_DM_CREATED as i32]),
+                    channel_id: Some(channel.id),
+                    limit: Some(1),
+                    ..EventQuery::for_community(tenant.community())
+                })
+                .await
+            {
+                Ok(v) => v.is_empty(),
+                Err(e) => {
+                    tracing::warn!(
+                        channel_id = %channel.id,
+                        error = %e,
+                        "reconcile: failed to query DM confirmation event"
+                    );
+                    continue;
+                }
+            }
+        } else {
+            false
+        };
+
+        if existing.is_empty() || dm_confirmation_missing {
+            // Re-emit the complete set so partial historical state is repaired.
             if let Err(e) = emit_group_discovery_events(tenant, state, channel.id).await {
                 tracing::warn!(
                     channel_id = %channel.id,
