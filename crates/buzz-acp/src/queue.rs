@@ -990,6 +990,9 @@ pub enum ConversationContext {
 /// A single message in a conversation context section.
 #[derive(Debug, Clone)]
 pub struct ContextMessage {
+    /// Exact relay event ID. This stays out of the human-readable prompt but
+    /// lets trusted ACP adapters preserve and deduplicate authorized history.
+    pub event_id: String,
     pub pubkey: String,
     pub timestamp: String,
     pub content: String,
@@ -2464,6 +2467,7 @@ mod tests {
 
         let ctx = ConversationContext::Thread {
             messages: vec![ContextMessage {
+                event_id: "a".repeat(64),
                 pubkey: "npub1test".into(),
                 content: "prior message".into(),
                 timestamp: "2024-01-01T00:00:00Z".into(),
@@ -3078,11 +3082,13 @@ mod tests {
         let ctx = ConversationContext::Thread {
             messages: vec![
                 ContextMessage {
+                    event_id: "a".repeat(64),
                     pubkey: "npub1xyz".into(),
                     timestamp: "2026-03-15T16:30:00Z".into(),
                     content: "Let's refactor auth".into(),
                 },
                 ContextMessage {
+                    event_id: "b".repeat(64),
                     pubkey: "npub1def".into(),
                     timestamp: "2026-03-15T16:35:00Z".into(),
                     content: "yes go ahead".into(),
@@ -3125,6 +3131,7 @@ mod tests {
         };
         let ctx = ConversationContext::Dm {
             messages: vec![ContextMessage {
+                event_id: "a".repeat(64),
                 pubkey: "npub1abc".into(),
                 timestamp: "2026-03-15T16:00:00Z".into(),
                 content: "Can you deploy?".into(),
@@ -3170,6 +3177,7 @@ mod tests {
         };
         let ctx = ConversationContext::Thread {
             messages: vec![ContextMessage {
+                event_id: "a".repeat(64),
                 pubkey: author_hex.clone(),
                 timestamp: "2026-03-25T05:51:25Z".into(),
                 content: "follow up".into(),
@@ -3382,6 +3390,7 @@ mod tests {
         // Thread context fetched (as the fetch path does for DM replies).
         let ctx = ConversationContext::Thread {
             messages: vec![ContextMessage {
+                event_id: "a".repeat(64),
                 pubkey: "npub1xyz".into(),
                 timestamp: "2026-03-15T16:30:00Z".into(),
                 content: "Should I deploy?".into(),
