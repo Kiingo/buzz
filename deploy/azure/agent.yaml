@@ -182,6 +182,8 @@ spec:
               value: "true"
             - name: KIINGO_ACP_POLL_INTERVAL_MS
               value: "100"
+            - name: BUZZ_ACP_CONTEXT_MESSAGE_LIMIT
+              value: "20"
           resources:
             requests:
               cpu: 100m

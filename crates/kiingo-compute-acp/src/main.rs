@@ -28,6 +28,9 @@ const POLL_LIMIT: u64 = 100;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
 const DEFAULT_TURN_TIMEOUT_SECS: u64 = 1_800;
 const MAX_PROMPT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_CONTEXT_EVENTS: usize = 100;
+const MAX_CONTEXT_EVENT_BYTES: usize = 16 * 1024;
+const MAX_CONTEXT_TOTAL_BYTES: usize = 128 * 1024;
 const LOCAL_ACTION_TIMEOUT_SECS: u64 = 75;
 const MAX_LOCAL_ACTION_OUTPUT_BYTES: usize = 128 * 1024;
 const ACP_STEERING_METHOD: &str = "_session/steering";
@@ -161,6 +164,14 @@ fn read_local_buzz_runtime(params: &Value) -> Option<LocalBuzzRuntime> {
 }
 
 #[derive(Debug, Clone)]
+struct BuzzContextEvent {
+    event_id: String,
+    author_public_key: String,
+    authored_at: String,
+    text: String,
+}
+
+#[derive(Debug, Clone)]
 struct BuzzEnvelope {
     event_id: String,
     channel_id: String,
@@ -169,6 +180,9 @@ struct BuzzEnvelope {
     authored_at: String,
     thread_root_event_id: Option<String>,
     text: String,
+    context_events: Vec<BuzzContextEvent>,
+    context_total: usize,
+    context_truncated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -711,6 +725,19 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
 
 async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
     let url = format!("{}/api/buzz-bridge/events", context.config.api_base_url);
+    let context_events = context
+        .envelope
+        .context_events
+        .iter()
+        .map(|event| {
+            json!({
+                "event_id": event.event_id,
+                "author_public_key": event.author_public_key,
+                "authored_at": event.authored_at,
+                "text": event.text,
+            })
+        })
+        .collect::<Vec<_>>();
     let response = context
         .http
         .post(url)
@@ -725,7 +752,10 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
             "thread_root_event_id": context.envelope.thread_root_event_id,
             "text": context.envelope.text,
             "authored_at": context.envelope.authored_at,
-            "event_metadata": {"source": "buzz_acp_format_event_block", "contract_version": 1}
+            "context_events": context_events,
+            "context_total": context.envelope.context_total,
+            "context_truncated": context.envelope.context_truncated,
+            "event_metadata": {"source": "buzz_acp_structured_metadata", "contract_version": 2}
         }))
         .send()
         .await
@@ -1337,7 +1367,11 @@ fn is_signed_buzz_action_control(text: &str) -> bool {
 }
 
 fn parse_structured_buzz_metadata(metadata: &Value) -> Result<BuzzEnvelope, String> {
-    if metadata.get("contractVersion").and_then(Value::as_u64) != Some(1) {
+    let contract_version = metadata
+        .get("contractVersion")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "structured Buzz metadata contract is missing".to_string())?;
+    if contract_version != 1 && contract_version != 2 {
         return Err("unsupported structured Buzz metadata contract".to_string());
     }
     let event_id = required_json_string(metadata, "eventId")?;
@@ -1365,6 +1399,11 @@ fn parse_structured_buzz_metadata(metadata: &Value) -> Result<BuzzEnvelope, Stri
     if metadata.get("replyToEventId").and_then(Value::as_str) != Some(event_id.as_str()) {
         return Err("structured Buzz reply target does not match the event".to_string());
     }
+    let (context_events, context_total, context_truncated) = if contract_version == 2 {
+        parse_structured_conversation_context(metadata.get("conversationContext"), &event_id)?
+    } else {
+        (Vec::new(), 0, false)
+    };
     Ok(BuzzEnvelope {
         event_id,
         channel_id: Uuid::parse_str(&channel_id)
@@ -1380,7 +1419,75 @@ fn parse_structured_buzz_metadata(metadata: &Value) -> Result<BuzzEnvelope, Stri
         authored_at,
         thread_root_event_id,
         text,
+        context_events,
+        context_total,
+        context_truncated,
     })
+}
+
+fn parse_structured_conversation_context(
+    value: Option<&Value>,
+    trigger_event_id: &str,
+) -> Result<(Vec<BuzzContextEvent>, usize, bool), String> {
+    let Some(context) = value.filter(|value| !value.is_null()) else {
+        return Ok((Vec::new(), 0, false));
+    };
+    let kind = context
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "structured Buzz conversation context kind is missing".to_string())?;
+    if kind != "thread" && kind != "dm" {
+        return Err("structured Buzz conversation context kind is invalid".to_string());
+    }
+    let messages = context
+        .get("messages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "structured Buzz conversation context messages are missing".to_string())?;
+    if messages.len() > MAX_CONTEXT_EVENTS {
+        return Err("structured Buzz conversation context is too large".to_string());
+    }
+    let total = context
+        .get("total")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| "structured Buzz conversation context total is invalid".to_string())?;
+    if total < messages.len() {
+        return Err("structured Buzz conversation context total is inconsistent".to_string());
+    }
+    let truncated = context
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "structured Buzz conversation context truncation is missing".to_string())?;
+    let mut total_bytes = 0usize;
+    let mut events = Vec::with_capacity(messages.len());
+    for message in messages {
+        let event_id = required_json_string(message, "eventId")?.to_ascii_lowercase();
+        let author_public_key =
+            required_json_string(message, "authorPublicKey")?.to_ascii_lowercase();
+        let authored_at = required_json_string(message, "authoredAt")?;
+        let text = required_json_string(message, "text")?;
+        if !is_hex_id(&event_id)
+            || !is_hex_id(&author_public_key)
+            || chrono::DateTime::parse_from_rfc3339(&authored_at).is_err()
+            || text.trim().is_empty()
+            || text.len() > MAX_CONTEXT_EVENT_BYTES
+        {
+            return Err("structured Buzz conversation context event is invalid".to_string());
+        }
+        total_bytes = total_bytes
+            .checked_add(text.len())
+            .filter(|value| *value <= MAX_CONTEXT_TOTAL_BYTES)
+            .ok_or_else(|| "structured Buzz conversation context text is too large".to_string())?;
+        if event_id != trigger_event_id {
+            events.push(BuzzContextEvent {
+                event_id,
+                author_public_key,
+                authored_at,
+                text,
+            });
+        }
+    }
+    Ok((events, total, truncated))
 }
 
 fn last_event_segment(text: &str) -> Option<&str> {
@@ -1436,6 +1543,9 @@ fn parse_event_block(block: &str) -> Result<BuzzEnvelope, String> {
         authored_at,
         thread_root_event_id,
         text,
+        context_events: Vec::new(),
+        context_total: 0,
+        context_truncated: false,
     })
 }
 
@@ -1679,6 +1789,55 @@ mod tests {
         assert_eq!(parsed.event_id, EVENT_ID);
         assert_eq!(parsed.text, "Structured request");
         assert_eq!(parsed.thread_root_event_id.as_deref(), Some(ROOT_ID));
+    }
+
+    #[test]
+    fn parses_bounded_structured_conversation_context() {
+        let prior_event_id = "b".repeat(64);
+        let prior_author = "c".repeat(64);
+        let params = json!({
+            "_meta": {"buzz": {
+                "contractVersion": 2,
+                "eventId": EVENT_ID,
+                "channelId": "4d3f6928-9bf5-43f7-87e4-55f4eeadcb03",
+                "channelName": "general",
+                "kind": 9,
+                "authorPublicKey": AUTHOR,
+                "authoredAt": "2026-07-29T17:03:02+00:00",
+                "text": "Structured request",
+                "tags": [],
+                "threadRootEventId": ROOT_ID,
+                "replyToEventId": EVENT_ID,
+                "conversationContext": {
+                    "kind": "thread",
+                    "total": 2,
+                    "truncated": true,
+                    "messages": [
+                        {
+                            "eventId": prior_event_id,
+                            "authorPublicKey": prior_author,
+                            "authoredAt": "2026-07-29T17:02:00+00:00",
+                            "text": "Prior authorized context"
+                        },
+                        {
+                            "eventId": EVENT_ID,
+                            "authorPublicKey": AUTHOR,
+                            "authoredAt": "2026-07-29T17:03:02+00:00",
+                            "text": "Structured request"
+                        }
+                    ]
+                }
+            }},
+            "prompt": [{"type": "text", "text": "formatter text is not authoritative"}]
+        });
+
+        let parsed = parse_prompt_envelope(&params).expect("metadata should parse");
+        assert_eq!(parsed.context_total, 2);
+        assert!(parsed.context_truncated);
+        assert_eq!(parsed.context_events.len(), 1);
+        assert_eq!(parsed.context_events[0].event_id, prior_event_id);
+        assert_eq!(parsed.context_events[0].author_public_key, prior_author);
+        assert_eq!(parsed.context_events[0].text, "Prior authorized context");
     }
 
     #[test]
@@ -2021,6 +2180,9 @@ mod tests {
                 authored_at: "2026-07-29T17:03:02+00:00".to_string(),
                 thread_root_event_id: None,
                 text: "test".to_string(),
+                context_events: Vec::new(),
+                context_total: 0,
+                context_truncated: false,
             },
             local_buzz: None,
             cancellation: CancellationToken::new(),
@@ -2077,6 +2239,9 @@ mod tests {
                 authored_at: "2026-07-29T17:03:02+00:00".to_string(),
                 thread_root_event_id: None,
                 text: "test".to_string(),
+                context_events: Vec::new(),
+                context_total: 0,
+                context_truncated: false,
             },
             local_buzz: None,
             cancellation: CancellationToken::new(),

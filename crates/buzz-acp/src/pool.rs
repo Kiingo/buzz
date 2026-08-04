@@ -1846,7 +1846,14 @@ pub async fn run_prompt_task(
         // Try startup cache first; lazy-fetch via REST for dynamic channels.
         let channel_info = ctx.channel_info.resolve(b.channel_id).await;
 
+        let conversation_context = if ctx.context_message_limit > 0 {
+            fetch_conversation_context(b, &channel_info, &ctx).await
+        } else {
+            None
+        };
+
         if let Some(trigger) = b.events.last() {
+            let trigger_event_id = trigger.event.id.to_hex();
             let thread = crate::queue::parse_thread_tags(&trigger.event);
             let tags: Vec<&[String]> = trigger
                 .event
@@ -1854,9 +1861,38 @@ pub async fn run_prompt_task(
                 .iter()
                 .map(|tag| tag.as_slice())
                 .collect();
+            let structured_context = conversation_context.as_ref().map(|context| {
+                let (kind, messages, total, truncated) = match context {
+                    ConversationContext::Thread {
+                        messages,
+                        total,
+                        truncated,
+                    } => ("thread", messages, total, truncated),
+                    ConversationContext::Dm {
+                        messages,
+                        total,
+                        truncated,
+                    } => ("dm", messages, total, truncated),
+                };
+                serde_json::json!({
+                    "kind": kind,
+                    "total": total,
+                    "truncated": truncated,
+                    "messages": messages
+                        .iter()
+                        .filter(|message| message.event_id != trigger_event_id)
+                        .map(|message| serde_json::json!({
+                            "eventId": message.event_id,
+                            "authorPublicKey": message.pubkey,
+                            "authoredAt": message.timestamp,
+                            "text": message.content,
+                        }))
+                        .collect::<Vec<_>>(),
+                })
+            });
             agent.acp.set_buzz_prompt_metadata(Some(serde_json::json!({
-                "contractVersion": 1,
-                "eventId": trigger.event.id.to_hex(),
+                "contractVersion": 2,
+                "eventId": trigger_event_id,
                 "channelId": b.channel_id.to_string(),
                 "channelName": channel_info.as_ref().map(|info| info.name.as_str()),
                 "kind": trigger.event.kind.as_u16() as u32,
@@ -1868,17 +1904,12 @@ pub async fn run_prompt_task(
                 "text": trigger.event.content,
                 "tags": tags,
                 "threadRootEventId": thread.root_event_id,
-                "replyToEventId": trigger.event.id.to_hex(),
+                "replyToEventId": trigger_event_id,
+                "conversationContext": structured_context,
             })));
         } else {
             agent.acp.set_buzz_prompt_metadata(None);
         }
-
-        let conversation_context = if ctx.context_message_limit > 0 {
-            fetch_conversation_context(b, &channel_info, &ctx).await
-        } else {
-            None
-        };
 
         let profile_lookup =
             fetch_prompt_profile_lookup(b, conversation_context.as_ref(), &ctx.rest_client).await;
@@ -3121,6 +3152,13 @@ fn parse_dm_response(json: serde_json::Value, limit: u32) -> Option<Conversation
 ///
 /// Works with both thread reply objects and channel message objects.
 fn json_to_context_message(obj: &serde_json::Value) -> Option<ContextMessage> {
+    let event_id = obj
+        .get("id")
+        .or_else(|| obj.get("event_id"))
+        .and_then(|v| v.as_str())?;
+    if event_id.len() != 64 || !event_id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
     let content = obj.get("content").and_then(|v| v.as_str())?;
     let pubkey = obj
         .get("pubkey")
@@ -3141,6 +3179,7 @@ fn json_to_context_message(obj: &serde_json::Value) -> Option<ContextMessage> {
         .unwrap_or_else(|| "unknown".to_string());
 
     Some(ContextMessage {
+        event_id: event_id.to_ascii_lowercase(),
         pubkey: pubkey.to_string(),
         timestamp,
         content: content.to_string(),
@@ -4284,14 +4323,14 @@ mod tests {
     fn test_parse_thread_response_basic() {
         let json = json!({
             "root": {
-                "event_id": "abc123",
+                "event_id": "a".repeat(64),
                 "pubkey": "pub1",
                 "content": "root message",
                 "created_at": 1710518400
             },
             "replies": [
                 {
-                    "event_id": "def456",
+                    "event_id": "b".repeat(64),
                     "pubkey": "pub2",
                     "content": "first reply",
                     "created_at": 1710518460
@@ -4321,14 +4360,14 @@ mod tests {
     fn test_parse_thread_response_truncated() {
         let json = json!({
             "root": {
-                "event_id": "abc",
+                "event_id": "a".repeat(64),
                 "pubkey": "pub1",
                 "content": "root",
                 "created_at": 1710518400
             },
             "replies": [
                 {
-                    "event_id": "def",
+                    "event_id": "b".repeat(64),
                     "pubkey": "pub2",
                     "content": "reply1",
                     "created_at": 1710518460
@@ -4374,13 +4413,13 @@ mod tests {
         let json = json!({
             "messages": [
                 {
-                    "event_id": "msg2",
+                    "event_id": "b".repeat(64),
                     "pubkey": "pub2",
                     "content": "newer message",
                     "created_at": 1710518500
                 },
                 {
-                    "event_id": "msg1",
+                    "event_id": "a".repeat(64),
                     "pubkey": "pub1",
                     "content": "older message",
                     "created_at": 1710518400
@@ -4413,7 +4452,7 @@ mod tests {
         let json = json!({
             "messages": [
                 {
-                    "event_id": "msg1",
+                    "event_id": "a".repeat(64),
                     "pubkey": "pub1",
                     "content": "message",
                     "created_at": 1710518400
@@ -4442,7 +4481,7 @@ mod tests {
         let json = json!({
             "messages": [
                 {
-                    "event_id": "msg1",
+                    "event_id": "a".repeat(64),
                     "pubkey": "pub1",
                     "content": "only message",
                     "created_at": 1710518400
@@ -5048,6 +5087,7 @@ mod tests {
     #[test]
     fn test_json_to_context_message_integer_timestamp() {
         let obj = json!({
+            "id": "a".repeat(64),
             "pubkey": "abc",
             "content": "hello",
             "created_at": 1710518400
@@ -5061,6 +5101,7 @@ mod tests {
     #[test]
     fn test_json_to_context_message_string_timestamp() {
         let obj = json!({
+            "id": "a".repeat(64),
             "pubkey": "abc",
             "content": "hello",
             "created_at": "2026-03-15T16:30:00+00:00"
@@ -5100,6 +5141,7 @@ mod tests {
         };
         let context = ConversationContext::Thread {
             messages: vec![ContextMessage {
+                event_id: "a".repeat(64),
                 pubkey: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
                 timestamp: "2026-03-25T05:51:25Z".into(),
                 content: "follow up".into(),
@@ -5175,7 +5217,7 @@ mod tests {
 
     #[test]
     fn test_json_to_context_message_missing_pubkey_uses_default() {
-        let obj = json!({ "content": "hello" });
+        let obj = json!({ "id": "a".repeat(64), "content": "hello" });
         let msg = json_to_context_message(&obj).expect("should parse");
         assert_eq!(msg.pubkey, "unknown");
     }
