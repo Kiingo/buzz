@@ -175,6 +175,7 @@ struct BuzzEnvelope {
 struct AcceptedTurn {
     receipt_id: String,
     event_cursor: u64,
+    initial_capacity_state: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -550,13 +551,13 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
         &accepted.receipt_id,
         "receipt",
         "accepted",
-        "Received — starting your Codex session now.",
+        initial_receipt_message(accepted.initial_capacity_state.as_deref()),
     )
     .await?;
     emit_message_chunk(
         &context.writer,
         &context.session_id,
-        "Kiingo durably accepted the request.",
+        initial_local_status_message(accepted.initial_capacity_state.as_deref()),
     )
     .await;
 
@@ -771,6 +772,12 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
     let receipt_id = required_json_string(&body, "receipt_id")?;
     required_json_string(&body, "conversation_id")?;
     let event_cursor = required_json_u64(&body, "event_cursor")?;
+    let initial_capacity_state = body
+        .get("initial_capacity_state")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     if body.get("selected_harness").and_then(Value::as_str) != Some("codex")
         || body.get("cold_fallback").and_then(Value::as_bool) != Some(false)
     {
@@ -779,7 +786,32 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
     Ok(TurnAdmission::Execution(AcceptedTurn {
         receipt_id,
         event_cursor,
+        initial_capacity_state,
     }))
+}
+
+fn capacity_is_waiting(state: Option<&str>) -> bool {
+    matches!(state, Some("saturated" | "unavailable" | "scale_out"))
+}
+
+fn initial_receipt_message(state: Option<&str>) -> &'static str {
+    if capacity_is_waiting(state) {
+        "Received - all ready Codex slots are busy. This exact request is preserved and will start automatically when resident capacity returns; no cold container will be launched."
+    } else if state == Some("available") {
+        "Received - starting your Codex session now."
+    } else {
+        "Received - your exact request is durably accepted. Kiingo is checking resident Codex capacity now; no cold container will be launched."
+    }
+}
+
+fn initial_local_status_message(state: Option<&str>) -> &'static str {
+    if capacity_is_waiting(state) {
+        "Kiingo durably accepted the request and is waiting for resident Codex capacity."
+    } else if state == Some("available") {
+        "Kiingo durably accepted the request."
+    } else {
+        "Kiingo durably accepted the request and is checking resident Codex capacity."
+    }
 }
 
 fn actionable_ingress_error(status: StatusCode, code: &str) -> String {
@@ -1677,6 +1709,22 @@ mod tests {
     fn provides_actionable_enrollment_guidance() {
         let error = actionable_ingress_error(StatusCode::FORBIDDEN, "buzz_identity_not_verified");
         assert!(error.contains("/team/harness-connections?provider=codex"));
+    }
+
+    #[test]
+    fn reports_saturation_as_a_durable_wait_without_claiming_model_progress() {
+        let message = initial_receipt_message(Some("saturated"));
+        assert!(message.contains("exact request is preserved"));
+        assert!(message.contains("no cold container"));
+        assert!(!message.contains("starting your Codex session"));
+        assert_eq!(
+            initial_receipt_message(Some("available")),
+            "Received - starting your Codex session now."
+        );
+        let unknown = initial_receipt_message(None);
+        assert!(unknown.contains("durably accepted"));
+        assert!(unknown.contains("checking resident Codex capacity"));
+        assert!(!unknown.contains("starting your Codex session"));
     }
 
     #[test]
