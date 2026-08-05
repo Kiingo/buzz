@@ -190,6 +190,7 @@ struct AcceptedTurn {
     receipt_id: String,
     event_cursor: u64,
     initial_capacity_state: Option<String>,
+    replayed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -560,20 +561,28 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
         }
     };
     *context.receipt_id.lock().await = Some(accepted.receipt_id.clone());
-    publish_status(
-        context,
-        &accepted.receipt_id,
-        "receipt",
-        "accepted",
-        initial_receipt_message(accepted.initial_capacity_state.as_deref()),
-    )
-    .await?;
-    emit_message_chunk(
-        &context.writer,
-        &context.session_id,
-        initial_local_status_message(accepted.initial_capacity_state.as_deref()),
-    )
-    .await;
+    // A queue retry replays the immutable ingress event so it can resume from
+    // the durable event cursor. The original acceptance fence is already
+    // published. Recomputing its capacity-sensitive text here can change the
+    // payload under the same idempotency key and correctly trigger a 409,
+    // preventing the retry from reaching the terminal event. Resume without
+    // touching that original receipt publication.
+    if !accepted.replayed {
+        publish_status(
+            context,
+            &accepted.receipt_id,
+            "receipt",
+            "accepted",
+            initial_receipt_message(accepted.initial_capacity_state.as_deref()),
+        )
+        .await?;
+        emit_message_chunk(
+            &context.writer,
+            &context.session_id,
+            initial_local_status_message(accepted.initial_capacity_state.as_deref()),
+        )
+        .await;
+    }
 
     let mut after_sequence = accepted.event_cursor;
     let mut last_status: Option<String> = None;
@@ -802,6 +811,10 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
     let receipt_id = required_json_string(&body, "receipt_id")?;
     required_json_string(&body, "conversation_id")?;
     let event_cursor = required_json_u64(&body, "event_cursor")?;
+    let replayed = body
+        .get("replayed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let initial_capacity_state = body
         .get("initial_capacity_state")
         .and_then(Value::as_str)
@@ -817,6 +830,7 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
         receipt_id,
         event_cursor,
         initial_capacity_state,
+        replayed,
     }))
 }
 
@@ -2087,13 +2101,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn canonical_terminal_replay_finishes_before_the_optional_action_poll() {
+    async fn replayed_terminal_turn_skips_the_original_receipt_fence_and_action_poll() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
         let address = listener.local_addr().expect("test server address");
         let action_requests = Arc::new(AtomicUsize::new(0));
         let observed_action_requests = action_requests.clone();
+        let publication_requests = Arc::new(AtomicUsize::new(0));
+        let observed_publication_requests = publication_requests.clone();
         let server = tokio::spawn(async move {
             loop {
                 let (mut stream, _) = listener.accept().await.expect("accept request");
@@ -2110,12 +2126,14 @@ mod tests {
                             "receipt_id": "test-receipt",
                             "conversation_id": "11111111-1111-4111-8111-111111111111",
                             "event_cursor": 41,
+                            "replayed": true,
                             "selected_harness": "codex",
                             "cold_fallback": false
                         })
                         .to_string(),
                     )
                 } else if request.contains("/publications/claim ") {
+                    observed_publication_requests.fetch_add(1, Ordering::SeqCst);
                     (
                         "200 OK",
                         "application/json",
@@ -2198,6 +2216,7 @@ mod tests {
             }
         );
         assert_eq!(action_requests.load(Ordering::SeqCst), 0);
+        assert_eq!(publication_requests.load(Ordering::SeqCst), 1);
         server.abort();
     }
 
