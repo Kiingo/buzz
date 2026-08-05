@@ -4,8 +4,8 @@
 //!   1. Fetch the caller's own live head via `kinds:[30621] + authors:[self] + #d:[slug]`.
 //!   2. Mutate the tag set (strip `auth`, apply change).
 //!   3. Re-validate the full envelope through Layer A before submitting.
-//!   4. Set `created_at = head.created_at + 1` (never wall-clock) to avoid
-//!      overwriting a concurrently advancing head.
+//!   4. Set `created_at = max(now, head.created_at + 1)` so the mutation both
+//!      dominates the observed head and stays inside relay freshness windows.
 //!
 //! Limitations recorded in this phase:
 //!   - Relay hints are read-preserved but not authored (`--repo` carries
@@ -120,13 +120,18 @@ async fn submit_project(client: &BuzzClient, builder: EventBuilder) -> Result<()
 
 // ── Build helpers ─────────────────────────────────────────────────────────────
 
-/// Advance the `created_at` counter off an observed head.
-fn next_timestamp(head: &Event) -> Result<Timestamp, CliError> {
-    head.created_at
+/// Select a fresh timestamp that still advances strictly past an observed head.
+fn next_timestamp_at(head: &Event, now: Timestamp) -> Result<Timestamp, CliError> {
+    let head_next = head
+        .created_at
         .as_secs()
         .checked_add(1)
-        .map(Timestamp::from)
-        .ok_or_else(|| CliError::Other("project timestamp cannot be advanced".into()))
+        .ok_or_else(|| CliError::Other("project timestamp cannot be advanced".into()))?;
+    Ok(Timestamp::from(head_next.max(now.as_secs())))
+}
+
+fn next_timestamp(head: &Event) -> Result<Timestamp, CliError> {
+    next_timestamp_at(head, Timestamp::now())
 }
 
 /// Strip `auth` from a tag list and pass the resulting envelope through
@@ -491,7 +496,7 @@ pub async fn cmd_update(
 ///
 /// Head-based and verified:
 ///   1. Fetch own live head — `NotFound` if absent.
-///   2. Build tombstone at `head.created_at + 1`.
+///   2. Build a fresh tombstone strictly after `head.created_at`.
 ///   3. Submit.
 ///   4. Re-query the coordinate; if a newer head survived → `Conflict`.
 pub async fn cmd_delete(client: &BuzzClient, slug: &str) -> Result<(), CliError> {
@@ -979,11 +984,8 @@ mod tests {
 
     // ── next_timestamp ordering ───────────────────────────────────────────────
 
-    /// `next_timestamp` must return `head.created_at + 1` regardless of the wall
-    /// clock.  NIP-MP Deletion rule: a tombstone older than the live head does
-    /// NOT remove it, so we must advance strictly off the observed head — never
-    /// use wall-clock time, which could be behind a head that was bumped
-    /// multiple times in the same second.
+    /// NIP-MP replacement and deletion must advance strictly beyond a head that
+    /// is ahead of the local clock.
     #[test]
     fn next_timestamp_returns_head_plus_one_when_head_is_ahead_of_wall_clock() {
         // Build a minimal signed event with a created_at far in the future.
@@ -998,12 +1000,32 @@ mod tests {
         // Verify the event actually has our future timestamp.
         assert_eq!(head.created_at, far_future_ts);
 
-        // next_timestamp must return far_future + 1, not now().
-        let next = next_timestamp(&head).expect("no overflow");
+        let next =
+            next_timestamp_at(&head, Timestamp::from(1_700_000_000u64)).expect("no overflow");
         assert_eq!(
             next.as_secs(),
             far_future_ts.as_secs() + 1,
             "tombstone must be strictly after head, even when head is far in the future"
+        );
+    }
+
+    #[test]
+    fn next_timestamp_uses_wall_clock_when_head_is_stale() {
+        let keys = nostr::Keys::generate();
+        let stale_ts = Timestamp::from(1_700_000_000u64);
+        let wall_clock = Timestamp::from(1_800_000_000u64);
+        let tags = vec![
+            make_test_tag(&["d", "platform"]),
+            make_test_tag(&["a", &format!("30617:{OWNER_HEX}:buzz")]),
+        ];
+        let builder = rebuild_project("", tags, stale_ts).expect("valid head envelope");
+        let head = builder.sign_with_keys(&keys).expect("sign");
+
+        let next = next_timestamp_at(&head, wall_clock).expect("no overflow");
+
+        assert_eq!(
+            next, wall_clock,
+            "stale project mutations must remain inside relay freshness windows"
         );
     }
 
