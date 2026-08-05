@@ -1,3 +1,5 @@
+//! First-frame window reveal helpers.
+
 #[cfg(target_os = "macos")]
 pub(crate) const INITIAL_RENDER_READY_EVENT: &str = "initial-render-ready";
 
