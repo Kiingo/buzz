@@ -278,7 +278,10 @@ jobs:
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
-          cargo install artifact-signing-cli --locked
+          # Keep the remote-signing client immutable just like every action
+          # used by this release. crates.io verifies the published package
+          # checksum, and --locked uses that exact release's dependency graph.
+          cargo install artifact-signing-cli --version '=0.11.0' --locked
 
       - name: Configure immutable Kiingo release
         shell: bash
