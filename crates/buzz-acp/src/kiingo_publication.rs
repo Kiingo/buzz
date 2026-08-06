@@ -22,6 +22,18 @@ const COMPLETE_RETRY_DELAYS: [Duration; 4] = [
     Duration::from_millis(500),
     Duration::from_secs(1),
 ];
+const PUBLISH_RETRY_DELAYS: [Duration; 9] = [
+    Duration::from_millis(100),
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(15),
+    Duration::from_secs(30),
+];
+const PUBLISH_RETRY_MAX_ELAPSED: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -83,19 +95,61 @@ impl LocalPublicationPublisher {
     }
 
     pub(crate) fn enqueue(&self, intent: KiingoPublicationIntent) {
+        if let Err(error) = validate_intent(&intent, &self.rest) {
+            tracing::error!(
+                target: "kiingo::publication",
+                receipt_id = %intent.receipt_id,
+                fence_id = %intent.fence_id,
+                publication_kind = %intent.publication_kind,
+                error = %error,
+                "rejected invalid local Buzz publication"
+            );
+            return;
+        }
         let publisher = self.clone();
         tokio::spawn(async move {
-            if let Err(error) = publisher.publish(intent).await {
-                tracing::error!(target: "kiingo::publication", error = %error, "local Buzz publication failed");
+            let started_at = tokio::time::Instant::now();
+            let mut attempt = 1usize;
+            loop {
+                match publisher.publish(&intent).await {
+                    Ok(()) => return,
+                    Err(error) => {
+                        let delay = publication_retry_delay(attempt);
+                        if started_at.elapsed().saturating_add(delay) > PUBLISH_RETRY_MAX_ELAPSED {
+                            tracing::error!(
+                                target: "kiingo::publication",
+                                receipt_id = %intent.receipt_id,
+                                fence_id = %intent.fence_id,
+                                publication_kind = %intent.publication_kind,
+                                attempt,
+                                error = %error,
+                                "local Buzz publication exhausted its relay-recovery window"
+                            );
+                            return;
+                        }
+                        tracing::warn!(
+                            target: "kiingo::publication",
+                            receipt_id = %intent.receipt_id,
+                            fence_id = %intent.fence_id,
+                            publication_kind = %intent.publication_kind,
+                            attempt,
+                            retry_delay_ms = delay.as_millis(),
+                            error = %error,
+                            "local Buzz publication will retry after a transient boundary failure"
+                        );
+                        tokio::time::sleep(delay).await;
+                        attempt = attempt.saturating_add(1);
+                    }
+                }
             }
         });
     }
 
-    async fn publish(&self, intent: KiingoPublicationIntent) -> Result<(), String> {
-        validate_intent(&intent, &self.rest)?;
+    async fn publish(&self, intent: &KiingoPublicationIntent) -> Result<(), String> {
+        validate_intent(intent, &self.rest)?;
         let fence_tag_value = format!("kiingo-publication:{}", intent.fence_id);
         if let Some(event_id) = self.find_existing_event(&fence_tag_value).await? {
-            self.complete_fence(&intent, &event_id).await?;
+            self.complete_fence(intent, &event_id).await?;
             tracing::info!(
                 target: "kiingo::publication",
                 receipt_id = %intent.receipt_id,
@@ -137,7 +191,7 @@ impl LocalPublicationPublisher {
             .await
             .map_err(|_| "publication relay submission timed out".to_string())?
             .map_err(|error| format!("publication relay submission failed: {error}"))?;
-        self.complete_fence(&intent, &event_id).await?;
+        self.complete_fence(intent, &event_id).await?;
         tracing::info!(
             target: "kiingo::publication",
             receipt_id = %intent.receipt_id,
@@ -213,6 +267,13 @@ impl LocalPublicationPublisher {
         }
         Err(last_error)
     }
+}
+
+fn publication_retry_delay(attempt: usize) -> Duration {
+    PUBLISH_RETRY_DELAYS
+        .get(attempt.saturating_sub(1))
+        .copied()
+        .unwrap_or(PUBLISH_RETRY_DELAYS[PUBLISH_RETRY_DELAYS.len() - 1])
 }
 
 fn validate_intent(intent: &KiingoPublicationIntent, rest: &RestClient) -> Result<(), String> {
@@ -309,5 +370,13 @@ mod tests {
         action.publication_kind = "action".to_string();
 
         assert!(validate_intent(&action, &rest).is_ok());
+    }
+
+    #[test]
+    fn publication_retry_backoff_is_fast_then_bounded() {
+        assert_eq!(publication_retry_delay(1), Duration::from_millis(100));
+        assert_eq!(publication_retry_delay(4), Duration::from_secs(1));
+        assert_eq!(publication_retry_delay(9), Duration::from_secs(30));
+        assert_eq!(publication_retry_delay(10_000), Duration::from_secs(30));
     }
 }
