@@ -590,6 +590,22 @@ impl EventQueue {
             .any(|id| !self.in_flight_channels.contains(id))
     }
 
+    /// Earliest retry throttle for queued, non-in-flight work.
+    ///
+    /// The relay can be completely quiet after a failed turn. Exposing the
+    /// exact deadline lets the main loop wake itself when the backoff expires
+    /// instead of waiting for an unrelated relay or pool event.
+    pub fn next_retry_deadline(&self) -> Option<Instant> {
+        self.retry_after
+            .iter()
+            .filter(|(id, _)| {
+                !self.in_flight_channels.contains(id)
+                    && self.queues.get(id).is_some_and(|queue| !queue.is_empty())
+            })
+            .map(|(_, deadline)| *deadline)
+            .min()
+    }
+
     /// Number of channels with pending events.
     pub fn pending_channels(&self) -> usize {
         self.queues.len()
@@ -2827,6 +2843,28 @@ mod tests {
             q.has_flushable_work(),
             "expired throttle should be flushable"
         );
+    }
+
+    #[test]
+    fn retry_deadline_is_exposed_for_quiet_channel_wakeup() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        q.push(make_queued(ch, "retry me"));
+        let batch = q.flush_next().expect("initial batch");
+        assert!(q.requeue(batch).is_none(), "retry remains within budget");
+        q.mark_complete(ch);
+
+        let deadline = q
+            .next_retry_deadline()
+            .expect("queued retry must expose a wake deadline");
+        assert!(deadline > Instant::now());
+
+        q.retry_after.insert(ch, Instant::now());
+        assert!(q.next_retry_deadline().is_some());
+        assert!(q.has_flushable_work());
+        let retry = q.flush_next().expect("expired retry must dispatch");
+        assert_eq!(retry.channel_id, ch);
+        assert!(q.next_retry_deadline().is_none());
     }
 
     #[test]

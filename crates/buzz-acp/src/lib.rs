@@ -1770,6 +1770,7 @@ async fn tokio_main() -> Result<()> {
         Panic(tokio::task::JoinError),
         SteerAck(SteerAckEvent),
         Wake(u32, Result<AgentPool, String>),
+        QueueRetryReady,
     }
 
     loop {
@@ -1888,6 +1889,17 @@ async fn tokio_main() -> Result<()> {
             }
         }
 
+        // A failed batch may be the only work on an otherwise quiet relay.
+        // Snapshot its exact deadline before splitting the pool borrow so the
+        // select loop can wake and redispatch it without external traffic.
+        let queue_retry_deadline = if pool_ready {
+            queue
+                .next_retry_deadline()
+                .map(tokio::time::Instant::from_std)
+        } else {
+            None
+        };
+
         // Borrow result_rx and join_set simultaneously via split-borrow helper.
         let pool_event: Option<PoolEvent> = {
             let (result_rx, join_set) = pool.rx_and_join_set();
@@ -1919,6 +1931,12 @@ async fn tokio_main() -> Result<()> {
                 Some((attempt, result)) = wake_rx.recv(), if config.lazy_pool && !pool_ready => {
                     Some(PoolEvent::Wake(attempt, result))
                 }
+                _ = async {
+                    match queue_retry_deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => Some(PoolEvent::QueueRetryReady),
                 // Gated on pending work: with an empty queue there is nothing
                 // for the retry to dispatch, and a past `retry_at` would
                 // otherwise complete instantly on every iteration (busy spin).
@@ -2527,6 +2545,13 @@ async fn tokio_main() -> Result<()> {
                     tracing::error!("all agents dead — exiting");
                     break;
                 }
+                for (channel_id, thread_tags) in
+                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
+                {
+                    typing_channels.insert(channel_id, thread_tags);
+                }
+            }
+            Some(PoolEvent::QueueRetryReady) => {
                 for (channel_id, thread_tags) in
                     dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
                 {

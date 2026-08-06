@@ -918,7 +918,7 @@ async fn fetch_next_action(
         "{}/api/buzz-bridge/receipts/{}/actions/next",
         context.config.api_base_url, receipt_id
     );
-    let response = context
+    let response = match context
         .http
         .get(url)
         .header("x-kiingo-internal-token", &context.config.internal_token)
@@ -929,8 +929,27 @@ async fn fetch_next_action(
         ])
         .send()
         .await
-        .map_err(|error| format!("Buzz action poll failed: {error}"))?;
+    {
+        Ok(response) => response,
+        Err(error) => {
+            // Action polling is an optional read inside the authoritative
+            // event-replay loop. A transient edge/connectivity failure must
+            // not abort an already-admitted provider turn: the next replay
+            // cycle will poll this same receipt again.
+            eprintln!(
+                "Buzz action poll transiently unavailable for receipt {receipt_id}; retrying on the next replay cycle: {error}"
+            );
+            return Ok(None);
+        }
+    };
     if response.status() == StatusCode::NO_CONTENT {
+        return Ok(None);
+    }
+    if is_transient_bridge_status(response.status()) {
+        eprintln!(
+            "Buzz action poll transiently unavailable for receipt {receipt_id}; retrying on the next replay cycle (HTTP {})",
+            response.status().as_u16()
+        );
         return Ok(None);
     }
     if !response.status().is_success() {
@@ -944,6 +963,14 @@ async fn fetch_next_action(
         .await
         .map(Some)
         .map_err(|error| format!("Buzz action poll response was invalid: {error}"))
+}
+
+fn is_transient_bridge_status(status: StatusCode) -> bool {
+    status.is_server_error()
+        || matches!(
+            status,
+            StatusCode::REQUEST_TIMEOUT | StatusCode::TOO_MANY_REQUESTS
+        )
 }
 
 async fn complete_action(
@@ -2098,6 +2125,90 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn transient_action_poll_failure_does_not_abort_the_turn() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let server = tokio::spawn(async move {
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().await.expect("accept request");
+                let mut request = [0_u8; 4096];
+                let read = stream.read(&mut request).await.expect("read request");
+                let request = String::from_utf8_lossy(&request[..read]);
+                assert!(request.contains("/actions/next?"));
+                let (status, body) = if attempt == 0 {
+                    ("503 Service Unavailable", "unavailable".to_string())
+                } else {
+                    (
+                        "200 OK",
+                        json!({
+                            "action_id": "11111111-1111-4111-8111-111111111111",
+                            "action_kind": "progress",
+                            "operation": "status",
+                            "arguments": {"message": "working"}
+                        })
+                        .to_string(),
+                    )
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write response");
+            }
+        });
+        let context = PromptContext {
+            config: Config {
+                api_base_url: format!("http://{address}"),
+                internal_token: "test-internal-token".to_string(),
+                community_id: "chat.kiingo.com".to_string(),
+                agent_public_key: AUTHOR.to_string(),
+                poll_interval: Duration::from_millis(1),
+                turn_timeout: Duration::from_secs(1),
+            },
+            http: reqwest::Client::new(),
+            writer: Arc::new(Mutex::new(tokio::io::stdout())),
+            session_id: "test-session".to_string(),
+            request_id: json!(1),
+            envelope: BuzzEnvelope {
+                event_id: EVENT_ID.to_string(),
+                channel_id: "4d3f6928-9bf5-43f7-87e4-55f4eeadcb03".to_string(),
+                channel_name: Some("general".to_string()),
+                author_public_key: AUTHOR.to_string(),
+                authored_at: "2026-07-29T17:03:02+00:00".to_string(),
+                thread_root_event_id: None,
+                text: "test".to_string(),
+                context_events: Vec::new(),
+                context_total: 0,
+                context_truncated: false,
+            },
+            local_buzz: None,
+            cancellation: CancellationToken::new(),
+            receipt_id: Arc::new(Mutex::new(None)),
+        };
+
+        assert_eq!(
+            fetch_next_action(&context, "test-receipt", "test-worker")
+                .await
+                .expect("transient failure is deferred"),
+            None
+        );
+        let action = fetch_next_action(&context, "test-receipt", "test-worker")
+            .await
+            .expect("next poll succeeds")
+            .expect("action is available");
+        assert_eq!(
+            action.get("action_kind").and_then(Value::as_str),
+            Some("progress")
+        );
+        server.await.expect("test server completes");
     }
 
     #[tokio::test]
