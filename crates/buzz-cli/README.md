@@ -86,6 +86,7 @@ buzz mem patch <slug> --base-hash <hex> < diff.patch  # or --no-base-hash
 buzz mem rm <slug>
 
 # Repository protection
+buzz repos delete --id obsolete-repo
 buzz repos protect list --id my-repo
 buzz repos protect set --id my-repo --ref refs/heads/main --push admin --no-force-push --no-delete
 buzz repos protect remove --id my-repo --ref refs/heads/main
@@ -154,6 +155,7 @@ stored rules in `validation_error` so an owner can remove and repair them.
 | `repos` | `create` | Announce a git repository (NIP-34) |
 | | `get` | Get a repository announcement |
 | | `list` | List repository announcements |
+| | `delete` | Delete your repository announcement with a verified NIP-09 tombstone |
 | | `protect list` | List branch and tag protection rules |
 | | `protect set` | Create or replace a protection rule |
 | | `protect remove` | Remove a protection rule |
