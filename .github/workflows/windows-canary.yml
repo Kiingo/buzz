@@ -3,12 +3,19 @@ name: Windows Canary
 # Produces an unsigned Windows NSIS installer from main without creating
 # a tag, GitHub Release, or auto-updater artifact. The installer is available
 # only as a short-lived GitHub Actions artifact for explicit testing.
+# Kiingo/buzz may invoke the same non-secret workflow from a review branch,
+# but the packaged source must be an exact revision already merged into main.
 #
 # Design notes vs. signed-macos-canary.yml:
 #   - No mesh-llm: release-windows doesn't build it.
 #   - pnpm store restore/save pattern mirrors ci.yml:149-196.
 on:
   workflow_dispatch:
+    inputs:
+      source_revision:
+        description: Exact merged Kiingo/buzz commit for an internal pilot build (unused by block/buzz)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -16,7 +23,7 @@ permissions:
 jobs:
   build:
     name: Build Windows canary
-    if: github.repository == 'block/buzz'
+    if: github.repository == 'block/buzz' || github.repository == 'Kiingo/buzz'
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
@@ -24,19 +31,43 @@ jobs:
     env:
       TARGET: x86_64-pc-windows-msvc
     steps:
-      - name: Require main
-        shell: bash
-        env:
-          SOURCE_REF: ${{ github.ref }}
-        run: |
-          if [[ "$SOURCE_REF" != "refs/heads/main" ]]; then
-            echo "::error::Canary builds must run from main; got $SOURCE_REF"
-            exit 1
-          fi
-
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ github.repository == 'Kiingo/buzz' && inputs.source_revision || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Require trusted source revision
+        id: source
+        shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          set -euo pipefail
+          if [[ "$REPOSITORY" == "block/buzz" ]]; then
+            if [[ "$SOURCE_REF" != "refs/heads/main" ]]; then
+              echo "::error::Upstream canary builds must run from main; got $SOURCE_REF"
+              exit 1
+            fi
+            SOURCE_REVISION=$(git rev-parse HEAD)
+          else
+            if ! [[ "$SOURCE_REVISION" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "::error::Kiingo source_revision must be an exact lowercase 40-character commit"
+              exit 1
+            fi
+            if [[ "$(git rev-parse HEAD)" != "$SOURCE_REVISION" ]]; then
+              echo "::error::Checked-out revision does not match source_revision"
+              exit 1
+            fi
+            git fetch origin main --depth=200
+            if ! git merge-base --is-ancestor "$SOURCE_REVISION" origin/main; then
+              echo "::error::Kiingo source_revision is not merged into main"
+              exit 1
+            fi
+          fi
+          echo "source_revision=$SOURCE_REVISION" >> "$GITHUB_OUTPUT"
 
       # The Windows runner ships with rustup preinstalled; rust-toolchain.toml
       # in the repo root pins the channel (1.95.0) automatically. We only need
@@ -83,7 +114,7 @@ jobs:
           fi
           VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))-test.${GITHUB_RUN_NUMBER}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building canary version $VERSION from $GITHUB_SHA"
+          echo "Building canary version $VERSION from ${{ steps.source.outputs.source_revision }}"
 
       - name: Patch canary version
         shell: bash
@@ -144,11 +175,38 @@ jobs:
           cargo build --release --target "$TARGET" -p buzz-acp -p buzz-agent -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli
           ./scripts/bundle-sidecars.sh "$TARGET"
 
+      - name: Prohibit provider credentials in Kiingo pilot build
+        if: github.repository == 'Kiingo/buzz'
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden=(
+            OPENAI_API_KEY ANTHROPIC_API_KEY CODEX_HOME CODEX_API_KEY
+            CODEX_CHATGPT_AUTH_JSON BUZZ_BUILD_AGENT_ENV
+          )
+          for name in "${forbidden[@]}"; do
+            if [[ -n "${!name:-}" ]]; then
+              echo "::error::Provider credential environment is forbidden in a Kiingo pilot build: ${name}"
+              exit 1
+            fi
+          done
+
       - name: Build Windows NSIS installer (unsigned)
         shell: bash
-        run: cd desktop && pnpm tauri build --target "$TARGET" --bundles nsis --config src-tauri/tauri.canary.conf.json
         env:
+          REPOSITORY: ${{ github.repository }}
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+        run: |
+          set -euo pipefail
+          if [[ "$REPOSITORY" == "Kiingo/buzz" ]]; then
+            export BUZZ_RELAY_URL='wss://chat.kiingo.com'
+            export BUZZ_CANONICAL_RELAY_URL='wss://chat.kiingo.com'
+            export BUZZ_RELAY_HTTP='https://chat.kiingo.com'
+            export BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY='1'
+            export BUZZ_BUILD_CODEX_ENROLLMENT_URL='https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect'
+          fi
+          cd desktop
+          pnpm tauri build --target "$TARGET" --bundles nsis --config src-tauri/tauri.canary.conf.json
 
       - name: Locate NSIS installer
         id: artifact
@@ -163,10 +221,31 @@ jobs:
           fi
           echo "exe=$EXE" >> "$GITHUB_OUTPUT"
 
+      - name: Verify unsigned Kiingo pilot contract
+        if: github.repository == 'Kiingo/buzz'
+        shell: pwsh
+        run: |
+          $bundle = "desktop/src-tauri/target/$env:TARGET/release/bundle"
+          $installer = Get-Item '${{ steps.artifact.outputs.exe }}'
+          $app = Get-Item "desktop/src-tauri/target/$env:TARGET/release/buzz-desktop.exe"
+          foreach ($file in @($installer, $app)) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            if ($signature.Status -ne 'NotSigned') {
+              throw "Expected an unsigned pilot artifact: $($file.FullName) ($($signature.Status))"
+            }
+          }
+          rg -a -q 'wss://chat\.kiingo\.com' $app.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Kiingo relay URL is absent from the pilot executable.' }
+          rg -a -q 'https://app\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' $app.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Codex enrollment URL is absent from the pilot executable.' }
+          rg -a -q 'kiingo-desktop-latest' $app.FullName
+          if ($LASTEXITCODE -eq 0) { throw 'Signed production updater endpoint must be absent from the pilot executable.' }
+          $global:LASTEXITCODE = 0
+
       - name: Upload Windows canary installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: buzz-windows-canary-${{ github.sha }}
+          name: ${{ github.repository == 'Kiingo/buzz' && 'kiingo-buzz-windows-pilot' || 'buzz-windows-canary' }}-${{ steps.source.outputs.source_revision }}
           path: ${{ steps.artifact.outputs.exe }}
           if-no-files-found: error
           retention-days: 7
@@ -176,10 +255,11 @@ jobs:
         shell: bash
         run: du -sh ~/.cargo/registry ~/.cargo/git target desktop/src-tauri/target 2>/dev/null || true
 
-      # Only this trusted, main-bound canary writes the cache. Excluding bundle
-      # output prevents installers from entering it.
+      # Only the upstream main-bound canary writes the cache. The Kiingo pilot
+      # may run from a review branch, so it consumes but never populates caches.
+      # Excluding bundle output prevents installers from entering the cache.
       - name: Save exact release Cargo cache
-        if: steps.rust_cache.outputs.cache-hit != 'true'
+        if: github.repository == 'block/buzz' && steps.rust_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
@@ -191,6 +271,7 @@ jobs:
           key: ${{ steps.rust_cache_key.outputs.key }}
 
       - name: Save pnpm store cache
+        if: github.repository == 'block/buzz'
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
