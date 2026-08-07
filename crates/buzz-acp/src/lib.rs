@@ -227,12 +227,13 @@ async fn is_owner_or_sibling(
 /// Clients auto-p-tag every DM participant, so in a DM *any* participant's
 /// message looks like a mention and would fire a turn. Combined with
 /// agent-initiated DMs (the agent can be asked to DM a third party), that
-/// turns `anyone`/`allowlist` modes into transitive access grants: whoever
-/// lands in a DM with the agent can prompt it. To close that hole, when
-/// `is_dm` is true only the owner and cryptographically verified same-owner
-/// siblings may fire a turn — the explicit allowlist and `anyone` mode do
-/// NOT apply inside DMs. `Nobody` still drops everything. Callers must
-/// resolve `is_dm` fail-closed: unknown channel type ⇒ treat as DM.
+/// turns `anyone` mode into a transitive access grant: whoever lands in a DM
+/// with the agent could otherwise prompt it. To close that hole, `Anyone`
+/// falls back to owner/sibling-only inside DMs. `Allowlist` remains an explicit
+/// administrator grant and admits only the listed pubkeys plus owner/siblings;
+/// merely landing in the DM does not add a pubkey to that list. `Nobody` still
+/// drops everything. Callers must resolve `is_dm` fail-closed: unknown channel
+/// type ⇒ treat as DM.
 async fn author_allowed(
     respond_to: &RespondTo,
     allowlist: &HashSet<String>,
@@ -244,7 +245,13 @@ async fn author_allowed(
     if is_dm {
         return match respond_to {
             RespondTo::Nobody => false,
-            _ => is_owner_or_sibling(author, owner_cache, rest_client).await,
+            RespondTo::Allowlist => {
+                allowlist.contains(author)
+                    || is_owner_or_sibling(author, owner_cache, rest_client).await
+            }
+            RespondTo::OwnerOnly | RespondTo::Anyone => {
+                is_owner_or_sibling(author, owner_cache, rest_client).await
+            }
         };
     }
     match respond_to {
@@ -3227,7 +3234,7 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
 /// prefix and a closed set of machine codes so arbitrary provider or internal
 /// agent errors cannot be reflected into a Buzz channel.
 fn actionable_agent_error_message(error: &acp::AcpError) -> Option<&str> {
-    const PREFIX: &str = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
+    const PREFIX: &str = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
     const CODES: &[&str] = &[
         "buzz_identity_not_verified",
         "buzz_identity_ambiguous",
@@ -4855,15 +4862,15 @@ mod author_gate_tests {
     //
     // In a DM, clients auto-p-tag every participant, and an agent can be
     // asked to open a DM with a third party. The gate must therefore ignore
-    // the allowlist and `anyone` mode inside DMs: only owner + verified
-    // siblings fire turns.
+    // `anyone` inside DMs. The explicit allowlist remains a direct operator
+    // grant, so only listed pubkeys plus owner + verified siblings fire turns.
 
     #[tokio::test]
-    async fn test_dm_rejects_allowlisted_external_pubkey() {
+    async fn test_dm_accepts_only_explicitly_allowlisted_external_pubkeys() {
         let cache = cache_with_sibling();
         let allowlist = HashSet::from([EXTERNAL.to_string()]);
         assert!(
-            !author_allowed(
+            author_allowed(
                 &RespondTo::Allowlist,
                 &allowlist,
                 EXTERNAL,
@@ -4872,7 +4879,19 @@ mod author_gate_tests {
                 &dummy_rest_client()
             )
             .await,
-            "an allowlisted external pubkey must NOT fire a turn inside a DM"
+            "an explicitly allowlisted external pubkey must fire a turn inside a DM"
+        );
+        assert!(
+            !author_allowed(
+                &RespondTo::Allowlist,
+                &allowlist,
+                STRANGER,
+                true,
+                &cache,
+                &dummy_rest_client()
+            )
+            .await,
+            "an unlisted external pubkey must remain blocked inside a DM"
         );
     }
 
@@ -6576,7 +6595,7 @@ mod error_outcome_emission_tests {
 
     #[test]
     fn actionable_agent_error_message_accepts_only_known_bridge_guidance() {
-        let message = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).";
+        let message = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).";
         let error = acp::AcpError::AgentError {
             code: -32000,
             message: message.to_string(),
@@ -6601,7 +6620,7 @@ mod error_outcome_emission_tests {
     fn actionable_agent_error_message_rejects_untrusted_errors() {
         let unknown_code = acp::AcpError::AgentError {
             code: -32000,
-            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (provider_internal_error).".to_string(),
+            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (provider_internal_error).".to_string(),
         };
         assert_eq!(actionable_agent_error_message(&unknown_code), None);
 
@@ -6613,7 +6632,7 @@ mod error_outcome_emission_tests {
 
         let wrong_rpc_code = acp::AcpError::AgentError {
             code: -32603,
-            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
+            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
         };
         assert_eq!(actionable_agent_error_message(&wrong_rpc_code), None);
     }
@@ -6689,7 +6708,7 @@ mod error_outcome_emission_tests {
     async fn actionable_agent_error_dead_letters_immediately_without_requeueing() {
         let error = acp::AcpError::AgentError {
             code: -32000,
-            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
+            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
         };
         assert_agent_error_dead_letters_immediately(error).await;
     }

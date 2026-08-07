@@ -447,13 +447,14 @@ async fn handle_line(app: &mut App, line: &str) {
                 receipt_id: Arc::new(Mutex::new(None)),
             };
             match accept_turn(&control_context).await {
-                Ok(TurnAdmission::ControlCompleted(_)) => {
-                    send_result(
-                        &app.writer,
-                        id,
-                        json!({"outcome": STEERING_OUTCOME_INJECTED}),
-                    )
-                    .await;
+                Ok(TurnAdmission::ControlCompleted(message)) => {
+                    // Steering is the normal delivery path for a control command
+                    // sent into an existing Buzz conversation. The ingress side
+                    // effect may already be complete, but Buzz still needs the
+                    // adapter's human-readable acknowledgement to close the loop.
+                    for value in steering_control_completion_values(session_id, id, &message) {
+                        send_value(&app.writer, value).await;
+                    }
                 }
                 Ok(TurnAdmission::Execution(_)) => {
                     // The local exact-command gate above must never admit a
@@ -867,7 +868,7 @@ fn actionable_ingress_error(status: StatusCode, code: &str) -> String {
         | "buzz_identity_enrollment_conflict"
         | "buzz_codex_subscription_not_connected"
         | "buzz_codex_subscription_routing_ambiguous" => format!(
-            "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect ({code})."
+            "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect ({code})."
         ),
         _ => format!("Kiingo rejected the Buzz event with HTTP {} ({code})", status.as_u16()),
     }
@@ -1737,6 +1738,28 @@ async fn emit_message_chunk(writer: &SharedWriter, session_id: &str, text: &str)
     .await;
 }
 
+fn steering_control_completion_values(
+    session_id: &str,
+    request_id: Value,
+    message: &str,
+) -> [Value; 2] {
+    [
+        json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "method": "session/update",
+            "params": {
+                "sessionId": session_id,
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": message}}
+            }
+        }),
+        json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "id": request_id,
+            "result": {"outcome": STEERING_OUTCOME_INJECTED}
+        }),
+    ]
+}
+
 async fn emit_publication_intent(writer: &SharedWriter, session_id: &str, update: Value) {
     send_value(
         writer,
@@ -2063,6 +2086,24 @@ mod tests {
         assert!(!is_signed_buzz_action_control(
             "continue with the approved action"
         ));
+    }
+
+    #[test]
+    fn steering_control_completion_publishes_the_acknowledgement_before_success() {
+        let values = steering_control_completion_values(
+            "existing-session",
+            json!(17),
+            "Your Buzz identity is linked.",
+        );
+
+        assert_eq!(values[0]["method"], "session/update");
+        assert_eq!(values[0]["params"]["sessionId"], "existing-session");
+        assert_eq!(
+            values[0]["params"]["update"]["content"]["text"],
+            "Your Buzz identity is linked."
+        );
+        assert_eq!(values[1]["id"], 17);
+        assert_eq!(values[1]["result"]["outcome"], STEERING_OUTCOME_INJECTED);
     }
 
     #[test]

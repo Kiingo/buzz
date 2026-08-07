@@ -244,6 +244,13 @@ fn extract_retry_in_hint(body: &str) -> Option<u64> {
 pub async fn relay_error_message(response: reqwest::Response) -> String {
     let status = response.status();
 
+    // Reverse proxies commonly render their own HTML error page for oversized
+    // requests. This is a reached server-side limit, not a captive portal or
+    // network sign-in page, so preserve the actionable HTTP status.
+    if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+        return "relay returned 413 Payload Too Large".to_string();
+    }
+
     // Check for intercepted/proxy responses before reading the body.
     let final_host = response.url().host_str().unwrap_or("").to_string();
     let content_type = response
@@ -599,6 +606,10 @@ pub async fn submit_signed_event_with_keys(
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "relay_error_response_tests.rs"]
+mod relay_error_response_tests;
 
 #[cfg(test)]
 mod tests {
