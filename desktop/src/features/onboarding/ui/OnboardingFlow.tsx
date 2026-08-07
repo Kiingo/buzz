@@ -317,6 +317,30 @@ export function OnboardingFlow({
     ],
   );
 
+  const retryMembership = React.useCallback(async () => {
+    try {
+      // An authentication denial deliberately puts RelayClient into a terminal
+      // state. "Try again" is explicit user re-engagement after an admin may
+      // have granted membership, so clear that latch and authenticate anew
+      // before the membership lookup runs again.
+      await relayClient.preconnect();
+    } catch (error) {
+      if (isRelayMembershipDeniedError(error)) {
+        return;
+      }
+
+      setMembershipError(
+        isRelayUnreachableError(error)
+          ? { kind: "unreachable" }
+          : { kind: "error", message: "Server error — try again" },
+      );
+      setCurrentPage(deniedFromPage);
+      return;
+    }
+
+    await saveProfileAndContinue(membershipRetryPage);
+  }, [deniedFromPage, membershipRetryPage, saveProfileAndContinue]);
+
   const updateDisplayNameDraft = React.useCallback(
     (value: string) => {
       updateProfileDraft({ displayName: value });
@@ -436,7 +460,7 @@ export function OnboardingFlow({
           onChangeCommunity={() => setIsCommunityChangeOpen(true)}
           onImportKey={importExistingKey}
           onRetry={() => {
-            void saveProfileAndContinue(membershipRetryPage);
+            void retryMembership();
           }}
           pubkey={deniedPubkey}
         />

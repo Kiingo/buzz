@@ -76,6 +76,11 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Match the relay's 500 MiB video ceiling while leaving a small amount of
+    # headroom for the raw request body. Stream uploads instead of buffering
+    # them on the ingress controller's limited ephemeral disk.
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
     # Preview and production edge hostnames are aliases for one canonical Buzz
     # community. Preserve row-zero tenant binding by normalizing the upstream
     # Host before the relay reads it.

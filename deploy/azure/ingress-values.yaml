@@ -7,6 +7,12 @@ controller:
     # ModSecurity snippet annotation, which ingress-nginx classifies Critical.
     annotations-risk-level: "Critical"
     enable-modsecurity: "true"
+    # The dedicated controller uses ModSecurity only for the phase-1 origin
+    # header rules on the Buzz ingresses. Disable global request-body inspection
+    # so its independent 12.5 MiB default cannot reject media before the relay's
+    # stricter type-specific size validation runs.
+    modsecurity-snippet: |
+      SecRequestBodyAccess Off
     use-forwarded-headers: "true"
     proxy-real-ip-cidr: "147.243.0.0/16"
   service:
