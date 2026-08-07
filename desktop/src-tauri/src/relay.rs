@@ -608,6 +608,10 @@ pub async fn submit_signed_event_with_keys(
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[path = "relay_error_response_tests.rs"]
+mod relay_error_response_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{
         build_profile_event, classify_intercepted_response, effective_agent_relay_url,
@@ -708,38 +712,6 @@ mod tests {
         assert!(
             !msg.contains(&oversized.to_string()),
             "raw oversized hint must not appear in the message string"
-        );
-    }
-
-    #[tokio::test]
-    async fn html_payload_too_large_response_preserves_actionable_status() {
-        use std::io::{Read as _, Write as _};
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 4096];
-                let _ = stream.read(&mut buf);
-                let body = "<html><body>request too large</body></html>";
-                let response = format!(
-                    "HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
-            }
-        });
-
-        let response = reqwest::Client::new()
-            .get(format!("http://{addr}/"))
-            .send()
-            .await
-            .expect("request must succeed");
-
-        assert_eq!(
-            super::relay_error_message(response).await,
-            "relay returned 413 Payload Too Large"
         );
     }
 
