@@ -610,7 +610,7 @@ buzz channels delete --channel "$FORUM_ID" | jq .
 | 49 | `repos create` | ☐ | |
 | 50 | `repos get` | ☐ | |
 | 51 | `repos list` | ☐ | |
-| 52 | `repos delete` | ☐ | Delete own coordinate; get/list absent; second delete → NotFound |
+| 52 | `repos delete` | ☐ | Delete own coordinate older than relay drift window; get/list absent; second delete → NotFound |
 | 53 | `repos protect list` | ☐ | Empty/populated rules; unknown rules visible; malformed rule reported in validation_error |
 | 54 | `repos protect set` | ☐ | Create and replace complete exact-ref rule; verify metadata is preserved |
 | 55 | `repos protect remove` | ☐ | Remove exact ref; missing rule → NotFound |
