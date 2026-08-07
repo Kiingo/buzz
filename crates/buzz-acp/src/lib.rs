@@ -3219,6 +3219,35 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
     message.contains("Re-authenticate") || message.contains("API Error: 401")
 }
 
+/// Return a trusted, user-actionable bridge error that should be published
+/// once instead of retried.
+///
+/// The Kiingo bridge deliberately returns this fixed message shape for
+/// identity and subscription enrollment failures. Match both the complete
+/// prefix and a closed set of machine codes so arbitrary provider or internal
+/// agent errors cannot be reflected into a Buzz channel.
+fn actionable_agent_error_message(error: &acp::AcpError) -> Option<&str> {
+    const PREFIX: &str = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
+    const CODES: &[&str] = &[
+        "buzz_identity_not_verified",
+        "buzz_identity_ambiguous",
+        "buzz_identity_endpoint_not_eligible",
+        "buzz_identity_enrollment_invalid",
+        "buzz_identity_enrollment_conflict",
+        "buzz_codex_subscription_not_connected",
+        "buzz_codex_subscription_routing_ambiguous",
+    ];
+
+    let acp::AcpError::AgentError { code, message } = error else {
+        return None;
+    };
+    if *code != -32000 {
+        return None;
+    }
+    let code = message.strip_prefix(PREFIX)?.strip_suffix(").")?;
+    CODES.contains(&code).then_some(message.as_str())
+}
+
 /// Spawn a task that posts a user-visible failure notice to the relay.
 ///
 /// Shared by the hard-cap immediate dead-letter path and the retries-exhausted
@@ -3270,6 +3299,10 @@ fn handle_prompt_result(
     // branch below records what actually happened; only the hard-timeout
     // match arm in the death_message construction reads it.
     let mut hard_timeout_fate_suffix: Option<&'static str> = None;
+    let actionable_error = match &result.outcome {
+        PromptOutcome::Error(error) => actionable_agent_error_message(error).map(str::to_owned),
+        _ => None,
+    };
 
     // Requeue BEFORE mark_complete: requeue() sets retry_after with a future
     // deadline, and mark_complete() checks for it to decide whether to preserve
@@ -3339,6 +3372,18 @@ fn handle_prompt_result(
                 } else {
                     hard_timeout_fate_suffix = Some(" — requeued for retry (recently active)");
                 }
+            } else if let Some(content) = actionable_error {
+                // Identity and subscription enrollment errors are terminal for
+                // this request, but already contain safe recovery guidance.
+                // Publish that exact guidance once rather than hiding it in
+                // logs and retrying a request whose eligibility cannot change
+                // during the retry window.
+                tracing::warn!(
+                    channel_id = %batch.channel_id,
+                    events = batch.events.len(),
+                    "publishing terminal actionable agent error"
+                );
+                spawn_failure_notice(rest_client, &batch, format!("⚠️ {content}"));
             } else if matches!(&result.outcome, PromptOutcome::Error(e) if is_auth_error(e)) {
                 // Auth errors are non-retryable: the token won't self-repair
                 // between retries, so requeueing only wastes attempt slots and
@@ -6529,13 +6574,51 @@ mod error_outcome_emission_tests {
         );
     }
 
-    // ── auth error dead-letter behavior ────────────────────────────────────
+    #[test]
+    fn actionable_agent_error_message_accepts_only_known_bridge_guidance() {
+        let message = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).";
+        let error = acp::AcpError::AgentError {
+            code: -32000,
+            message: message.to_string(),
+        };
+        assert_eq!(actionable_agent_error_message(&error), Some(message));
 
-    /// An auth-class `PromptOutcome::Error` must dead-letter immediately
-    /// (the batch is never requeued) so the user sees a re-auth hint at once
-    /// rather than after 10 futile retries.
-    #[tokio::test]
-    async fn auth_error_dead_letters_immediately_without_requeueing() {
+        let ambiguous_message = message.replace(
+            "buzz_codex_subscription_not_connected",
+            "buzz_identity_ambiguous",
+        );
+        let ambiguous = acp::AcpError::AgentError {
+            code: -32000,
+            message: ambiguous_message.clone(),
+        };
+        assert_eq!(
+            actionable_agent_error_message(&ambiguous),
+            Some(ambiguous_message.as_str())
+        );
+    }
+
+    #[test]
+    fn actionable_agent_error_message_rejects_untrusted_errors() {
+        let unknown_code = acp::AcpError::AgentError {
+            code: -32000,
+            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (provider_internal_error).".to_string(),
+        };
+        assert_eq!(actionable_agent_error_message(&unknown_code), None);
+
+        let injected = acp::AcpError::AgentError {
+            code: -32000,
+            message: "Provider failed; buzz_codex_subscription_not_connected".to_string(),
+        };
+        assert_eq!(actionable_agent_error_message(&injected), None);
+
+        let wrong_rpc_code = acp::AcpError::AgentError {
+            code: -32603,
+            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
+        };
+        assert_eq!(actionable_agent_error_message(&wrong_rpc_code), None);
+    }
+
+    async fn assert_agent_error_dead_letters_immediately(error: acp::AcpError) {
         let keys = nostr::Keys::generate();
         let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "test")
             .sign_with_keys(&keys)
@@ -6551,13 +6634,6 @@ mod error_outcome_emission_tests {
             cancelled_events: vec![],
             cancel_reason: None,
         };
-
-        let auth_error = acp::AcpError::AgentError {
-            code: -32000,
-            message: "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
-                .to_string(),
-        };
-
         let agent = dummy_agent(0).await;
         let mut pool = AgentPool::from_slots(vec![None]);
         let task_id = pool.join_set.spawn(async {}).id();
@@ -6588,7 +6664,7 @@ mod error_outcome_emission_tests {
             agent,
             source: PromptSource::Channel(channel_id),
             turn_id: "test-turn-id".to_string(),
-            outcome: PromptOutcome::Error(auth_error),
+            outcome: PromptOutcome::Error(error),
             batch: Some(batch),
         };
         handle_prompt_result(
@@ -6605,17 +6681,32 @@ mod error_outcome_emission_tests {
             None,
         );
 
-        // The batch must not be requeued: pending_channels returns 0.
-        assert_eq!(
-            queue.pending_channels(),
-            0,
-            "auth error must dead-letter immediately — batch must not be requeued"
-        );
-        assert_eq!(
-            queue.queued_event_count(&channel_id),
-            0,
-            "auth error must dead-letter immediately — no events should be pending"
-        );
+        assert_eq!(queue.pending_channels(), 0);
+        assert_eq!(queue.queued_event_count(&channel_id), 0);
+    }
+
+    #[tokio::test]
+    async fn actionable_agent_error_dead_letters_immediately_without_requeueing() {
+        let error = acp::AcpError::AgentError {
+            code: -32000,
+            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
+        };
+        assert_agent_error_dead_letters_immediately(error).await;
+    }
+
+    // ── auth error dead-letter behavior ────────────────────────────────────
+
+    /// An auth-class `PromptOutcome::Error` must dead-letter immediately
+    /// (the batch is never requeued) so the user sees a re-auth hint at once
+    /// rather than after 10 futile retries.
+    #[tokio::test]
+    async fn auth_error_dead_letters_immediately_without_requeueing() {
+        let auth_error = acp::AcpError::AgentError {
+            code: -32000,
+            message: "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
+                .to_string(),
+        };
+        assert_agent_error_dead_letters_immediately(auth_error).await;
     }
 
     /// A non-auth application error (e.g. usage credits) must still follow the
