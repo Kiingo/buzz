@@ -79,6 +79,14 @@ agent or endpoint ownership, and repairs only same-scope endpoint state. A
 restart therefore returns the same endpoint, agent, and ownership boundary; it
 does not create another agent or store a provider credential.
 
+Before the listener starts, the same agent identity reads its canonical relay
+profile through `wss://chat.kiingo.com`. If the display name or description is
+missing or stale, it publishes the reviewed `Kiingo Buzz` profile and verifies
+that write before starting `buzz-acp`. This keeps the hosted agent discoverable
+after a restore or fresh deployment without copying an owner or employee
+private key into the workload. The operation is replaceable and idempotent when
+the expected profile is already present.
+
 The listener and membership Job run as the tokenless `buzz-kiingo-agent`
 service account. They consume only the Kubernetes `buzz-runtime` keys projected
 and synchronized by the already-ready relay workload; they do not mount the

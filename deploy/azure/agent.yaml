@@ -115,7 +115,8 @@ spec:
               set -eu
               umask 077
               bootstrap_response=/tmp/buzz-endpoint-bootstrap.json
-              trap 'rm -f "${bootstrap_response}"' EXIT
+              profile_response=/tmp/buzz-agent-profile.json
+              trap 'rm -f "${bootstrap_response}" "${profile_response}"' EXIT
               curl \
                 --fail-with-body \
                 --silent \
@@ -135,6 +136,56 @@ spec:
               EOF
               grep -q '"registered":true' "${bootstrap_response}"
               rm -f "${bootstrap_response}"
+
+              profile_read=false
+              profile_matches() {
+                grep -Fq "\"display_name\":\"${BUZZ_AGENT_DISPLAY_NAME}\"" "${profile_response}" && \
+                  grep -Fq "\"about\":\"${BUZZ_AGENT_ABOUT}\"" "${profile_response}"
+              }
+              for attempt in 1 2 3 4 5; do
+                if /usr/local/bin/buzz \
+                  --relay "${BUZZ_CANONICAL_RELAY_URL}" \
+                  users get \
+                  --pubkey "${BUZZ_AGENT_PUBLIC_KEY}" \
+                  >"${profile_response}" 2>/dev/null; then
+                  profile_read=true
+                  break
+                fi
+                sleep 2
+              done
+              [ "${profile_read}" = true ]
+
+              if ! profile_matches; then
+                profile_published=false
+                for attempt in 1 2 3 4 5; do
+                  if /usr/local/bin/buzz \
+                    --relay "${BUZZ_CANONICAL_RELAY_URL}" \
+                    users set-profile \
+                    --name "${BUZZ_AGENT_DISPLAY_NAME}" \
+                    --about "${BUZZ_AGENT_ABOUT}" \
+                    >/dev/null; then
+                    profile_published=true
+                    break
+                  fi
+                  sleep 2
+                done
+                [ "${profile_published}" = true ]
+
+                profile_verified=false
+                for attempt in 1 2 3 4 5; do
+                  if /usr/local/bin/buzz \
+                    --relay "${BUZZ_CANONICAL_RELAY_URL}" \
+                    users get \
+                    --pubkey "${BUZZ_AGENT_PUBLIC_KEY}" \
+                    >"${profile_response}" 2>/dev/null && profile_matches; then
+                    profile_verified=true
+                    break
+                  fi
+                  sleep 2
+                done
+                [ "${profile_verified}" = true ]
+              fi
+              rm -f "${profile_response}"
               trap - EXIT
               exec /usr/local/bin/buzz-acp
           env:
@@ -144,6 +195,10 @@ spec:
               value: chat.kiingo.com
             - name: BUZZ_CANONICAL_RELAY_URL
               value: wss://chat.kiingo.com
+            - name: BUZZ_AGENT_DISPLAY_NAME
+              value: Kiingo Buzz
+            - name: BUZZ_AGENT_ABOUT
+              value: Kiingo hosted Codex agent powered by Kiingo Compute.
             - name: BUZZ_ORGANIZATION_ID
               value: __BUZZ_ORGANIZATION_ID__
             - name: BUZZ_OWNER_USER_ID
