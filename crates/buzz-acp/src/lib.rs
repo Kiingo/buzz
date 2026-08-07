@@ -3227,7 +3227,7 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
 /// prefix and a closed set of machine codes so arbitrary provider or internal
 /// agent errors cannot be reflected into a Buzz channel.
 fn actionable_agent_error_message(error: &acp::AcpError) -> Option<&str> {
-    const PREFIX: &str = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
+    const PREFIX: &str = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
     const CODES: &[&str] = &[
         "buzz_identity_not_verified",
         "buzz_identity_ambiguous",
@@ -6576,7 +6576,7 @@ mod error_outcome_emission_tests {
 
     #[test]
     fn actionable_agent_error_message_accepts_only_known_bridge_guidance() {
-        let message = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).";
+        let message = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).";
         let error = acp::AcpError::AgentError {
             code: -32000,
             message: message.to_string(),
@@ -6601,7 +6601,7 @@ mod error_outcome_emission_tests {
     fn actionable_agent_error_message_rejects_untrusted_errors() {
         let unknown_code = acp::AcpError::AgentError {
             code: -32000,
-            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (provider_internal_error).".to_string(),
+            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (provider_internal_error).".to_string(),
         };
         assert_eq!(actionable_agent_error_message(&unknown_code), None);
 
@@ -6613,7 +6613,7 @@ mod error_outcome_emission_tests {
 
         let wrong_rpc_code = acp::AcpError::AgentError {
             code: -32603,
-            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
+            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
         };
         assert_eq!(actionable_agent_error_message(&wrong_rpc_code), None);
     }
@@ -6689,7 +6689,7 @@ mod error_outcome_emission_tests {
     async fn actionable_agent_error_dead_letters_immediately_without_requeueing() {
         let error = acp::AcpError::AgentError {
             code: -32000,
-            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
+            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
         };
         assert_agent_error_dead_letters_immediately(error).await;
     }

@@ -867,7 +867,7 @@ fn actionable_ingress_error(status: StatusCode, code: &str) -> String {
         | "buzz_identity_enrollment_conflict"
         | "buzz_codex_subscription_not_connected"
         | "buzz_codex_subscription_routing_ambiguous" => format!(
-            "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect ({code})."
+            "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect ({code})."
         ),
         _ => format!("Kiingo rejected the Buzz event with HTTP {} ({code})", status.as_u16()),
     }
