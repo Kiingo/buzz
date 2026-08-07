@@ -234,13 +234,18 @@ jobs:
               throw "Expected an unsigned pilot artifact: $($file.FullName) ($($signature.Status))"
             }
           }
-          rg -a -q 'wss://chat\.kiingo\.com' $app.FullName
-          if ($LASTEXITCODE -ne 0) { throw 'Pinned Kiingo relay URL is absent from the pilot executable.' }
-          rg -a -q 'https://app\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' $app.FullName
-          if ($LASTEXITCODE -ne 0) { throw 'Codex enrollment URL is absent from the pilot executable.' }
-          rg -a -q 'kiingo-desktop-latest' $app.FullName
-          if ($LASTEXITCODE -eq 0) { throw 'Signed production updater endpoint must be absent from the pilot executable.' }
-          $global:LASTEXITCODE = 0
+          $appAscii = [System.Text.Encoding]::ASCII.GetString(
+            [System.IO.File]::ReadAllBytes($app.FullName)
+          )
+          if (-not $appAscii.Contains('wss://chat.kiingo.com')) {
+            throw 'Pinned Kiingo relay URL is absent from the pilot executable.'
+          }
+          if (-not $appAscii.Contains('https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect')) {
+            throw 'Codex enrollment URL is absent from the pilot executable.'
+          }
+          if ($appAscii.Contains('kiingo-desktop-latest')) {
+            throw 'Signed production updater endpoint must be absent from the pilot executable.'
+          }
 
       - name: Upload Windows canary installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
