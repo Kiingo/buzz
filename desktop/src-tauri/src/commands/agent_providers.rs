@@ -1,7 +1,7 @@
+use crate::app_state::AppState;
 use crate::managed_agents::{
     discover_provider_candidates, invoke_provider, validate_provider_info, BackendProviderInfo,
 };
-use crate::app_state::AppState;
 use tauri::State;
 
 #[tauri::command]

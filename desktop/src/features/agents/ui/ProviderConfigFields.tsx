@@ -44,7 +44,9 @@ export function providerFieldOptions(
   ) {
     const source = multiDependent as Record<string, unknown>;
     const fields = Array.isArray(source.fields)
-      ? source.fields.filter((field): field is string => typeof field === "string")
+      ? source.fields.filter(
+          (field): field is string => typeof field === "string",
+        )
       : [];
     const options =
       source.options &&
@@ -53,9 +55,8 @@ export function providerFieldOptions(
         ? (source.options as Record<string, unknown>)
         : null;
     if (fields.length === 0 || fields.length > 4 || !options) return [];
-    const selectedOptions = options[
-      fields.map((field) => config[field] ?? "").join("|")
-    ];
+    const selectedOptions =
+      options[fields.map((field) => config[field] ?? "").join("|")];
     return Array.isArray(selectedOptions)
       ? selectedOptions.filter(
           (entry): entry is ProviderFieldOption =>

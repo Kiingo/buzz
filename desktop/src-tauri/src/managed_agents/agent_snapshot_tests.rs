@@ -48,9 +48,9 @@ fn minimal_record() -> ManagedAgentRecord {
             name: None,
             summary: Vec::new(),
         },
-       backend_agent_id: Some("SENTINEL_BACKEND_AGENT_ID".to_string()), // MUST NOT appear
+        backend_agent_id: Some("SENTINEL_BACKEND_AGENT_ID".to_string()), // MUST NOT appear
         provider_lifecycle_state: None,
-       provider_binary_path: Some("/usr/bin/SENTINEL_PROVIDER_BINARY".to_string()), // MUST NOT appear
+        provider_binary_path: Some("/usr/bin/SENTINEL_PROVIDER_BINARY".to_string()), // MUST NOT appear
         persona_team_dir: Some(std::path::PathBuf::from("SENTINEL_TEAM_DIR")), // MUST NOT appear
         persona_name_in_team: Some("SENTINEL_NAME_IN_TEAM".to_string()),       // MUST NOT appear
         created_at: "2024-01-01T00:00:00Z".to_string(),

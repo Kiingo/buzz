@@ -168,17 +168,17 @@ pub fn build_managed_agent_summary(
                     _ => "deployed".to_string(),
                 }
             } else {
-            let paused = record.last_stopped_at.as_deref().is_some_and(|stopped| {
-                record
-                    .last_started_at
-                    .as_deref()
-                    .is_none_or(|started| stopped > started)
-            });
-            if paused {
-                "paused".to_string()
-            } else {
-                "deployed".to_string()
-            }
+                let paused = record.last_stopped_at.as_deref().is_some_and(|stopped| {
+                    record
+                        .last_started_at
+                        .as_deref()
+                        .is_none_or(|started| stopped > started)
+                });
+                if paused {
+                    "paused".to_string()
+                } else {
+                    "deployed".to_string()
+                }
             }
         } else {
             "not_deployed".to_string()

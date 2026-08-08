@@ -120,9 +120,7 @@ pub(crate) fn validate_provider_info(info: &serde_json::Value) -> Result<u64, St
                 .as_str()
                 .is_none_or(|value| value.is_empty() || value.len() > 1_000)
             {
-                return Err(
-                    "provider v2 connection_scope_message must be a bounded string".into(),
-                );
+                return Err("provider v2 connection_scope_message must be a bounded string".into());
             }
         }
         if capabilities
@@ -224,9 +222,7 @@ fn validate_provider_connection_status(status: &serde_json::Value) -> Result<(),
         let valid_status = state
             .get("status")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| {
-                matches!(value, "connected" | "action_required" | "unavailable")
-            });
+            .is_some_and(|value| matches!(value, "connected" | "action_required" | "unavailable"));
         if !valid_status {
             return Err("provider v2 connection state status is invalid".into());
         }
@@ -813,7 +809,9 @@ fn verify_provider_platform_signature(binary: &Path) -> Result<(), String> {
     }
     let system_root = std::env::var_os("SystemRoot")
         .map(PathBuf::from)
-        .ok_or_else(|| "Windows system root is unavailable for provider verification".to_string())?;
+        .ok_or_else(|| {
+            "Windows system root is unavailable for provider verification".to_string()
+        })?;
     let powershell = system_root
         .join("System32")
         .join("WindowsPowerShell")
@@ -821,7 +819,13 @@ fn verify_provider_platform_signature(binary: &Path) -> Result<(), String> {
         .join("powershell.exe");
     let script = r#"$signature = Get-AuthenticodeSignature -LiteralPath $env:BUZZ_PROVIDER_SIGNATURE_TARGET; if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) { exit 41 }; [Console]::Out.Write($signature.SignerCertificate.Subject)"#;
     let output = std::process::Command::new(powershell)
-        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script])
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
         .env("BUZZ_PROVIDER_SIGNATURE_TARGET", binary)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -902,10 +906,7 @@ pub(crate) fn parse_provider_lifecycle_state(
         "error_code",
         "correlation_id",
     ];
-    if let Some(field) = state
-        .keys()
-        .find(|field| !FIELDS.contains(&field.as_str()))
-    {
+    if let Some(field) = state.keys().find(|field| !FIELDS.contains(&field.as_str())) {
         return Err(format!(
             "provider lifecycle state contains unknown field {field}"
         ));

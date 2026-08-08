@@ -112,9 +112,7 @@ export function resolveBackendIntent(
       {
         label:
           field.label ??
-          (typeof property?.title === "string"
-            ? property.title
-            : field.field),
+          (typeof property?.title === "string" ? property.title : field.field),
         value,
       },
     ];
@@ -126,9 +124,7 @@ export function resolveBackendIntent(
       draft.providerConfig,
       draft.probedProvider?.config_schema,
     ),
-    ...(draft.probedProvider?.name
-      ? { name: draft.probedProvider.name }
-      : {}),
+    ...(draft.probedProvider?.name ? { name: draft.probedProvider.name } : {}),
     ...(summary.length > 0 ? { summary } : {}),
   };
 }

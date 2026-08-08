@@ -10,10 +10,9 @@ use crate::{
         provider_deploy, resolve_provider_binary, save_managed_agents, start_managed_agent_process,
         stop_managed_agent_process, stop_managed_agent_workspace_pair,
         sync_managed_agent_processes, try_regenerate_nest, validate_provider_config,
-        validate_provider_presentation_snapshot, BackendKind,
-        CreateManagedAgentRequest, CreateManagedAgentResponse, ManagedAgentRecord,
-        ManagedAgentSummary, RelayMeshConfig, DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM,
-        DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
+        validate_provider_presentation_snapshot, BackendKind, CreateManagedAgentRequest,
+        CreateManagedAgentResponse, ManagedAgentRecord, ManagedAgentSummary, RelayMeshConfig,
+        DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM, DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
     },
     relay::{relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
@@ -618,8 +617,13 @@ fn control_provider_record(
     let owner_proof = serde_json::to_value(owner_proof)
         .map_err(|error| format!("failed to serialize provider control proof: {error}"))?;
     let binary = resolve_provider_binary(id)?;
-    let response =
-        crate::managed_agents::provider_control(&binary, operation, agent_id, revision, &owner_proof)?;
+    let response = crate::managed_agents::provider_control(
+        &binary,
+        operation,
+        agent_id,
+        revision,
+        &owner_proof,
+    )?;
     crate::managed_agents::parse_provider_lifecycle_state(&response)
 }
 
@@ -1118,9 +1122,7 @@ pub async fn create_managed_agent(
     // ── Phase 5: provider deploy (async, outside lock) ───────────────────────
     let spawn_error = if input.spawn_after_create && input.backend != BackendKind::Local {
         if let BackendKind::Provider {
-            ref id,
-            ref config,
-            ..
+            ref id, ref config, ..
         } = input.backend
         {
             // Read the saved record to build the deploy payload (record has the
