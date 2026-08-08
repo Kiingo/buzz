@@ -186,10 +186,20 @@ struct BuzzEnvelope {
 }
 
 #[derive(Debug, Clone)]
+struct InitialReceiptPublication {
+    fence_id: String,
+    publication_kind: String,
+    content: String,
+    should_publish: bool,
+    status: String,
+}
+
+#[derive(Debug, Clone)]
 struct AcceptedTurn {
     receipt_id: String,
     event_cursor: u64,
     initial_capacity_state: Option<String>,
+    initial_receipt_publication: Option<InitialReceiptPublication>,
     selected_harness: String,
     replayed: bool,
 }
@@ -563,13 +573,16 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
     };
     *context.receipt_id.lock().await = Some(accepted.receipt_id.clone());
     let harness_label = harness_label(&accepted.selected_harness);
-    // A queue retry replays the immutable ingress event so it can resume from
-    // the durable event cursor. The original acceptance fence is already
-    // published. Recomputing its capacity-sensitive text here can change the
-    // payload under the same idempotency key and correctly trigger a 409,
-    // preventing the retry from reaching the terminal event. Resume without
-    // touching that original receipt publication.
-    if !accepted.replayed {
+    // Newer APIs claim the immutable acceptance fence in the admission
+    // transaction and return it here. Emit that intent directly so the parent
+    // can reconcile/publish it without another API round trip. Replays may
+    // return a still-publishing fence after a process interruption; emitting
+    // the same durable d-tag is safe because the parent queries the relay
+    // before publishing. Older APIs omit the field and use the legacy claim
+    // path for non-replayed turns.
+    if let Some(publication) = accepted.initial_receipt_publication.as_ref() {
+        emit_preclaimed_receipt(context, &accepted.receipt_id, publication).await;
+    } else if !accepted.replayed {
         publish_status(
             context,
             &accepted.receipt_id,
@@ -578,6 +591,8 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
             &initial_receipt_message(accepted.initial_capacity_state.as_deref(), harness_label),
         )
         .await?;
+    }
+    if !accepted.replayed {
         emit_message_chunk(
             &context.writer,
             &context.session_id,
@@ -827,6 +842,7 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    let initial_receipt_publication = parse_initial_receipt_publication(&body)?;
     let selected_harness = required_json_string(&body, "selected_harness")?;
     if !matches!(selected_harness.as_str(), "codex" | "claude-code") {
         return Err("Kiingo ingress returned an unsupported hosted harness".to_string());
@@ -838,8 +854,49 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
         receipt_id,
         event_cursor,
         initial_capacity_state,
+        initial_receipt_publication,
         selected_harness,
         replayed,
+    }))
+}
+
+fn parse_initial_receipt_publication(
+    body: &Value,
+) -> Result<Option<InitialReceiptPublication>, String> {
+    let Some(publication) = body.get("initial_receipt_publication") else {
+        return Ok(None);
+    };
+    if !publication.is_object() {
+        return Err("Kiingo ingress returned an invalid initial receipt publication".to_string());
+    }
+    let fence_id = required_json_string(publication, "fence_id")?;
+    let publication_kind = required_json_string(publication, "publication_kind")?;
+    if publication_kind != "receipt" {
+        return Err("Kiingo ingress returned an unsupported initial publication kind".to_string());
+    }
+    let content = required_json_string(publication, "content")?;
+    let should_publish = publication
+        .get("should_publish")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| {
+            "Kiingo ingress initial receipt publication is missing should_publish".to_string()
+        })?;
+    let status = required_json_string(publication, "status")?;
+    if !matches!(
+        status.as_str(),
+        "pending" | "publishing" | "published" | "retryable" | "failed"
+    ) {
+        return Err("Kiingo ingress returned an unsupported publication status".to_string());
+    }
+    if should_publish && status != "publishing" {
+        return Err("Kiingo ingress returned an inconsistent publication claim".to_string());
+    }
+    Ok(Some(InitialReceiptPublication {
+        fence_id,
+        publication_kind,
+        content,
+        should_publish,
+        status,
     }))
 }
 
@@ -1400,6 +1457,39 @@ async fn publish_status(
         return Ok(());
     }
     let fence_id = required_json_string(&body, "fence_id")?;
+    emit_claimed_publication(context, receipt_id, &fence_id, publication_kind, content).await;
+    Ok(())
+}
+
+async fn emit_preclaimed_receipt(
+    context: &PromptContext,
+    receipt_id: &str,
+    publication: &InitialReceiptPublication,
+) {
+    if !publication_requires_emit(publication) {
+        return;
+    }
+    emit_claimed_publication(
+        context,
+        receipt_id,
+        &publication.fence_id,
+        &publication.publication_kind,
+        &publication.content,
+    )
+    .await;
+}
+
+fn publication_requires_emit(publication: &InitialReceiptPublication) -> bool {
+    publication.should_publish || publication.status == "publishing"
+}
+
+async fn emit_claimed_publication(
+    context: &PromptContext,
+    receipt_id: &str,
+    fence_id: &str,
+    publication_kind: &str,
+    content: &str,
+) {
     emit_publication_intent(
         &context.writer,
         &context.session_id,
@@ -1417,7 +1507,6 @@ async fn publish_status(
         }),
     )
     .await;
-    Ok(())
 }
 
 fn parse_prompt_envelope(params: &Value) -> Result<BuzzEnvelope, String> {
@@ -1999,6 +2088,82 @@ mod tests {
     }
 
     #[test]
+    fn parses_preclaimed_initial_receipt_for_direct_publication() {
+        let body = json!({
+            "initial_receipt_publication": {
+                "fence_id": "11111111-1111-4111-8111-111111111111",
+                "publication_kind": "receipt",
+                "content": "Received - this request is durably accepted.",
+                "should_publish": true,
+                "status": "publishing"
+            }
+        });
+
+        let publication = parse_initial_receipt_publication(&body)
+            .expect("valid publication")
+            .expect("publication is present");
+        assert_eq!(publication.fence_id, "11111111-1111-4111-8111-111111111111");
+        assert_eq!(publication.publication_kind, "receipt");
+        assert_eq!(
+            publication.content,
+            "Received - this request is durably accepted."
+        );
+        assert!(publication_requires_emit(&publication));
+    }
+
+    #[test]
+    fn keeps_legacy_admission_compatible_and_skips_published_fences() {
+        assert!(parse_initial_receipt_publication(&json!({}))
+            .expect("missing field is backward compatible")
+            .is_none());
+        let publication = parse_initial_receipt_publication(&json!({
+            "initial_receipt_publication": {
+                "fence_id": "11111111-1111-4111-8111-111111111111",
+                "publication_kind": "receipt",
+                "content": "Already published.",
+                "should_publish": false,
+                "status": "published"
+            }
+        }))
+        .expect("published fence is valid")
+        .expect("publication is present");
+        assert!(!publication_requires_emit(&publication));
+    }
+
+    #[test]
+    fn rejects_malformed_or_unsupported_initial_publications() {
+        let malformed = parse_initial_receipt_publication(&json!({
+            "initial_receipt_publication": null
+        }))
+        .expect_err("null publication must be rejected");
+        assert!(malformed.contains("invalid initial receipt publication"));
+
+        let unsupported = parse_initial_receipt_publication(&json!({
+            "initial_receipt_publication": {
+                "fence_id": "11111111-1111-4111-8111-111111111111",
+                "publication_kind": "progress",
+                "content": "Wrong kind.",
+                "should_publish": true,
+                "status": "publishing"
+            }
+        }))
+        .expect_err("non-receipt publication must be rejected");
+        assert!(unsupported.contains("unsupported initial publication kind"));
+
+        let inconsistent = parse_initial_receipt_publication(&json!({
+            "initial_receipt_publication": {
+                "fence_id": "11111111-1111-4111-8111-111111111111",
+                "publication_kind": "receipt",
+                "content": "Inconsistent claim.",
+                "should_publish": true,
+                "status": "published"
+            }
+        }))
+        .expect_err("published claim cannot request publication");
+        assert!(inconsistent.contains("inconsistent publication claim"));
+    }
+
+    #[test]
     fn extracts_only_the_local_buzz_runtime_from_acp_mcp_config() {
         let runtime = read_local_buzz_runtime(&json!({
             "mcpServers": [{
@@ -2283,7 +2448,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replayed_terminal_turn_skips_the_original_receipt_fence_and_action_poll() {
+    async fn replayed_terminal_turn_reemits_preclaimed_receipt_without_reclaim_or_action_poll() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -2310,7 +2475,14 @@ mod tests {
                             "event_cursor": 41,
                             "replayed": true,
                             "selected_harness": "codex",
-                            "cold_fallback": false
+                            "cold_fallback": false,
+                            "initial_receipt_publication": {
+                                "fence_id": "11111111-1111-4111-8111-111111111111",
+                                "publication_kind": "receipt",
+                                "content": "Received - this request is durably accepted.",
+                                "should_publish": true,
+                                "status": "publishing"
+                            }
                         })
                         .to_string(),
                     )
