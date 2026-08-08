@@ -180,7 +180,7 @@ jobs:
           xcrun stapler validate "${dmg}"
           binary="${app}/Contents/MacOS/Buzz"
           rg -a -q 'wss://chat\.kiingo\.com' "${binary}"
-          rg -a -q 'https://app\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' "${binary}"
+          rg -a -q 'https://dashboard\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' "${binary}"
 
       - name: Stage signed release evidence
         shell: bash
@@ -334,7 +334,7 @@ jobs:
           }
           rg -a -q 'wss://chat\.kiingo\.com' $app.FullName
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Kiingo relay URL is absent from the desktop executable.' }
-          rg -a -q 'https://app\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' $app.FullName
+          rg -a -q 'https://dashboard\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' $app.FullName
           if ($LASTEXITCODE -ne 0) { throw 'Codex enrollment URL is absent from the desktop executable.' }
 
       - name: Stage signed release evidence
