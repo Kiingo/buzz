@@ -203,7 +203,7 @@ jobs:
             export BUZZ_CANONICAL_RELAY_URL='wss://chat.kiingo.com'
             export BUZZ_RELAY_HTTP='https://chat.kiingo.com'
             export BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY='1'
-            export BUZZ_BUILD_CODEX_ENROLLMENT_URL='https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect'
+            export BUZZ_BUILD_CODEX_ENROLLMENT_URL='https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect'
           fi
           cd desktop
           pnpm tauri build --target "$TARGET" --bundles nsis --config src-tauri/tauri.canary.conf.json
@@ -240,7 +240,7 @@ jobs:
           if (-not $appAscii.Contains('wss://chat.kiingo.com')) {
             throw 'Pinned Kiingo relay URL is absent from the pilot executable.'
           }
-          if (-not $appAscii.Contains('https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect')) {
+          if (-not $appAscii.Contains('https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect')) {
             throw 'Codex enrollment URL is absent from the pilot executable.'
           }
           if ($appAscii.Contains('kiingo-desktop-latest')) {
