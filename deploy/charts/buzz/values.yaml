@@ -118,6 +118,8 @@ relay:
   drainJitterMs: 0
   requireAuthToken: true
   requireRelayMembership: true
+  # Keep private media reads behind signed relay authentication by default.
+  requireMediaGetAuth: true
   allowNipOaAuth: true
   pubkeyAllowlist: false
   corsOrigins: []

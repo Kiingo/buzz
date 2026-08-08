@@ -239,7 +239,7 @@ export function usePersonaActions() {
         }
         const agentInput = await buildInstanceInputForDefinition(
           persona,
-          runtime,
+          runtime ?? null,
           undefined,
           startIntent ?? undefined,
         );

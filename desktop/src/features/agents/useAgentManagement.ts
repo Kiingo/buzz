@@ -208,7 +208,7 @@ export function useAgentManagement() {
         const created = await createAgentMutation.mutateAsync(
           await buildInstanceInputForDefinition(
             persona,
-            runtime,
+            runtime ?? null,
             undefined,
             backendIntent ?? undefined,
           ),
