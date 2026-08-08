@@ -32,17 +32,17 @@ export type ProfilePanelTab = "info" | "runtime" | "channels" | "memories";
 export type ProfileEditTarget = "instance" | "persona" | null;
 
 /**
- * A profile can resolve both a managed agent and the persona it was created
- * from. In that case the primary Edit action must open the running instance:
- * its runtime, provider, and hosted execution settings live there. The
- * instance editor exposes a separate link for editing the persona template.
+ * Provider-backed execution settings live on the managed instance, so its
+ * profile must open the instance editor even when it has a linked persona.
+ * Local linked agents retain the existing persona-template edit flow.
  */
 export function resolveProfileEditTarget(
   managedAgent: ManagedAgent | undefined,
   persona: AgentPersona | undefined,
 ): ProfileEditTarget {
-  if (managedAgent) return "instance";
+  if (managedAgent?.backend.type === "provider") return "instance";
   if (persona) return "persona";
+  if (managedAgent) return "instance";
   return null;
 }
 

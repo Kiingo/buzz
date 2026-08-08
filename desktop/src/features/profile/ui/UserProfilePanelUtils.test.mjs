@@ -93,14 +93,19 @@ test("personaManagedAgentUpdate syncs edited persona identity to linked agent", 
   });
 });
 
-test("profile Edit targets the managed instance before its linked persona", () => {
-  const linkedAgent = agent();
+test("profile Edit targets hosted instances without changing local persona edits", () => {
+  const hostedAgent = agent({
+    backend: { type: "provider", id: "example", config: {} },
+  });
+  const localAgent = agent();
   const linkedPersona = persona();
 
   assert.equal(
-    resolveProfileEditTarget(linkedAgent, linkedPersona),
+    resolveProfileEditTarget(hostedAgent, linkedPersona),
     "instance",
   );
+  assert.equal(resolveProfileEditTarget(localAgent, linkedPersona), "persona");
+  assert.equal(resolveProfileEditTarget(localAgent, undefined), "instance");
   assert.equal(resolveProfileEditTarget(undefined, linkedPersona), "persona");
   assert.equal(resolveProfileEditTarget(undefined, undefined), null);
 });
