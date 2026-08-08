@@ -26,6 +26,7 @@ env:
   BUZZ_RELAY_HTTP: https://chat.kiingo.com
   BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY: '1'
   BUZZ_BUILD_CODEX_ENROLLMENT_URL: https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect
+  BUZZ_TRUSTED_PROVIDER_SIGNER_SUBJECTS: ${{ vars.BUZZ_TRUSTED_PROVIDER_SIGNER_SUBJECTS }}
   BUZZ_UPDATER_ENDPOINT: https://github.com/Kiingo/buzz/releases/download/kiingo-desktop-latest/latest.json
 
 jobs:
@@ -246,6 +247,7 @@ jobs:
             BUZZ_UPDATER_PUBLIC_KEY TAURI_SIGNING_PRIVATE_KEY
             AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID
             ARTIFACT_SIGNING_ENDPOINT ARTIFACT_SIGNING_ACCOUNT ARTIFACT_SIGNING_PROFILE
+            BUZZ_TRUSTED_PROVIDER_SIGNER_SUBJECTS
           )
           for name in "${required[@]}"; do
             [[ -n "${!name:-}" ]] || {
