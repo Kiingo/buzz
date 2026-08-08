@@ -190,14 +190,14 @@ export function useAgentManagement() {
       const runtime = runtimes.find(
         (candidate) => candidate.id === input.runtime,
       );
-      if (!runtime) {
+      if (!runtime && !backendIntent) {
         throw new Error("Choose an available runtime for this agent.");
       }
 
       const avatarUrl = await resolveManagedAgentAvatarUrl(
         input.avatarUrl,
         undefined,
-        runtime.avatarUrl,
+        runtime?.avatarUrl,
       );
       const persona = await createPersonaMutation.mutateAsync({
         ...input,

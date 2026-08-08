@@ -158,9 +158,15 @@ esac"#,
     );
     write_test_provider(&provider, &body);
 
-    let id = provider_deploy(&provider, &serde_json::json!({}), &serde_json::json!({}))
-        .expect("staged deploy");
-    assert_eq!(id, "remote-1");
+    let id = provider_deploy(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        None,
+    )
+    .expect("staged deploy");
+    assert_eq!(id.0, "remote-1");
+    assert!(id.1.is_none());
     let paths: Vec<_> = std::fs::read_to_string(log)
         .unwrap()
         .lines()
@@ -213,10 +219,16 @@ esac"#,
     write_test_provider(&provider, &body);
     let inode_before = std::fs::metadata(&provider).unwrap().ino();
 
-    let id = provider_deploy(&provider, &serde_json::json!({}), &serde_json::json!({}))
-        .expect("deploy from immutable staged copy");
+    let id = provider_deploy(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        None,
+    )
+    .expect("deploy from immutable staged copy");
 
-    assert_eq!(id, "original-staged-bytes");
+    assert_eq!(id.0, "original-staged-bytes");
+    assert!(id.1.is_none());
     assert_eq!(
         std::fs::metadata(&provider).unwrap().ino(),
         inode_before,
@@ -254,10 +266,16 @@ esac"#,
     write_test_provider(&provider, &body);
     let inode_before = std::fs::metadata(&provider).unwrap().ino();
 
-    let id = provider_deploy(&provider, &serde_json::json!({}), &serde_json::json!({}))
-        .expect("deploy from immutable staged copy");
+    let id = provider_deploy(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        None,
+    )
+    .expect("deploy from immutable staged copy");
 
-    assert_eq!(id, "original-staged-bytes");
+    assert_eq!(id.0, "original-staged-bytes");
+    assert!(id.1.is_none());
     assert_ne!(
         std::fs::metadata(&provider).unwrap().ino(),
         inode_before,
@@ -272,7 +290,7 @@ esac"#,
 
 #[cfg(unix)]
 #[test]
-fn provider_deploy_refuses_mismatch_before_sending_agent_secret() {
+fn provider_deploy_refuses_malformed_v2_before_sending_agent_secret() {
     let directory = tempfile::tempdir().unwrap();
     let provider = directory.path().join("provider");
     let marker = directory.path().join("deploy-received");
@@ -290,9 +308,10 @@ esac"#,
         &provider,
         &serde_json::json!({"private_key_nsec": "nsec1must-not-cross"}),
         &serde_json::json!({}),
+        None,
     )
     .unwrap_err();
-    assert!(error.contains("protocol version 2"), "{error}");
+    assert!(error.contains("missing object capabilities"), "{error}");
     assert!(!marker.exists());
     assert!(!error.contains("nsec1must-not-cross"));
 }
@@ -308,12 +327,62 @@ fn provider_deploy_requires_an_explicit_integer_protocol_version() {
 printf '%s\n' '{"ok":true,"version":"1.0.0"}'"#,
     );
 
-    let error =
-        provider_deploy(&provider, &serde_json::json!({}), &serde_json::json!({})).unwrap_err();
+    let error = provider_deploy(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        None,
+    )
+    .unwrap_err();
     assert!(
         error.contains("missing integer protocol_version"),
         "{error}"
     );
+}
+
+#[test]
+fn provider_lifecycle_state_accepts_the_bounded_v2_contract() {
+    let parsed = parse_provider_lifecycle_state(&serde_json::json!({
+        "ok": true,
+        "state": {
+            "contract_version": 1,
+            "provider_agent_id": "agent-1",
+            "agent_public_key": "00",
+            "profile": {},
+            "desired_state": "active",
+            "observed_state": "ready",
+            "last_reconciled_at": "2026-08-08T12:00:00Z",
+            "last_ready_at": "2026-08-08T12:00:01Z",
+            "error_code": null,
+            "correlation_id": "request-1"
+        }
+    }))
+    .expect("valid lifecycle state");
+    assert_eq!(parsed.observed_state, "ready");
+    assert_eq!(parsed.desired_state, "active");
+    assert_eq!(parsed.correlation_id, "request-1");
+}
+
+#[test]
+fn provider_lifecycle_state_rejects_unknown_or_secret_bearing_fields() {
+    let error = parse_provider_lifecycle_state(&serde_json::json!({
+        "state": {
+            "contract_version": 1,
+            "provider_agent_id": "agent-1",
+            "agent_public_key": "00",
+            "profile": {},
+            "desired_state": "active",
+            "observed_state": "ready",
+            "last_reconciled_at": null,
+            "last_ready_at": null,
+            "error_code": null,
+            "correlation_id": "request-1",
+            "credential": "must-not-persist"
+        }
+    }))
+    .unwrap_err();
+    assert!(error.contains("unknown field credential"), "{error}");
+    assert!(!error.contains("must-not-persist"));
 }
 
 #[test]
@@ -342,6 +411,112 @@ fn provider_info_requires_the_complete_flat_wire_shape() {
     assert!(validate_provider_info(&nested)
         .unwrap_err()
         .contains("unknown field provider"));
+}
+
+#[test]
+fn provider_v2_accepts_bounded_connection_status_metadata() {
+    let info = serde_json::json!({
+        "ok": true,
+        "name": "remote compute",
+        "version": "2.0.0",
+        "protocol_version": 2,
+        "description": "Remote provider",
+        "config_schema": {},
+        "capabilities": {
+            "owns_execution_profile": true,
+            "lifecycle_operations": ["status", "reconcile"],
+            "self_check": true,
+            "connection_scope_message": "Each sender connects independently.",
+            "presentation": {
+                "summary_fields": [
+                    {"field": "harness", "label": "Harness"},
+                    {"field": "model", "label": "Model", "empty_label": "Automatic"}
+                ]
+            },
+            "connection_status": {
+                "field": "harness",
+                "states": {
+                    "first": {
+                        "status": "action_required",
+                        "message": "Connect this account.",
+                        "remediation_url": "https://example.com/connect"
+                    }
+                }
+            }
+        }
+    });
+    assert_eq!(validate_provider_info(&info), Ok(2));
+}
+
+#[test]
+fn provider_v2_rejects_unbounded_presentation_metadata() {
+    let info = serde_json::json!({
+        "ok": true,
+        "name": "remote compute",
+        "version": "2.0.0",
+        "protocol_version": 2,
+        "description": "Remote provider",
+        "config_schema": {},
+        "capabilities": {
+            "owns_execution_profile": true,
+            "lifecycle_operations": [],
+            "presentation": {
+                "summary_fields": [{"field": "model", "label": "x".repeat(129)}]
+            }
+        }
+    });
+    assert!(validate_provider_info(&info)
+        .unwrap_err()
+        .contains("presentation summary field label"));
+}
+
+#[test]
+fn provider_v2_rejects_an_untrusted_connection_remediation_scheme() {
+    let info = serde_json::json!({
+        "ok": true,
+        "name": "remote compute",
+        "version": "2.0.0",
+        "protocol_version": 2,
+        "description": "Remote provider",
+        "config_schema": {},
+        "capabilities": {
+            "owns_execution_profile": true,
+            "lifecycle_operations": [],
+            "connection_status": {
+                "field": "harness",
+                "states": {
+                    "first": {
+                        "status": "action_required",
+                        "message": "Connect this account.",
+                        "remediation_url": "file:///unsafe"
+                    }
+                }
+            }
+        }
+    });
+    assert!(validate_provider_info(&info)
+        .unwrap_err()
+        .contains("remediation_url"));
+}
+
+#[test]
+fn structured_provider_errors_keep_safe_remediation_and_support_ids() {
+    let rendered = provider_error_text(Some(&serde_json::json!({
+        "code": "connection_required",
+        "message": "Connect your account, then retry.",
+        "remediation_url": "https://example.com/connect",
+        "correlation_id": "support_123"
+    })))
+    .unwrap();
+    assert!(rendered.contains("Connect your account"));
+    assert!(rendered.contains("https://example.com/connect"));
+    assert!(rendered.contains("support_123"));
+    assert!(provider_error_text(Some(&serde_json::json!({
+        "code": "bad",
+        "message": "bad",
+        "unexpected": "field"
+    })))
+    .is_err());
 }
 
 #[test]

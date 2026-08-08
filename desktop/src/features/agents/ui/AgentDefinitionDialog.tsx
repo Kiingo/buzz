@@ -113,6 +113,8 @@ type AgentDefinitionDialogProps = {
   createRunSection?: React.ReactNode;
   /** Extra create-mode submit gate (e.g. incomplete provider config). */
   createSubmitBlocked?: boolean;
+  /** The selected remote provider owns harness/model/profile configuration. */
+  remoteProviderOwnsExecutionProfile?: boolean;
 };
 
 export type AgentDefinitionSubmitOptions = {
@@ -136,6 +138,7 @@ export function AgentDefinitionDialog({
   publishCatalogUpdatesOnSave = false,
   createRunSection,
   createSubmitBlocked = false,
+  remoteProviderOwnsExecutionProfile = false,
 }: AgentDefinitionDialogProps) {
   const runtimesLoading = runtimeCatalogStatus === "loading";
   const [displayName, setDisplayName] = React.useState("");
@@ -339,8 +342,14 @@ export function AgentDefinitionDialog({
       provider: providerForSubmit,
     } = buildRuntimeModelProviderPayload({
       runtime,
-      model: aiConfigurationMode === "defaults" ? "" : model,
-      provider: aiConfigurationMode === "defaults" ? "" : provider,
+      model:
+        remoteProviderOwnsExecutionProfile || aiConfigurationMode === "defaults"
+          ? ""
+          : model,
+      provider:
+        remoteProviderOwnsExecutionProfile || aiConfigurationMode === "defaults"
+          ? ""
+          : provider,
       isEditMode: "id" in initialValues,
       isAutoSeeded: isRuntimeAutoSeededRef.current,
       initialPreviousRuntime: initialValues.runtime?.trim() ?? "",
@@ -434,7 +443,7 @@ export function AgentDefinitionDialog({
         globalEnvVars: globalConfig.env_vars,
         globalProvider: inheritedProviderDefault.value,
         globalModel: inheritedModelDefault.value,
-        isProviderMode: false,
+        isProviderMode: remoteProviderOwnsExecutionProfile,
         model,
         provider: trimmedProvider,
         runtimeId: runtime,
@@ -447,6 +456,7 @@ export function AgentDefinitionDialog({
       inheritedModelDefault.value,
       inheritedProviderDefault.value,
       model,
+      remoteProviderOwnsExecutionProfile,
       trimmedProvider,
       runtime,
       runtimeFileConfig,
@@ -482,7 +492,8 @@ export function AgentDefinitionDialog({
   const providerIsRequired =
     aiConfigurationMode === "custom" && runtimeCanChooseLlmProvider;
   const modelFieldVisible =
-    runtime.trim().length > 0 || blankRuntimeModelProviderEditable;
+    !remoteProviderOwnsExecutionProfile &&
+    (runtime.trim().length > 0 || blankRuntimeModelProviderEditable);
   const isExplicitModelRequired = aiConfigurationMode === "custom";
   // Gate the provider requirement on the field's actual visibility, not the raw
   // runtime capability. Codex/Claude hide the provider picker (they drive their
@@ -502,8 +513,12 @@ export function AgentDefinitionDialog({
   // source of truth with the readiness gate so display and Save can't drift.
   const canSubmit =
     canSubmitPersonaDialog({ displayName, isPending }) &&
-    (!isCreateMode || runtime.trim().length > 0) &&
-    (!isCreateMode || selectedRuntimeIsAvailable) &&
+    (!isCreateMode ||
+      remoteProviderOwnsExecutionProfile ||
+      runtime.trim().length > 0) &&
+    (!isCreateMode ||
+      remoteProviderOwnsExecutionProfile ||
+      selectedRuntimeIsAvailable) &&
     (!isCreateMode || !createSubmitBlocked) &&
     // Crash-loop guard, create AND edit: an empty allowlist would crash
     // every instance minted from this definition at startup.
@@ -816,6 +831,8 @@ export function AgentDefinitionDialog({
           </div>
         </div>
 
+        {isCreateMode ? createRunSection : null}
+
         {modelFieldVisible ? (
           <AgentAiConfigurationModeField
             mode={aiConfigurationMode}
@@ -828,7 +845,8 @@ export function AgentDefinitionDialog({
           className="space-y-5"
           data-testid={`agent-${aiConfigurationMode}-configuration-section`}
         >
-          {aiConfigurationMode === "custom" ? (
+          {!remoteProviderOwnsExecutionProfile &&
+          aiConfigurationMode === "custom" ? (
             <AgentHarnessField
               disabled={isPending || runtimesLoading}
               onValueChange={handleRuntimeDropdownChange}
@@ -923,7 +941,8 @@ export function AgentDefinitionDialog({
             ) : null}
           </AnimatePresence>
 
-          {aiConfigurationMode === "defaults" ? (
+          {!remoteProviderOwnsExecutionProfile &&
+          aiConfigurationMode === "defaults" ? (
             <AgentCreateAiDefaultsSummary
               canChooseProvider={runtimeCanChooseLlmProvider}
               harness={runtimeSummaryLabel}
@@ -987,7 +1006,7 @@ export function AgentDefinitionDialog({
                 transition={advancedFieldsTransition}
               >
                 <PersonaAdvancedFields
-                  afterRespondTo={isCreateMode ? createRunSection : undefined}
+                  afterRespondTo={undefined}
                   behaviorDraft={behaviorDraft}
                   disabled={isPending}
                   envVars={envVars}

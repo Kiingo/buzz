@@ -161,7 +161,25 @@ pub fn build_managed_agent_summary(
         // have allocated a VM/container that persists across process restarts.
         // A future provider `undeploy` operation (v2) will handle teardown.
         let status = if record.backend_agent_id.is_some() {
-            "deployed".to_string()
+            if let Some(provider_state) = &record.provider_lifecycle_state {
+                match provider_state.observed_state.as_str() {
+                    "paused" => "paused".to_string(),
+                    "deleted" => "not_deployed".to_string(),
+                    _ => "deployed".to_string(),
+                }
+            } else {
+            let paused = record.last_stopped_at.as_deref().is_some_and(|stopped| {
+                record
+                    .last_started_at
+                    .as_deref()
+                    .is_none_or(|started| stopped > started)
+            });
+            if paused {
+                "paused".to_string()
+            } else {
+                "deployed".to_string()
+            }
+            }
         } else {
             "not_deployed".to_string()
         };
@@ -324,6 +342,7 @@ pub fn build_managed_agent_summary(
         env_vars: record.env_vars.clone(),
         backend: record.backend.clone(),
         backend_agent_id: record.backend_agent_id.clone(),
+        provider_lifecycle_state: record.provider_lifecycle_state.clone(),
         status,
         pid,
         created_at: record.created_at.clone(),

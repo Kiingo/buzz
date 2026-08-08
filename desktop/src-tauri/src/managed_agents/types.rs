@@ -9,7 +9,20 @@ pub enum BackendKind {
     Provider {
         id: String,
         config: serde_json::Value,
+        /// Provider-advertised presentation metadata captured at selection
+        /// time. Buzz treats this as inert display data; provider identifiers,
+        /// model names, and business rules stay out of the desktop core.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        summary: Vec<ProviderPresentationItem>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderPresentationItem {
+    pub label: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,8 +137,9 @@ impl AgentDefinition {
             auto_restart_on_config_change: true,
             runtime_pid: None,
             backend: BackendKind::default(),
-            backend_agent_id: None,
-            provider_binary_path: None,
+           backend_agent_id: None,
+            provider_lifecycle_state: None,
+           provider_binary_path: None,
             team_id: None,
             persona_team_dir: None,
             persona_name_in_team: None,
@@ -208,6 +222,23 @@ pub struct RelayAgentInfo {
     #[serde(default)]
     pub respond_to_allowlist: Vec<String>,
 }
+
+/// Last provider-authoritative lifecycle state returned by protocol v2.
+///
+/// This is a cache for immediate/offline UI rendering only. The provider
+/// control plane remains authoritative and every lifecycle operation refreshes
+/// the complete value. Optional/defaulted fields preserve compatibility with
+/// agents written by earlier Buzz versions and protocol-v1 providers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderLifecycleState {
+    pub desired_state: String,
+    pub observed_state: String,
+    pub last_reconciled_at: Option<String>,
+    pub last_ready_at: Option<String>,
+    pub error_code: Option<String>,
+    pub correlation_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManagedAgentRecord {
     pub pubkey: String,
@@ -320,6 +351,8 @@ pub struct ManagedAgentRecord {
     pub backend: BackendKind,
     #[serde(default)]
     pub backend_agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_lifecycle_state: Option<ProviderLifecycleState>,
     #[serde(default)]
     pub provider_binary_path: Option<String>,
     /// Installed team directory path (absolute). Set when agent was created from a team persona.
@@ -552,6 +585,7 @@ pub struct ManagedAgentSummary {
     pub env_vars: BTreeMap<String, String>,
     pub backend: BackendKind,
     pub backend_agent_id: Option<String>,
+    pub provider_lifecycle_state: Option<ProviderLifecycleState>,
     pub status: String,
     pub pid: Option<u32>,
     pub created_at: String,

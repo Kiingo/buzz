@@ -200,6 +200,12 @@ pub struct CreateManagedAgentRequest {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateManagedAgentRequest {
     pub pubkey: String,
+    /// Absent = do not touch the execution location/profile. Present updates
+    /// the existing provider configuration in place. Changing between local
+    /// and provider execution (or changing provider IDs) requires creating a
+    /// new agent identity and is intentionally rejected by the command layer.
+    #[serde(default)]
+    pub backend: Option<BackendKind>,
     /// Absent = don't touch. Present = rename the agent.
     #[serde(default)]
     pub name: Option<String>,

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { coerceConfigValues } from "./ProviderConfigFields.tsx";
+import {
+  coerceConfigValues,
+  providerFieldOptions,
+  providerFieldVisible,
+} from "./ProviderConfigFields.tsx";
 
 const schema = {
   properties: {
@@ -26,6 +30,54 @@ describe("coerceConfigValues", () => {
     assert.deepEqual(
       coerceConfigValues({ inactivity_seconds: "not-a-number" }, schema),
       { inactivity_seconds: "not-a-number" },
+    );
+  });
+});
+
+describe("dependent provider fields", () => {
+  it("supports automatic-model options and hides unsupported controls", () => {
+    const property = {
+      "x-hide-when-no-options": true,
+      "x-options-by-field": {
+        field: "model_selector",
+        options: {
+          "": [{ value: "auto", label: "Automatic" }],
+          fast: [],
+        },
+      },
+    };
+    assert.deepEqual(providerFieldOptions(property, { model_selector: "" }), [
+      { value: "auto", label: "Automatic" },
+    ]);
+    assert.equal(
+      providerFieldVisible(property, { model_selector: "fast" }),
+      false,
+    );
+  });
+
+  it("resolves options from more than one provider-owned dependency", () => {
+    const property = {
+      "x-options-by-fields": {
+        fields: ["harness", "model_selector"],
+        options: {
+          "codex|": [{ value: "fast", label: "Fast" }],
+          "claude-code|": [],
+        },
+      },
+    };
+    assert.deepEqual(
+      providerFieldOptions(property, {
+        harness: "codex",
+        model_selector: "",
+      }),
+      [{ value: "fast", label: "Fast" }],
+    );
+    assert.deepEqual(
+      providerFieldOptions(property, {
+        harness: "claude-code",
+        model_selector: "",
+      }),
+      [],
     );
   });
 });

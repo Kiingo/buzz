@@ -171,6 +171,20 @@ with a TypeScript lookup table or an id comparison in a component.
    `getAgentAccessOwnerOnly()` is true, every managed agent's access control is
    locked to owner-only, including provider-backed agents. A provider backend
    does not prove remote execution and must never create a policy carve-out.
+12. **Remote execution is provider-described, never provider-ID-coded.**
+   `buzz-backend-* info` protocol v2 owns remote execution-profile fields
+   through `config_schema`, `x-buzz-owns-execution-profile`, connection
+   status, and advertised lifecycle operations. Create and Edit render those
+   generic descriptors and pass the flat provider config through unchanged;
+   they must never add a `kiingo`, Codex, Claude, model, or effort branch to
+   Buzz render code. Owner proofs are signed in Rust, lifecycle replies are
+   strictly validated, and the last provider-authoritative desired/observed
+   state is cached on the agent record for immediate/offline display. The
+   server remains authoritative. Production builds may set
+   `BUZZ_TRUSTED_PROVIDER_SIGNER_SUBJECTS`; when set, every provider execution
+   must use a read-only staged copy with a valid Authenticode signature from
+   that exact allowlist. Keep the unset behavior generic for
+   upstream/community builds and test providers.
 
 ## The tests that enforce this
 

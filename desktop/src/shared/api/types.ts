@@ -302,7 +302,14 @@ export type ManagedAgentRuntimeStatus = {
 
 export type ManagedAgentBackend =
   | { type: "local" }
-  | { type: "provider"; id: string; config: Record<string, unknown> };
+  | {
+      type: "provider";
+      id: string;
+      config: Record<string, unknown>;
+      /** Provider-advertised, inert presentation metadata saved at selection. */
+      name?: string;
+      summary?: { label: string; value: string }[];
+    };
 
 import type { RestartDiffEntry } from "./restartDiff";
 export type { JsonValue, RestartChange, RestartDiffEntry } from "./restartDiff";
@@ -363,7 +370,7 @@ export type ManagedAgent = {
   restartDiff: RestartDiffEntry[];
   /** Per-agent env vars. Layered on top of persona envVars. */
   envVars: Record<string, string>;
-  status: "running" | "stopped" | "deployed" | "not_deployed";
+  status: "running" | "stopped" | "deployed" | "paused" | "not_deployed";
   pid: number | null;
   createdAt: string;
   updatedAt: string;
@@ -377,6 +384,8 @@ export type ManagedAgent = {
   autoRestartOnConfigChange: boolean;
   backend: ManagedAgentBackend;
   backendAgentId: string | null;
+  /** Last lifecycle state confirmed by a protocol-v2 remote provider. */
+  providerLifecycleState?: ProviderLifecycleState | null;
   /** Who the agent should respond to. Maps to `buzz-acp --respond-to`. */
   respondTo: RespondToMode;
   /**
@@ -384,6 +393,23 @@ export type ManagedAgent = {
    * `"allowlist"`. Preserved across mode toggles.
    */
   respondToAllowlist: string[];
+};
+
+export type ProviderLifecycleState = {
+  desired_state: "active" | "paused" | "deleted";
+  observed_state:
+    | "provisioning"
+    | "ready"
+    | "updating"
+    | "paused"
+    | "action_required"
+    | "degraded"
+    | "deletion_pending"
+    | "deleted";
+  last_reconciled_at: string | null;
+  last_ready_at: string | null;
+  error_code: string | null;
+  correlation_id: string;
 };
 
 /** Inbound author gate mode. Mirrors buzz-acp's --respond-to CLI flag. */
@@ -398,8 +424,33 @@ export type BackendProviderProbeResult = {
   ok: boolean;
   name?: string;
   version?: string;
+  protocol_version?: number;
   description?: string;
   config_schema?: Record<string, unknown>;
+  capabilities?: {
+    owns_execution_profile?: boolean;
+    lifecycle_operations?: string[];
+    connection_status?: {
+      field: string;
+      states: Record<
+        string,
+        {
+          status: "connected" | "action_required" | "unavailable";
+          message: string;
+          remediation_url?: string | null;
+        }
+      >;
+    };
+    connection_scope_message?: string;
+    self_check?: boolean;
+    presentation?: {
+      summary_fields: {
+        field: string;
+        label?: string;
+        empty_label?: string;
+      }[];
+    };
+  };
 };
 
 export type RelayMeshConfig = {
@@ -679,6 +730,12 @@ export type RuntimeConfigSurface = {
 
 export type UpdateManagedAgentInput = {
   pubkey: string;
+  /**
+   * Absent leaves execution unchanged. Provider-backed agents may submit an
+   * updated provider config; the backend preserves the provider and stable
+   * remote agent identity while incrementing its profile revision.
+   */
+  backend?: ManagedAgentBackend;
   name?: string;
   model?: string | null;
   provider?: string | null;

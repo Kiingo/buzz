@@ -10,11 +10,13 @@ export function AgentStatusBadge({
   isWorking,
   presenceLoaded,
   presenceStatus,
+  providerLifecycleState,
   status,
 }: {
   isWorking?: boolean;
   presenceLoaded: boolean;
   presenceStatus: PresenceStatus | undefined;
+  providerLifecycleState?: ManagedAgent["providerLifecycleState"];
   status: ManagedAgent["status"];
 }) {
   const [inGracePeriod, setInGracePeriod] = React.useState(true);
@@ -31,19 +33,27 @@ export function AgentStatusBadge({
     status === "running" &&
     (!presenceStatus || presenceStatus === "offline");
 
+  const providerObservedState = providerLifecycleState?.observed_state;
+  const providerNeedsAttention =
+    providerObservedState === "action_required" ||
+    providerObservedState === "degraded";
   const variant: "default" | "warning" | "secondary" = isWorking
     ? "default"
-    : isStarting
+    : providerNeedsAttention
       ? "warning"
-      : isActive
-        ? "default"
-        : "secondary";
+      : isStarting
+        ? "warning"
+        : isActive
+          ? "default"
+          : "secondary";
 
   const label = isWorking
     ? "Working"
-    : isStarting
-      ? "Starting\u2026"
-      : status.replace(/_/g, " ");
+    : providerObservedState
+      ? providerObservedState.replace(/_/g, " ")
+      : isStarting
+        ? "Starting\u2026"
+        : status.replace(/_/g, " ");
 
   return (
     <Badge

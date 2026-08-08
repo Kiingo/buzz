@@ -141,6 +141,11 @@ function AgentCreateDialogRouter({
   );
 
   const copy = createPersonaDialogState();
+  const remoteProviderOwnsExecutionProfile =
+    runDraft.runOn !== "local" &&
+    runDraft.probedProvider?.config_schema?.[
+      "x-buzz-owns-execution-profile"
+    ] === true;
 
   return (
     // The create flow is the one surface that knows where the agent will run,
@@ -179,6 +184,7 @@ function AgentCreateDialogRouter({
         open
         runtimes={runtimes}
         runtimeCatalogStatus={runtimeCatalogStatus}
+        remoteProviderOwnsExecutionProfile={remoteProviderOwnsExecutionProfile}
         submitLabel={submitLabel ?? copy.submitLabel}
         title={copy.title}
       />

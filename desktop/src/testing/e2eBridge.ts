@@ -839,7 +839,7 @@ type RawManagedAgent = {
   model: string | null;
   provider?: string | null;
   env_vars?: Record<string, string>;
-  status: "running" | "stopped" | "deployed" | "not_deployed";
+  status: "running" | "stopped" | "deployed" | "paused" | "not_deployed";
   pid: number | null;
   created_at: string;
   updated_at: string;

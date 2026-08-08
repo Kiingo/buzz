@@ -6,10 +6,11 @@ use crate::{
     managed_agents::{
         build_managed_agent_summary, current_instance_id, discover_provider_candidates,
         ensure_persona_is_active, find_managed_agent_mut, load_managed_agents, load_personas,
-        load_teams, managed_agent_avatar_url, normalize_agent_args, provider_deploy,
-        resolve_provider_binary, save_managed_agents, start_managed_agent_process,
+        load_teams, managed_agent_avatar_url, normalize_agent_args, provider_config_sha256,
+        provider_deploy, resolve_provider_binary, save_managed_agents, start_managed_agent_process,
         stop_managed_agent_process, stop_managed_agent_workspace_pair,
-        sync_managed_agent_processes, try_regenerate_nest, validate_provider_config, BackendKind,
+        sync_managed_agent_processes, try_regenerate_nest, validate_provider_config,
+        validate_provider_presentation_snapshot, BackendKind,
         CreateManagedAgentRequest, CreateManagedAgentResponse, ManagedAgentRecord,
         ManagedAgentSummary, RelayMeshConfig, DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM,
         DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
@@ -456,7 +457,7 @@ pub(super) async fn start_local_agent_with_preflight(
 ///
 /// Returns Ok(()) on success, Err(message) on failure. Either way the record is
 /// updated and saved before returning.
-async fn deploy_to_provider(
+pub(super) async fn deploy_to_provider(
     app: &AppHandle,
     state: &AppState,
     pubkey: &str,
@@ -479,11 +480,56 @@ async fn deploy_to_provider(
         })
         .map_or_else(|| resolve_provider_binary(provider_id), Ok)?;
 
+    let config_hash = provider_config_sha256(config)?;
+    let relay_url = agent_json
+        .get("relay_url")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "provider deploy payload is missing relay_url".to_string())?;
+    let relay = url::Url::parse(relay_url)
+        .map_err(|error| format!("provider deploy relay_url is invalid: {error}"))?;
+    if relay.scheme() != "wss"
+        || relay.username() != ""
+        || relay.password().is_some()
+        || relay.query().is_some()
+        || relay.fragment().is_some()
+        || (relay.path() != "/" && !relay.path().is_empty())
+    {
+        return Err("provider deploy relay_url must be a bare wss community URL".to_string());
+    }
+    let community_id = relay
+        .host_str()
+        .ok_or_else(|| "provider deploy relay_url has no community host".to_string())?;
+    let normalized_relay_url = match relay.port() {
+        Some(port) => format!("wss://{community_id}:{port}"),
+        None => format!("wss://{community_id}"),
+    };
+    let proof_request_id = uuid::Uuid::new_v4().to_string();
+    let proof_content = serde_json::json!({
+        "version": 1,
+        "action": "deploy",
+        "provider_id": provider_id,
+        "request_id": proof_request_id,
+        "community_id": community_id,
+        "relay_url": normalized_relay_url,
+        "agent_public_key": pubkey,
+        "provider_config_sha256": config_hash,
+        "expires_at": chrono::Utc::now().timestamp() + 300,
+    });
+    let owner_proof = nostr::EventBuilder::new(
+        nostr::Kind::Custom(27236),
+        serde_json::to_string(&proof_content)
+            .map_err(|error| format!("failed to serialize provider proof: {error}"))?,
+    )
+    .sign_with_keys(&state.signing_keys()?)
+    .map_err(|error| format!("failed to sign provider deployment proof: {error}"))?;
+    let owner_proof = serde_json::to_value(owner_proof)
+        .map_err(|error| format!("failed to serialize provider deployment proof: {error}"))?;
     let config_clone = config.clone();
-    let deploy_result =
-        tokio::task::spawn_blocking(move || provider_deploy(&bin_path, &agent_json, &config_clone))
-            .await
-            .map_err(|e| format!("spawn_blocking failed: {e}"))?;
+    let deploy_result = tokio::task::spawn_blocking(move || {
+        provider_deploy(&bin_path, &agent_json, &config_clone, Some(&owner_proof))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?;
 
     // Persist result under lock.
     let _store_guard = state
@@ -497,8 +543,21 @@ async fn deploy_to_provider(
         .ok_or_else(|| format!("agent {pubkey} not found"))?;
 
     match deploy_result {
-        Ok(backend_agent_id) => {
+        Ok((backend_agent_id, lifecycle_state)) => {
+            if rec
+                .backend_agent_id
+                .as_deref()
+                .is_some_and(|existing| existing != backend_agent_id.as_str())
+            {
+                let error = "provider returned a different remote agent id for an in-place update"
+                    .to_string();
+                rec.last_error = Some(error.clone());
+                rec.updated_at = now_iso();
+                save_managed_agents(app, &records)?;
+                return Err(error);
+            }
             rec.backend_agent_id = Some(backend_agent_id);
+            rec.provider_lifecycle_state = lifecycle_state;
             rec.last_started_at = Some(now_iso());
             rec.updated_at = now_iso();
             rec.last_error = None;
@@ -512,6 +571,56 @@ async fn deploy_to_provider(
     }
     save_managed_agents(app, &records)?;
     Ok(())
+}
+
+fn provider_profile_revision(config: &serde_json::Value) -> u64 {
+    config
+        .get("profile_revision")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
+        })
+        .filter(|value| *value > 0)
+        .unwrap_or(1)
+}
+
+fn control_provider_record(
+    state: &AppState,
+    record: &ManagedAgentRecord,
+    operation: &str,
+) -> Result<crate::managed_agents::ProviderLifecycleState, String> {
+    let BackendKind::Provider { id, config, .. } = &record.backend else {
+        return Err("agent is not provider-backed".to_string());
+    };
+    let agent_id = record
+        .backend_agent_id
+        .as_deref()
+        .ok_or_else(|| "remote agent has no provider deployment id".to_string())?;
+    let revision = provider_profile_revision(config);
+    let proof_request_id = uuid::Uuid::new_v4().to_string();
+    let proof_content = serde_json::json!({
+        "version": 1,
+        "action": operation,
+        "provider_id": id,
+        "request_id": proof_request_id,
+        "provider_agent_id": agent_id,
+        "expected_profile_revision": revision,
+        "expires_at": chrono::Utc::now().timestamp() + 300,
+    });
+    let owner_proof = nostr::EventBuilder::new(
+        nostr::Kind::Custom(27236),
+        serde_json::to_string(&proof_content)
+            .map_err(|error| format!("failed to serialize provider proof: {error}"))?,
+    )
+    .sign_with_keys(&state.signing_keys()?)
+    .map_err(|error| format!("failed to sign provider control proof: {error}"))?;
+    let owner_proof = serde_json::to_value(owner_proof)
+        .map_err(|error| format!("failed to serialize provider control proof: {error}"))?;
+    let binary = resolve_provider_binary(id)?;
+    let response =
+        crate::managed_agents::provider_control(&binary, operation, agent_id, revision, &owner_proof)?;
+    crate::managed_agents::parse_provider_lifecycle_state(&response)
 }
 
 // Async so the blocking body (disk reads of agent/persona records, per-agent
@@ -653,8 +762,15 @@ pub async fn create_managed_agent(
     };
 
     // ── Pre-Phase 2: validate provider config BEFORE any side effects ────────
-    if let BackendKind::Provider { ref config, ref id } = input.backend {
+    if let BackendKind::Provider {
+        ref config,
+        ref id,
+        ref name,
+        ref summary,
+    } = input.backend
+    {
         validate_provider_config(config)?;
+        validate_provider_presentation_snapshot(name, summary)?;
         // Validate via discovered candidates — not raw resolve_command.
         resolve_provider_binary(id)?;
     }
@@ -878,6 +994,7 @@ pub async fn create_managed_agent(
             runtime_pid: None,
             backend: input.backend.clone(),
             backend_agent_id: None,
+            provider_lifecycle_state: None,
             provider_binary_path,
             persona_team_dir: None,
             persona_name_in_team: None,
@@ -1000,7 +1117,12 @@ pub async fn create_managed_agent(
 
     // ── Phase 5: provider deploy (async, outside lock) ───────────────────────
     let spawn_error = if input.spawn_after_create && input.backend != BackendKind::Local {
-        if let BackendKind::Provider { ref id, ref config } = input.backend {
+        if let BackendKind::Provider {
+            ref id,
+            ref config,
+            ..
+        } = input.backend
+        {
             // Read the saved record to build the deploy payload (record has the
             // canonical field values after Phase 3 normalization).
             let agent_json = {
@@ -1140,7 +1262,7 @@ pub async fn start_managed_agent(
             start_local_agent_with_preflight(&app, &state, &pubkey, &owner_hex, false).await
         }
         StartTarget::Provider {
-            backend: BackendKind::Provider { id, config },
+            backend: BackendKind::Provider { id, config, .. },
             cached_binary_path,
             agent_json,
         } => {
@@ -1241,16 +1363,17 @@ pub async fn stop_managed_agent(
 
         {
             let record = find_managed_agent_mut(&mut records, &pubkey)?;
-            // Remote agents are stopped via !shutdown @mention from the frontend,
-            // not via this backend command. Reject the call.
             if record.backend != BackendKind::Local {
-                return Err(
-                    "remote agents are stopped via !shutdown message, not this command".to_string(),
-                );
+                let lifecycle_state = control_provider_record(&state, record, "pause")?;
+                record.provider_lifecycle_state = Some(lifecycle_state);
+                record.last_stopped_at = Some(now_iso());
+                record.updated_at = now_iso();
+                record.last_error = None;
+            } else {
+                // Pair-scoped: stops only the active workspace's pair; delete and
+                // the config-restart flows still drain every pair.
+                stop_managed_agent_workspace_pair(&app, record, &mut runtimes)?;
             }
-            // Pair-scoped: stops only the active workspace's pair; delete and
-            // the config-restart flows still drain every pair.
-            stop_managed_agent_workspace_pair(&app, record, &mut runtimes)?;
         }
         save_managed_agents(&app, &records)?;
         let record = records
@@ -1302,6 +1425,37 @@ pub async fn delete_managed_agent(
             }
             for pubkey in &exited_pubkeys {
                 state.clear_agent_session_caches(pubkey);
+            }
+
+            // Protocol-v2 providers delete their hosted resource before the
+            // local record. `force_remote_delete` remains an explicit orphan
+            // escape hatch for legacy/unreachable providers.
+            if let Some(record) = records.iter_mut().find(|r| r.pubkey == pubkey) {
+                if record.backend != BackendKind::Local && record.backend_agent_id.is_some() {
+                    match control_provider_record(&state, record, "delete") {
+                        Ok(lifecycle_state) => {
+                            record.provider_lifecycle_state = Some(lifecycle_state);
+                            record.backend_agent_id = None;
+                            record.updated_at = now_iso();
+                            record.last_error = None;
+                        }
+                        Err(error) if !force_remote_delete.unwrap_or(false) => {
+                            return Err(format!(
+                                "remote provider deletion failed; the local record was preserved: {error}"
+                            ));
+                        }
+                        Err(error) if record.provider_lifecycle_state.is_some() => {
+                            return Err(format!(
+                                "This protocol-v2 hosted agent cannot be force-deleted locally because that could leave its signing identity active. Retry or reconcile the provider deletion; the local record was preserved: {error}"
+                            ));
+                        }
+                        Err(error) => {
+                            record.last_error = Some(format!(
+                                "remote provider deletion was bypassed: {error}"
+                            ));
+                        }
+                    }
+                }
             }
 
             // Guard: reject deletion of deployed remote agents unless explicitly forced.
@@ -1358,7 +1512,7 @@ pub async fn delete_managed_agent(
 #[path = "agents_deploy.rs"]
 mod deploy;
 pub(super) mod provider_access;
-use deploy::build_deploy_payload;
+pub(crate) use deploy::build_deploy_payload;
 #[cfg(test)]
 use deploy::{deploy_payload_json, DeployProjections};
 #[cfg(test)]
