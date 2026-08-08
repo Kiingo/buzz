@@ -18,6 +18,7 @@ import {
   emptyWhereToRunDraft,
   type WhereToRunDraft,
 } from "./whereToRunIntent";
+import { RunOnSummarySection } from "./RunOnSummarySection";
 
 /** Optional remote-backend selector. Buzz shared compute is an LLM provider, not a run destination. */
 export function WhereToRunSection({
@@ -103,6 +104,23 @@ export function WhereToRunSection({
       cancelled = true;
     };
   }, [selectedBinaryPath, draft.probedProvider, draft.runOn]);
+
+  // An existing remote identity must remain understandable and editable for
+  // its non-execution fields even when its provider executable was removed or
+  // is temporarily undiscoverable. Preserve the established read-only saved
+  // configuration view instead of hiding the entire Run on section or
+  // pretending the identity can be moved to another provider.
+  if (lockedRunOn && isProviderMode && !selectedBackendProvider) {
+    return (
+      <RunOnSummarySection
+        backend={{
+          type: "provider",
+          id: draft.runOn,
+          config: draft.providerConfig,
+        }}
+      />
+    );
+  }
 
   if (backendProviders.length === 0) return null;
 
