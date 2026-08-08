@@ -8,6 +8,12 @@ import {
   type WelcomeComposerBannerState,
 } from "@/features/channels/ui/WelcomeComposerBanner";
 
+const completedWelcomeChannelIds = new Set<string>();
+
+export function resetWelcomeComposerBannerState(): void {
+  completedWelcomeChannelIds.clear();
+}
+
 /**
  * Manages the Welcome-channel composer hint banner's state machine.
  *
@@ -26,7 +32,6 @@ export function useWelcomeComposerBanner(
   completeBanner: () => void;
   dismissBanner: () => void;
 } {
-  const completedChannelIdsRef = React.useRef(new Set<string>());
   const dismissTimerRef = React.useRef<number | null>(null);
   const hideTimerRef = React.useRef<number | null>(null);
   const [bannerState, setBannerState] =
@@ -50,7 +55,7 @@ export function useWelcomeComposerBanner(
     if (
       activeChannelId &&
       isActiveWelcomeChannel &&
-      completedChannelIdsRef.current.has(activeChannelId)
+      completedWelcomeChannelIds.has(activeChannelId)
     ) {
       setBannerState("hidden");
       return;
@@ -75,7 +80,7 @@ export function useWelcomeComposerBanner(
     }
 
     clearTimers();
-    completedChannelIdsRef.current.add(activeChannelId);
+    completedWelcomeChannelIds.add(activeChannelId);
     setBannerState("complete");
     dismissTimerRef.current = window.setTimeout(() => {
       setBannerState("dismissing");
@@ -90,7 +95,7 @@ export function useWelcomeComposerBanner(
     }
 
     clearTimers();
-    completedChannelIdsRef.current.add(activeChannelId);
+    completedWelcomeChannelIds.add(activeChannelId);
     setBannerState("dismissing");
     scheduleHide();
   }, [activeChannelId, clearTimers, isActiveWelcomeChannel, scheduleHide]);
