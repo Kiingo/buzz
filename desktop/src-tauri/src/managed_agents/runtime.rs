@@ -26,6 +26,9 @@ pub(crate) use metadata::{
     DISPLAY_NAME_ENV_VAR, SESSION_TITLE_ENV_VAR,
 };
 
+mod provider_status;
+use provider_status::provider_control_status;
+
 mod stop;
 pub(crate) use stop::managed_agent_runtime_keys;
 pub use stop::{stop_managed_agent_process, stop_managed_agent_workspace_pair};
@@ -147,10 +150,10 @@ pub fn build_managed_agent_summary(
     let (status, pid, log_path) = if record.backend != BackendKind::Local {
         // Two-axis status model for remote agents:
         //
-        //   Control-plane (this field): "deployed" = provider has been invoked and
-        //   returned a backend_agent_id. "not_deployed" = no deploy call yet (or it
-        //   failed). This axis tracks whether infrastructure *exists*, not whether
-        //   the process is currently running.
+        //   Control-plane (this field): follows the accepted desired state so the
+        //   next valid action is available immediately while provider observation
+        //   catches up. "not_deployed" still means no provider resource (or a
+        //   desired deletion).
         //
         //   Live axis (relay presence, polled by frontend): online/away/offline.
         //   Shown as a PresenceDot next to the agent name. This is the real-time
@@ -160,29 +163,7 @@ pub fn build_managed_agent_summary(
         // (infrastructure still exists). This is intentional — the provider may
         // have allocated a VM/container that persists across process restarts.
         // A future provider `undeploy` operation (v2) will handle teardown.
-        let status = if record.backend_agent_id.is_some() {
-            if let Some(provider_state) = &record.provider_lifecycle_state {
-                match provider_state.observed_state.as_str() {
-                    "paused" => "paused".to_string(),
-                    "deleted" => "not_deployed".to_string(),
-                    _ => "deployed".to_string(),
-                }
-            } else {
-                let paused = record.last_stopped_at.as_deref().is_some_and(|stopped| {
-                    record
-                        .last_started_at
-                        .as_deref()
-                        .is_none_or(|started| stopped > started)
-                });
-                if paused {
-                    "paused".to_string()
-                } else {
-                    "deployed".to_string()
-                }
-            }
-        } else {
-            "not_deployed".to_string()
-        };
+        let status = provider_control_status(record);
         (status, None, String::new())
     } else {
         let persisted_pid = record.runtime_pid.filter(|pid| process_is_running(*pid));
