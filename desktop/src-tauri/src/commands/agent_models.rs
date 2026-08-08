@@ -12,6 +12,10 @@ use super::agent_models_env::env_value;
 use super::agent_models_env::{
     effective_discovery_provider, env_or_process_value, redaction_env_with_value, DiscoveryProvider,
 };
+use super::agent_provider_update::{
+    apply_model_provider_prompt_update, apply_provider_update, prepare_provider_update,
+    updated_provider_backend, validate_requested_provider_backend,
+};
 use super::agent_update_rollback::{rollback_failed_agent_update, AgentUpdateRollback};
 
 use crate::{
@@ -21,8 +25,7 @@ use crate::{
         find_managed_agent_mut, known_acp_runtime, load_global_agent_config, load_managed_agents,
         load_personas, managed_agent_avatar_url, missing_command_message, normalize_agent_args,
         resolve_command, save_managed_agents, sync_managed_agent_processes, try_regenerate_nest,
-        validate_provider_config, validate_provider_presentation_snapshot, AgentModelInfo,
-        AgentModelsResponse, BackendKind, UpdateManagedAgentRequest, UpdateManagedAgentResponse,
+        AgentModelInfo, AgentModelsResponse, UpdateManagedAgentRequest, UpdateManagedAgentResponse,
         DEFAULT_ACP_COMMAND,
     },
     relay::{relay_ws_url_with_override, sync_managed_agent_profile},
@@ -697,131 +700,6 @@ use databricks::{
 };
 use databricks::{discover_databricks_models, DatabricksAuthIntent};
 
-/// Apply an `UpdateManagedAgentRequest`'s model/provider/system_prompt patch
-/// to `record`, enforcing the linked-instance write guard: a definition-linked
-/// record's model/provider/prompt are definition-authoritative (see
-/// `effective_config::resolve_linked`), so writes to these three fields are
-/// silently dropped for a linked instance rather than persisting a byte the
-/// resolver will never read. Definition-less instances accept the patch
-/// as-is. Extracted so the guard is exercised by both `update_managed_agent`
-/// and its regression tests — a test that reimplements this check instead of
-/// calling it can go green after the real guard is deleted.
-fn apply_model_provider_prompt_update(
-    record: &mut crate::managed_agents::ManagedAgentRecord,
-    model: Option<Option<String>>,
-    provider: Option<Option<String>>,
-    system_prompt: Option<Option<String>>,
-) {
-    if record.persona_id.is_some() {
-        return;
-    }
-    if let Some(model_update) = model {
-        record.model = model_update;
-    }
-    if let Some(provider_update) = provider {
-        record.provider = provider_update;
-    }
-    if let Some(prompt_update) = system_prompt {
-        record.system_prompt = prompt_update;
-    }
-}
-
-/// Produce an in-place provider profile update while keeping the execution
-/// provider and remote identity stable. `profile_revision` is desktop-owned
-/// when present in the provider schema: callers cannot skip or replay a
-/// revision by editing the read-only field in the webview.
-fn updated_provider_backend(
-    current: &BackendKind,
-    requested: &BackendKind,
-) -> Result<Option<BackendKind>, String> {
-    let (
-        BackendKind::Provider {
-            id: current_id,
-            config: current_config,
-            name: current_name,
-            summary: current_summary,
-        },
-        BackendKind::Provider {
-            id: requested_id,
-            config: requested_config,
-            name: requested_name,
-            summary: requested_summary,
-        },
-    ) = (current, requested)
-    else {
-        return Err(
-            "Changing an existing agent between this computer and a remote provider requires creating a new agent."
-                .to_string(),
-        );
-    };
-    if current_id != requested_id {
-        return Err(
-            "Changing the remote provider requires creating a new agent so its identity cannot be moved accidentally."
-                .to_string(),
-        );
-    }
-    validate_provider_config(requested_config)?;
-    validate_provider_presentation_snapshot(requested_name, requested_summary)?;
-
-    let presentation_changed =
-        current_name != requested_name || current_summary != requested_summary;
-
-    let mut next = requested_config.clone();
-    let current_revision = current_config
-        .get("profile_revision")
-        .and_then(|value| {
-            value
-                .as_u64()
-                .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
-        })
-        .filter(|revision| *revision > 0);
-    if let Some(current_revision) = current_revision {
-        let current_without_revision = {
-            let mut value = current_config.clone();
-            value
-                .as_object_mut()
-                .expect("validated provider config is an object")
-                .remove("profile_revision");
-            value
-        };
-        let next_without_revision = {
-            let mut value = next.clone();
-            value
-                .as_object_mut()
-                .expect("validated provider config is an object")
-                .remove("profile_revision");
-            value
-        };
-        if current_without_revision == next_without_revision && !presentation_changed {
-            return Ok(None);
-        }
-        if current_without_revision != next_without_revision {
-            next.as_object_mut()
-                .expect("validated provider config is an object")
-                .insert(
-                    "profile_revision".to_string(),
-                    serde_json::Value::Number((current_revision + 1).into()),
-                );
-        } else {
-            next.as_object_mut()
-                .expect("validated provider config is an object")
-                .insert(
-                    "profile_revision".to_string(),
-                    serde_json::Value::Number(current_revision.into()),
-                );
-        }
-    } else if current_config == &next && !presentation_changed {
-        return Ok(None);
-    }
-
-    Ok(Some(BackendKind::Provider {
-        id: current_id.clone(),
-        config: next,
-        name: requested_name.clone(),
-        summary: requested_summary.clone(),
-    }))
-}
-
 /// Update mutable fields on an existing managed agent record.
 ///
 /// Does NOT auto-restart the agent. Runtime config changes (system prompt,
@@ -833,12 +711,7 @@ pub async fn update_managed_agent(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<UpdateManagedAgentResponse, String> {
-    if let Some(BackendKind::Provider { config, .. }) = input.backend.as_ref() {
-        // Reject malformed/secret-looking values before touching the store.
-        // The provider and Kiingo API perform the authoritative schema/catalog
-        // validation before accepting the replacement revision.
-        validate_provider_config(config)?;
-    }
+    validate_requested_provider_backend(input.backend.as_ref())?;
 
     // Phase 1: local save (synchronous, under lock)
     let (summary, sync_params, rollback, provider_update) = {
@@ -1015,20 +888,7 @@ pub async fn update_managed_agent(
                 &crate::managed_agents::load_global_agent_config(&app).unwrap_or_default(),
             )?
         };
-        let provider_update = if record.backend != previous_record.backend {
-            let BackendKind::Provider { id, config, .. } = &record.backend else {
-                unreachable!("provider updates cannot switch execution kind")
-            };
-            Some((
-                id.clone(),
-                config.clone(),
-                record.provider_binary_path.clone(),
-                super::agents::build_deploy_payload(&app, &state, record)?,
-                previous_record.backend.clone(),
-            ))
-        } else {
-            None
-        };
+        let provider_update = prepare_provider_update(&app, &state, record, &previous_record)?;
         let rollback = name_changed.then(|| AgentUpdateRollback::new(previous_record, record));
         (summary, sync_params, rollback, provider_update)
     }; // lock dropped here
@@ -1059,62 +919,7 @@ pub async fn update_managed_agent(
         }
     }
 
-    let summary =
-        if let Some((provider_id, config, cached_binary_path, agent_json, previous_backend)) =
-            provider_update
-        {
-            if let Err(error) = super::agents::deploy_to_provider(
-                &app,
-                &state,
-                &summary.pubkey,
-                &provider_id,
-                &config,
-                agent_json,
-                cached_binary_path.as_deref(),
-            )
-            .await
-            {
-                // Keep all unrelated successful edits, but restore the last locally
-                // known-good provider profile. The server also retains the prior
-                // ready revision when validation/provisioning fails.
-                let _store_guard = state
-                    .managed_agents_store_lock
-                    .lock()
-                    .map_err(|lock_error| lock_error.to_string())?;
-                let mut records = load_managed_agents(&app)?;
-                let record = find_managed_agent_mut(&mut records, &summary.pubkey)?;
-                record.backend = previous_backend;
-                record.updated_at = now_iso();
-                save_managed_agents(&app, &records)?;
-                return Err(format!(
-                    "Hosted execution settings were not changed: {error}"
-                ));
-            }
-
-            let _store_guard = state
-                .managed_agents_store_lock
-                .lock()
-                .map_err(|lock_error| lock_error.to_string())?;
-            let records = load_managed_agents(&app)?;
-            let runtimes = state
-                .managed_agent_processes
-                .lock()
-                .map_err(|lock_error| lock_error.to_string())?;
-            let record = records
-                .iter()
-                .find(|record| record.pubkey == summary.pubkey)
-                .ok_or_else(|| format!("agent {} not found", summary.pubkey))?;
-            let personas = load_personas(&app).unwrap_or_default();
-            build_managed_agent_summary(
-                &app,
-                record,
-                &runtimes,
-                &personas,
-                &load_global_agent_config(&app).unwrap_or_default(),
-            )?
-        } else {
-            summary
-        };
+    let summary = apply_provider_update(&app, &state, summary, provider_update).await?;
 
     Ok(UpdateManagedAgentResponse {
         agent: summary,
@@ -1204,6 +1009,9 @@ pub(super) fn normalize_agent_models(
     }
 }
 
+#[cfg(test)]
+#[path = "agent_provider_update_tests.rs"]
+mod provider_update_tests;
 #[cfg(test)]
 #[path = "agent_models_tests.rs"]
 mod tests;

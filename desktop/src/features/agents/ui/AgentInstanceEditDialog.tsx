@@ -1,6 +1,4 @@
 import * as React from "react";
-import { ChevronDown } from "lucide-react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 
 import {
@@ -25,9 +23,7 @@ import { ChooserDialogContent } from "@/shared/ui/chooser-dialog-content";
 import { Dialog } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
 import { setManagedAgentAutoRestart } from "@/shared/api/tauriManagedAgents";
-import { EditAgentAdvancedFields } from "./EditAgentAdvancedFields";
 import {
-  ADVANCED_FIELDS_MOTION_TRANSITION,
   AUTO_PROVIDER_DROPDOWN_VALUE,
   BLOCK_BUILD_HIDDEN_PROVIDER_IDS,
   CUSTOM_PROVIDER_DROPDOWN_VALUE,
@@ -39,7 +35,6 @@ import {
   NO_RUNTIME_DROPDOWN_VALUE,
   PERSONA_FIELD_CONTROL_CLASS,
   PERSONA_FIELD_SHELL_CLASS,
-  PERSONA_LABEL_OPTIONAL_CLASS,
   runtimeSupportsLlmProviderSelection,
   shouldClearKnownModelForSelectionScope,
   sortPersonaRuntimes,
@@ -67,56 +62,31 @@ import { AgentCreationPreview } from "./AgentCreationPreview";
 import { OwnerOnlyAccessField } from "./OwnerOnlyAccessField";
 import type { EnvVarsValue } from "./EnvVarsEditor";
 import { useRequiredCredentialState } from "./useRequiredCredentialState";
-import { RunOnSummarySection } from "./RunOnSummarySection";
 import { WhereToRunSection } from "./WhereToRunSection";
 import {
-  canSubmitWhereToRun,
-  resolveBackendIntent,
-  type WhereToRunDraft,
-} from "./whereToRunIntent";
-import { PersonaDropdownField } from "./PersonaDropdownField";
+  canSubmitRemoteAgentEdit,
+  remoteDraftForAgent,
+  submitRemoteAgentEdit,
+} from "./remoteAgentEdit";
 import {
   MODEL_DISCOVERY_LOADING_VALUE,
   usePersonaModelDiscovery,
 } from "./usePersonaModelDiscovery";
-import { PersonaProviderApiKeyField } from "./PersonaProviderApiKeyField";
 import {
   getBakedModelInheritLabel,
   getBakedProviderInheritLabel,
 } from "./bakedEnvHelpers";
-import {
-  getProviderApiKeyEnvVar,
-  getProviderApiKeyLabel,
-} from "./agentConfigOptions";
+import { getProviderApiKeyEnvVar } from "./agentConfigOptions";
 import { useAgentDialogDefaults } from "./useAgentDialogDefaults";
-import { AgentAiDefaultsNotice } from "./AgentAiDefaults";
-import { AgentDefaultsDialog } from "./AgentDefaultsDialog";
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
 import { resolveModelFieldStatusMessage } from "./agentConfigControls";
-import { AdvancedRequiredBadge } from "./AdvancedRequiredBadge";
 import { showAgentProfileSyncWarning } from "./agentProfileSyncWarning";
-import { AddCustomHarnessDialog } from "./AddCustomHarnessDialog";
 import {
   ADD_CUSTOM_HARNESS_OPTION,
   runtimeDropdownAction,
   usePendingHarnessSelection,
 } from "./addCustomHarness";
-
-function remoteDraftForAgent(agent: ManagedAgent): WhereToRunDraft {
-  if (agent.backend.type !== "provider") {
-    return { runOn: "local", providerConfig: {}, probedProvider: null };
-  }
-  return {
-    runOn: agent.backend.id,
-    providerConfig: Object.fromEntries(
-      Object.entries(agent.backend.config).map(([key, value]) => [
-        key,
-        value == null ? "" : String(value),
-      ]),
-    ),
-    probedProvider: null,
-  };
-}
+import { LocalAgentExecutionFields } from "./LocalAgentExecutionFields";
 
 export function AgentInstanceEditDialog({
   agent,
@@ -187,10 +157,9 @@ export function AgentInstanceEditDialog({
   const [isAvatarUploadPending, setIsAvatarUploadPending] =
     React.useState(false);
   const [isAddHarnessOpen, setIsAddHarnessOpen] = React.useState(false);
-  const shouldReduceMotion = useReducedMotion();
   const isRemoteAgent = agent.backend.type === "provider";
-  const [remoteRunDraft, setRemoteRunDraft] = React.useState<WhereToRunDraft>(
-    () => remoteDraftForAgent(agent),
+  const [remoteRunDraft, setRemoteRunDraft] = React.useState(() =>
+    remoteDraftForAgent(agent),
   );
 
   // Runtime selector: defaults to "custom" until the dialog opens and the
@@ -627,11 +596,14 @@ export function AgentInstanceEditDialog({
   });
 
   const canSubmit = isRemoteAgent
-    ? name.trim().length > 0 &&
-      canSubmitWhereToRun(remoteRunDraft) &&
-      (respondTo !== "allowlist" || respondToAllowlist.length > 0) &&
-      !updateMutation.isPending &&
-      !isAvatarUploadPending
+    ? canSubmitRemoteAgentEdit({
+        name,
+        draft: remoteRunDraft,
+        respondTo,
+        allowlistLength: respondToAllowlist.length,
+        isPending: updateMutation.isPending,
+        isAvatarUploadPending,
+      })
     : computeEditAgentFormValidity({
         name,
         parallelism,
@@ -651,35 +623,16 @@ export function AgentInstanceEditDialog({
   async function handleSubmit() {
     try {
       if (isRemoteAgent) {
-        const backend = resolveBackendIntent(remoteRunDraft);
-        if (!backend) {
-          throw new Error("Hosted execution settings are unavailable.");
-        }
-        const backendChanged =
-          JSON.stringify(backend.config) !==
-          JSON.stringify(
-            agent.backend.type === "provider" ? agent.backend.config : {},
-          );
-        if (
-          backendChanged &&
-          !window.confirm(
-            "Change this hosted agent's harness or model for future messages? A message already being processed will finish with its current settings.",
-          )
-        ) {
-          return;
-        }
-        const input: UpdateManagedAgentInput = {
-          pubkey: agent.pubkey,
-          name: name.trim() !== agent.name ? name.trim() : undefined,
-          backend: backendChanged ? backend : undefined,
-          respondTo: respondTo !== agent.respondTo ? respondTo : undefined,
-          respondToAllowlist:
-            respondTo === "allowlist" &&
-            respondToAllowlist.join(",") !== agent.respondToAllowlist.join(",")
-              ? respondToAllowlist
-              : undefined,
-        };
-        const result = await updateMutation.mutateAsync(input);
+        const submitted = await submitRemoteAgentEdit({
+          agent,
+          draft: remoteRunDraft,
+          name,
+          respondTo,
+          respondToAllowlist,
+          update: updateMutation.mutateAsync,
+        });
+        if (!submitted) return;
+        const { result, backendChanged } = submitted;
         showAgentProfileSyncWarning(result.agent.name, result.profileSyncError);
         handleOpenChange(false);
         onUpdated?.(result.agent);
@@ -916,10 +869,6 @@ export function AgentInstanceEditDialog({
 
   const previewLabel = name.trim() || "Agent name";
   const previewAvatarUrl = avatarUrl.trim() || null;
-  const advancedFieldsTransition = shouldReduceMotion
-    ? { duration: 0 }
-    : ADVANCED_FIELDS_MOTION_TRANSITION;
-
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
       <ChooserDialogContent
@@ -1025,288 +974,75 @@ export function AgentInstanceEditDialog({
                 onDraftChange={setRemoteRunDraft}
               />
             ) : (
-              <>
-                <RunOnSummarySection backend={agent.backend} />
-
-                {/* Provider (runtime) */}
-                <div className="space-y-1.5">
-                  <label
-                    className="text-sm font-medium text-foreground"
-                    htmlFor="edit-agent-runtime"
-                  >
-                    Provider
-                  </label>
-                  <PersonaDropdownField
-                    disabled={updateMutation.isPending}
-                    id="edit-agent-runtime"
-                    onValueChange={handleRuntimeDropdownChange}
-                    options={runtimeDropdownOptions}
-                    placeholder="Choose a provider"
-                    value={runtimeDropdownValue}
-                  />
-                  {selectedRuntime ? (
-                    <p className="text-xs text-muted-foreground">
-                      Detected at{" "}
-                      <span className="font-medium">
-                        {selectedRuntime.binaryPath ??
-                          selectedRuntime.command ??
-                          selectedRuntime.id}
-                      </span>
-                    </p>
-                  ) : null}
-                  <AddCustomHarnessDialog
-                    onOpenChange={setIsAddHarnessOpen}
-                    onSaved={selectSavedHarness}
-                    open={isAddHarnessOpen}
-                  />
-                </div>
-                {selectedRuntimeId === "custom" && !inheritHarness ? (
-                  <div className="space-y-1.5">
-                    <label
-                      className="text-sm font-medium text-foreground"
-                      htmlFor="edit-agent-command"
-                    >
-                      Agent command
-                    </label>
-                    <div
-                      className={cn(
-                        "flex min-h-11 items-center px-3",
-                        PERSONA_FIELD_SHELL_CLASS,
-                      )}
-                    >
-                      <Input
-                        autoCorrect="off"
-                        className={cn(
-                          "h-8 px-0 py-0 leading-6",
-                          PERSONA_FIELD_CONTROL_CLASS,
-                        )}
-                        disabled={updateMutation.isPending}
-                        id="edit-agent-command"
-                        onChange={(event) =>
-                          setAgentCommand(event.target.value)
-                        }
-                        placeholder="Full path or shell command"
-                        value={agentCommand}
-                      />
-                    </div>
-                  </div>
-                ) : null}
-                {/* LLM provider */}
-                {llmProviderFieldVisible ? (
-                  <div className="space-y-1.5">
-                    <label
-                      className="text-sm font-medium text-foreground"
-                      htmlFor="edit-agent-llm-provider"
-                    >
-                      LLM provider
-                      {providerRequired ? (
-                        <span
-                          className="ml-1 text-destructive"
-                          aria-hidden="true"
-                        >
-                          *
-                        </span>
-                      ) : (
-                        <span className={PERSONA_LABEL_OPTIONAL_CLASS}>
-                          Optional
-                        </span>
-                      )}
-                    </label>
-                    <PersonaDropdownField
-                      disabled={updateMutation.isPending}
-                      id="edit-agent-llm-provider"
-                      onValueChange={handleProviderDropdownChange}
-                      options={providerDropdownOptions}
-                      placeholder="Default (auto)"
-                      value={providerSelectValue}
-                    />
-                    {isCustomProviderEditing ? (
-                      <div
-                        className={cn(
-                          "mt-2 flex min-h-11 items-center px-3",
-                          PERSONA_FIELD_SHELL_CLASS,
-                        )}
-                      >
-                        <Input
-                          aria-label="Custom provider ID"
-                          autoCorrect="off"
-                          className={cn(
-                            "h-8 px-0 py-0 leading-6",
-                            PERSONA_FIELD_CONTROL_CLASS,
-                          )}
-                          disabled={updateMutation.isPending}
-                          id="edit-agent-custom-provider"
-                          onChange={(event) => setProvider(event.target.value)}
-                          placeholder="Custom provider ID"
-                          value={provider}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {llmProviderFieldVisible && topLevelSecretEnvVar ? (
-                  <PersonaProviderApiKeyField
-                    disabled={updateMutation.isPending}
-                    envVarName={topLevelSecretEnvVar}
-                    isInherited={apiKeyIsInherited}
-                    inheritedLabel={apiKeyInheritedLabel}
-                    isRequired={apiKeyIsRequired}
-                    label={
-                      getProviderApiKeyLabel(effectiveProvider) ?? "API Key"
-                    }
-                    onValueChange={(next) => {
-                      setEnvVars((prev) => ({
-                        ...prev,
-                        [topLevelSecretEnvVar]: next,
-                      }));
-                    }}
-                    value={apiKeyValue}
-                  />
-                ) : null}
-
-                {/* Model */}
-                <div className="space-y-1.5">
-                  <label
-                    className="text-sm font-medium text-foreground"
-                    htmlFor="edit-agent-model"
-                  >
-                    Model
-                    {modelRequired ? (
-                      <span
-                        className="ml-1 text-destructive"
-                        aria-hidden="true"
-                      >
-                        *
-                      </span>
-                    ) : (
-                      <span className={PERSONA_LABEL_OPTIONAL_CLASS}>
-                        Optional
-                      </span>
-                    )}
-                  </label>
-                  <PersonaDropdownField
-                    disabled={updateMutation.isPending || modelDiscoveryLoading}
-                    id="edit-agent-model"
-                    onValueChange={handleModelDropdownChange}
-                    options={modelDropdownOptions}
-                    placeholder="Default model"
-                    value={modelSelectValue}
-                  />
-                  {showCustomModelInput ? (
-                    <div
-                      className={cn(
-                        "mt-2 flex min-h-11 items-center px-3",
-                        PERSONA_FIELD_SHELL_CLASS,
-                      )}
-                    >
-                      <Input
-                        aria-label="Custom model ID"
-                        autoCorrect="off"
-                        className={cn(
-                          "h-8 px-0 py-0 leading-6",
-                          PERSONA_FIELD_CONTROL_CLASS,
-                        )}
-                        disabled={updateMutation.isPending}
-                        id="edit-agent-custom-model"
-                        onChange={(event) => setModel(event.target.value)}
-                        placeholder="Custom model ID"
-                        value={model}
-                      />
-                    </div>
-                  ) : null}
-                  {modelStatusMessage ? (
-                    <p className="text-xs text-muted-foreground">
-                      {modelStatusMessage}
-                    </p>
-                  ) : null}
-                </div>
-
-                <AgentAiDefaultsNotice
-                  onEditDefaults={() => setAiDefaultsOpen(true)}
-                  triggerRef={aiDefaultsTriggerRef}
-                  explicitModel={inheritedSubmission.model ?? ""}
-                  explicitProvider={inheritedSubmission.provider ?? ""}
-                  inheritedModel={inheritedModelDefault}
-                  inheritedProvider={inheritedProviderDefault}
-                />
-
-                <AgentDefaultsDialog
-                  onOpenChange={setAiDefaultsOpen}
-                  open={aiDefaultsOpen}
-                  returnFocusRef={aiDefaultsTriggerRef}
-                />
-
-                {/* Advanced settings */}
-                <div className="space-y-3">
-                  <button
-                    aria-expanded={showAdvancedFields}
-                    className="inline-flex h-9 items-center gap-1.5 text-sm font-medium text-foreground transition-colors hover:text-foreground/80 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => setShowAdvancedFields((current) => !current)}
-                    type="button"
-                  >
-                    <span>Advanced</span>
-                    <AdvancedRequiredBadge
-                      envVars={inheritedSubmission.envVars}
-                      requiredEnvKeys={advancedRequiredEnvKeys}
-                      testId="edit-agent-advanced-required-badge"
-                    />
-                    <ChevronDown
-                      className={cn(
-                        "h-4 w-4 text-muted-foreground transition-transform duration-150 ease-out",
-                        showAdvancedFields && "rotate-180",
-                      )}
-                    />
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {showAdvancedFields ? (
-                      <motion.div
-                        animate={{ height: "auto", opacity: 1, scale: 1 }}
-                        className="origin-top overflow-hidden"
-                        exit={{ height: 0, opacity: 0, scale: 0.98 }}
-                        initial={{ height: 0, opacity: 0, scale: 0.98 }}
-                        key="edit-agent-advanced-fields"
-                        transition={advancedFieldsTransition}
-                      >
-                        <EditAgentAdvancedFields
-                          acpCommand={acpCommand}
-                          agentArgs={agentArgs}
-                          autoRestartOnConfigChange={autoRestartOnConfigChange}
-                          disabled={updateMutation.isPending}
-                          envVars={envVars}
-                          fileSatisfiedEnvKeys={fileSatisfiedEnvKeys}
-                          hiddenEnvKeys={
-                            topLevelSecretEnvVar ? [topLevelSecretEnvVar] : []
-                          }
-                          focusKey={
-                            initialFocus?.type === "env_key"
-                              ? initialFocus.key
-                              : undefined
-                          }
-                          inheritedEnvVars={inheritedEnvVarsForAdvanced}
-                          inheritHarness={inheritHarness}
-                          linkedPersona={linkedPersona}
-                          model={inheritedSubmission.model ?? ""}
-                          modelTuningRuntimeId={prospectiveRuntimeId}
-                          parallelism={parallelism}
-                          provider={effectiveProvider}
-                          requiredEnvKeys={advancedRequiredEnvKeys}
-                          catalogStatus={runtimeCatalogStatus}
-                          selectedRuntime={prospectiveRuntime}
-                          systemPrompt={systemPrompt}
-                          onAcpCommandChange={setAcpCommand}
-                          onAgentArgsChange={setAgentArgs}
-                          onAutoRestartChange={setAutoRestartOnConfigChange}
-                          onEnvVarsChange={setEnvVars}
-                          onInheritHarnessChange={setInheritHarness}
-                          onParallelismChange={setParallelism}
-                          onSystemPromptChange={setSystemPrompt}
-                        />
-                      </motion.div>
-                    ) : null}
-                  </AnimatePresence>
-                </div>
-              </>
+              <LocalAgentExecutionFields
+                backend={agent.backend}
+                isPending={updateMutation.isPending}
+                runtimeDropdownValue={runtimeDropdownValue}
+                onRuntimeChange={handleRuntimeDropdownChange}
+                runtimeDropdownOptions={runtimeDropdownOptions}
+                selectedRuntime={selectedRuntime}
+                isAddHarnessOpen={isAddHarnessOpen}
+                onAddHarnessOpenChange={setIsAddHarnessOpen}
+                onHarnessSaved={selectSavedHarness}
+                selectedRuntimeId={selectedRuntimeId}
+                inheritHarness={inheritHarness}
+                agentCommand={agentCommand}
+                onAgentCommandChange={setAgentCommand}
+                llmProviderFieldVisible={llmProviderFieldVisible}
+                providerRequired={providerRequired}
+                providerDropdownOptions={providerDropdownOptions}
+                onProviderChange={handleProviderDropdownChange}
+                providerSelectValue={providerSelectValue}
+                isCustomProviderEditing={isCustomProviderEditing}
+                provider={provider}
+                onProviderIdChange={setProvider}
+                topLevelSecretEnvVar={topLevelSecretEnvVar}
+                apiKeyIsInherited={apiKeyIsInherited}
+                apiKeyInheritedLabel={apiKeyInheritedLabel}
+                apiKeyIsRequired={apiKeyIsRequired}
+                effectiveProvider={effectiveProvider}
+                apiKeyValue={apiKeyValue}
+                onEnvVarsChange={setEnvVars}
+                modelRequired={modelRequired}
+                modelDiscoveryLoading={modelDiscoveryLoading}
+                onModelChange={handleModelDropdownChange}
+                modelDropdownOptions={modelDropdownOptions}
+                modelSelectValue={modelSelectValue}
+                showCustomModelInput={showCustomModelInput}
+                model={model}
+                onModelIdChange={setModel}
+                modelStatusMessage={modelStatusMessage}
+                aiDefaultsOpen={aiDefaultsOpen}
+                onAiDefaultsOpenChange={setAiDefaultsOpen}
+                aiDefaultsTriggerRef={aiDefaultsTriggerRef}
+                explicitModel={inheritedSubmission.model ?? ""}
+                explicitProvider={inheritedSubmission.provider ?? ""}
+                inheritedModelDefault={inheritedModelDefault}
+                inheritedProviderDefault={inheritedProviderDefault}
+                showAdvancedFields={showAdvancedFields}
+                onShowAdvancedFieldsChange={setShowAdvancedFields}
+                advancedRequiredEnvKeys={advancedRequiredEnvKeys}
+                acpCommand={acpCommand}
+                agentArgs={agentArgs}
+                autoRestartOnConfigChange={autoRestartOnConfigChange}
+                envVars={envVars}
+                effectiveEnvVars={inheritedSubmission.envVars}
+                fileSatisfiedEnvKeys={fileSatisfiedEnvKeys}
+                initialFocus={initialFocus}
+                inheritedEnvVarsForAdvanced={inheritedEnvVarsForAdvanced}
+                linkedPersona={linkedPersona}
+                prospectiveRuntimeId={prospectiveRuntimeId}
+                parallelism={parallelism}
+                runtimeCatalogStatus={runtimeCatalogStatus}
+                prospectiveRuntime={prospectiveRuntime}
+                systemPrompt={systemPrompt}
+                onAcpCommandChange={setAcpCommand}
+                onAgentArgsChange={setAgentArgs}
+                onAutoRestartChange={setAutoRestartOnConfigChange}
+                onInheritHarnessChange={setInheritHarness}
+                onParallelismChange={setParallelism}
+                onSystemPromptChange={setSystemPrompt}
+              />
             )}
 
             {/* Error */}

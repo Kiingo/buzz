@@ -24,6 +24,7 @@ pub(crate) mod persona_events;
 mod personas;
 #[cfg(windows)]
 mod process_lifecycle;
+mod provider_protocol;
 pub(crate) mod readiness;
 pub(crate) mod reconcile;
 mod relay_mesh;
@@ -66,6 +67,9 @@ pub use parallelism::{acp_agents_value, effective_parallelism, harness_max_paral
 pub use personas::*;
 #[cfg(windows)]
 pub use process_lifecycle::*;
+pub(crate) use provider_protocol::{
+    provider_config_sha256, validate_provider_info, validate_provider_presentation_snapshot,
+};
 pub(crate) use readiness::{
     agent_readiness, resolve_effective_agent_env, resolve_effective_harness_descriptor,
     AgentReadiness, Requirement,

@@ -2,8 +2,7 @@
 //!
 //! # Overview
 //!
-//! Before spawning a managed agent (or before deciding whether to enter
-//! setup-mode nudge), the desktop must know whether the agent has every
+//! Before spawning a managed agent (or before deciding whether to enter setup-mode nudge), the desktop must know whether the agent has every
 //! piece of configuration it will need to start successfully. This module
 //! provides:
 //!

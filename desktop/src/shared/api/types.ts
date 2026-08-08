@@ -1,3 +1,9 @@
+import type {
+  ManagedAgentBackend,
+  ProviderLifecycleState,
+} from "./providerTypes";
+export type * from "./providerTypes";
+
 export type ChannelType = "stream" | "forum" | "dm";
 export type ChannelVisibility = "open" | "private";
 export type ChannelRole = "owner" | "admin" | "member" | "guest" | "bot";
@@ -300,17 +306,6 @@ export type ManagedAgentRuntimeStatus = {
   logPath: string | null;
 };
 
-export type ManagedAgentBackend =
-  | { type: "local" }
-  | {
-      type: "provider";
-      id: string;
-      config: Record<string, unknown>;
-      /** Provider-advertised, inert presentation metadata saved at selection. */
-      name?: string;
-      summary?: { label: string; value: string }[];
-    };
-
 import type { RestartDiffEntry } from "./restartDiff";
 export type { JsonValue, RestartChange, RestartDiffEntry } from "./restartDiff";
 export type ManagedAgent = {
@@ -395,62 +390,12 @@ export type ManagedAgent = {
   respondToAllowlist: string[];
 };
 
-export type ProviderLifecycleState = {
-  desired_state: "active" | "paused" | "deleted";
-  observed_state:
-    | "provisioning"
-    | "ready"
-    | "updating"
-    | "paused"
-    | "action_required"
-    | "degraded"
-    | "deletion_pending"
-    | "deleted";
-  last_reconciled_at: string | null;
-  last_ready_at: string | null;
-  error_code: string | null;
-  correlation_id: string;
-};
-
 /** Inbound author gate mode. Mirrors buzz-acp's --respond-to CLI flag. */
 export type RespondToMode = "owner-only" | "allowlist" | "anyone";
 
 export type BackendProviderCandidate = {
   id: string;
   binaryPath: string;
-};
-
-export type BackendProviderProbeResult = {
-  ok: boolean;
-  name?: string;
-  version?: string;
-  protocol_version?: number;
-  description?: string;
-  config_schema?: Record<string, unknown>;
-  capabilities?: {
-    owns_execution_profile?: boolean;
-    lifecycle_operations?: string[];
-    connection_status?: {
-      field: string;
-      states: Record<
-        string,
-        {
-          status: "connected" | "action_required" | "unavailable";
-          message: string;
-          remediation_url?: string | null;
-        }
-      >;
-    };
-    connection_scope_message?: string;
-    self_check?: boolean;
-    presentation?: {
-      summary_fields: {
-        field: string;
-        label?: string;
-        empty_label?: string;
-      }[];
-    };
-  };
 };
 
 export type RelayMeshConfig = {
@@ -513,10 +458,9 @@ export type CancelManagedAgentTurnResult = {
 };
 
 /**
- * Outcome of a live `switch_model` control frame, surfaced asynchronously via
- * the agent's `control_result` observer frame. Busy path: `sent` (cancel +
- * requeue on the new model) or `turn_ending` (oneshot already consumed this
- * turn). Idle path: `switched`, `unsupported_model`, or `no_active_turn`.
+ * Outcome of a live `switch_model` control frame, surfaced asynchronously via the
+ * agent's `control_result` observer frame. Busy path: `sent`/`turn_ending`; idle
+ * path: `switched`, `unsupported_model`, or `no_active_turn`.
  */
 export type SwitchManagedAgentModelStatus =
   | "sent"
@@ -799,8 +743,7 @@ export type AgentPersona = {
 };
 
 /**
- * A catalog publication's coordinate: the owner who published it and the
- * `d`-tag identifying the persona within that owner's catalog. Mirrors the
+ * A catalog publication's coordinate: owner plus persona `d`-tag. Mirrors the
  * backend `CatalogSource`.
  */
 export type CatalogSourceCoordinate = {
