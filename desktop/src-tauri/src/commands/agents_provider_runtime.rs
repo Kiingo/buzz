@@ -3,9 +3,8 @@ use tauri::AppHandle;
 use crate::{
     app_state::AppState,
     managed_agents::{
-        discover_provider_candidates, find_managed_agent_mut, load_managed_agents,
-        provider_config_sha256, provider_control, provider_deploy, resolve_provider_binary,
-        save_managed_agents, BackendKind, ManagedAgentRecord, ProviderLifecycleState,
+        discover_provider_candidates, load_managed_agents, provider_config_sha256, provider_deploy,
+        resolve_provider_binary, save_managed_agents, BackendKind, ManagedAgentRecord,
     },
     util::now_iso,
 };
@@ -19,7 +18,7 @@ use crate::{
 ///
 /// Returns Ok(()) on success, Err(message) on failure. Either way the record is
 /// updated and saved before returning.
-pub(super) async fn deploy_to_provider(
+pub(in crate::commands) async fn deploy_to_provider(
     app: &AppHandle,
     state: &AppState,
     pubkey: &str,
@@ -147,7 +146,7 @@ fn provider_profile_revision(config: &serde_json::Value) -> u64 {
         .unwrap_or(1)
 }
 
-pub(super) fn control_provider_record(
+pub(in crate::commands) fn control_provider_record(
     state: &AppState,
     record: &ManagedAgentRecord,
     operation: &str,

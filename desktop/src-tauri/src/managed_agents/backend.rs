@@ -1,4 +1,5 @@
 use super::validate_provider_info;
+use sha2::{Digest, Sha256};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::managed_agents::BackendKind;
 
 #[test]
 fn provider_profile_edit_increments_revision_and_keeps_provider() {
