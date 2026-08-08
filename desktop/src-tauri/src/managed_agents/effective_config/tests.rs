@@ -64,6 +64,7 @@ fn record(
         runtime_pid: None,
         backend: BackendKind::Local,
         backend_agent_id: None,
+        provider_lifecycle_state: None,
         provider_binary_path: None,
         team_id: None,
         persona_team_dir: None,

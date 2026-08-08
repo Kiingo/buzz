@@ -1,5 +1,4 @@
 use super::*;
-
 #[test]
 fn openai_model_normalization_keeps_agent_text_models() {
     let models = normalize_openai_compatible_models(

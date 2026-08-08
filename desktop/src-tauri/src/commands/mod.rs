@@ -1,3 +1,4 @@
+mod agent_access;
 mod agent_auth;
 mod agent_config;
 mod agent_discovery;
@@ -6,6 +7,7 @@ mod agent_metric_archive;
 mod agent_model_process;
 mod agent_models;
 mod agent_models_env;
+mod agent_provider_update;
 mod agent_providers;
 mod agent_settings;
 mod agent_update_rollback;
@@ -63,6 +65,7 @@ mod window_vibrancy;
 mod workflows;
 mod workspace;
 
+pub use agent_access::*;
 pub use agent_auth::*;
 pub use agent_config::*;
 pub use agent_discovery::*;

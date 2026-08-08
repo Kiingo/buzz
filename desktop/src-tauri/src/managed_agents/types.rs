@@ -1,16 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, process::Child};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum BackendKind {
-    #[default]
-    Local,
-    Provider {
-        id: String,
-        config: serde_json::Value,
-    },
-}
+mod provider;
+pub use provider::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDefinition {
@@ -125,6 +117,7 @@ impl AgentDefinition {
             runtime_pid: None,
             backend: BackendKind::default(),
             backend_agent_id: None,
+            provider_lifecycle_state: None,
             provider_binary_path: None,
             team_id: None,
             persona_team_dir: None,
@@ -208,6 +201,7 @@ pub struct RelayAgentInfo {
     #[serde(default)]
     pub respond_to_allowlist: Vec<String>,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManagedAgentRecord {
     pub pubkey: String,
@@ -320,6 +314,8 @@ pub struct ManagedAgentRecord {
     pub backend: BackendKind,
     #[serde(default)]
     pub backend_agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_lifecycle_state: Option<ProviderLifecycleState>,
     #[serde(default)]
     pub provider_binary_path: Option<String>,
     /// Installed team directory path (absolute). Set when agent was created from a team persona.
@@ -552,6 +548,7 @@ pub struct ManagedAgentSummary {
     pub env_vars: BTreeMap<String, String>,
     pub backend: BackendKind,
     pub backend_agent_id: Option<String>,
+    pub provider_lifecycle_state: Option<ProviderLifecycleState>,
     pub status: String,
     pub pid: Option<u32>,
     pub created_at: String,
@@ -663,16 +660,14 @@ pub struct AcpRuntimeCatalogEntry {
     /// Whether this entry came from the compiled-in catalog or a user-supplied
     /// JSON file in `custom_harnesses/`. The UI uses this to decide editability.
     pub source: HarnessSource,
-    /// Definition-level environment variables for `source: custom` entries.
-    ///
-    /// Populated from `HarnessDefinition.env` so the edit form can read them
-    /// back and the user doesn't silently lose env vars when saving.  Always
-    /// empty for `builtin` and `preset` entries (those env values come from the
-    /// runtime metadata path, not user-editable JSON).
-    ///
-    /// Skipped in serialization when empty to keep the catalog payload compact.
+    /// Definition-level env vars for `source: custom` entries; populated from
+    /// `HarnessDefinition.env` so saves don't silently erase existing vars.
+    /// Absent for builtin/preset entries. Skipped when empty in serialization.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub definition_env: BTreeMap<String, String>,
+    /// Spawn-time parallelism cap; absent for uncapped harnesses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_parallelism: Option<u32>,
 }
 
 /// Result of a single install step (CLI or adapter).

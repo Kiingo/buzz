@@ -37,14 +37,18 @@ export function isManagedAgentActive(agent: Pick<ManagedAgent, "status">) {
 
 export function getManagedAgentPrimaryActionLabel(agent: ManagedAgent) {
   if (agent.backend.type === "provider") {
-    return isManagedAgentActive(agent) ? "Shutdown" : "Deploy";
+    return isManagedAgentActive(agent)
+      ? "Pause"
+      : agent.status === "paused"
+        ? "Resume"
+        : "Deploy";
   }
 
   if (isManagedAgentActive(agent)) {
     return "Stop";
   }
 
-  return agent.status === "stopped" ? "Respawn" : "Spawn";
+  return agent.status === "stopped" ? "Restart Agent" : "Start Agent";
 }
 
 export function resolveManagedAgentChannelId(
@@ -120,6 +124,18 @@ export async function stopManagedAgentWithRules({
   stopManagedAgent: StopManagedAgent;
 } & ManagedAgentChannelContext): Promise<ManagedAgentActionResult> {
   if (agent.backend.type === "provider") {
+    try {
+      await stopManagedAgent(agent.pubkey);
+      return { noticeMessage: "Hosted agent paused." };
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        (!error.message.includes("protocol version 2") &&
+          !error.message.includes("does not advertise lifecycle"))
+      ) {
+        throw error;
+      }
+    }
     const channelId = resolveManagedAgentChannelId(agent, {
       channels,
       preferredChannelId,
@@ -133,7 +149,8 @@ export async function stopManagedAgentWithRules({
       agent.pubkey,
     ]);
     return {
-      noticeMessage: "Shutdown command sent. Agent will stop shortly.",
+      noticeMessage:
+        "This legacy provider does not support pause; shutdown command sent.",
     };
   }
 
@@ -155,6 +172,18 @@ export async function deleteManagedAgentWithRules({
   skipRemoteDeleteConfirm?: boolean;
 } & ManagedAgentActionContext): Promise<ManagedAgentActionResult> {
   if (agent.backend.type === "provider" && agent.backendAgentId) {
+    try {
+      await deleteManagedAgent({ pubkey: agent.pubkey });
+      return { noticeMessage: "Hosted agent deleted." };
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        (!error.message.includes("protocol version 2") &&
+          !error.message.includes("does not advertise lifecycle"))
+      ) {
+        throw error;
+      }
+    }
     const presence = presenceLookup?.[normalizePubkey(agent.pubkey)];
     const channelId = resolveManagedAgentChannelId(agent, {
       channels,

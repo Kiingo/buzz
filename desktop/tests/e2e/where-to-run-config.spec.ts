@@ -8,10 +8,15 @@
  * looked completely dead, and the provider binary respawned in a loop.
  *
  * Covers:
+ *  - Run on remains visible outside Advanced so remote execution is a clear
+ *    first-class creation choice
  *  - typing into a defaultless provider field sticks, and the provider is
- *    probed exactly once for the selection (not once per keystroke)
+ *    probed exactly once for the selection (not once per keystroke or
+ *    unrelated Advanced disclosure toggle)
  *  - the config form is gated on probe resolution (no half-rendered form),
  *    and defaults prefill exactly once when a slow probe lands
+ *  - collapsing Advanced during an incomplete remote setup keeps the remote
+ *    setup visible and the submit blocker represented by the Required badge
  *  - switching provider → local → provider re-probes and resets cleanly
  *
  * The stale-closure merge on probe resolution (defaults beneath in-flight
@@ -63,15 +68,47 @@ async function probeInvocations(page: Page): Promise<number> {
   );
 }
 
-/** Open the create-agent dialog and select the mocked provider in "Run on". */
+async function selectRunOnOption(
+  page: Page,
+  dialog: import("@playwright/test").Locator,
+  optionName: string,
+) {
+  const trigger = dialog.locator("#agent-run-on");
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.press("Enter");
+
+  const option = page.getByRole("menuitemradio", {
+    exact: true,
+    name: optionName,
+  });
+  await expect(option).toBeVisible();
+  // The shared PersonaDropdownField supports keyboard selection. Using it here
+  // avoids racing the menu's open animation when this test changes locations
+  // repeatedly.
+  await option.press("Enter");
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+}
+
+/** Open the create-agent dialog, select the mocked provider, then open Advanced. */
 async function openCreateDialogOnProvider(page: Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-agents-view").click();
   await page.getByTestId("new-agent-card").click();
-  await page.getByRole("menuitem", { name: "Create agent" }).click();
   const dialog = page.getByTestId("persona-dialog");
   await expect(dialog).toBeVisible({ timeout: 10_000 });
-  await dialog.locator("#agent-run-on").selectOption(PROVIDER.id);
+  const advanced = dialog.getByRole("button", {
+    name: "Advanced",
+    exact: true,
+  });
+  await expect(advanced).toHaveAttribute("aria-expanded", "false");
+  const runOn = dialog.locator("#agent-run-on");
+  await expect(runOn).toBeVisible();
+  await selectRunOnOption(page, dialog, PROVIDER.id);
+  await advanced.click();
+  await expect(advanced).toHaveAttribute("aria-expanded", "true");
+  const respondTo = dialog.getByTestId("agent-respond-to");
+  await expect(respondTo).toBeVisible();
+  await expect(runOn).toBeVisible();
   return dialog;
 }
 
@@ -92,10 +129,27 @@ test("typing into a defaultless provider field sticks and probes only once", asy
   );
   await expect(contextField).toHaveValue("");
 
-  await contextField.pressSequentially("prod-us-west", { delay: 20 });
+  await contextField.fill("prod-us-west");
   await expect(contextField).toHaveValue("prod-us-west");
 
-  // One selection, one probe — keystrokes must not refire it.
+  // One selection, one probe — keystrokes and Advanced disclosure toggles
+  // must not refire executable provider discovery after it has completed.
+  expect(await probeInvocations(page)).toBe(1);
+  const advanced = dialog.getByRole("button", {
+    name: "Advanced",
+    exact: true,
+  });
+  await advanced.click();
+  await expect(advanced).toHaveAttribute("aria-expanded", "false");
+  await expect(dialog.locator("#agent-run-on")).toBeVisible();
+  await expect(dialog.locator("#provider-cfg-context")).toHaveValue(
+    "prod-us-west",
+  );
+  await advanced.click();
+  await expect(advanced).toHaveAttribute("aria-expanded", "true");
+  await expect(dialog.locator("#provider-cfg-context")).toHaveValue(
+    "prod-us-west",
+  );
   expect(await probeInvocations(page)).toBe(1);
 });
 
@@ -128,6 +182,31 @@ test("config fields render only after a slow probe resolves, with defaults", asy
   expect(await probeInvocations(page)).toBe(1);
 });
 
+test("collapsed Advanced marks incomplete remote setup as required", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    backendProviders: [PROVIDER],
+    backendProviderProbeResult: PROBE_RESULT,
+    backendProviderProbeDelayMs: 10_000,
+  });
+  const dialog = await openCreateDialogOnProvider(page);
+  const advanced = dialog.getByRole("button", {
+    name: "Advanced",
+    exact: true,
+  });
+  const submit = dialog.getByTestId("persona-dialog-submit");
+
+  await expect(submit).toBeDisabled();
+  await advanced.click();
+  await expect(advanced).toHaveAttribute("aria-expanded", "false");
+  await expect(dialog.locator("#agent-run-on")).toBeVisible();
+  await expect(
+    dialog.getByTestId("persona-advanced-required-badge"),
+  ).toHaveText("Required");
+  await expect(submit).toBeDisabled();
+});
+
 test("provider → local → provider re-probes and resets the config", async ({
   page,
 }) => {
@@ -141,10 +220,10 @@ test("provider → local → provider re-probes and resets the config", async ({
   await expect(contextField).toBeVisible({ timeout: 10_000 });
   await contextField.fill("stale-value");
 
-  await dialog.locator("#agent-run-on").selectOption("local");
+  await selectRunOnOption(page, dialog, "This computer");
   await expect(contextField).toHaveCount(0);
 
-  await dialog.locator("#agent-run-on").selectOption(PROVIDER.id);
+  await selectRunOnOption(page, dialog, PROVIDER.id);
   await expect(dialog.locator("#provider-cfg-context")).toBeVisible({
     timeout: 10_000,
   });

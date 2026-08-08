@@ -255,6 +255,7 @@ fn record_with(
         runtime_pid: None,
         backend: Default::default(),
         backend_agent_id: None,
+        provider_lifecycle_state: None,
         provider_binary_path: None,
         team_id: None,
         persona_team_dir: None,
@@ -288,8 +289,7 @@ fn record_with(
 
 #[test]
 fn record_agent_command_own_runtime_wins_over_persona() {
-    // A record with its own materialized runtime never consults the
-    // persona list — the unified-model resolution.
+    // A record with its own materialized runtime never consults the persona list — the unified-model resolution.
     let personas = vec![persona_with_runtime("p1", Some("goose"))];
     let record = record_with(Some("claude"), Some("p1"), None);
     assert_eq!(record_agent_command(&record, &personas), "claude-agent-acp");

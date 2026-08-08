@@ -1,3 +1,4 @@
+use super::validate_provider_info;
 use sha2::{Digest, Sha256};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -8,62 +9,6 @@ const STDERR_CAP: usize = 65536;
 /// Provider responses should be small JSON objects. Cap stdout to prevent a
 /// buggy or malicious provider from OOM-ing the desktop process.
 const STDOUT_CAP: usize = 1_048_576; // 1 MB
-const PROVIDER_PROTOCOL_VERSION: u64 = 1;
-
-fn validate_provider_info(info: &serde_json::Value) -> Result<(), String> {
-    let object = info
-        .as_object()
-        .ok_or_else(|| "provider info response must be a JSON object".to_string())?;
-    let actual_version = object
-        .get("protocol_version")
-        .and_then(serde_json::Value::as_u64);
-    if actual_version != Some(PROVIDER_PROTOCOL_VERSION) {
-        return Err(match actual_version {
-            Some(version) => format!(
-                "unsupported provider protocol version {version}; desktop requires {PROVIDER_PROTOCOL_VERSION}"
-            ),
-            None => "provider info response missing integer protocol_version".to_string(),
-        });
-    }
-    if object.get("ok") != Some(&serde_json::Value::Bool(true)) {
-        return Err("provider info response must contain ok: true".to_string());
-    }
-    for field in ["name", "version", "description"] {
-        if object
-            .get(field)
-            .is_none_or(|value| value.as_str().is_none_or(str::is_empty))
-        {
-            return Err(format!(
-                "provider info response missing non-empty string {field}"
-            ));
-        }
-    }
-    if !object
-        .get("config_schema")
-        .is_some_and(serde_json::Value::is_object)
-    {
-        return Err("provider info response missing object config_schema".to_string());
-    }
-
-    const FIELDS: &[&str] = &[
-        "ok",
-        "name",
-        "version",
-        "protocol_version",
-        "description",
-        "config_schema",
-    ];
-    if let Some(field) = object
-        .keys()
-        .find(|field| !FIELDS.contains(&field.as_str()))
-    {
-        return Err(format!(
-            "provider info response contains unknown field {field}"
-        ));
-    }
-    Ok(())
-}
-
 /// Invoke a provider binary: write JSON to stdin, read JSON from stdout.
 ///
 /// Reader threads stream lines/chunks over channels so the caller can receive
@@ -280,11 +225,70 @@ pub fn invoke_provider(
         })?;
 
     if response.get("ok").and_then(|v| v.as_bool()) == Some(false) {
-        let error = response["error"].as_str().unwrap_or("unknown error");
-        return Err(redact_secrets_with(error, &env_secret_refs));
+        let error = provider_error_text(response.get("error"))?;
+        return Err(redact_secrets_with(&error, &env_secret_refs));
     }
 
     Ok(response)
+}
+
+fn provider_error_text(error: Option<&serde_json::Value>) -> Result<String, String> {
+    let Some(error) = error else {
+        return Ok("Provider request failed".to_string());
+    };
+    if let Some(value) = error.as_str() {
+        return Ok(value.chars().take(1_000).collect());
+    }
+    let object = error
+        .as_object()
+        .ok_or_else(|| "provider error must be a string or structured error object".to_string())?;
+    const FIELDS: &[&str] = &["code", "message", "remediation_url", "correlation_id"];
+    if object.keys().any(|field| !FIELDS.contains(&field.as_str())) {
+        return Err("provider structured error contains an unknown field".into());
+    }
+    let code = object
+        .get("code")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 160
+                && value
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || "_-".contains(character))
+        })
+        .ok_or_else(|| "provider structured error code is invalid".to_string())?;
+    let message = object
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty() && value.len() <= 1_000)
+        .unwrap_or(code);
+    let mut parts = vec![message.to_string()];
+    if let Some(remediation) = object
+        .get("remediation_url")
+        .and_then(serde_json::Value::as_str)
+    {
+        let parsed = url::Url::parse(remediation)
+            .map_err(|_| "provider structured error remediation_url is invalid".to_string())?;
+        if parsed.scheme() != "https" || remediation.len() > 2_048 {
+            return Err("provider structured error remediation_url is invalid".into());
+        }
+        parts.push(format!("Open: {remediation}"));
+    }
+    if let Some(correlation) = object
+        .get("correlation_id")
+        .and_then(serde_json::Value::as_str)
+    {
+        if correlation.is_empty()
+            || correlation.len() > 160
+            || !correlation
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "_-".contains(character))
+        {
+            return Err("provider structured error correlation_id is invalid".into());
+        }
+        parts.push(format!("Support ID: {correlation}"));
+    }
+    Ok(parts.join(" "))
 }
 
 /// Split a config key into lowercase words on `_`, `-`, `.`, and camelCase boundaries.
@@ -481,6 +485,7 @@ fn stage_provider(
     std::fs::set_permissions(&staged_path, permissions)
         .map_err(|error| format!("failed to protect staged provider: {error}"))?;
     drop(staged);
+    verify_provider_platform_signature(&staged_path)?;
 
     #[cfg(windows)]
     let execution_guard = {
@@ -504,20 +509,209 @@ fn stage_provider(
     ))
 }
 
+#[cfg(windows)]
+fn verify_provider_platform_signature(binary: &Path) -> Result<(), String> {
+    let configured = option_env!("BUZZ_TRUSTED_PROVIDER_SIGNER_SUBJECTS").unwrap_or("");
+    let expected: Vec<_> = configured
+        .split(';')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect();
+    if expected.is_empty() {
+        return Ok(());
+    }
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "Windows system root is unavailable for provider verification".to_string()
+        })?;
+    let powershell = system_root
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    let script = r#"$signature = Get-AuthenticodeSignature -LiteralPath $env:BUZZ_PROVIDER_SIGNATURE_TARGET; if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) { exit 41 }; [Console]::Out.Write($signature.SignerCertificate.Subject)"#;
+    let output = std::process::Command::new(powershell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .env("BUZZ_PROVIDER_SIGNATURE_TARGET", binary)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|error| format!("provider signature verification failed to run: {error}"))?;
+    if !output.status.success() {
+        return Err("provider has no valid trusted Authenticode signature".to_string());
+    }
+    let subject = String::from_utf8(output.stdout)
+        .map_err(|_| "provider signer subject is not valid UTF-8".to_string())?;
+    let subject = subject.trim();
+    if !expected
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(subject))
+    {
+        return Err("provider Authenticode signer is not approved by this Buzz build".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn verify_provider_platform_signature(_binary: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn provider_state_string<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    max_len: usize,
+) -> Result<&'a str, String> {
+    object
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty() && value.len() <= max_len)
+        .ok_or_else(|| format!("provider lifecycle state has invalid {field}"))
+}
+
+fn provider_state_optional_timestamp(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Option<String>, String> {
+    let Some(value) = object.get(field) else {
+        return Err(format!("provider lifecycle state missing {field}"));
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let timestamp = value
+        .as_str()
+        .filter(|value| value.len() <= 64)
+        .ok_or_else(|| format!("provider lifecycle state has invalid {field}"))?;
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .map_err(|_| format!("provider lifecycle state has invalid {field}"))?;
+    Ok(Some(timestamp.to_string()))
+}
+
+/// Parse the protocol-v2 lifecycle envelope into a bounded, non-secret cache.
+///
+/// Providers may return a richer profile object, but Buzz persists only these
+/// generic control-plane fields. Unknown fields are rejected so a provider
+/// cannot smuggle credentials or arbitrary data into managed-agents.json.
+pub(crate) fn parse_provider_lifecycle_state(
+    response: &serde_json::Value,
+) -> Result<super::ProviderLifecycleState, String> {
+    let state = response
+        .get("state")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "provider response missing lifecycle state".to_string())?;
+    const FIELDS: &[&str] = &[
+        "contract_version",
+        "provider_agent_id",
+        "agent_public_key",
+        "profile",
+        "desired_state",
+        "observed_state",
+        "last_reconciled_at",
+        "last_ready_at",
+        "error_code",
+        "correlation_id",
+    ];
+    if let Some(field) = state.keys().find(|field| !FIELDS.contains(&field.as_str())) {
+        return Err(format!(
+            "provider lifecycle state contains unknown field {field}"
+        ));
+    }
+    if state
+        .get("contract_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err("provider lifecycle state has unsupported contract_version".into());
+    }
+    let desired_state = provider_state_string(state, "desired_state", 32)?;
+    if !matches!(desired_state, "active" | "paused" | "deleted") {
+        return Err("provider lifecycle desired_state is unsupported".into());
+    }
+    let observed_state = provider_state_string(state, "observed_state", 32)?;
+    if !matches!(
+        observed_state,
+        "provisioning"
+            | "ready"
+            | "updating"
+            | "paused"
+            | "action_required"
+            | "degraded"
+            | "deletion_pending"
+            | "deleted"
+    ) {
+        return Err("provider lifecycle observed_state is unsupported".into());
+    }
+    let error_code = match state.get("error_code") {
+        Some(value) if value.is_null() => None,
+        Some(value) => {
+            let value = value
+                .as_str()
+                .filter(|value| {
+                    !value.is_empty()
+                        && value.len() <= 160
+                        && value.chars().all(|character| {
+                            character.is_ascii_alphanumeric() || "_-".contains(character)
+                        })
+                })
+                .ok_or_else(|| "provider lifecycle error_code is invalid".to_string())?;
+            Some(value.to_string())
+        }
+        None => return Err("provider lifecycle state missing error_code".into()),
+    };
+    let correlation_id = provider_state_string(state, "correlation_id", 160)?;
+    if !correlation_id
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "_-".contains(character))
+    {
+        return Err("provider lifecycle correlation_id is invalid".into());
+    }
+    Ok(super::ProviderLifecycleState {
+        desired_state: desired_state.to_string(),
+        observed_state: observed_state.to_string(),
+        last_reconciled_at: provider_state_optional_timestamp(state, "last_reconciled_at")?,
+        last_ready_at: provider_state_optional_timestamp(state, "last_ready_at")?,
+        error_code,
+        correlation_id: correlation_id.to_string(),
+    })
+}
+
 /// Deploy through one immutable staged copy: negotiate protocol v1 before the
 /// secret-bearing request, then invoke deploy on those exact same bytes.
 pub fn provider_deploy(
     binary: &Path,
     agent: &serde_json::Value,
     provider_config: &serde_json::Value,
-) -> Result<String, String> {
+    owner_proof: Option<&serde_json::Value>,
+) -> Result<(String, Option<super::ProviderLifecycleState>), String> {
     let (_directory, staged, _digest, _execution_guard) = stage_provider(binary)?;
     let info_request = serde_json::json!({
         "op": "info",
         "request_id": uuid::Uuid::new_v4().to_string(),
     });
     let info = invoke_provider(&staged, &info_request, Duration::from_secs(10))?;
-    validate_provider_info(&info)?;
+    let version = validate_provider_info(&info)?;
+    let owns_execution_profile = version == 2
+        && info
+            .pointer("/capabilities/owns_execution_profile")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+    let mut agent = agent.clone();
+    if owns_execution_profile {
+        let proof = owner_proof
+            .ok_or_else(|| "provider v2 requires an owner-signed deployment proof".to_string())?;
+        agent
+            .as_object_mut()
+            .ok_or_else(|| "agent deploy payload must be an object".to_string())?
+            .insert("owner_proof".to_string(), proof.clone());
+    }
 
     let request = serde_json::json!({
         "op": "deploy",
@@ -526,10 +720,80 @@ pub fn provider_deploy(
         "provider_config": provider_config,
     });
     let resp = invoke_provider(&staged, &request, Duration::from_secs(600))?;
-    resp["agent_id"]
+    let agent_id = resp["agent_id"]
         .as_str()
         .map(String::from)
-        .ok_or_else(|| "deploy response missing agent_id".to_string())
+        .ok_or_else(|| "deploy response missing agent_id".to_string())?;
+    let lifecycle_state = if version == 2 && owns_execution_profile {
+        Some(parse_provider_lifecycle_state(&resp)?)
+    } else {
+        resp.get("state")
+            .map(|_| parse_provider_lifecycle_state(&resp))
+            .transpose()?
+    };
+    Ok((agent_id, lifecycle_state))
+}
+
+/// Invoke a protocol-v2 lifecycle operation through the same immutable staging
+/// and strict negotiation boundary as deploy.
+pub fn provider_control(
+    binary: &Path,
+    operation: &str,
+    agent_id: &str,
+    expected_profile_revision: u64,
+    owner_proof: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    const OPERATIONS: &[&str] = &["status", "pause", "resume", "delete", "reconcile"];
+    if !OPERATIONS.contains(&operation) {
+        return Err(format!(
+            "unsupported provider lifecycle operation {operation}"
+        ));
+    }
+    let (_directory, staged, _digest, _execution_guard) = stage_provider(binary)?;
+    let info = invoke_provider(
+        &staged,
+        &serde_json::json!({
+            "op": "info",
+            "request_id": uuid::Uuid::new_v4().to_string(),
+        }),
+        Duration::from_secs(10),
+    )?;
+    let version = validate_provider_info(&info)?;
+    if version != 2 {
+        return Err("provider lifecycle requires protocol version 2".to_string());
+    }
+    let advertised = info
+        .pointer("/capabilities/lifecycle_operations")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|operations| {
+            operations
+                .iter()
+                .any(|candidate| candidate.as_str() == Some(operation))
+        });
+    if !advertised {
+        return Err(format!(
+            "provider does not advertise lifecycle operation {operation}"
+        ));
+    }
+    let response = invoke_provider(
+        &staged,
+        &serde_json::json!({
+            "op": operation,
+            "request_id": uuid::Uuid::new_v4().to_string(),
+            "agent_id": agent_id,
+            "expected_profile_revision": expected_profile_revision,
+            "owner_proof": owner_proof,
+        }),
+        Duration::from_secs(30),
+    )?;
+    if response.get("ok") != Some(&serde_json::Value::Bool(true)) {
+        return Err(response
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("provider lifecycle operation failed")
+            .to_string());
+    }
+    Ok(response)
 }
 
 /// Validate provider_config: flat object, scalar values, no secret-like keys.
@@ -615,6 +879,16 @@ pub fn discover_provider_candidates() -> Vec<(String, PathBuf)> {
         let local_bin = home.join(".local").join("bin");
         if !dirs.contains(&local_bin) {
             dirs.push(local_bin);
+        }
+    }
+
+    // Companion installers can place provider executables in a stable,
+    // user-scoped directory without mutating PATH or the built-in runtime list.
+    #[cfg(windows)]
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let provider_dir = PathBuf::from(local_app_data).join("Buzz").join("providers");
+        if !dirs.contains(&provider_dir) {
+            dirs.insert(0, provider_dir);
         }
     }
 

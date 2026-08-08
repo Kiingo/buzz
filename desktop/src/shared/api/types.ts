@@ -1,3 +1,9 @@
+import type {
+  ManagedAgentBackend,
+  ProviderLifecycleState,
+} from "./providerTypes";
+export type * from "./providerTypes";
+
 export type ChannelType = "stream" | "forum" | "dm";
 export type ChannelVisibility = "open" | "private";
 export type ChannelRole = "owner" | "admin" | "member" | "guest" | "bot";
@@ -300,10 +306,6 @@ export type ManagedAgentRuntimeStatus = {
   logPath: string | null;
 };
 
-export type ManagedAgentBackend =
-  | { type: "local" }
-  | { type: "provider"; id: string; config: Record<string, unknown> };
-
 import type { RestartDiffEntry } from "./restartDiff";
 export type { JsonValue, RestartChange, RestartDiffEntry } from "./restartDiff";
 export type ManagedAgent = {
@@ -363,7 +365,7 @@ export type ManagedAgent = {
   restartDiff: RestartDiffEntry[];
   /** Per-agent env vars. Layered on top of persona envVars. */
   envVars: Record<string, string>;
-  status: "running" | "stopped" | "deployed" | "not_deployed";
+  status: "running" | "stopped" | "deployed" | "paused" | "not_deployed";
   pid: number | null;
   createdAt: string;
   updatedAt: string;
@@ -377,6 +379,8 @@ export type ManagedAgent = {
   autoRestartOnConfigChange: boolean;
   backend: ManagedAgentBackend;
   backendAgentId: string | null;
+  /** Last lifecycle state confirmed by a protocol-v2 remote provider. */
+  providerLifecycleState?: ProviderLifecycleState | null;
   /** Who the agent should respond to. Maps to `buzz-acp --respond-to`. */
   respondTo: RespondToMode;
   /**
@@ -392,14 +396,6 @@ export type RespondToMode = "owner-only" | "allowlist" | "anyone";
 export type BackendProviderCandidate = {
   id: string;
   binaryPath: string;
-};
-
-export type BackendProviderProbeResult = {
-  ok: boolean;
-  name?: string;
-  version?: string;
-  description?: string;
-  config_schema?: Record<string, unknown>;
 };
 
 export type RelayMeshConfig = {
@@ -462,10 +458,9 @@ export type CancelManagedAgentTurnResult = {
 };
 
 /**
- * Outcome of a live `switch_model` control frame, surfaced asynchronously via
- * the agent's `control_result` observer frame. Busy path: `sent` (cancel +
- * requeue on the new model) or `turn_ending` (oneshot already consumed this
- * turn). Idle path: `switched`, `unsupported_model`, or `no_active_turn`.
+ * Outcome of a live `switch_model` control frame, surfaced asynchronously via the
+ * agent's `control_result` observer frame. Busy path: `sent`/`turn_ending`; idle
+ * path: `switched`, `unsupported_model`, or `no_active_turn`.
  */
 export type SwitchManagedAgentModelStatus =
   | "sent"
@@ -535,13 +530,13 @@ export type AcpRuntimeCatalogEntry = {
   /** "builtin" (compiled in), "preset" (PATH-probed, not editable), or "custom" (user JSON). Controls UI editability. */
   source: "builtin" | "preset" | "custom";
   /**
-   * Definition-level environment variables for `source: custom` entries.
-   *
-   * Populated by the backend from `HarnessDefinition.env` so the edit form can
-   * read them back without losing existing env vars on save. Always absent/empty
-   * for `builtin` and `preset` entries.
+   * Definition-level env vars for `source: custom` entries. Populated from
+   * `HarnessDefinition.env` so saves don't erase existing vars. Absent for
+   * builtin/preset entries.
    */
   definitionEnv?: Record<string, string>;
+  /** Spawn-time parallelism cap; absent for uncapped harnesses. */
+  maxParallelism?: number;
 };
 
 /** An AcpRuntimeCatalogEntry that is confirmed available — command and binaryPath are non-null. */
@@ -679,6 +674,12 @@ export type RuntimeConfigSurface = {
 
 export type UpdateManagedAgentInput = {
   pubkey: string;
+  /**
+   * Absent leaves execution unchanged. Provider-backed agents may submit an
+   * updated provider config; the backend preserves the provider and stable
+   * remote agent identity while incrementing its profile revision.
+   */
+  backend?: ManagedAgentBackend;
   name?: string;
   model?: string | null;
   provider?: string | null;
@@ -742,8 +743,7 @@ export type AgentPersona = {
 };
 
 /**
- * A catalog publication's coordinate: the owner who published it and the
- * `d`-tag identifying the persona within that owner's catalog. Mirrors the
+ * A catalog publication's coordinate: owner plus persona `d`-tag. Mirrors the
  * backend `CatalogSource`.
  */
 export type CatalogSourceCoordinate = {

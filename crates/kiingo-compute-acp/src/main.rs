@@ -190,6 +190,7 @@ struct AcceptedTurn {
     receipt_id: String,
     event_cursor: u64,
     initial_capacity_state: Option<String>,
+    selected_harness: String,
     replayed: bool,
 }
 
@@ -532,7 +533,7 @@ async fn run_prompt(context: PromptContext) {
                     &receipt_id,
                     "cancelled",
                     "timeout",
-                    "This Codex turn reached its time limit and was stopped.",
+                    "This hosted turn reached its time limit and was stopped.",
                 )
                 .await;
             }
@@ -561,6 +562,7 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
         }
     };
     *context.receipt_id.lock().await = Some(accepted.receipt_id.clone());
+    let harness_label = harness_label(&accepted.selected_harness);
     // A queue retry replays the immutable ingress event so it can resume from
     // the durable event cursor. The original acceptance fence is already
     // published. Recomputing its capacity-sensitive text here can change the
@@ -573,13 +575,16 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
             &accepted.receipt_id,
             "receipt",
             "accepted",
-            initial_receipt_message(accepted.initial_capacity_state.as_deref()),
+            &initial_receipt_message(accepted.initial_capacity_state.as_deref(), harness_label),
         )
         .await?;
         emit_message_chunk(
             &context.writer,
             &context.session_id,
-            initial_local_status_message(accepted.initial_capacity_state.as_deref()),
+            &initial_local_status_message(
+                accepted.initial_capacity_state.as_deref(),
+                harness_label,
+            ),
         )
         .await;
     }
@@ -599,7 +604,7 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
                     &accepted.receipt_id,
                     "cancelled",
                     "cancelled",
-                    "Stopped this Codex turn.",
+                    &format!("Stopped this {harness_label} turn."),
                 ).await?;
                 return Ok(TurnOutcome {
                     stop_reason: "cancelled",
@@ -622,7 +627,7 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
                         emit_message_chunk(
                             &context.writer,
                             &context.session_id,
-                            "Codex produced an answer; Buzz is publishing it with the local agent identity.",
+                            &format!("{harness_label} produced an answer; Buzz is publishing it with the hosted agent identity."),
                         )
                         .await;
                         output_observed = true;
@@ -676,8 +681,9 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
                 TerminalState::Completed => {
                     let text = final_text
                         .as_deref()
-                        .unwrap_or("Codex completed the turn without returning a text response.");
-                    publish_status(context, &accepted.receipt_id, "final", "final", text).await?;
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("{harness_label} completed the turn without returning a text response."));
+                    publish_status(context, &accepted.receipt_id, "final", "final", &text).await?;
                     return Ok(TurnOutcome {
                         stop_reason: "end_turn",
                         terminal_reason: terminal_reason.unwrap_or_else(|| "completed".to_string()),
@@ -693,9 +699,9 @@ async fn execute_turn(context: &PromptContext) -> Result<TurnOutcome, String> {
                 TerminalState::Blocked | TerminalState::Failed => {
                     let text = latest_terminal_text(&replay).unwrap_or_else(|| {
                         if state == TerminalState::Blocked {
-                            "Codex could not start because ready interactive capacity is unavailable. No cold container was launched.".to_string()
+                            format!("{harness_label} could not start because ready interactive capacity is unavailable. No cold container was launched.")
                         } else {
-                            "The Codex turn failed. Kiingo recorded the failure for recovery.".to_string()
+                            format!("The {harness_label} turn failed. Kiingo recorded the failure for recovery.")
                         }
                     });
                     publish_status(
@@ -821,15 +827,18 @@ async fn accept_turn(context: &PromptContext) -> Result<TurnAdmission, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    if body.get("selected_harness").and_then(Value::as_str) != Some("codex")
-        || body.get("cold_fallback").and_then(Value::as_bool) != Some(false)
-    {
-        return Err("Kiingo ingress violated the Codex no-cold-start contract".to_string());
+    let selected_harness = required_json_string(&body, "selected_harness")?;
+    if !matches!(selected_harness.as_str(), "codex" | "claude-code") {
+        return Err("Kiingo ingress returned an unsupported hosted harness".to_string());
+    }
+    if body.get("cold_fallback").and_then(Value::as_bool) != Some(false) {
+        return Err("Kiingo ingress violated the hosted no-cold-start contract".to_string());
     }
     Ok(TurnAdmission::Execution(AcceptedTurn {
         receipt_id,
         event_cursor,
         initial_capacity_state,
+        selected_harness,
         replayed,
     }))
 }
@@ -838,23 +847,32 @@ fn capacity_is_waiting(state: Option<&str>) -> bool {
     matches!(state, Some("saturated" | "unavailable" | "scale_out"))
 }
 
-fn initial_receipt_message(state: Option<&str>) -> &'static str {
-    if capacity_is_waiting(state) {
-        "Received - all ready Codex slots are busy. This exact request is preserved and will start automatically when resident capacity returns; no cold container will be launched."
-    } else if state == Some("available") {
-        "Received - starting your Codex session now."
-    } else {
-        "Received - your exact request is durably accepted. Kiingo is checking resident Codex capacity now; no cold container will be launched."
+fn harness_label(harness: &str) -> &'static str {
+    match harness {
+        "claude-code" => "Claude Code",
+        _ => "Codex",
     }
 }
 
-fn initial_local_status_message(state: Option<&str>) -> &'static str {
+fn initial_receipt_message(state: Option<&str>, harness: &str) -> String {
     if capacity_is_waiting(state) {
-        "Kiingo durably accepted the request and is waiting for resident Codex capacity."
+        format!("Received - all ready {harness} slots are busy. This exact request is preserved and will start automatically when resident capacity returns; no cold container will be launched.")
     } else if state == Some("available") {
-        "Kiingo durably accepted the request."
+        format!("Received - starting your {harness} session now.")
     } else {
-        "Kiingo durably accepted the request and is checking resident Codex capacity."
+        format!("Received - your exact request is durably accepted. Kiingo is checking resident {harness} capacity now; no cold container will be launched.")
+    }
+}
+
+fn initial_local_status_message(state: Option<&str>, harness: &str) -> String {
+    if capacity_is_waiting(state) {
+        format!(
+            "Kiingo durably accepted the request and is waiting for resident {harness} capacity."
+        )
+    } else if state == Some("available") {
+        "Kiingo durably accepted the request.".to_string()
+    } else {
+        format!("Kiingo durably accepted the request and is checking resident {harness} capacity.")
     }
 }
 
@@ -866,10 +884,22 @@ fn actionable_ingress_error(status: StatusCode, code: &str) -> String {
         | "buzz_identity_enrollment_invalid"
         | "buzz_identity_enrollment_conflict"
         | "buzz_codex_subscription_not_connected"
-        | "buzz_codex_subscription_routing_ambiguous" => format!(
-            "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect ({code})."
+        | "buzz_codex_subscription_routing_ambiguous"
+        | "buzz_claude-code_subscription_not_connected"
+        | "buzz_claude-code_subscription_routing_ambiguous" => {
+            let (provider, label) = if code.contains("claude-code") {
+                ("claude-code", "Claude Code")
+            } else {
+                ("codex", "ChatGPT-powered Codex")
+            };
+            format!(
+                "Buzz identity or {label} access is not active. Link the Buzz public key and connect this user's subscription at https://app.kiingo.com/team/harness-connections?provider={provider}&buzz=connect ({code})."
+            )
+        }
+        _ => format!(
+            "Kiingo rejected the Buzz event with HTTP {} ({code})",
+            status.as_u16()
         ),
-        _ => format!("Kiingo rejected the Buzz event with HTTP {} ({code})", status.as_u16()),
     }
 }
 
@@ -1199,7 +1229,7 @@ async fn process_next_action(context: &PromptContext, receipt_id: &str) -> Resul
             let message = arguments
                 .get("message")
                 .and_then(Value::as_str)
-                .unwrap_or("Codex reported progress.");
+                .unwrap_or("The hosted agent reported progress.");
             match publish_status(
                 context,
                 receipt_id,
@@ -1913,18 +1943,32 @@ mod tests {
 
     #[test]
     fn reports_saturation_as_a_durable_wait_without_claiming_model_progress() {
-        let message = initial_receipt_message(Some("saturated"));
+        let message = initial_receipt_message(Some("saturated"), "Codex");
         assert!(message.contains("exact request is preserved"));
         assert!(message.contains("no cold container"));
         assert!(!message.contains("starting your Codex session"));
         assert_eq!(
-            initial_receipt_message(Some("available")),
+            initial_receipt_message(Some("available"), "Codex"),
             "Received - starting your Codex session now."
         );
-        let unknown = initial_receipt_message(None);
+        let unknown = initial_receipt_message(None, "Codex");
         assert!(unknown.contains("durably accepted"));
         assert!(unknown.contains("checking resident Codex capacity"));
         assert!(!unknown.contains("starting your Codex session"));
+    }
+
+    #[test]
+    fn hosted_receipts_use_the_resolved_harness_label() {
+        assert_eq!(harness_label("codex"), "Codex");
+        assert_eq!(harness_label("claude-code"), "Claude Code");
+        assert_eq!(
+            initial_receipt_message(Some("available"), harness_label("claude-code")),
+            "Received - starting your Claude Code session now."
+        );
+        assert!(
+            initial_local_status_message(Some("saturated"), harness_label("claude-code"))
+                .contains("resident Claude Code capacity")
+        );
     }
 
     #[test]

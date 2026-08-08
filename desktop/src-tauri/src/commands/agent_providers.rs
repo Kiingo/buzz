@@ -1,4 +1,8 @@
-use crate::managed_agents::{discover_provider_candidates, invoke_provider, BackendProviderInfo};
+use crate::app_state::AppState;
+use crate::managed_agents::{
+    discover_provider_candidates, invoke_provider, validate_provider_info, BackendProviderInfo,
+};
+use tauri::State;
 
 #[tauri::command]
 pub async fn discover_backend_providers() -> Result<Vec<BackendProviderInfo>, String> {
@@ -16,7 +20,11 @@ pub async fn discover_backend_providers() -> Result<Vec<BackendProviderInfo>, St
 }
 
 #[tauri::command]
-pub async fn probe_backend_provider(binary_path: String) -> Result<serde_json::Value, String> {
+pub async fn probe_backend_provider(
+    binary_path: String,
+    provider_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
     // Validate that the requested path is actually a discovered buzz-backend-* binary.
     // This prevents arbitrary binary execution via a compromised frontend or IPC.
     let candidates = discover_provider_candidates();
@@ -34,12 +42,30 @@ pub async fn probe_backend_provider(binary_path: String) -> Result<serde_json::V
     }
     // request_id is for provider-side logging — not validated in the response
     // (stdin→stdout is 1:1 per process invocation).
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let proof_content = serde_json::json!({
+        "version": 1,
+        "action": "capabilities",
+        "provider_id": provider_id,
+        "request_id": request_id,
+        "expires_at": chrono::Utc::now().timestamp() + 300,
+    });
+    let owner_proof = nostr::EventBuilder::new(
+        nostr::Kind::Custom(27236),
+        serde_json::to_string(&proof_content)
+            .map_err(|error| format!("failed to serialize provider proof: {error}"))?,
+    )
+    .sign_with_keys(&state.signing_keys()?)
+    .map_err(|error| format!("failed to sign provider capability proof: {error}"))?;
     let request = serde_json::json!({
         "op": "info",
-        "request_id": uuid::Uuid::new_v4().to_string(),
+        "request_id": request_id,
+        "owner_proof": owner_proof,
     });
     tokio::task::spawn_blocking(move || {
-        invoke_provider(&canonical, &request, std::time::Duration::from_secs(10))
+        let response = invoke_provider(&canonical, &request, std::time::Duration::from_secs(10))?;
+        validate_provider_info(&response)?;
+        Ok(response)
     })
     .await
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
