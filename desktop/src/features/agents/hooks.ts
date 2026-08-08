@@ -559,6 +559,17 @@ export function useStopManagedAgentMutation() {
 
   return useMutation({
     mutationFn: (pubkey: string) => stopManagedAgent(pubkey),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<ManagedAgent[]>(
+        managedAgentsQueryKey,
+        (current) => {
+          if (!current) return current;
+          return current.map((agent) =>
+            agent.pubkey === updated.pubkey ? updated : agent,
+          );
+        },
+      );
+    },
     onSettled: () => {
       invalidateManagedAgentQueriesInBackground(queryClient);
     },
