@@ -17,8 +17,8 @@ export function resetWelcomeComposerBannerState(): void {
 /**
  * Manages the Welcome-channel composer hint banner's state machine.
  *
- * Tracks which channels have been completed within the session so the banner
- * stays hidden on re-entry. Exposes three transitions:
+ * Tracks completion for the active community session so the single Welcome
+ * banner stays hidden on re-entry. Exposes three transitions:
  * - `completeBanner`: agent-mention path — plays the "Nice work." success
  *   animation before auto-dismissing.
  * - `dismissBanner`: manual X-button path — immediately begins the slide-down
