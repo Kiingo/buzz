@@ -885,16 +885,27 @@ fn actionable_ingress_error(status: StatusCode, code: &str) -> String {
         | "buzz_identity_enrollment_conflict"
         | "buzz_codex_subscription_not_connected"
         | "buzz_codex_subscription_routing_ambiguous"
+        | "buzz_codex_subscription_capacity_unavailable"
         | "buzz_claude-code_subscription_not_connected"
-        | "buzz_claude-code_subscription_routing_ambiguous" => {
+        | "buzz_claude-code_subscription_routing_ambiguous"
+        | "buzz_claude-code_subscription_capacity_unavailable" => {
             let (provider, label) = if code.contains("claude-code") {
                 ("claude-code", "Claude Code")
             } else {
                 ("codex", "ChatGPT-powered Codex")
             };
-            format!(
-                "Buzz identity or {label} access is not active. Link the Buzz public key and connect this user's subscription at https://app.kiingo.com/team/harness-connections?provider={provider}&buzz=connect ({code})."
-            )
+            let url = format!(
+                "https://dashboard.kiingo.com/team/harness-connections?provider={provider}&buzz=connect"
+            );
+            if code.ends_with("_subscription_capacity_unavailable") {
+                format!(
+                    "This user's {label} subscription accounts are currently out of provider capacity. Wait for an allowance reset or make another eligible subscription available at {url} ({code})."
+                )
+            } else {
+                format!(
+                    "Buzz identity or {label} access is not active. Link the Buzz public key and connect this user's subscription at {url} ({code})."
+                )
+            }
         }
         _ => format!(
             "Kiingo rejected the Buzz event with HTTP {} ({code})",
@@ -1938,7 +1949,23 @@ mod tests {
     #[test]
     fn provides_actionable_enrollment_guidance() {
         let error = actionable_ingress_error(StatusCode::FORBIDDEN, "buzz_identity_not_verified");
-        assert!(error.contains("/team/harness-connections?provider=codex"));
+        assert!(error.contains(
+            "https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect"
+        ));
+        assert!(!error.contains("https://app.kiingo.com"));
+    }
+
+    #[test]
+    fn provides_actionable_subscription_capacity_guidance() {
+        let error = actionable_ingress_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "buzz_codex_subscription_capacity_unavailable",
+        );
+        assert!(error.contains("currently out of provider capacity"));
+        assert!(error.contains("Wait for an allowance reset"));
+        assert!(error.contains(
+            "https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect"
+        ));
     }
 
     #[test]

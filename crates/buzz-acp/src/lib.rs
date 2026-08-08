@@ -3458,7 +3458,10 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
 /// prefix and a closed set of machine codes so arbitrary provider or internal
 /// agent errors cannot be reflected into a Buzz channel.
 fn actionable_agent_error_message(error: &acp::AcpError) -> Option<&str> {
-    const PREFIX: &str = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
+    const CODEX_ACCESS_PREFIX: &str = "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
+    const CLAUDE_ACCESS_PREFIX: &str = "Buzz identity or Claude Code access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=claude-code&buzz=connect (";
+    const CODEX_CAPACITY_PREFIX: &str = "This user's ChatGPT-powered Codex subscription accounts are currently out of provider capacity. Wait for an allowance reset or make another eligible subscription available at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
+    const CLAUDE_CAPACITY_PREFIX: &str = "This user's Claude Code subscription accounts are currently out of provider capacity. Wait for an allowance reset or make another eligible subscription available at https://dashboard.kiingo.com/team/harness-connections?provider=claude-code&buzz=connect (";
     const CODES: &[&str] = &[
         "buzz_identity_not_verified",
         "buzz_identity_ambiguous",
@@ -3467,6 +3470,10 @@ fn actionable_agent_error_message(error: &acp::AcpError) -> Option<&str> {
         "buzz_identity_enrollment_conflict",
         "buzz_codex_subscription_not_connected",
         "buzz_codex_subscription_routing_ambiguous",
+        "buzz_codex_subscription_capacity_unavailable",
+        "buzz_claude-code_subscription_not_connected",
+        "buzz_claude-code_subscription_routing_ambiguous",
+        "buzz_claude-code_subscription_capacity_unavailable",
     ];
 
     let acp::AcpError::AgentError { code, message } = error else {
@@ -3475,8 +3482,24 @@ fn actionable_agent_error_message(error: &acp::AcpError) -> Option<&str> {
     if *code != -32000 {
         return None;
     }
-    let code = message.strip_prefix(PREFIX)?.strip_suffix(").")?;
-    CODES.contains(&code).then_some(message.as_str())
+    let machine_code = CODES
+        .iter()
+        .copied()
+        .find(|candidate| message.ends_with(&format!("({candidate}).")))?;
+    let expected_prefix = if machine_code.ends_with("_subscription_capacity_unavailable") {
+        if machine_code.contains("claude-code") {
+            CLAUDE_CAPACITY_PREFIX
+        } else {
+            CODEX_CAPACITY_PREFIX
+        }
+    } else if machine_code.contains("claude-code") {
+        CLAUDE_ACCESS_PREFIX
+    } else {
+        CODEX_ACCESS_PREFIX
+    };
+    message
+        .strip_prefix(expected_prefix)
+        .and_then(|value| (value == format!("{machine_code}).")).then_some(message.as_str()))
 }
 
 /// Spawn a task that posts a user-visible failure notice to the relay.
@@ -6391,7 +6414,7 @@ mod build_mcp_servers_tests {
             memory_enabled: false,
             model: None,
             session_title: None,
-            permission_mode: config::PermissionMode::DontAsk,
+            permission_mode: config::PermissionMode::BypassPermissions,
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: std::collections::HashSet::new(),
             allowed_respond_to: vec![],
@@ -6631,7 +6654,7 @@ mod error_outcome_emission_tests {
             memory_enabled: false,
             model: None,
             session_title: None,
-            permission_mode: config::PermissionMode::DontAsk,
+            permission_mode: config::PermissionMode::BypassPermissions,
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: HashSet::new(),
             allowed_respond_to: vec![],
@@ -7650,7 +7673,7 @@ mod error_outcome_emission_tests {
 
     #[test]
     fn actionable_agent_error_message_accepts_only_known_bridge_guidance() {
-        let message = "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).";
+        let message = "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).";
         let error = acp::AcpError::AgentError {
             code: -32000,
             message: message.to_string(),
@@ -7669,13 +7692,23 @@ mod error_outcome_emission_tests {
             actionable_agent_error_message(&ambiguous),
             Some(ambiguous_message.as_str())
         );
+
+        let capacity_message = "This user's ChatGPT-powered Codex subscription accounts are currently out of provider capacity. Wait for an allowance reset or make another eligible subscription available at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_capacity_unavailable).";
+        let capacity = acp::AcpError::AgentError {
+            code: -32000,
+            message: capacity_message.to_string(),
+        };
+        assert_eq!(
+            actionable_agent_error_message(&capacity),
+            Some(capacity_message)
+        );
     }
 
     #[test]
     fn actionable_agent_error_message_rejects_untrusted_errors() {
         let unknown_code = acp::AcpError::AgentError {
             code: -32000,
-            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (provider_internal_error).".to_string(),
+            message: "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (provider_internal_error).".to_string(),
         };
         assert_eq!(actionable_agent_error_message(&unknown_code), None);
 
@@ -7687,7 +7720,7 @@ mod error_outcome_emission_tests {
 
         let wrong_rpc_code = acp::AcpError::AgentError {
             code: -32603,
-            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
+            message: "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
         };
         assert_eq!(actionable_agent_error_message(&wrong_rpc_code), None);
     }
@@ -7763,7 +7796,7 @@ mod error_outcome_emission_tests {
     async fn actionable_agent_error_dead_letters_immediately_without_requeueing() {
         let error = acp::AcpError::AgentError {
             code: -32000,
-            message: "Buzz identity or Codex access is not active. Link the Buzz public key and connect this user's ChatGPT account at https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
+            message: "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
         };
         assert_agent_error_dead_letters_immediately(error).await;
     }

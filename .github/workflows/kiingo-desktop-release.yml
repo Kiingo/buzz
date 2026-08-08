@@ -25,7 +25,8 @@ env:
   BUZZ_CANONICAL_RELAY_URL: wss://chat.kiingo.com
   BUZZ_RELAY_HTTP: https://chat.kiingo.com
   BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY: '1'
-  BUZZ_BUILD_CODEX_ENROLLMENT_URL: https://app.kiingo.com/team/harness-connections?provider=codex&buzz=connect
+  BUZZ_BUILD_CODEX_ENROLLMENT_URL: https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect
+  BUZZ_TRUSTED_PROVIDER_SIGNER_SUBJECTS: ${{ vars.BUZZ_TRUSTED_PROVIDER_SIGNER_SUBJECTS }}
   BUZZ_UPDATER_ENDPOINT: https://github.com/Kiingo/buzz/releases/download/kiingo-desktop-latest/latest.json
 
 jobs:
@@ -180,7 +181,7 @@ jobs:
           xcrun stapler validate "${dmg}"
           binary="${app}/Contents/MacOS/Buzz"
           rg -a -q 'wss://chat\.kiingo\.com' "${binary}"
-          rg -a -q 'https://app\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' "${binary}"
+          rg -a -q 'https://dashboard\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' "${binary}"
 
       - name: Stage signed release evidence
         shell: bash
@@ -246,6 +247,7 @@ jobs:
             BUZZ_UPDATER_PUBLIC_KEY TAURI_SIGNING_PRIVATE_KEY
             AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID
             ARTIFACT_SIGNING_ENDPOINT ARTIFACT_SIGNING_ACCOUNT ARTIFACT_SIGNING_PROFILE
+            BUZZ_TRUSTED_PROVIDER_SIGNER_SUBJECTS
           )
           for name in "${required[@]}"; do
             [[ -n "${!name:-}" ]] || {
@@ -334,7 +336,7 @@ jobs:
           }
           rg -a -q 'wss://chat\.kiingo\.com' $app.FullName
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Kiingo relay URL is absent from the desktop executable.' }
-          rg -a -q 'https://app\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' $app.FullName
+          rg -a -q 'https://dashboard\.kiingo\.com/team/harness-connections\?provider=codex&buzz=connect' $app.FullName
           if ($LASTEXITCODE -ne 0) { throw 'Codex enrollment URL is absent from the desktop executable.' }
 
       - name: Stage signed release evidence
