@@ -8,10 +8,10 @@ import {
   type WelcomeComposerBannerState,
 } from "@/features/channels/ui/WelcomeComposerBanner";
 
-const completedWelcomeChannelIds = new Set<string>();
+let welcomeComposerBannerCompleted = false;
 
 export function resetWelcomeComposerBannerState(): void {
-  completedWelcomeChannelIds.clear();
+  welcomeComposerBannerCompleted = false;
 }
 
 /**
@@ -55,7 +55,7 @@ export function useWelcomeComposerBanner(
     if (
       activeChannelId &&
       isActiveWelcomeChannel &&
-      completedWelcomeChannelIds.has(activeChannelId)
+      welcomeComposerBannerCompleted
     ) {
       setBannerState("hidden");
       return;
@@ -80,7 +80,7 @@ export function useWelcomeComposerBanner(
     }
 
     clearTimers();
-    completedWelcomeChannelIds.add(activeChannelId);
+    welcomeComposerBannerCompleted = true;
     setBannerState("complete");
     dismissTimerRef.current = window.setTimeout(() => {
       setBannerState("dismissing");
@@ -95,7 +95,7 @@ export function useWelcomeComposerBanner(
     }
 
     clearTimers();
-    completedWelcomeChannelIds.add(activeChannelId);
+    welcomeComposerBannerCompleted = true;
     setBannerState("dismissing");
     scheduleHide();
   }, [activeChannelId, clearTimers, isActiveWelcomeChannel, scheduleHide]);
