@@ -82,6 +82,7 @@ import {
   resolveAgentInstruction,
   resolvePanelProfile,
   resolveProfileDisplayName,
+  resolveProfileEditTarget,
   truncatePubkey,
   type UserProfilePanelProps,
   useRetainedPersona,
@@ -159,9 +160,7 @@ export function UserProfilePanel({
     EditAgentFocusTarget | undefined
   >(undefined);
 
-  // Open the Edit Agent dialog when `requestOpenEditAgent(pubkey)` fires from
-  // a card or other non-panel surface (e.g. `ConfigNudgeCard`). Mirrors the
-  // `subscribeOpenCreateAgent` pattern in AgentsView.
+  // Honor edit requests from cards and other non-panel surfaces.
   React.useEffect(() => {
     if (!pubkey) return;
     // Consume any pending request that arrived before this panel mounted.
@@ -299,8 +298,7 @@ export function UserProfilePanel({
   const isBot =
     Boolean(relayAgent || managedAgent || resolvedPersona) || isAgentByOaOwner;
   const managedAgentOwner = useIsManagedAgent(isBot ? effectivePubkey : null);
-  // Does THIS desktop hold the agent's seckey (or is this an editable persona)?
-  // Gates edit (which needs the key) and grants owner access when managed locally.
+  // Edit requires this desktop's agent key (or an editable persona).
   const isOwner = resolvedPersona ? true : managedAgentOwner;
   // Is the viewer the agent's declared owner (NIP-OA `ownerPubkey == me`)? This
   // is the right signal for viewing owner-scoped data (activity feed, memory):
@@ -402,12 +400,14 @@ export function UserProfilePanel({
   });
 
   const handleEditAgent = React.useCallback(() => {
-    if (resolvedPersona) {
+    if (
+      resolveProfileEditTarget(managedAgent, resolvedPersona) === "instance"
+    ) {
+      setEditAgentOpen(true);
+    } else if (resolvedPersona) {
       setPersonaDialogState(editPersonaDialogState(resolvedPersona));
-      return;
     }
-    setEditAgentOpen(true);
-  }, [resolvedPersona]);
+  }, [managedAgent, resolvedPersona]);
 
   const { deleteManagedAgentRecord, deleteManagedAgentsForPersona } =
     useProfileAgentDeletion({
