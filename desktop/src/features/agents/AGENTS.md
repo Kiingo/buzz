@@ -185,6 +185,17 @@ with a TypeScript lookup table or an id comparison in a component.
    must use a read-only staged copy with a valid Authenticode signature from
    that exact allowlist. Keep the unset behavior generic for
    upstream/community builds and test providers.
+13. **Hosted prompt edits are execution-profile revisions.** The generic
+   provider update path compares the managed agent's effective persisted
+   `system_prompt`; set, replace, and clear each trigger a full provider
+   redeploy and increment an advertised `profile_revision` exactly once.
+   Prompt text remains in the generic deploy payload—never add a provider-ID,
+   Codex, Claude, or Kiingo branch. If deployment fails, restore both the
+   previous provider backend and prompt so Desktop never claims a local-only
+   hosted configuration. A definition prompt edit increments and redeploys
+   every linked provider instance; attempt every target and surface any
+   partial failure while keeping the saved desired definition available for
+   the existing start/workspace reconciliation retry paths.
 
 ## The tests that enforce this
 
