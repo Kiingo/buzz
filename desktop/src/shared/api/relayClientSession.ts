@@ -36,7 +36,6 @@ import { replayLiveSubscriptions } from "@/shared/api/relayReconnectReplay";
 import {
   activateRateLimit,
   parseRateLimitHint,
-  waitForRateLimit,
 } from "@/shared/api/relayRateLimitGate";
 import {
   fetchChunkedHistory,
@@ -710,8 +709,9 @@ export class RelayClient {
     timeoutMessage: string,
     sendErrorMessage: string,
   ) {
-    // Await the gate before sending EVENT; op timeout starts after the wait.
-    await waitForRateLimit();
+    // Relay EVENT writes have their own per-principal message quota. Do not let
+    // a history/subscription backoff delay an interactive publish; the relay
+    // returns an event-scoped OK rejection if the write quota is exhausted.
 
     return new Promise<RelayEvent>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
