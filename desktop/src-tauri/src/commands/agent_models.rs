@@ -13,8 +13,8 @@ use super::agent_models_env::{
     effective_discovery_provider, env_or_process_value, redaction_env_with_value, DiscoveryProvider,
 };
 use super::agent_provider_update::{
-    apply_model_provider_prompt_update, apply_provider_update, prepare_provider_update,
-    updated_provider_backend, validate_requested_provider_backend,
+    apply_model_provider_prompt_update, apply_provider_prompt_revision, apply_provider_update,
+    prepare_provider_update, updated_provider_backend, validate_requested_provider_backend,
 };
 use super::agent_update_rollback::{rollback_failed_agent_update, AgentUpdateRollback};
 
@@ -757,6 +757,12 @@ pub async fn update_managed_agent(
             input.provider,
             input.system_prompt,
         );
+        apply_provider_prompt_revision(
+            &previous_record.backend,
+            &mut record.backend,
+            previous_record.system_prompt.as_deref(),
+            record.system_prompt.as_deref(),
+        )?;
         if let Some(parallelism) = input.parallelism {
             record.parallelism = parallelism;
         }
