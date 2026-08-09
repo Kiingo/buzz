@@ -732,7 +732,6 @@ pub async fn update_managed_agent(
 
         let record = find_managed_agent_mut(&mut records, &input.pubkey)?;
         let previous_record = record.clone();
-
         let next_backend = input
             .backend
             .as_ref()
