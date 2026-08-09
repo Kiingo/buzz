@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     commands::agent_provider_update::{
-        apply_definition_prompt_revisions, provider_update_required,
+        apply_definition_prompt_revisions, apply_provider_prompt_revision, provider_update_required,
     },
     managed_agents::{BackendKind, ManagedAgentRecord},
 };

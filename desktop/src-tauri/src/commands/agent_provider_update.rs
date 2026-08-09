@@ -33,6 +33,23 @@ pub(super) fn apply_model_provider_prompt_update(
     }
 }
 
+pub(super) fn apply_model_provider_prompt_revision_update(
+    record: &mut ManagedAgentRecord,
+    previous_record: &ManagedAgentRecord,
+    model: Option<Option<String>>,
+    provider: Option<Option<String>>,
+    system_prompt: Option<Option<String>>,
+) -> Result<(), String> {
+    apply_model_provider_prompt_update(record, model, provider, system_prompt);
+    apply_provider_prompt_revision(
+        &previous_record.backend,
+        &mut record.backend,
+        previous_record.system_prompt.as_deref(),
+        record.system_prompt.as_deref(),
+    )?;
+    Ok(())
+}
+
 pub(super) struct PendingProviderUpdate {
     provider_id: String,
     config: serde_json::Value,
