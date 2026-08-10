@@ -24,18 +24,20 @@ function sameStringRecord(
 }
 
 /**
- * Allows an unrelated definition edit to preserve a legacy null-runtime
- * configuration even when the UI's display-only auto-seeded runtime is not
- * currently ready. Explicit runtime/model/provider/env changes still use the
- * normal readiness gate.
+ * Allows an unrelated definition edit to preserve a legacy execution
+ * configuration even when that existing configuration is not currently
+ * ready. A display-only auto-seeded runtime still represents an unchanged
+ * null runtime. Explicit runtime/model/provider/env changes continue through
+ * the normal readiness gate.
  */
-export function preservesAutoSeededEditConfiguration({
+export function preservesUnchangedEditConfiguration({
   currentEnvVars,
   currentModel,
   currentProvider,
+  currentRuntime,
   initialEnvVars,
   initialModel,
-  initialPreviousRuntime,
+  initialRuntime,
   initialProvider,
   isAutoSeeded,
   isEditMode,
@@ -43,42 +45,49 @@ export function preservesAutoSeededEditConfiguration({
   currentEnvVars: Record<string, string>;
   currentModel: string;
   currentProvider: string;
+  currentRuntime: string;
   initialEnvVars: Record<string, string> | undefined;
   initialModel: string | null | undefined;
-  initialPreviousRuntime: string;
+  initialRuntime: string | null | undefined;
   initialProvider: string | null | undefined;
   isAutoSeeded: boolean;
   isEditMode: boolean;
 }): boolean {
+  const savedRuntime = initialRuntime ?? "";
+  const runtimeIsUnchanged = isAutoSeeded
+    ? savedRuntime.trim().length === 0
+    : currentRuntime === savedRuntime;
+
   return (
     isEditMode &&
-    isAutoSeeded &&
-    initialPreviousRuntime.trim().length === 0 &&
+    runtimeIsUnchanged &&
     currentModel === (initialModel ?? "") &&
     currentProvider === (initialProvider ?? "") &&
     sameStringRecord(initialEnvVars, currentEnvVars)
   );
 }
 
-export function canPreserveAutoSeededEdit(
+export function canPreserveUnchangedEdit(
   initialValues: CreatePersonaInput | UpdatePersonaInput | null,
   current: {
     envVars: Record<string, string>;
     model: string;
     provider: string;
+    runtime: string;
   },
   isAutoSeeded: boolean,
 ): boolean {
   return (
     initialValues != null &&
     "id" in initialValues &&
-    preservesAutoSeededEditConfiguration({
+    preservesUnchangedEditConfiguration({
       currentEnvVars: current.envVars,
       currentModel: current.model,
       currentProvider: current.provider,
+      currentRuntime: current.runtime,
       initialEnvVars: initialValues.envVars,
       initialModel: initialValues.model,
-      initialPreviousRuntime: initialValues.runtime ?? "",
+      initialRuntime: initialValues.runtime,
       initialProvider: initialValues.provider,
       isAutoSeeded,
       isEditMode: true,

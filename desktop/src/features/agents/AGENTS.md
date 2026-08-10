@@ -195,11 +195,11 @@ with a TypeScript lookup table or an id comparison in a component.
    hosted configuration. A definition prompt edit increments and redeploys
    every linked provider instance; attempt every target and surface any
    partial failure while keeping the saved desired definition available for
-   the existing start/workspace reconciliation retry paths. A display-only
-   auto-seeded runtime must not block an unrelated edit to a legacy definition
-   whose execution configuration remains byte-for-byte unchanged; any explicit
-   runtime, model, provider, or environment change still uses the normal
-   readiness gate.
+   the existing start/workspace reconciliation retry paths. An existing legacy
+   execution configuration (including a display-only auto-seeded null runtime)
+   must not block an unrelated definition edit when runtime, model, provider,
+   and environment remain byte-for-byte unchanged; any explicit change to
+   those execution fields still uses the normal readiness gate.
 
 ## The tests that enforce this
 
