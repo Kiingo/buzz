@@ -33,7 +33,6 @@ import { resetAvatarProfileSync } from "@/features/profile/avatarProfileSync";
 import { resetSidebarRelayConnectionCardState } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
 import { clearMarkdownNodeCache } from "@/shared/ui/markdown/nodeCache";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
-import { resetWelcomeComposerBannerState } from "@/features/channels/ui/useWelcomeComposerBanner";
 
 import {
   initFirstCommunity,
@@ -72,7 +71,6 @@ function resetCommunityState({
   resetVideoPlayerState();
   resetRenderScopedReactionHydration();
   resetBackgroundMediaUploads();
-  resetWelcomeComposerBannerState();
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
 }
