@@ -78,7 +78,7 @@ import {
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
 import {
   buildRuntimeModelProviderPayload,
-  canPreserveAutoSeededEdit,
+  canPreserveUnchangedEdit,
 } from "./agentDefinitionSubmitPayload";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
 import { AgentDefinitionDialogShell } from "./AgentDefinitionDialogShell";
@@ -435,9 +435,9 @@ export function AgentDefinitionDialog({
   const localModeSatisfied = localModeGate.satisfied;
   const effectiveLocalModeSatisfied =
     localModeSatisfied ||
-    canPreserveAutoSeededEdit(
+    canPreserveUnchangedEdit(
       initialValues,
-      { envVars, model, provider },
+      { envVars, model, provider, runtime },
       isRuntimeAutoSeededRef.current,
     );
   // Mirror the gate's agent → global → file provider precedence.
