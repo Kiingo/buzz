@@ -1,4 +1,90 @@
+import type {
+  CreatePersonaInput,
+  UpdatePersonaInput,
+} from "@/shared/api/types";
 import { runtimeSupportsLlmProviderSelection } from "./agentConfigOptions";
+
+function sameStringRecord(
+  left: Record<string, string> | undefined,
+  right: Record<string, string>,
+): boolean {
+  const leftEntries = Object.entries(left ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  const rightEntries = Object.entries(right).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  return (
+    leftEntries.length === rightEntries.length &&
+    leftEntries.every(
+      ([key, value], index) =>
+        rightEntries[index]?.[0] === key && rightEntries[index]?.[1] === value,
+    )
+  );
+}
+
+/**
+ * Allows an unrelated definition edit to preserve a legacy null-runtime
+ * configuration even when the UI's display-only auto-seeded runtime is not
+ * currently ready. Explicit runtime/model/provider/env changes still use the
+ * normal readiness gate.
+ */
+export function preservesAutoSeededEditConfiguration({
+  currentEnvVars,
+  currentModel,
+  currentProvider,
+  initialEnvVars,
+  initialModel,
+  initialPreviousRuntime,
+  initialProvider,
+  isAutoSeeded,
+  isEditMode,
+}: {
+  currentEnvVars: Record<string, string>;
+  currentModel: string;
+  currentProvider: string;
+  initialEnvVars: Record<string, string> | undefined;
+  initialModel: string | null | undefined;
+  initialPreviousRuntime: string;
+  initialProvider: string | null | undefined;
+  isAutoSeeded: boolean;
+  isEditMode: boolean;
+}): boolean {
+  return (
+    isEditMode &&
+    isAutoSeeded &&
+    initialPreviousRuntime.trim().length === 0 &&
+    currentModel === (initialModel ?? "") &&
+    currentProvider === (initialProvider ?? "") &&
+    sameStringRecord(initialEnvVars, currentEnvVars)
+  );
+}
+
+export function canPreserveAutoSeededEdit(
+  initialValues: CreatePersonaInput | UpdatePersonaInput | null,
+  current: {
+    envVars: Record<string, string>;
+    model: string;
+    provider: string;
+  },
+  isAutoSeeded: boolean,
+): boolean {
+  return (
+    initialValues != null &&
+    "id" in initialValues &&
+    preservesAutoSeededEditConfiguration({
+      currentEnvVars: current.envVars,
+      currentModel: current.model,
+      currentProvider: current.provider,
+      initialEnvVars: initialValues.envVars,
+      initialModel: initialValues.model,
+      initialPreviousRuntime: initialValues.runtime ?? "",
+      initialProvider: initialValues.provider,
+      isAutoSeeded,
+      isEditMode: true,
+    })
+  );
+}
 
 /**
  * Pure helper extracted from the `handleSubmit` path of `AgentDefinitionDialog`

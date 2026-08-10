@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload.ts";
+import {
+  buildRuntimeModelProviderPayload,
+  canPreserveAutoSeededEdit,
+  preservesAutoSeededEditConfiguration,
+} from "./agentDefinitionSubmitPayload.ts";
 
 // Shared fixture for a builtin edit: previous runtime null, no saved model/provider.
 const BUILTIN_EDIT_BASE = {
@@ -89,4 +93,81 @@ test("explicit-runtime-chosen: runtime and model both persisted when user explic
   assert.equal(result.runtime, "buzz-agent", "runtime must be persisted");
   assert.equal(result.model, "claude-opus-4-8", "model must be persisted");
   assert.equal(result.provider, undefined, "empty provider must be omitted");
+});
+
+test("auto-seeded edit may preserve unchanged incomplete runtime configuration", () => {
+  assert.equal(
+    canPreserveAutoSeededEdit(
+      {
+        id: "legacy-definition",
+        displayName: "Legacy",
+        systemPrompt: "Preserve me.",
+        envVars: { TOKEN: "preserved" },
+      },
+      {
+        envVars: { TOKEN: "preserved" },
+        model: "",
+        provider: "",
+      },
+      true,
+    ),
+    true,
+  );
+});
+
+test("auto-seeded edit cannot bypass readiness after execution config changes", () => {
+  const base = {
+    currentEnvVars: { TOKEN: "preserved" },
+    currentModel: "",
+    currentProvider: "",
+    initialEnvVars: { TOKEN: "preserved" },
+    initialModel: null,
+    initialPreviousRuntime: "",
+    initialProvider: undefined,
+    isAutoSeeded: true,
+    isEditMode: true,
+  };
+
+  assert.equal(
+    preservesAutoSeededEditConfiguration({
+      ...base,
+      currentProvider: "anthropic",
+    }),
+    false,
+  );
+  assert.equal(
+    preservesAutoSeededEditConfiguration({
+      ...base,
+      currentModel: "explicit-model",
+    }),
+    false,
+  );
+  assert.equal(
+    preservesAutoSeededEditConfiguration({
+      ...base,
+      currentEnvVars: { TOKEN: "changed" },
+    }),
+    false,
+  );
+  assert.equal(
+    preservesAutoSeededEditConfiguration({
+      ...base,
+      isAutoSeeded: false,
+    }),
+    false,
+  );
+  assert.equal(
+    preservesAutoSeededEditConfiguration({
+      ...base,
+      isEditMode: false,
+    }),
+    false,
+  );
+  assert.equal(
+    preservesAutoSeededEditConfiguration({
+      ...base,
+      initialPreviousRuntime: "buzz-agent",
+    }),
+    false,
+  );
 });

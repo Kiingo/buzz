@@ -76,7 +76,10 @@ import {
   initialAgentAiConfigurationMode,
 } from "./agentAiConfigurationPolicy";
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
-import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload";
+import {
+  buildRuntimeModelProviderPayload,
+  canPreserveAutoSeededEdit,
+} from "./agentDefinitionSubmitPayload";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
 import { AgentDefinitionDialogShell } from "./AgentDefinitionDialogShell";
 import { AddCustomHarnessDialog } from "./AddCustomHarnessDialog";
@@ -299,9 +302,7 @@ export function AgentDefinitionDialog({
   }
 
   async function handleSubmit() {
-    // D1: the same localModeSatisfied gate as canSubmit prevents form-submit
-    // (Enter) from bypassing a missing credential.
-    if (!initialValues || !localModeSatisfied || !canSubmit) return;
+    if (!initialValues || !effectiveLocalModeSatisfied || !canSubmit) return;
 
     const {
       runtime: runtimeForSubmit,
@@ -429,13 +430,17 @@ export function AgentDefinitionDialog({
       runtimeFileConfig,
     ],
   );
-  // requiredEnvKeys: the gate already handles baked-, global-, and file-
-  // satisfied keys so no further filtering is needed.
+  // The gate already excludes baked-, global-, and file-satisfied keys.
   const { requiredEnvKeys } = localModeGate;
   const localModeSatisfied = localModeGate.satisfied;
-  // Effective provider: agent value → global fallback → file fallback.
-  // Mirrors the chain inside computeLocalModeGate so model-option scoping and
-  // model requiredness are consistent with the readiness gate.
+  const effectiveLocalModeSatisfied =
+    localModeSatisfied ||
+    canPreserveAutoSeededEdit(
+      initialValues,
+      { envVars, model, provider },
+      isRuntimeAutoSeededRef.current,
+    );
+  // Mirror the gate's agent → global → file provider precedence.
   const fileProvider = runtimeFileConfig?.provider?.trim() ?? "";
   const effectiveProvider =
     trimmedProvider || inheritedProviderDefault.value || fileProvider;
@@ -462,12 +467,8 @@ export function AgentDefinitionDialog({
     !remoteProviderOwnsExecutionProfile &&
     (runtime.trim().length > 0 || blankRuntimeModelProviderEditable);
   const isExplicitModelRequired = aiConfigurationMode === "custom";
-  // Gate the provider requirement on the field's actual visibility, not the raw
-  // runtime capability. Codex/Claude hide the provider picker (they drive their
-  // own provider), so Customize must not require a provider there. But a
-  // runtime-less legacy/builtin definition still exposes the picker via
-  // blankRuntimeModelProviderEditable, so it must keep requiring a provider —
-  // otherwise Save could persist `provider: undefined` despite the visible field.
+  // Require a provider only when its field is visible; runtime-less legacy
+  // definitions expose that field and therefore keep the requirement.
   const customAiPairSatisfied = agentAiConfigurationModeSatisfied(
     aiConfigurationMode,
     { provider, model },
@@ -490,9 +491,8 @@ export function AgentDefinitionDialog({
     // Crash-loop guard, create AND edit: an empty allowlist would crash
     // every instance minted from this definition at startup.
     personaBehaviorDraftValid(behaviorDraft) &&
-    // D1: localModeSatisfied covers both missingNormalizedFields AND
-    // missingEnvKeys — credential env keys now block submit, not just display.
-    localModeSatisfied &&
+    // Credential env keys and normalized fields block explicit changes.
+    effectiveLocalModeSatisfied &&
     customAiPairSatisfied &&
     !isAvatarUploadPending;
 
