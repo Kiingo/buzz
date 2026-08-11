@@ -148,6 +148,16 @@ feature flag, duplicate implementation, or undocumented exception.
   without conflict. The unrelated conflicted main checkout was not modified.
 - 2026-08-11: Immediately before review, fetched upstream again and merged its
   new `main` `5e4d0fe92508fc5e0c812ff3edbe8877d86b8ec6` with zero
-  conflicts. The final-tree guard remained green at 32 classified divergences,
-  23 modified upstream files, exactly 15 modified upstream production-source
-  files, and zero Kiingo-specific contamination in upstream production source.
+  conflicts. Before protected scanning, the final-tree guard remained green at
+  32 classified divergences, 23 modified upstream files, exactly 15 modified
+  upstream production-source files, and zero Kiingo-specific contamination in
+  upstream production source.
+- 2026-08-11: Protected CodeQL then caught three high-severity regressions in
+  exact-upstream desktop code: a TTS regex DoS and two README sanitization
+  findings. The pre-cutover Kiingo fork already contained provider-neutral
+  fixes for these issues, so the cutover restored those generic fixes and their
+  focused tests instead of dismissing real alerts. The guard now distinguishes
+  dedicated test files and Rust hunks confined below `#[cfg(test)]` from
+  production source; the hardened final tree remains within the binding budget
+  at 37 classified divergences, 25 modified upstream files, exactly 15 modified
+  upstream production-source files, and zero Kiingo contamination.

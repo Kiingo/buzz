@@ -62,14 +62,19 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz desktop maintainers",
-      "purpose": "Provider-owned JSON-schema presentation, user-scoped provider discovery, immutable staging, and optional build-pinned Windows signer enforcement.",
+      "purpose": "Provider-owned JSON-schema presentation, user-scoped provider discovery, immutable staging, optional build-pinned Windows signer enforcement, and retained provider-neutral security fixes required by CodeQL.",
       "upstreamStatus": "candidate for upstream provider UI contribution",
       "removalCondition": "Remove when block/buzz supports the same provider-neutral schema keywords.",
       "paths": [
         "desktop/src-tauri/Cargo.lock",
         "desktop/src-tauri/src/managed_agents/backend.rs",
         "desktop/src/features/agents/ui/ProviderConfigFields.test.mjs",
-        "desktop/src/features/agents/ui/ProviderConfigFields.tsx"
+        "desktop/src/features/agents/ui/ProviderConfigFields.tsx",
+        "desktop/src/features/huddle/lib/ttsLiveMessages.security.test.mjs",
+        "desktop/src/features/huddle/lib/ttsLiveMessages.ts",
+        "desktop/src/features/projects/lib/projectReadmeMarkdown.test.mjs",
+        "desktop/src/features/projects/lib/projectReadmeMarkdown.ts",
+        "desktop/src/features/projects/ui/ProjectReadmePanel.tsx"
       ]
     },
     {

@@ -71,8 +71,24 @@ if (missingInventory.length || staleInventory.length) {
 
 const modified = changes.filter((change) => change.status.startsWith('M'));
 const productionSourcePattern = /^(?:crates|desktop|web|mobile)\/.+\.(?:rs|ts|tsx|js|jsx|mjs|cjs)$/;
+const dedicatedTestSourcePattern = /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:test|spec)\./;
+const rustDiffIsConfinedToCfgTestModule = (path) => {
+  if (!path.endsWith('.rs')) return false;
+  const lines = readFileSync(path, 'utf8').split(/\r?\n/);
+  const cfgTestLine = lines.findLastIndex((line) => /^\s*#\[cfg\(test\)\]/.test(line));
+  if (cfgTestLine < 0) return false;
+  const hunkStarts = runGit('diff', '--unified=0', upstreamRef, '--', path)
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      return match ? [Number(match[1])] : [];
+    });
+  return hunkStarts.length > 0 && hunkStarts.every((line) => line > cfgTestLine + 1);
+};
 const modifiedProduction = modified.filter((change) =>
-  productionSourcePattern.test(change.path)
+  productionSourcePattern.test(change.path) &&
+  !dedicatedTestSourcePattern.test(change.path) &&
+  !rustDiffIsConfinedToCfgTestModule(change.path)
 );
 if (modified.length > inventory.budgets.modifiedUpstreamFiles) {
   fail(`modified upstream file budget exceeded: ${modified.length}`);

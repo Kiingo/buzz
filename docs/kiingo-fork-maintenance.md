@@ -40,6 +40,12 @@ tree (not historical merge noise), and verifies every divergent path against
 production-source files, 25 modified upstream files overall, and zero Kiingo
 business-logic lines in upstream-owned production source.
 
+The production-source metric excludes dedicated `*.test.*`/`tests/` files and
+Rust diffs whose every hunk is below the file's final `#[cfg(test)]` boundary.
+The guard derives that classification from the current diff; it is not a path
+waiver. This keeps scanner-only fixture changes from consuming the production
+budget while still counting their files in the overall 25-file limit.
+
 The inventory is the deterministic patch ledger. Each group records purpose,
 owner, upstream status, and removal condition. Add a path there only after
 classifying it as `drop/upstream-present`, `move-to-kiingo`, `retain-generic`,
@@ -55,6 +61,9 @@ or `obsolete`; CI rejects both unclassified paths and stale entries.
 - Prefer small upstreamable commits. Submit generally useful fixes upstream
   when practical, but never make production synchronization depend on upstream
   accepting a Kiingo-specific change.
+- Retain provider-neutral security fixes when the current upstream tip still
+  triggers a release-blocking scanner. Keep their focused regression tests and
+  remove the downstream patches as soon as an equivalent upstream commit lands.
 - Record intentional long-lived divergences in the Kiingo implementation plan
   and in the pull request that introduces them.
 
