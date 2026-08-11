@@ -4,7 +4,7 @@
   "upstreamReference": "upstream/main",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 15,
-    "modifiedUpstreamFiles": 25,
+    "modifiedUpstreamFiles": 26,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -80,11 +80,12 @@
     {
       "classification": "move-to-kiingo",
       "owner": "Kiingo platform engineering",
-      "purpose": "Fork inventory, replay/footprint policy, maintenance runbook, and implementation evidence.",
+      "purpose": "Fork inventory, replay/footprint policy, maintenance runbook, implementation evidence, and fork-safe CI permissions that never write upstream-owned registry caches.",
       "upstreamStatus": "permanent downstream composition metadata",
       "removalCondition": "Remove only if Kiingo stops distributing a Buzz composition.",
       "paths": [
         ".github/workflows/ci.yml",
+        ".github/workflows/docker.yml",
         "docs/kiingo-fork-inventory.json",
         "docs/kiingo-fork-maintenance.md",
         "docs/kiingo-fork-minimization-hard-cutover-plan-2026-08-11.md",
