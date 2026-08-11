@@ -9,7 +9,6 @@ use base64::Engine as _;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=BUZZ_RELAY_URL");
-    println!("cargo:rerun-if-env-changed=BUZZ_CANONICAL_RELAY_URL");
     println!("cargo:rerun-if-env-changed=BUZZ_RELAY_HTTP");
     println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_PUBLIC_KEY");
     println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_ENDPOINT");
@@ -19,7 +18,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=BUZZ_BUILD_RELAY_RECONNECT_CMD");
     println!("cargo:rerun-if-env-changed=BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY");
     println!("cargo:rerun-if-env-changed=BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY");
-    println!("cargo:rerun-if-env-changed=BUZZ_BUILD_CODEX_ENROLLMENT_URL");
     println!("cargo:rustc-check-cfg=cfg(buzz_updater_enabled)");
 
     // Explicit owner-only agent-access capability. Release packaging sets this
@@ -30,10 +28,6 @@ fn main() {
 
     if let Ok(relay_url) = std::env::var("BUZZ_RELAY_URL") {
         println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_RELAY_URL={relay_url}");
-    }
-
-    if let Ok(relay_url) = std::env::var("BUZZ_CANONICAL_RELAY_URL") {
-        println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_CANONICAL_RELAY_URL={relay_url}");
     }
 
     if let Ok(relay_http) = std::env::var("BUZZ_RELAY_HTTP") {
@@ -108,15 +102,6 @@ fn main() {
     // leave this unset and retain explicit community selection.
     if std::env::var("BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY").is_ok() {
         println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY=1");
-    }
-
-    if let Ok(raw_url) = std::env::var("BUZZ_BUILD_CODEX_ENROLLMENT_URL") {
-        let url = url::Url::parse(raw_url.trim())
-            .unwrap_or_else(|error| panic!("BUZZ_BUILD_CODEX_ENROLLMENT_URL is invalid: {error}"));
-        if url.scheme() != "https" || url.host_str().is_none() {
-            panic!("BUZZ_BUILD_CODEX_ENROLLMENT_URL must be an absolute HTTPS URL");
-        }
-        println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_CODEX_ENROLLMENT_URL={url}");
     }
 
     let updater_public_key = std::env::var("BUZZ_UPDATER_PUBLIC_KEY")

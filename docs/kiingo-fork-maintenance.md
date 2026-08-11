@@ -33,6 +33,18 @@ fork branch.
 8. Merge through the normal protected-branch workflow. Production images must
    be built from the reviewed merge commit and pinned by digest.
 
+Run `node scripts/check-kiingo-fork-boundary.mjs` before pushing. The guard
+requires the fetched `upstream/main` tip to be incorporated, compares the final
+tree (not historical merge noise), and verifies every divergent path against
+`docs/kiingo-fork-inventory.json`. Its hard budgets are 15 modified upstream
+production-source files, 25 modified upstream files overall, and zero Kiingo
+business-logic lines in upstream-owned production source.
+
+The inventory is the deterministic patch ledger. Each group records purpose,
+owner, upstream status, and removal condition. Add a path there only after
+classifying it as `drop/upstream-present`, `move-to-kiingo`, `retain-generic`,
+or `obsolete`; CI rejects both unclassified paths and stale entries.
+
 ## License and patch boundaries
 
 - Preserve the root `LICENSE`, copyright statements, dependency notices,
@@ -51,4 +63,8 @@ fork branch.
 If an upstream merge causes a regression, revert the merge or the smallest
 identified follow-up commit through a new signed commit. Do not rewrite the
 published fork history. Restore the last known-good digest in deployment
-configuration while the forward fix is reviewed.
+configuration while the forward fix is reviewed. Kiingo-owned desktop and
+provider release workflows retain immutable version tags plus rolling aliases;
+rollback moves the deployment or alias to the last reviewed immutable artifact
+without replacing relay, PostgreSQL, Blob, agent identity, history, or memory
+data.

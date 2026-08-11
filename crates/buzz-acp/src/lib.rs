@@ -4,7 +4,7 @@ mod acp;
 mod config;
 mod engram_fetch;
 mod filter;
-mod kiingo_publication;
+mod local_publication;
 mod observer;
 mod pool;
 mod pool_lifecycle;
@@ -3462,58 +3462,6 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
     message.contains("Re-authenticate") || message.contains("API Error: 401")
 }
 
-/// Return a trusted, user-actionable bridge error that should be published
-/// once instead of retried.
-///
-/// The Kiingo bridge deliberately returns this fixed message shape for
-/// identity and subscription enrollment failures. Match both the complete
-/// prefix and a closed set of machine codes so arbitrary provider or internal
-/// agent errors cannot be reflected into a Buzz channel.
-fn actionable_agent_error_message(error: &acp::AcpError) -> Option<&str> {
-    const CODEX_ACCESS_PREFIX: &str = "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
-    const CLAUDE_ACCESS_PREFIX: &str = "Buzz identity or Claude Code access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=claude-code&buzz=connect (";
-    const CODEX_CAPACITY_PREFIX: &str = "This user's ChatGPT-powered Codex subscription accounts are currently out of provider capacity. Wait for an allowance reset or make another eligible subscription available at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (";
-    const CLAUDE_CAPACITY_PREFIX: &str = "This user's Claude Code subscription accounts are currently out of provider capacity. Wait for an allowance reset or make another eligible subscription available at https://dashboard.kiingo.com/team/harness-connections?provider=claude-code&buzz=connect (";
-    const CODES: &[&str] = &[
-        "buzz_identity_not_verified",
-        "buzz_identity_ambiguous",
-        "buzz_identity_endpoint_not_eligible",
-        "buzz_identity_enrollment_invalid",
-        "buzz_identity_enrollment_conflict",
-        "buzz_codex_subscription_not_connected",
-        "buzz_codex_subscription_routing_ambiguous",
-        "buzz_codex_subscription_capacity_unavailable",
-        "buzz_claude-code_subscription_not_connected",
-        "buzz_claude-code_subscription_routing_ambiguous",
-        "buzz_claude-code_subscription_capacity_unavailable",
-    ];
-
-    let acp::AcpError::AgentError { code, message } = error else {
-        return None;
-    };
-    if *code != -32000 {
-        return None;
-    }
-    let machine_code = CODES
-        .iter()
-        .copied()
-        .find(|candidate| message.ends_with(&format!("({candidate}).")))?;
-    let expected_prefix = if machine_code.ends_with("_subscription_capacity_unavailable") {
-        if machine_code.contains("claude-code") {
-            CLAUDE_CAPACITY_PREFIX
-        } else {
-            CODEX_CAPACITY_PREFIX
-        }
-    } else if machine_code.contains("claude-code") {
-        CLAUDE_ACCESS_PREFIX
-    } else {
-        CODEX_ACCESS_PREFIX
-    };
-    message
-        .strip_prefix(expected_prefix)
-        .and_then(|value| (value == format!("{machine_code}).")).then_some(message.as_str()))
-}
-
 /// Spawn a task that posts a user-visible failure notice to the relay.
 ///
 /// Shared by the hard-cap immediate dead-letter path and the retries-exhausted
@@ -3586,11 +3534,6 @@ fn handle_prompt_result(
     // branch below records what actually happened; only the hard-timeout
     // match arm in the death_message construction reads it.
     let mut hard_timeout_fate_suffix: Option<&'static str> = None;
-    let actionable_error = match &result.outcome {
-        PromptOutcome::Error(error) => actionable_agent_error_message(error).map(str::to_owned),
-        _ => None,
-    };
-
     // Requeue BEFORE mark_complete: requeue() sets retry_after with a future
     // deadline, and mark_complete() checks for it to decide whether to preserve
     // retry_counts. If mark_complete runs first, retry_counts is cleared and
@@ -3659,18 +3602,6 @@ fn handle_prompt_result(
                 } else {
                     hard_timeout_fate_suffix = Some(" — requeued for retry (recently active)");
                 }
-            } else if let Some(content) = actionable_error {
-                // Identity and subscription enrollment errors are terminal for
-                // this request, but already contain safe recovery guidance.
-                // Publish that exact guidance once rather than hiding it in
-                // logs and retrying a request whose eligibility cannot change
-                // during the retry window.
-                tracing::warn!(
-                    channel_id = %batch.channel_id,
-                    events = batch.events.len(),
-                    "publishing terminal actionable agent error"
-                );
-                spawn_failure_notice(rest_client, &batch, format!("⚠️ {content}"));
             } else if matches!(&result.outcome, PromptOutcome::Error(e) if is_auth_error(e)) {
                 // Auth errors are non-retryable: the token won't self-repair
                 // between retries, so requeueing only wastes attempt slots and
@@ -6523,7 +6454,7 @@ mod build_mcp_servers_tests {
     #[test]
     fn session_new_mcp_server_forwards_canonical_relay_url() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("BUZZ_CANONICAL_RELAY_URL", "wss://chat.kiingo.com");
+        std::env::set_var("BUZZ_CANONICAL_RELAY_URL", "wss://relay.example");
         let config = test_config();
         let servers = build_mcp_servers(&config);
         std::env::remove_var("BUZZ_CANONICAL_RELAY_URL");
@@ -6534,7 +6465,7 @@ mod build_mcp_servers_tests {
             .find(|entry| entry.name == "BUZZ_CANONICAL_RELAY_URL");
         assert_eq!(
             canonical_env.map(|entry| entry.value.as_str()),
-            Some("wss://chat.kiingo.com")
+            Some("wss://relay.example")
         );
     }
 
@@ -6731,11 +6662,16 @@ mod error_outcome_emission_tests {
     /// an `OwnedAgent` to move into respawn or return to the pool. The error
     /// branches never talk to the subprocess.
     async fn dummy_agent(index: usize) -> OwnedAgent {
+        #[cfg(windows)]
+        let (command, args): (&str, Vec<String>) =
+            ("cmd", vec!["/C".to_string(), "more".to_string()]);
+        #[cfg(not(windows))]
+        let (command, args): (&str, Vec<String>) = ("cat", vec![]);
         OwnedAgent {
             index,
-            acp: AcpClient::spawn("cat", &[], &[], false)
+            acp: AcpClient::spawn(command, &args, &[], false)
                 .await
-                .expect("spawn cat as inert agent"),
+                .expect("spawn inert agent"),
             state: Default::default(),
             model_capabilities: None,
             desired_model: None,
@@ -7982,60 +7918,6 @@ mod error_outcome_emission_tests {
         );
     }
 
-    #[test]
-    fn actionable_agent_error_message_accepts_only_known_bridge_guidance() {
-        let message = "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).";
-        let error = acp::AcpError::AgentError {
-            code: -32000,
-            message: message.to_string(),
-        };
-        assert_eq!(actionable_agent_error_message(&error), Some(message));
-
-        let ambiguous_message = message.replace(
-            "buzz_codex_subscription_not_connected",
-            "buzz_identity_ambiguous",
-        );
-        let ambiguous = acp::AcpError::AgentError {
-            code: -32000,
-            message: ambiguous_message.clone(),
-        };
-        assert_eq!(
-            actionable_agent_error_message(&ambiguous),
-            Some(ambiguous_message.as_str())
-        );
-
-        let capacity_message = "This user's ChatGPT-powered Codex subscription accounts are currently out of provider capacity. Wait for an allowance reset or make another eligible subscription available at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_capacity_unavailable).";
-        let capacity = acp::AcpError::AgentError {
-            code: -32000,
-            message: capacity_message.to_string(),
-        };
-        assert_eq!(
-            actionable_agent_error_message(&capacity),
-            Some(capacity_message)
-        );
-    }
-
-    #[test]
-    fn actionable_agent_error_message_rejects_untrusted_errors() {
-        let unknown_code = acp::AcpError::AgentError {
-            code: -32000,
-            message: "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (provider_internal_error).".to_string(),
-        };
-        assert_eq!(actionable_agent_error_message(&unknown_code), None);
-
-        let injected = acp::AcpError::AgentError {
-            code: -32000,
-            message: "Provider failed; buzz_codex_subscription_not_connected".to_string(),
-        };
-        assert_eq!(actionable_agent_error_message(&injected), None);
-
-        let wrong_rpc_code = acp::AcpError::AgentError {
-            code: -32603,
-            message: "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
-        };
-        assert_eq!(actionable_agent_error_message(&wrong_rpc_code), None);
-    }
-
     async fn assert_agent_error_dead_letters_immediately(error: acp::AcpError) {
         let keys = nostr::Keys::generate();
         let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "test")
@@ -8102,15 +7984,6 @@ mod error_outcome_emission_tests {
 
         assert_eq!(queue.pending_channels(), 0);
         assert_eq!(queue.queued_event_count(&channel_id), 0);
-    }
-
-    #[tokio::test]
-    async fn actionable_agent_error_dead_letters_immediately_without_requeueing() {
-        let error = acp::AcpError::AgentError {
-            code: -32000,
-            message: "Buzz identity or ChatGPT-powered Codex access is not active. Link the Buzz public key and connect this user's subscription at https://dashboard.kiingo.com/team/harness-connections?provider=codex&buzz=connect (buzz_codex_subscription_not_connected).".to_string(),
-        };
-        assert_agent_error_dead_letters_immediately(error).await;
     }
 
     // ── auth error dead-letter behavior ────────────────────────────────────

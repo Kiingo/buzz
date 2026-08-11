@@ -243,10 +243,8 @@ pub fn build_message(
 /// Build a stream message (kind 9) with additional caller-owned tags.
 ///
 /// This is intended for durable integration identifiers that must survive a
-/// process restart (for example an idempotency fence). The normal Buzz tags
-/// are still constructed and validated here; every extra tag is parsed by the
-/// Nostr library before it is attached. Callers should use a namespaced value
-/// and must not use this to replace the canonical `h`, `e`, or `p` tags.
+/// process restart. The normal Buzz tags are still constructed and validated
+/// here; every extra tag is parsed by the Nostr library before it is attached.
 pub fn build_message_with_extra_tags(
     channel_id: Uuid,
     content: &str,
@@ -2295,11 +2293,11 @@ mod tests {
         let cid = uuid();
         let extra = vec![vec![
             "d".to_string(),
-            "kiingo-publication:fence-123".to_string(),
+            "buzz-local-publication:fence-123".to_string(),
         ]];
         let ev =
             sign(build_message_with_extra_tags(cid, "hi", None, &[], false, &[], &extra).unwrap());
-        assert!(has_tag(&ev, "d", "kiingo-publication:fence-123"));
+        assert!(has_tag(&ev, "d", "buzz-local-publication:fence-123"));
         assert!(has_tag(&ev, "h", &cid.to_string()));
     }
 

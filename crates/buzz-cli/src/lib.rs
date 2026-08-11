@@ -68,10 +68,9 @@ where
 Buzz CLI — interact with a Buzz relay
 
 Configuration (flags override env vars):
-  BUZZ_RELAY_URL             Relay network URL       [default: http://localhost:3000]
-  BUZZ_CANONICAL_RELAY_URL   Canonical auth URL      [optional; defaults to BUZZ_RELAY_URL]
-  BUZZ_PRIVATE_KEY           Nostr private key (hex or nsec)  [required]
-  BUZZ_AUTH_TAG              NIP-OA auth tag JSON    [optional]
+  BUZZ_RELAY_URL     Relay base URL        [default: http://localhost:3000]
+  BUZZ_PRIVATE_KEY   Nostr private key (hex or nsec)  [required]
+  BUZZ_AUTH_TAG      NIP-OA auth tag JSON  [optional]
 
 The 'pack' subcommand runs locally and does not require a relay connection.
 
@@ -1186,15 +1185,6 @@ pub enum ReposCmd {
         #[arg(long)]
         limit: Option<u32>,
     },
-    /// Delete one of your repository announcements.
-    ///
-    /// Publishes an NIP-09 coordinate tombstone for your current kind:30617
-    /// head and verifies that no newer concurrent head survived.
-    Delete {
-        /// Repository identifier (d-tag).
-        #[arg(long)]
-        id: String,
-    },
     /// Bind (or rebind) one of your repositories to a channel.
     ///
     /// The `buzz-channel` tag on the announcement is the git ACL: the relay
@@ -1960,11 +1950,6 @@ fn normalize_auth_tag_input(input: &str) -> String {
 
 async fn run(cli: Cli) -> Result<(), CliError> {
     let relay_url = client::normalize_relay_url(&cli.relay);
-    let auth_relay_url = std::env::var("BUZZ_CANONICAL_RELAY_URL")
-        .ok()
-        .map(|value| client::normalize_relay_url(value.trim()))
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| relay_url.clone());
 
     // Pack commands are local-only — no relay connection needed.
     if let Cmd::Pack(ref sub) = cli.command {
@@ -2009,17 +1994,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         _ => (None, None),
     };
 
-    let client = if auth_relay_url == relay_url {
-        BuzzClient::new(relay_url, keys, auth_tag, auth_tag_json)?
-    } else {
-        BuzzClient::new_with_auth_relay_url(
-            relay_url,
-            auth_relay_url,
-            keys,
-            auth_tag,
-            auth_tag_json,
-        )?
-    };
+    let client = BuzzClient::new(relay_url, keys, auth_tag, auth_tag_json)?;
 
     match cli.command {
         Cmd::Agents(sub) => commands::agents::dispatch(sub, &client).await,
@@ -2276,7 +2251,7 @@ mod tests {
         );
         assert_eq!(
             names(&cmd, "repos"),
-            vec!["bind", "create", "delete", "get", "list", "protect"]
+            vec!["bind", "create", "get", "list", "protect"]
         );
         let repos = cmd
             .get_subcommands()
@@ -2352,7 +2327,7 @@ mod tests {
             ("pr", 5),
             ("projects", 7),
             ("reactions", 3),
-            ("repos", 6),
+            ("repos", 5),
             ("social", 7),
             ("upload", 1),
             ("users", 5),

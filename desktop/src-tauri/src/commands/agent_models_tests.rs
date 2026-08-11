@@ -1,4 +1,5 @@
 use super::*;
+
 #[test]
 fn openai_model_normalization_keeps_agent_text_models() {
     let models = normalize_openai_compatible_models(
@@ -503,7 +504,7 @@ fn linked_instance_ignores_model_provider_prompt_writes() {
     let is_linked = record.persona_id.is_some();
     assert!(is_linked, "test setup: record must be linked");
 
-    crate::commands::agent_provider_update::apply_model_provider_prompt_update(
+    crate::commands::agent_models::apply_model_provider_prompt_update(
         &mut record,
         Some(Some("explicit-model".to_string())),
         Some(Some("explicit-prov".to_string())),
@@ -554,7 +555,7 @@ fn definition_less_instance_accepts_model_provider_prompt_writes() {
     let is_linked = record.persona_id.is_some();
     assert!(!is_linked, "test setup: record must not be linked");
 
-    crate::commands::agent_provider_update::apply_model_provider_prompt_update(
+    crate::commands::agent_models::apply_model_provider_prompt_update(
         &mut record,
         Some(Some("new-model".to_string())),
         Some(Some("new-prov".to_string())),

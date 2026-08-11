@@ -8,15 +8,13 @@
  * looked completely dead, and the provider binary respawned in a loop.
  *
  * Covers:
- *  - Run on remains visible outside Advanced so remote execution is a clear
- *    first-class creation choice
  *  - typing into a defaultless provider field sticks, and the provider is
  *    probed exactly once for the selection (not once per keystroke or
- *    unrelated Advanced disclosure toggle)
+ *    Advanced disclosure toggle)
  *  - the config form is gated on probe resolution (no half-rendered form),
  *    and defaults prefill exactly once when a slow probe lands
- *  - collapsing Advanced during an incomplete remote setup keeps the remote
- *    setup visible and the submit blocker represented by the Required badge
+ *  - collapsing Advanced during an incomplete remote setup keeps the submit
+ *    blocker visible through the Required badge
  *  - switching provider → local → provider re-probes and resets cleanly
  *
  * The stale-closure merge on probe resolution (defaults beneath in-flight
@@ -89,7 +87,7 @@ async function selectRunOnOption(
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
 }
 
-/** Open the create-agent dialog, select the mocked provider, then open Advanced. */
+/** Open Advanced in the create-agent dialog and select the mocked provider. */
 async function openCreateDialogOnProvider(page: Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-agents-view").click();
@@ -101,14 +99,17 @@ async function openCreateDialogOnProvider(page: Page) {
     exact: true,
   });
   await expect(advanced).toHaveAttribute("aria-expanded", "false");
-  const runOn = dialog.locator("#agent-run-on");
-  await expect(runOn).toBeVisible();
-  await selectRunOnOption(page, dialog, PROVIDER.id);
+  await expect(dialog.locator("#agent-run-on")).toHaveCount(0);
   await advanced.click();
   await expect(advanced).toHaveAttribute("aria-expanded", "true");
   const respondTo = dialog.getByTestId("agent-respond-to");
+  const runOn = dialog.locator("#agent-run-on");
   await expect(respondTo).toBeVisible();
   await expect(runOn).toBeVisible();
+  expect(await respondTo.evaluate((element) => element.offsetTop)).toBeLessThan(
+    await runOn.evaluate((element) => element.offsetTop),
+  );
+  await selectRunOnOption(page, dialog, PROVIDER.id);
   return dialog;
 }
 
@@ -141,10 +142,7 @@ test("typing into a defaultless provider field sticks and probes only once", asy
   });
   await advanced.click();
   await expect(advanced).toHaveAttribute("aria-expanded", "false");
-  await expect(dialog.locator("#agent-run-on")).toBeVisible();
-  await expect(dialog.locator("#provider-cfg-context")).toHaveValue(
-    "prod-us-west",
-  );
+  await expect(dialog.locator("#agent-run-on")).toHaveCount(0);
   await advanced.click();
   await expect(advanced).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.locator("#provider-cfg-context")).toHaveValue(
@@ -200,7 +198,7 @@ test("collapsed Advanced marks incomplete remote setup as required", async ({
   await expect(submit).toBeDisabled();
   await advanced.click();
   await expect(advanced).toHaveAttribute("aria-expanded", "false");
-  await expect(dialog.locator("#agent-run-on")).toBeVisible();
+  await expect(dialog.locator("#agent-run-on")).toHaveCount(0);
   await expect(
     dialog.getByTestId("persona-advanced-required-badge"),
   ).toHaveText("Required");

@@ -2,6 +2,11 @@ import * as React from "react";
 import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
+import type {
+  AcpRuntimeCatalogEntry,
+  CreatePersonaInput,
+  UpdatePersonaInput,
+} from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
@@ -76,20 +81,43 @@ import {
   initialAgentAiConfigurationMode,
 } from "./agentAiConfigurationPolicy";
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
-import {
-  buildRuntimeModelProviderPayload,
-  canPreserveUnchangedEdit,
-} from "./agentDefinitionSubmitPayload";
+import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
 import { AgentDefinitionDialogShell } from "./AgentDefinitionDialogShell";
 import { AddCustomHarnessDialog } from "./AddCustomHarnessDialog";
-import type { AgentDefinitionDialogProps } from "./AgentDefinitionDialog.types";
-export type { AgentDefinitionSubmitOptions } from "./AgentDefinitionDialog.types";
 import {
   ADD_CUSTOM_HARNESS_OPTION,
   runtimeDropdownAction,
   usePendingHarnessSelection,
 } from "./addCustomHarness";
+
+type AgentDefinitionDialogProps = {
+  open: boolean;
+  embedded?: boolean;
+  title: string;
+  description: string;
+  submitLabel: string;
+  initialValues: CreatePersonaInput | UpdatePersonaInput | null;
+  error: Error | null;
+  isPending: boolean;
+  runtimes: AcpRuntimeCatalogEntry[];
+  runtimeCatalogStatus?: "loading" | "ready" | "error";
+  onDirtyChange?: (dirty: boolean) => void;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (
+    input: CreatePersonaInput | UpdatePersonaInput,
+    options: AgentDefinitionSubmitOptions,
+  ) => Promise<unknown>;
+  /** Publishes saved changes when the edited agent is shared in the catalog. */
+  publishCatalogUpdatesOnSave?: boolean;
+  createRunSection?: React.ReactNode;
+  /** Extra create-mode submit gate (e.g. incomplete provider config). */
+  createSubmitBlocked?: boolean;
+};
+
+export type AgentDefinitionSubmitOptions = {
+  publishCatalogUpdates: boolean;
+};
 
 export function AgentDefinitionDialog({
   open,
@@ -108,7 +136,6 @@ export function AgentDefinitionDialog({
   publishCatalogUpdatesOnSave = false,
   createRunSection,
   createSubmitBlocked = false,
-  remoteProviderOwnsExecutionProfile = false,
 }: AgentDefinitionDialogProps) {
   const runtimesLoading = runtimeCatalogStatus === "loading";
   const [displayName, setDisplayName] = React.useState("");
@@ -302,7 +329,9 @@ export function AgentDefinitionDialog({
   }
 
   async function handleSubmit() {
-    if (!initialValues || !effectiveLocalModeSatisfied || !canSubmit) return;
+    // D1: the same localModeSatisfied gate as canSubmit prevents form-submit
+    // (Enter) from bypassing a missing credential.
+    if (!initialValues || !localModeSatisfied || !canSubmit) return;
 
     const {
       runtime: runtimeForSubmit,
@@ -310,14 +339,8 @@ export function AgentDefinitionDialog({
       provider: providerForSubmit,
     } = buildRuntimeModelProviderPayload({
       runtime,
-      model:
-        remoteProviderOwnsExecutionProfile || aiConfigurationMode === "defaults"
-          ? ""
-          : model,
-      provider:
-        remoteProviderOwnsExecutionProfile || aiConfigurationMode === "defaults"
-          ? ""
-          : provider,
+      model: aiConfigurationMode === "defaults" ? "" : model,
+      provider: aiConfigurationMode === "defaults" ? "" : provider,
       isEditMode: "id" in initialValues,
       isAutoSeeded: isRuntimeAutoSeededRef.current,
       initialPreviousRuntime: initialValues.runtime?.trim() ?? "",
@@ -411,7 +434,7 @@ export function AgentDefinitionDialog({
         globalEnvVars: globalConfig.env_vars,
         globalProvider: inheritedProviderDefault.value,
         globalModel: inheritedModelDefault.value,
-        isProviderMode: remoteProviderOwnsExecutionProfile,
+        isProviderMode: false,
         model,
         provider: trimmedProvider,
         runtimeId: runtime,
@@ -424,23 +447,18 @@ export function AgentDefinitionDialog({
       inheritedModelDefault.value,
       inheritedProviderDefault.value,
       model,
-      remoteProviderOwnsExecutionProfile,
       trimmedProvider,
       runtime,
       runtimeFileConfig,
     ],
   );
-  // The gate already excludes baked-, global-, and file-satisfied keys.
+  // requiredEnvKeys: the gate already handles baked-, global-, and file-
+  // satisfied keys so no further filtering is needed.
   const { requiredEnvKeys } = localModeGate;
   const localModeSatisfied = localModeGate.satisfied;
-  const effectiveLocalModeSatisfied =
-    localModeSatisfied ||
-    canPreserveUnchangedEdit(
-      initialValues,
-      { envVars, model, provider, runtime },
-      isRuntimeAutoSeededRef.current,
-    );
-  // Mirror the gate's agent → global → file provider precedence.
+  // Effective provider: agent value → global fallback → file fallback.
+  // Mirrors the chain inside computeLocalModeGate so model-option scoping and
+  // model requiredness are consistent with the readiness gate.
   const fileProvider = runtimeFileConfig?.provider?.trim() ?? "";
   const effectiveProvider =
     trimmedProvider || inheritedProviderDefault.value || fileProvider;
@@ -464,11 +482,14 @@ export function AgentDefinitionDialog({
   const providerIsRequired =
     aiConfigurationMode === "custom" && runtimeCanChooseLlmProvider;
   const modelFieldVisible =
-    !remoteProviderOwnsExecutionProfile &&
-    (runtime.trim().length > 0 || blankRuntimeModelProviderEditable);
+    runtime.trim().length > 0 || blankRuntimeModelProviderEditable;
   const isExplicitModelRequired = aiConfigurationMode === "custom";
-  // Require a provider only when its field is visible; runtime-less legacy
-  // definitions expose that field and therefore keep the requirement.
+  // Gate the provider requirement on the field's actual visibility, not the raw
+  // runtime capability. Codex/Claude hide the provider picker (they drive their
+  // own provider), so Customize must not require a provider there. But a
+  // runtime-less legacy/builtin definition still exposes the picker via
+  // blankRuntimeModelProviderEditable, so it must keep requiring a provider —
+  // otherwise Save could persist `provider: undefined` despite the visible field.
   const customAiPairSatisfied = agentAiConfigurationModeSatisfied(
     aiConfigurationMode,
     { provider, model },
@@ -481,18 +502,15 @@ export function AgentDefinitionDialog({
   // source of truth with the readiness gate so display and Save can't drift.
   const canSubmit =
     canSubmitPersonaDialog({ displayName, isPending }) &&
-    (!isCreateMode ||
-      remoteProviderOwnsExecutionProfile ||
-      runtime.trim().length > 0) &&
-    (!isCreateMode ||
-      remoteProviderOwnsExecutionProfile ||
-      selectedRuntimeIsAvailable) &&
+    (!isCreateMode || runtime.trim().length > 0) &&
+    (!isCreateMode || selectedRuntimeIsAvailable) &&
     (!isCreateMode || !createSubmitBlocked) &&
     // Crash-loop guard, create AND edit: an empty allowlist would crash
     // every instance minted from this definition at startup.
     personaBehaviorDraftValid(behaviorDraft) &&
-    // Credential env keys and normalized fields block explicit changes.
-    effectiveLocalModeSatisfied &&
+    // D1: localModeSatisfied covers both missingNormalizedFields AND
+    // missingEnvKeys — credential env keys now block submit, not just display.
+    localModeSatisfied &&
     customAiPairSatisfied &&
     !isAvatarUploadPending;
 
@@ -798,8 +816,6 @@ export function AgentDefinitionDialog({
           </div>
         </div>
 
-        {isCreateMode ? createRunSection : null}
-
         {modelFieldVisible ? (
           <AgentAiConfigurationModeField
             mode={aiConfigurationMode}
@@ -812,8 +828,7 @@ export function AgentDefinitionDialog({
           className="space-y-5"
           data-testid={`agent-${aiConfigurationMode}-configuration-section`}
         >
-          {!remoteProviderOwnsExecutionProfile &&
-          aiConfigurationMode === "custom" ? (
+          {aiConfigurationMode === "custom" ? (
             <AgentHarnessField
               disabled={isPending || runtimesLoading}
               onValueChange={handleRuntimeDropdownChange}
@@ -908,8 +923,7 @@ export function AgentDefinitionDialog({
             ) : null}
           </AnimatePresence>
 
-          {!remoteProviderOwnsExecutionProfile &&
-          aiConfigurationMode === "defaults" ? (
+          {aiConfigurationMode === "defaults" ? (
             <AgentCreateAiDefaultsSummary
               canChooseProvider={runtimeCanChooseLlmProvider}
               harness={runtimeSummaryLabel}
@@ -973,7 +987,7 @@ export function AgentDefinitionDialog({
                 transition={advancedFieldsTransition}
               >
                 <PersonaAdvancedFields
-                  afterRespondTo={undefined}
+                  afterRespondTo={isCreateMode ? createRunSection : undefined}
                   behaviorDraft={behaviorDraft}
                   disabled={isPending}
                   envVars={envVars}

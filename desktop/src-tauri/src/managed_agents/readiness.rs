@@ -2,7 +2,8 @@
 //!
 //! # Overview
 //!
-//! Before spawning a managed agent (or before deciding whether to enter setup-mode nudge), the desktop must know whether the agent has every
+//! Before spawning a managed agent (or before deciding whether to enter
+//! setup-mode nudge), the desktop must know whether the agent has every
 //! piece of configuration it will need to start successfully. This module
 //! provides:
 //!
@@ -1502,7 +1503,6 @@ mod tests {
             runtime_pid: None,
             backend: Default::default(),
             backend_agent_id: None,
-            provider_lifecycle_state: None,
             provider_binary_path: None,
             team_id: None,
             persona_team_dir: None,

@@ -4138,11 +4138,8 @@ mod tests {
     #[test]
     fn nip42_uses_canonical_relay_url_when_edge_alias_is_configured() {
         assert_eq!(
-            resolve_nip42_relay_url(
-                "wss://buzz-preview.kiingo.com",
-                Some(" wss://chat.kiingo.com ")
-            ),
-            "wss://chat.kiingo.com"
+            resolve_nip42_relay_url("wss://preview.relay.example", Some(" wss://relay.example ")),
+            "wss://relay.example"
         );
     }
 
@@ -4162,18 +4159,18 @@ mod tests {
     fn nip98_uses_canonical_http_url_when_edge_alias_is_configured() {
         assert_eq!(
             resolve_nip98_http_base_url(
-                "https://buzz-preview.kiingo.com",
-                Some(" wss://chat.kiingo.com/ ")
+                "https://preview.relay.example",
+                Some(" wss://relay.example/ ")
             ),
-            "https://chat.kiingo.com"
+            "https://relay.example"
         );
     }
 
     #[test]
     fn nip98_falls_back_to_http_dial_url_without_canonical_override() {
         assert_eq!(
-            resolve_nip98_http_base_url("https://buzz-preview.kiingo.com/", None),
-            "https://buzz-preview.kiingo.com"
+            resolve_nip98_http_base_url("https://preview.relay.example/", None),
+            "https://preview.relay.example"
         );
         assert_eq!(
             resolve_nip98_http_base_url("http://localhost:3000", Some("  ")),
@@ -4183,7 +4180,7 @@ mod tests {
 
     #[test]
     fn http_request_dials_private_url_with_canonical_host() {
-        let authority = canonical_relay_authority("wss://chat.kiingo.com")
+        let authority = canonical_relay_authority("wss://relay.example")
             .expect("canonical authority should be valid");
         let request = with_canonical_http_host(
             reqwest::Client::new().post("http://buzz:3000/query"),
@@ -4198,14 +4195,14 @@ mod tests {
                 .headers()
                 .get(reqwest::header::HOST)
                 .and_then(|value| value.to_str().ok()),
-            Some("chat.kiingo.com")
+            Some("relay.example")
         );
     }
 
     #[test]
     fn websocket_request_dials_private_url_with_canonical_host() {
         let request =
-            relay_connect_request("ws://buzz:3000", Some(" wss://chat.kiingo.com/relay/path "))
+            relay_connect_request("ws://buzz:3000", Some(" wss://relay.example/relay/path "))
                 .expect("request should be valid");
 
         assert_eq!(request.uri(), "ws://buzz:3000/");
@@ -4214,7 +4211,7 @@ mod tests {
                 .headers()
                 .get(HOST)
                 .and_then(|value| value.to_str().ok()),
-            Some("chat.kiingo.com")
+            Some("relay.example")
         );
     }
 
@@ -4235,7 +4232,7 @@ mod tests {
 
     #[test]
     fn websocket_request_keeps_non_default_canonical_port() {
-        let request = relay_connect_request("ws://buzz:3000", Some("wss://chat.kiingo.com:8443"))
+        let request = relay_connect_request("ws://relay:3000", Some("wss://relay.example:8443"))
             .expect("request should be valid");
 
         assert_eq!(
@@ -4243,13 +4240,13 @@ mod tests {
                 .headers()
                 .get(HOST)
                 .and_then(|value| value.to_str().ok()),
-            Some("chat.kiingo.com:8443")
+            Some("relay.example:8443")
         );
     }
 
     #[test]
     fn websocket_request_rejects_non_websocket_canonical_url() {
-        let err = relay_connect_request("ws://buzz:3000", Some("https://chat.kiingo.com"))
+        let err = relay_connect_request("ws://relay:3000", Some("https://relay.example"))
             .expect_err("non-WebSocket canonical URL should fail closed");
 
         assert!(matches!(err, RelayError::Http(message) if message.contains("scheme")));
@@ -4257,9 +4254,8 @@ mod tests {
 
     #[test]
     fn websocket_request_rejects_canonical_credentials() {
-        let err =
-            relay_connect_request("ws://buzz:3000", Some("wss://user:secret@chat.kiingo.com"))
-                .expect_err("canonical credentials should fail closed");
+        let err = relay_connect_request("ws://relay:3000", Some("wss://user:secret@relay.example"))
+            .expect_err("canonical credentials should fail closed");
 
         assert!(matches!(err, RelayError::Http(message) if message.contains("credentials")));
     }

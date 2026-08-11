@@ -72,24 +72,11 @@ impl NostrWsConnection {
         keys: &Keys,
         auth_tag: Option<&Tag>,
     ) -> Result<(), WsClientError> {
-        let relay_url = self.relay_url.clone();
-        self.authenticate_for_relay(&relay_url, keys, auth_tag)
-            .await
-    }
-
-    /// Performs NIP-42 authentication while binding the AUTH event to
-    /// `auth_relay_url` instead of the network dial URL.
-    pub async fn authenticate_for_relay(
-        &mut self,
-        auth_relay_url: &str,
-        keys: &Keys,
-        auth_tag: Option<&Tag>,
-    ) -> Result<(), WsClientError> {
         let challenge = self
             .wait_for_auth_challenge(Duration::from_secs(AUTH_CHALLENGE_TIMEOUT_SECS))
             .await?;
 
-        let auth_event = build_auth_event(&challenge, auth_relay_url, keys, auth_tag)?;
+        let auth_event = build_auth_event(&challenge, &self.relay_url, keys, auth_tag)?;
         let event_id = auth_event.id.to_hex();
 
         self.send_raw(&json!(["AUTH", auth_event])).await?;
@@ -294,23 +281,9 @@ pub async fn publish_event(
     auth_tag: Option<&Tag>,
     timeout_secs: u64,
 ) -> Result<OkResponse, WsClientError> {
-    publish_event_with_auth_url(relay_url, relay_url, event, keys, auth_tag, timeout_secs).await
-}
-
-/// One-shot helper that dials `relay_url` while binding NIP-42 authentication
-/// to `auth_relay_url`.
-pub async fn publish_event_with_auth_url(
-    relay_url: &str,
-    auth_relay_url: &str,
-    event: Event,
-    keys: &Keys,
-    auth_tag: Option<&Tag>,
-    timeout_secs: u64,
-) -> Result<OkResponse, WsClientError> {
     let result = tokio::time::timeout(Duration::from_secs(timeout_secs), async {
         let mut conn = NostrWsConnection::connect(relay_url).await?;
-        conn.authenticate_for_relay(auth_relay_url, keys, auth_tag)
-            .await?;
+        conn.authenticate(keys, auth_tag).await?;
         let ok = conn.send_event(event).await?;
         let _ = conn.disconnect().await;
         Ok::<_, WsClientError>(ok)

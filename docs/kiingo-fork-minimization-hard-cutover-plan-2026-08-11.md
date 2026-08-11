@@ -41,7 +41,7 @@ feature flag, duplicate implementation, or undocumented exception.
 
 ## Kiingo-owned provider and Compute boundary
 
-- [ ] Make the signed `buzz-backend-kiingo` provider the sole desktop-side owner of Kiingo connection discovery, harness/model/reasoning catalog, configuration validation, identity envelope creation, provisioning, update, and lifecycle transport.
+- [ ] Make the signed `buzz-backend-kiingo` provider the sole desktop-side owner of Kiingo connection discovery, harness/model/reasoning catalog, configuration validation, identity envelope creation, and initial provisioning; keep subsequent hosted-agent management in the authenticated Kiingo management surface.
 - [ ] Ensure the provider emits a standard provider schema that represents Codex and Claude, automatic and explicit models, compatible reasoning/service-tier choices, and safe connection readiness without requiring Kiingo model logic in Buzz.
 - [ ] Keep connection setup and detailed remediation in the Kiingo onboarding/Harness Connections UI; provider failures must return bounded actionable text without a Kiingo-specific Buzz error parser.
 - [ ] Move or replace the fork-local `kiingo-compute-acp` implementation so its maintained source and release ownership live in the Kiingo monorepo/provider boundary rather than the upstream Buzz workspace.
@@ -55,15 +55,15 @@ feature flag, duplicate implementation, or undocumented exception.
 - [ ] Rebase the native hosted-agent experience on stock upstream provider discovery and provider-backed agent creation.
 - [ ] Reduce provider schema rendering changes to a compact generic JSON-schema control extension for enums, booleans, numbers, labels, and bounded conditional options.
 - [ ] Ensure agent name and system instructions remain normal Buzz fields and reach the provider through the standard deploy payload.
-- [ ] Implement generic provider-backed edit application by invoking the provider's idempotent deploy/update contract without provider-specific branching.
-- [ ] Implement optional live provider lifecycle operations (`status`, `pause`, `resume`, `delete`, `reconcile`) behind advertised generic capabilities without spreading lifecycle cache fields through unrelated persisted models.
+- [ ] Keep the stock provider deploy contract idempotent for safe create/retry while applying subsequent hosted-agent edits through the designated authenticated Kiingo management surface, without provider-specific branches in Buzz.
+- [ ] Implement live hosted-agent lifecycle operations (`status`, `pause`, `resume`, `delete`, `reconcile`) in the designated authenticated Kiingo management surface without spreading lifecycle cache fields through unrelated Buzz persisted models.
 - [ ] Make provider delete complete remotely before local identity-management state is removed; a failure must remain visible and retryable rather than orphaning a hosted identity.
 - [ ] Retain generic immutable provider staging and runtime signer verification with a build-time trust policy, or remove the patch only if current upstream supplies equivalent enforcement.
 - [ ] Keep protocol v1 behavior unchanged for existing providers while making unsupported optional capabilities fail clearly; do not preserve a Kiingo-only compatibility branch.
 - [ ] Remove native Kiingo connection cards, URLs, labels, model lists, and special-case provider IDs from Buzz source.
 - [ ] Remove downstream lifecycle fields and plumbing from managed-agent snapshots, persona/team import/export, access policy, runtime summaries, and unrelated tests unless a provider-neutral authoritative need is demonstrated.
 - [ ] Keep the retained desktop integration in dedicated added modules with the smallest stable hooks into upstream-owned files.
-- [ ] Add focused provider contract and UI tests covering create, edit, instructions, model/reasoning schema, status, pause/resume, safe delete, provider absence, v1 compatibility, signature failure, and actionable errors.
+- [ ] Add focused provider-contract, generic schema-UI, and designated management-UI tests covering create, edit, instructions, model/reasoning schema, status, pause/resume, safe delete, provider absence, v1 compatibility, signature failure, and actionable errors.
 
 ## Relay, storage, and Azure ownership boundary
 

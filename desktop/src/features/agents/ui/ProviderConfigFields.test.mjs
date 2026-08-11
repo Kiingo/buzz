@@ -3,8 +3,8 @@ import { describe, it } from "node:test";
 
 import {
   coerceConfigValues,
-  providerFieldOptions,
-  providerFieldVisible,
+  providerConfigFieldVisible,
+  providerConfigOptions,
 } from "./ProviderConfigFields.tsx";
 
 const schema = {
@@ -34,50 +34,91 @@ describe("coerceConfigValues", () => {
   });
 });
 
-describe("dependent provider fields", () => {
-  it("supports automatic-model options and hides unsupported controls", () => {
-    const property = {
-      "x-hide-when-no-options": true,
-      "x-options-by-field": {
-        field: "model_selector",
-        options: {
-          "": [{ value: "auto", label: "Automatic" }],
-          fast: [],
-        },
-      },
-    };
-    assert.deepEqual(providerFieldOptions(property, { model_selector: "" }), [
-      { value: "auto", label: "Automatic" },
+describe("providerConfigOptions", () => {
+  it("renders simple enum values without provider-specific logic", () => {
+    assert.deepEqual(providerConfigOptions({ enum: ["codex", "claude"] }), [
+      { label: "codex", value: "codex" },
+      { label: "claude", value: "claude" },
     ]);
-    assert.equal(
-      providerFieldVisible(property, { model_selector: "fast" }),
-      false,
+  });
+
+  it("uses oneOf titles as bounded option labels", () => {
+    assert.deepEqual(
+      providerConfigOptions({
+        oneOf: [
+          { const: "auto", title: "Automatic" },
+          { const: "opus", title: "Claude Opus" },
+        ],
+      }),
+      [
+        { label: "Automatic", value: "auto" },
+        { label: "Claude Opus", value: "opus" },
+      ],
     );
   });
 
-  it("resolves options from more than one provider-owned dependency", () => {
-    const property = {
-      "x-options-by-fields": {
-        fields: ["harness", "model_selector"],
-        options: {
-          "codex|": [{ value: "fast", label: "Fast" }],
-          "claude-code|": [],
+  it("provides a bounded boolean choice", () => {
+    assert.deepEqual(providerConfigOptions({ type: "boolean" }), [
+      { label: "Yes", value: "true" },
+      { label: "No", value: "false" },
+    ]);
+  });
+
+  it("uses provider-owned labels for enum values", () => {
+    assert.deepEqual(
+      providerConfigOptions({
+        enum: ["codex", "claude-code"],
+        "x-enum-labels": {
+          codex: "Codex CLI",
+          "claude-code": "Claude Code",
         },
+      }),
+      [
+        { label: "Codex CLI", value: "codex" },
+        { label: "Claude Code", value: "claude-code" },
+      ],
+    );
+  });
+
+  it("resolves and filters dependent provider-owned options", () => {
+    const property = {
+      "x-options-by-field": {
+        field: "harness",
+        options: {
+          codex: [
+            { value: "gpt", label: "GPT", selector_kind: "version" },
+            { value: "stable", label: "Stable", selector_kind: "track" },
+          ],
+        },
+      },
+      "x-option-filter": {
+        field: "model_mode",
+        option_property: "selector_kind",
       },
     };
     assert.deepEqual(
-      providerFieldOptions(property, {
+      providerConfigOptions(property, {
         harness: "codex",
-        model_selector: "",
+        model_mode: "track",
       }),
-      [{ value: "fast", label: "Fast" }],
+      [{ value: "stable", label: "Stable", selector_kind: "track" }],
     );
-    assert.deepEqual(
-      providerFieldOptions(property, {
+  });
+
+  it("hides fields when their bounded option set is empty", () => {
+    const property = {
+      "x-hide-when-no-options": true,
+      "x-options-by-fields": {
+        fields: ["harness", "model_selector"],
+        options: { "codex|": [{ value: "auto", label: "Automatic" }] },
+      },
+    };
+    assert.equal(
+      providerConfigFieldVisible(property, {
         harness: "claude-code",
         model_selector: "",
       }),
-      [],
+      false,
     );
   });
 });

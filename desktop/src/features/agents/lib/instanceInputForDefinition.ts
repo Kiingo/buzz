@@ -86,8 +86,6 @@ export type BackendIntent = {
   type: "provider";
   id: string;
   config: Record<string, unknown>;
-  name?: string;
-  summary?: { label: string; value: string }[];
 };
 
 /**
@@ -111,7 +109,7 @@ export type BackendIntent = {
  */
 export async function buildInstanceInputForDefinition(
   persona: AgentPersona,
-  runtime: AcpRuntime | null,
+  runtime: AcpRuntime,
   upload?: UploadMediaBytes,
   backendIntent?: BackendIntent,
 ): Promise<CreateManagedAgentInput> {
@@ -137,14 +135,8 @@ export async function buildInstanceInputForDefinition(
         type: "provider",
         id: backendIntent.id,
         config: backendIntent.config,
-        ...(backendIntent.name ? { name: backendIntent.name } : {}),
-        ...(backendIntent.summary ? { summary: backendIntent.summary } : {}),
       },
     };
-  }
-
-  if (!runtime) {
-    throw new Error("No available runtime found for this agent.");
   }
 
   return {

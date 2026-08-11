@@ -9,7 +9,6 @@ use crate::{
     models::IdentityInfo,
     nostr_bind,
     relay::{self, relay_api_base_url_with_override, relay_ws_url_with_override},
-    relay_auth::nip42_auth_relay_url,
 };
 
 /// Encode `pubkey` as npub bech32 and truncate it for display: first 10 chars
@@ -59,14 +58,6 @@ pub fn get_default_relay_url() -> String {
 #[tauri::command]
 pub fn auto_connect_default_relay_enabled() -> bool {
     option_env!("BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY").is_some()
-}
-
-#[tauri::command]
-pub fn get_codex_enrollment_url() -> Option<String> {
-    option_env!("BUZZ_DESKTOP_BUILD_CODEX_ENROLLMENT_URL")
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -654,11 +645,10 @@ pub async fn create_auth_event(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let keys = state.signing_keys()?;
-    let auth_relay_url = nip42_auth_relay_url(&relay_url);
 
     tauri::async_runtime::spawn_blocking(move || {
         let tags = vec![
-            Tag::parse(vec!["relay", &auth_relay_url])
+            Tag::parse(vec!["relay", &relay_url])
                 .map_err(|error| format!("relay tag failed: {error}"))?,
             Tag::parse(vec!["challenge", &challenge])
                 .map_err(|error| format!("challenge tag failed: {error}"))?,

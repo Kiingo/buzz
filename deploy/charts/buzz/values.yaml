@@ -25,7 +25,6 @@ quickstart: false
 image:
   repository: ghcr.io/block/buzz
   tag: ""                        # empty → .Chart.AppVersion
-  digest: ""                     # sha256:... overrides tag for immutable production deploys
   pullPolicy: IfNotPresent
   pullSecrets: []
 
@@ -118,8 +117,6 @@ relay:
   drainJitterMs: 0
   requireAuthToken: true
   requireRelayMembership: true
-  # Keep private media reads behind signed relay authentication by default.
-  requireMediaGetAuth: true
   allowNipOaAuth: true
   pubkeyAllowlist: false
   corsOrigins: []
@@ -342,16 +339,6 @@ externalRedis:
 # (default 300 s BUZZ_USAGE_METRICS_INTERVAL_SECS), not at sweep-interval
 # cadence — so a permanently missing s3:ListBucket yields one cheap LIST call
 # per tick until the permission is added.
-objectStorage:
-  # `s3` preserves the existing S3/MinIO behavior. `azure` uses AKS
-  # workload identity and separate containers for media and Git/CAS data.
-  backend: s3
-  azure:
-    account: ""
-    workloadIdentityClientId: ""
-    mediaContainer: "buzz-media"
-    gitContainer: "buzz-git"
-
 s3:
   endpoint: ""
   bucket: "buzz-media"

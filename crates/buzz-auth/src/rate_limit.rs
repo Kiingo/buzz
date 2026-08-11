@@ -60,7 +60,7 @@ pub enum LimitType {
     Messages,
     /// HTTP REST API calls.
     ApiCalls,
-    /// WebSocket query operations (`REQ` and `COUNT`).
+    /// All WebSocket events (broader than `Messages`).
     WsEvents,
     /// Concurrent WebSocket connections from a single IP address.
     IpConnections,
@@ -90,7 +90,7 @@ pub struct RateLimitConfig {
     /// Maximum HTTP API calls per minute for human users. Default: 300.
     #[serde(default = "default_human_api")]
     pub human_api_calls_per_min: u64,
-    /// Maximum WebSocket query operations per second for human users. Default: 10.
+    /// Maximum WebSocket events per second for human users. Default: 10.
     #[serde(default = "default_human_ws")]
     pub human_ws_events_per_sec: u64,
     /// Maximum messages per minute for standard-tier agent tokens. Default: 120.

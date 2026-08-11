@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "upstreamRepository": "https://github.com/block/buzz.git",
+  "upstreamReference": "upstream/main",
+  "budgets": {
+    "modifiedUpstreamProductionSourceFiles": 15,
+    "modifiedUpstreamFiles": 25,
+    "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
+  },
+  "baseline": {
+    "kiingoMain": "501a3a887c95a3eed4e83c339471c0baa5db33eb",
+    "upstreamMain": "be48ce98bd163899197b79a82ad5b2bcf0bc9b54",
+    "changedFiles": 171,
+    "addedFiles": 41,
+    "modifiedFiles": 130,
+    "insertions": 12882,
+    "deletions": 1312,
+    "recentUpstreamOverlapFiles": 100
+  },
+  "deltas": [
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz runtime maintainers",
+      "purpose": "Provider-neutral ACP durability, bounded queueing, relay recovery, and local publication transport.",
+      "upstreamStatus": "composition-boundary; split into independently upstreamable fixes",
+      "removalCondition": "Remove each patch when block/buzz ships equivalent behavior.",
+      "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "Dockerfile",
+        "crates/buzz-acp/README.md",
+        "crates/buzz-acp/src/acp.rs",
+        "crates/buzz-acp/src/lib.rs",
+        "crates/buzz-acp/src/local_publication.rs",
+        "crates/buzz-acp/src/pool.rs",
+        "crates/buzz-acp/src/queue.rs",
+        "crates/buzz-acp/src/relay.rs",
+        "crates/buzz-sdk/src/builders.rs"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz storage maintainers",
+      "purpose": "Backend-neutral Azure Blob implementation, minimal media/relay storage integration, and scanner-safe reconstruction of a nonfunctional database fixture.",
+      "upstreamStatus": "composition-boundary; candidate for upstream storage adapter contribution",
+      "removalCondition": "Remove when block/buzz exposes and ships an equivalent Azure Blob adapter contract.",
+      "paths": [
+        "crates/buzz-db/src/lib.rs",
+        "crates/buzz-azure-storage/Cargo.toml",
+        "crates/buzz-azure-storage/README.md",
+        "crates/buzz-azure-storage/src/lib.rs",
+        "crates/buzz-azure-storage/tests/azurite_conformance.rs",
+        "crates/buzz-media/Cargo.toml",
+        "crates/buzz-media/src/error.rs",
+        "crates/buzz-media/src/storage.rs",
+        "crates/buzz-relay/Cargo.toml",
+        "crates/buzz-relay/src/api/git/store.rs",
+        "crates/buzz-relay/src/main.rs",
+        "crates/buzz-relay/src/state.rs"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "purpose": "Provider-owned JSON-schema presentation, user-scoped provider discovery, immutable staging, and optional build-pinned Windows signer enforcement.",
+      "upstreamStatus": "candidate for upstream provider UI contribution",
+      "removalCondition": "Remove when block/buzz supports the same provider-neutral schema keywords.",
+      "paths": [
+        "desktop/src-tauri/Cargo.lock",
+        "desktop/src-tauri/src/managed_agents/backend.rs",
+        "desktop/src/features/agents/ui/ProviderConfigFields.test.mjs",
+        "desktop/src/features/agents/ui/ProviderConfigFields.tsx"
+      ]
+    },
+    {
+      "classification": "move-to-kiingo",
+      "owner": "Kiingo platform engineering",
+      "purpose": "Fork inventory, replay/footprint policy, maintenance runbook, and implementation evidence.",
+      "upstreamStatus": "permanent downstream composition metadata",
+      "removalCondition": "Remove only if Kiingo stops distributing a Buzz composition.",
+      "paths": [
+        ".github/workflows/ci.yml",
+        "docs/kiingo-fork-inventory.json",
+        "docs/kiingo-fork-maintenance.md",
+        "docs/kiingo-fork-minimization-hard-cutover-plan-2026-08-11.md",
+        "scripts/check-kiingo-fork-boundary.mjs"
+      ]
+    }
+  ]
+}

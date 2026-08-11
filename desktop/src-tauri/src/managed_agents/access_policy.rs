@@ -155,8 +155,6 @@ mod tests {
                 BackendKind::Provider {
                     id: "p".into(),
                     config: serde_json::json!({}),
-                    name: None,
-                    summary: Vec::new(),
                 },
             ),
         ] {

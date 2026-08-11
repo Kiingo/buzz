@@ -15,9 +15,6 @@ use crate::{
 };
 
 use super::{pending, retain_persona_pending, trim_optional, trim_required};
-use crate::commands::agent_provider_update::{
-    apply_definition_prompt_revisions, deploy_definition_prompt_updates,
-};
 
 #[cfg(test)]
 mod name_propagation_tests;
@@ -88,9 +85,9 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
     use tauri::Manager;
 
     // Phase 1: synchronous save (persona record + linked agent avatar updates)
-    let phase_one = tokio::task::spawn_blocking({
+    let (result, retained, profile_sync_params) = tokio::task::spawn_blocking({
         let app = app.clone();
-        move || -> Result<(AgentDefinition, R, ProfileSyncParams, Vec<String>), String> {
+        move || -> Result<(AgentDefinition, R, ProfileSyncParams), String> {
             let state = app.state::<AppState>();
             let display_name = trim_required(&input.display_name, "Display name")?;
             let system_prompt = input.system_prompt.clone();
@@ -113,9 +110,7 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
             // Track what changed so we can propagate to linked agent records.
             let avatar_changed = persona.avatar_url != avatar_url;
             let name_changed = persona.display_name != display_name;
-            let system_prompt_changed = persona.system_prompt.trim() != system_prompt.trim();
             let old_display_name = persona.display_name.clone();
-            let old_system_prompt = persona.system_prompt.clone();
 
             persona.display_name = display_name;
             persona.avatar_url = avatar_url;
@@ -144,22 +139,10 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
 
             // If the avatar or display_name changed, propagate to linked agent
             // records and collect relay profile sync params for the async phase.
-            let mut provider_prompt_pubkeys = Vec::new();
-            let sync_params: ProfileSyncParams = if avatar_changed
-                || name_changed
-                || system_prompt_changed
-            {
+            let sync_params: ProfileSyncParams = if avatar_changed || name_changed {
                 let mut records = load_managed_agents(&app)?;
                 let mut params: ProfileSyncParams = Vec::new();
-                if system_prompt_changed {
-                    provider_prompt_pubkeys = apply_definition_prompt_revisions(
-                        &mut records,
-                        &result.id,
-                        &old_system_prompt,
-                        &result.system_prompt,
-                    )?;
-                }
-                let mut agents_modified = !provider_prompt_pubkeys.is_empty();
+                let mut agents_modified = false;
                 let workspace_relay = crate::relay::relay_ws_url_with_override(&state);
 
                 // Propagate the display_name rename to instances that still
@@ -237,12 +220,11 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
                 Vec::new()
             };
 
-            Ok((result, retained, sync_params, provider_prompt_pubkeys))
+            Ok((result, retained, sync_params))
         }
-    });
-    let (result, retained, profile_sync_params, provider_prompt_pubkeys) = phase_one
-        .await
-        .map_err(|e| format!("spawn_blocking failed: {e}"))??;
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))??;
 
     // Phase 2: await relay profile sync for linked agents whose avatar or
     // display_name was just updated. We await (rather than fire-and-forget)
@@ -264,11 +246,6 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
                 eprintln!("buzz-desktop: relay profile sync failed after persona update: {e}");
             }
         }
-    }
-
-    if !provider_prompt_pubkeys.is_empty() {
-        let state = app.state::<AppState>();
-        deploy_definition_prompt_updates(&app, &state, provider_prompt_pubkeys).await?;
     }
 
     Ok((result, retained))

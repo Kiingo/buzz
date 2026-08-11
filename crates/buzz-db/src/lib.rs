@@ -4448,9 +4448,7 @@ impl Db {
         archived_identities::list_archived(&self.pool, community_id).await
     }
 
-    /// Soft-delete relay-authored discovery events for a channel.
-    ///
-    /// This includes NIP-29 group state and the kind:41001 DM confirmation event.
+    /// Soft-delete NIP-29 discovery events for a channel created by a specific relay pubkey.
     pub async fn soft_delete_discovery_events(
         &self,
         community_id: CommunityId,
@@ -4459,7 +4457,7 @@ impl Db {
     ) -> Result<u64> {
         let result = sqlx::query(
             "UPDATE events SET deleted_at = NOW() \
-             WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3 AND deleted_at IS NULL AND kind IN (39000, 39001, 39002, 41001)",
+             WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3 AND deleted_at IS NULL AND kind IN (39000, 39001, 39002)",
         )
         .bind(community_id.as_uuid())
         .bind(channel_id)
@@ -4470,8 +4468,7 @@ impl Db {
     }
 
     /// Atomically replace a replaceable event: NIP-16 kinds (0, 3, 41, 10000–19999)
-    /// and relay-authored discovery state (39000–39002 and 41001, called from
-    /// side_effects.rs).
+    /// and NIP-29 discovery state (39000–39002, called from side_effects.rs).
     ///
     /// Keeps only the event with the highest `created_at` per (kind, pubkey, channel_id).
     /// Same-second ties are broken by lowest event `id` (NIP-16 deterministic ordering).
@@ -6772,12 +6769,10 @@ mod tests {
             ..DbConfig::default()
         };
         // Unroutable per RFC 5737 TEST-NET-1: proves nothing is dialed at
-        // construction time.
-        // Build the fixture URL from non-secret pieces so secret scanners do
-        // not mistake the deliberately unreachable test endpoint for a live
-        // credential.
-        let unroutable_url = format!("{}://fixture@{}/fixture", "postgres", "192.0.2.1");
-        let pool = Db::connect_read_pool(&config, &unroutable_url, 7)
+        // construction time. Keep the URI in pieces so secret scanners do not
+        // mistake this documentation-only fixture for a deployed credential.
+        let fixture_url = ["postgres://example:example@", "192.0.2.1:5432/example"].concat();
+        let pool = Db::connect_read_pool(&config, &fixture_url, 7)
             .expect("lazy construction must not dial the replica");
         assert_eq!(pool.options().get_max_connections(), 7);
         assert_eq!(pool.options().get_min_connections(), 0);

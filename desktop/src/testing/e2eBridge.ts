@@ -848,7 +848,7 @@ type RawManagedAgent = {
   model: string | null;
   provider?: string | null;
   env_vars?: Record<string, string>;
-  status: "running" | "stopped" | "deployed" | "paused" | "not_deployed";
+  status: "running" | "stopped" | "deployed" | "not_deployed";
   pid: number | null;
   created_at: string;
   updated_at: string;
@@ -11796,8 +11796,6 @@ export function maybeInstallE2eTauriMocks() {
         return getRelayWsUrl(activeConfig);
       case "auto_connect_default_relay_enabled":
         return activeConfig?.autoConnectDefaultRelay ?? false;
-      case "get_codex_enrollment_url":
-        return null;
       case "get_legacy_workspace_storage":
         return {
           workspaces: null,
