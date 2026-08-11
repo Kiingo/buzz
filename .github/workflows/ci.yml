@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
@@ -90,6 +90,12 @@ jobs:
         run: scripts/test-mobile-worktree-overrides.sh
       - name: File size ratchet unit tests
         run: node --test scripts/check-file-sizes-core.test.mjs
+      - name: Kiingo fork replay and footprint boundary
+        if: github.repository == 'Kiingo/buzz'
+        run: |
+          git remote add upstream https://github.com/block/buzz.git 2>/dev/null || true
+          git fetch --no-tags upstream main
+          node scripts/check-kiingo-fork-boundary.mjs
 
   rust-lint:
     name: Rust Lint
@@ -145,7 +151,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
       - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -188,8 +194,15 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-
       - name: Install desktop dependencies
         run: just desktop-install-ci
+      - name: Fetch the upstream file-size baseline
+        if: github.repository == 'Kiingo/buzz'
+        run: |
+          git remote add upstream https://github.com/block/buzz.git 2>/dev/null || true
+          git fetch --no-tags upstream main
       - name: Desktop lint and format
         run: just desktop-check
+        env:
+          CHECK_FILE_SIZES_BASE: ${{ github.repository == 'Kiingo/buzz' && 'upstream/main' || '' }}
       - name: Desktop unit tests
         run: just desktop-test
       - name: Desktop build
@@ -1108,11 +1121,16 @@ jobs:
       - name: Build mesh llama native libraries
         if: steps.llama_cache.outputs.cache-hit != 'true'
         env:
-          MESH_REV: ${{ steps.mesh_rev.outputs.rev }}
+          MESH_REV_SHORT: ${{ steps.mesh_rev.outputs.short }}
         run: |
           set -euo pipefail
           cargo fetch --manifest-path desktop/src-tauri/Cargo.toml
-          MESH_ROOT="$(bash scripts/resolve-mesh-llm-checkout.sh "$MESH_REV")"
+          SHORT="$MESH_REV_SHORT"
+          MESH_ROOT=$(find "${CARGO_HOME:-$HOME/.cargo}/git/checkouts" -path "*/$SHORT" -type d -name "$SHORT" | head -1)
+          if [[ -z "$MESH_ROOT" ]]; then
+            echo "::error::mesh-llm checkout for $SHORT not found after cargo fetch"
+            exit 1
+          fi
           export LLAMA_STAGE_BACKEND=metal
           export LLAMA_STAGE_BUILD_DIR="$GITHUB_WORKSPACE/.cache/mesh-llama/build-stage-abi-metal"
           export CMAKE_OSX_DEPLOYMENT_TARGET=10.15

@@ -1,8 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, process::Child};
 
-mod provider;
-pub use provider::*;
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BackendKind {
+    #[default]
+    Local,
+    Provider {
+        id: String,
+        config: serde_json::Value,
+    },
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDefinition {
@@ -117,7 +125,6 @@ impl AgentDefinition {
             runtime_pid: None,
             backend: BackendKind::default(),
             backend_agent_id: None,
-            provider_lifecycle_state: None,
             provider_binary_path: None,
             team_id: None,
             persona_team_dir: None,
@@ -201,7 +208,6 @@ pub struct RelayAgentInfo {
     #[serde(default)]
     pub respond_to_allowlist: Vec<String>,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ManagedAgentRecord {
     pub pubkey: String,
@@ -314,8 +320,6 @@ pub struct ManagedAgentRecord {
     pub backend: BackendKind,
     #[serde(default)]
     pub backend_agent_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_lifecycle_state: Option<ProviderLifecycleState>,
     #[serde(default)]
     pub provider_binary_path: Option<String>,
     /// Installed team directory path (absolute). Set when agent was created from a team persona.
@@ -548,7 +552,6 @@ pub struct ManagedAgentSummary {
     pub env_vars: BTreeMap<String, String>,
     pub backend: BackendKind,
     pub backend_agent_id: Option<String>,
-    pub provider_lifecycle_state: Option<ProviderLifecycleState>,
     pub status: String,
     pub pid: Option<u32>,
     pub created_at: String,

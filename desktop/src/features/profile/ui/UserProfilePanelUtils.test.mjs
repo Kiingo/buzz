@@ -7,7 +7,6 @@ import {
   personaManagedAgentUpdate,
   profilePanelTabFromSearch,
   profilePanelViewFromSearch,
-  resolveProfileEditTarget,
 } from "./UserProfilePanelUtils.ts";
 
 function agent(overrides = {}) {
@@ -91,23 +90,6 @@ test("personaManagedAgentUpdate syncs edited persona identity to linked agent", 
     model: "new-model",
     envVars: { NEW_KEY: "2" },
   });
-});
-
-test("profile Edit targets hosted instances without changing local persona edits", () => {
-  const hostedAgent = agent({
-    backend: { type: "provider", id: "example", config: {} },
-  });
-  const localAgent = agent();
-  const linkedPersona = persona();
-
-  assert.equal(
-    resolveProfileEditTarget(hostedAgent, linkedPersona),
-    "instance",
-  );
-  assert.equal(resolveProfileEditTarget(localAgent, linkedPersona), "persona");
-  assert.equal(resolveProfileEditTarget(localAgent, undefined), "instance");
-  assert.equal(resolveProfileEditTarget(undefined, linkedPersona), "persona");
-  assert.equal(resolveProfileEditTarget(undefined, undefined), null);
 });
 
 test("personaManagedAgentUpdate skips unrelated or unchanged agents", () => {

@@ -538,9 +538,7 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
             let permit = match state.handler_semaphore.clone().try_acquire_owned() {
                 Ok(p) => p,
                 Err(_) => {
-                    let event_id = event.id.to_hex();
-                    conn.send(admission_rejection_message(
-                        AdmissionRejectionTarget::Event(&event_id),
+                    conn.send(RelayMessage::notice(
                         "rate-limited: too many concurrent requests",
                     ));
                     return;
@@ -568,8 +566,8 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
             let permit = match state.handler_semaphore.clone().try_acquire_owned() {
                 Ok(p) => p,
                 Err(_) => {
-                    conn.send(admission_rejection_message(
-                        AdmissionRejectionTarget::Subscription(&sub_id),
+                    conn.send(request_rejection_message(
+                        Some(&sub_id),
                         "rate-limited: too many concurrent requests",
                     ));
                     return;
@@ -590,8 +588,7 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
             let permit = match state.handler_semaphore.clone().try_acquire_owned() {
                 Ok(p) => p,
                 Err(_) => {
-                    conn.send(admission_rejection_message(
-                        AdmissionRejectionTarget::Subscription(&sub_id),
+                    conn.send(RelayMessage::notice(
                         "rate-limited: too many concurrent requests",
                     ));
                     return;
@@ -612,16 +609,10 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum AdmissionRejectionTarget<'a> {
-    Event(&'a str),
-    Subscription(&'a str),
-}
-
-fn admission_rejection_message(target: AdmissionRejectionTarget<'_>, reason: &str) -> String {
-    match target {
-        AdmissionRejectionTarget::Event(event_id) => RelayMessage::ok(event_id, false, reason),
-        AdmissionRejectionTarget::Subscription(sub_id) => RelayMessage::closed(sub_id, reason),
+fn request_rejection_message(sub_id: Option<&str>, reason: &str) -> String {
+    match sub_id {
+        Some(sub_id) => RelayMessage::closed(sub_id, reason),
+        None => RelayMessage::notice(reason),
     }
 }
 
@@ -631,13 +622,7 @@ async fn enforce_ws_admission(
     state: &AppState,
 ) -> bool {
     let is_event = matches!(msg, ClientMessage::Event(_));
-    let query_sub_id = match msg {
-        ClientMessage::Req { sub_id, .. } | ClientMessage::Count { sub_id, .. } => {
-            Some(sub_id.as_str())
-        }
-        _ => None,
-    };
-    if !is_event && query_sub_id.is_none() {
+    if !is_event && !matches!(msg, ClientMessage::Req { .. } | ClientMessage::Count { .. }) {
         return true;
     }
 
@@ -650,26 +635,26 @@ async fn enforce_ws_admission(
     };
 
     let limits = &state.auth.config().rate_limits;
-    if let Some(sub_id) = query_sub_id {
-        let (ws_window_secs, ws_limit) =
-            crate::admission::ws_admission_budget(limits.human_ws_events_per_sec);
-        let ws_result = crate::admission::check_principal(
-            state.admission_rate_limiter.as_ref(),
-            &conn.tenant,
-            &pubkey,
-            LimitType::WsEvents,
-            ws_window_secs,
-            ws_limit,
-        )
-        .await;
-        if !send_admission_result(
-            conn,
-            ws_result,
-            AdmissionRejectionTarget::Subscription(sub_id),
-        ) {
-            return false;
-        }
-    } else if let ClientMessage::Event(event) = msg {
+    let (ws_window_secs, ws_limit) =
+        crate::admission::ws_admission_budget(limits.human_ws_events_per_sec);
+    let ws_result = crate::admission::check_principal(
+        state.admission_rate_limiter.as_ref(),
+        &conn.tenant,
+        &pubkey,
+        LimitType::WsEvents,
+        ws_window_secs,
+        ws_limit,
+    )
+    .await;
+    let sub_id = match msg {
+        ClientMessage::Req { sub_id, .. } => Some(sub_id.as_str()),
+        _ => None,
+    };
+    if !send_admission_result(conn, ws_result, sub_id) {
+        return false;
+    }
+
+    if is_event {
         let message_limit = if is_agent {
             limits.agent_standard_messages_per_min
         } else {
@@ -684,12 +669,7 @@ async fn enforce_ws_admission(
             message_limit,
         )
         .await;
-        let event_id = event.id.to_hex();
-        if !send_admission_result(
-            conn,
-            message_result,
-            AdmissionRejectionTarget::Event(&event_id),
-        ) {
+        if !send_admission_result(conn, message_result, None) {
             return false;
         }
     }
@@ -700,22 +680,22 @@ async fn enforce_ws_admission(
 fn send_admission_result(
     conn: &ConnectionState,
     result: Result<(), crate::admission::AdmissionError>,
-    target: AdmissionRejectionTarget<'_>,
+    sub_id: Option<&str>,
 ) -> bool {
     match result {
         Ok(()) => true,
         Err(crate::admission::AdmissionError::Exceeded { reset_in_secs }) => {
             metrics::counter!("buzz_admission_rejections_total", "transport" => "websocket", "reason" => "quota").increment(1);
-            conn.send(admission_rejection_message(
-                target,
+            conn.send(request_rejection_message(
+                sub_id,
                 &format!("rate-limited: quota exceeded; retry in {reset_in_secs}s"),
             ));
             false
         }
         Err(crate::admission::AdmissionError::Unavailable) => {
             metrics::counter!("buzz_admission_rejections_total", "transport" => "websocket", "reason" => "unavailable").increment(1);
-            conn.send(admission_rejection_message(
-                target,
+            conn.send(request_rejection_message(
+                sub_id,
                 "rate-limited: shared admission unavailable",
             ));
             false
@@ -818,24 +798,16 @@ mod tests {
     }
 
     #[test]
-    fn admission_rejections_are_operation_scoped() {
+    fn req_rejections_are_subscription_scoped() {
         let reason = "rate-limited: too many concurrent requests";
-        let closed: serde_json::Value = serde_json::from_str(&admission_rejection_message(
-            AdmissionRejectionTarget::Subscription("history-123"),
-            reason,
-        ))
-        .expect("parse CLOSED");
+        let closed: serde_json::Value =
+            serde_json::from_str(&request_rejection_message(Some("history-123"), reason))
+                .expect("parse CLOSED");
         assert_eq!(closed, serde_json::json!(["CLOSED", "history-123", reason]));
 
-        let rejected_event: serde_json::Value = serde_json::from_str(&admission_rejection_message(
-            AdmissionRejectionTarget::Event("event-123"),
-            reason,
-        ))
-        .expect("parse OK rejection");
-        assert_eq!(
-            rejected_event,
-            serde_json::json!(["OK", "event-123", false, reason])
-        );
+        let notice: serde_json::Value =
+            serde_json::from_str(&request_rejection_message(None, reason)).expect("parse NOTICE");
+        assert_eq!(notice, serde_json::json!(["NOTICE", reason]));
     }
 
     #[tokio::test]

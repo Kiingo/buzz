@@ -61,50 +61,7 @@ async fn require_localhost(req: Request<Body>, next: Next) -> Response {
 pub fn git_policy_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/internal/git/policy", post(policy::hook_policy_check))
-        // Keep both guards scoped to the internal route. `Router::layer`
-        // also wraps the sub-router's fallback, so after this router is merged
-        // it would turn unrelated, otherwise-unmatched public paths (including
-        // `/invite/{code}`) into the localhost guard's 403 response before the
-        // outer SPA fallback could handle them.
-        .route_layer(RequestBodyLimitLayer::new(1024 * 1024)) // 1 MB
-        .route_layer(middleware::from_fn(require_localhost))
+        .layer(RequestBodyLimitLayer::new(1024 * 1024)) // 1 MB
+        .layer(middleware::from_fn(require_localhost))
         .with_state(state)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::routing::get;
-    use tower::ServiceExt;
-
-    fn request(path: &str) -> Request<Body> {
-        let mut request = Request::builder()
-            .uri(path)
-            .body(Body::empty())
-            .expect("test request");
-        request
-            .extensions_mut()
-            .insert(ConnectInfo(SocketAddr::from(([203, 0, 113, 10], 41234))));
-        request
-    }
-
-    #[tokio::test]
-    async fn localhost_guard_does_not_intercept_unmatched_public_paths() {
-        let router = Router::new()
-            .route("/internal/git/policy", get(|| async { StatusCode::OK }))
-            .route_layer(middleware::from_fn(require_localhost));
-
-        let public_fallback = router
-            .clone()
-            .oneshot(request("/invite/v2.opaque-code"))
-            .await
-            .expect("route response");
-        assert_eq!(public_fallback.status(), StatusCode::NOT_FOUND);
-
-        let internal_route = router
-            .oneshot(request("/internal/git/policy"))
-            .await
-            .expect("route response");
-        assert_eq!(internal_route.status(), StatusCode::FORBIDDEN);
-    }
 }

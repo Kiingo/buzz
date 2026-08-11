@@ -1,36 +1,25 @@
-import {
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
-  ExternalLink,
-} from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import * as React from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { useBackendProvidersQuery } from "@/features/agents/hooks";
 import { probeBackendProvider } from "@/shared/api/tauri";
 
 import { ProviderConfigFields } from "./ProviderConfigFields";
 import { PersonaDropdownField } from "./PersonaDropdownField";
-import { Button } from "@/shared/ui/button";
 import {
   applyProbeResult,
   emptyWhereToRunDraft,
   type WhereToRunDraft,
 } from "./whereToRunIntent";
-import { RunOnSummarySection } from "./RunOnSummarySection";
 
 /** Optional remote-backend selector. Buzz shared compute is an LLM provider, not a run destination. */
 export function WhereToRunSection({
   draft,
   isPending,
-  lockedRunOn = false,
   onDraftChange,
 }: {
   draft: WhereToRunDraft;
   isPending: boolean;
-  /** Existing remote identities cannot be moved to another execution boundary. */
-  lockedRunOn?: boolean;
   onDraftChange: (next: WhereToRunDraft) => void;
 }) {
   const backendProviders = useBackendProvidersQuery().data ?? [];
@@ -39,14 +28,11 @@ export function WhereToRunSection({
     () => [
       { label: "This computer", value: "local" },
       ...backendProviders.map((provider) => ({
-        label:
-          provider.id === draft.runOn && draft.probedProvider?.name
-            ? draft.probedProvider.name
-            : provider.id,
+        label: provider.id,
         value: provider.id,
       })),
     ],
-    [backendProviders, draft.probedProvider?.name, draft.runOn],
+    [backendProviders],
   );
   const isProviderMode = draft.runOn !== "local";
   const selectedBackendProvider = React.useMemo(
@@ -54,14 +40,6 @@ export function WhereToRunSection({
       backendProviders.find((provider) => provider.id === draft.runOn) ?? null,
     [backendProviders, draft.runOn],
   );
-  const connectionStatus =
-    draft.probedProvider?.capabilities?.connection_status;
-  const connectionFieldValue = connectionStatus
-    ? draft.providerConfig[connectionStatus.field]
-    : undefined;
-  const selectedConnection = connectionFieldValue
-    ? connectionStatus?.states[connectionFieldValue]
-    : undefined;
 
   // Latest-state seam for probe resolution: an Effect Event always sees the
   // draft as it is *now*. Without this, the probe promise closes over the
@@ -90,7 +68,7 @@ export function WhereToRunSection({
     }
     let cancelled = false;
     setProbeError(null);
-    void probeBackendProvider(selectedBinaryPath, draft.runOn)
+    void probeBackendProvider(selectedBinaryPath)
       .then((result) => {
         if (cancelled) return;
         applyProbe(result);
@@ -103,24 +81,7 @@ export function WhereToRunSection({
     return () => {
       cancelled = true;
     };
-  }, [selectedBinaryPath, draft.probedProvider, draft.runOn]);
-
-  // An existing remote identity must remain understandable and editable for
-  // its non-execution fields even when its provider executable was removed or
-  // is temporarily undiscoverable. Preserve the established read-only saved
-  // configuration view instead of hiding the entire Run on section or
-  // pretending the identity can be moved to another provider.
-  if (lockedRunOn && isProviderMode && !selectedBackendProvider) {
-    return (
-      <RunOnSummarySection
-        backend={{
-          type: "provider",
-          id: draft.runOn,
-          config: draft.providerConfig,
-        }}
-      />
-    );
-  }
+  }, [selectedBinaryPath, draft.probedProvider]);
 
   if (backendProviders.length === 0) return null;
 
@@ -131,7 +92,7 @@ export function WhereToRunSection({
           Run on
         </label>
         <PersonaDropdownField
-          disabled={isPending || lockedRunOn}
+          disabled={isPending}
           id="agent-run-on"
           onValueChange={(runOn) =>
             onDraftChange({
@@ -143,81 +104,14 @@ export function WhereToRunSection({
           placeholder="Choose where to run"
           value={draft.runOn}
         />
-        {lockedRunOn ? (
-          <p className="text-xs text-muted-foreground">
-            Execution location is fixed for this identity. You can change its
-            hosted harness and model below.
-          </p>
-        ) : null}
       </div>
 
       {isProviderMode && selectedBackendProvider ? (
         <div className="space-y-4">
-          {draft.probedProvider?.name ? (
-            <div className="rounded-2xl border bg-muted/30 px-4 py-3">
-              <p className="text-sm font-medium">{draft.probedProvider.name}</p>
-              {draft.probedProvider.description ? (
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {draft.probedProvider.description}
-                </p>
-              ) : null}
-              {draft.probedProvider.capabilities?.owns_execution_profile ? (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Harness and model settings come from this provider. No local
-                  coding-agent CLI or adapter is required.
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-          {selectedConnection ? (
-            <div
-              className={
-                selectedConnection.status === "connected"
-                  ? "flex gap-3 rounded-2xl border border-success/30 bg-success/10 px-4 py-3"
-                  : "flex gap-3 rounded-2xl border border-warning/30 bg-warning-bg px-4 py-3"
-              }
-            >
-              {selectedConnection.status === "connected" ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-              ) : (
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-              )}
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <p className="text-sm font-medium">
-                  {selectedConnection.status === "connected"
-                    ? "Connected"
-                    : selectedConnection.status === "action_required"
-                      ? "Action required"
-                      : "Unavailable"}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {selectedConnection.message}
-                </p>
-                {selectedConnection.remediation_url ? (
-                  <Button
-                    className="h-8 px-2"
-                    onClick={() =>
-                      void openUrl(selectedConnection.remediation_url as string)
-                    }
-                    type="button"
-                    variant="outline"
-                  >
-                    Open connection settings
-                    <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          {draft.probedProvider?.capabilities?.connection_scope_message ? (
-            <p className="text-xs text-muted-foreground">
-              {draft.probedProvider.capabilities.connection_scope_message}
-            </p>
-          ) : null}
           <div className="flex gap-3 rounded-2xl border border-warning/30 bg-warning-bg px-4 py-3">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <p className="text-sm text-warning">
-              {draft.probedProvider?.name ?? "This provider"} at{" "}
+              This provider at{" "}
               <span className="font-mono font-medium">
                 {selectedBackendProvider.binaryPath}
               </span>{" "}

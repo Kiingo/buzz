@@ -52,18 +52,8 @@ export function ManagedAgentRow({
   onSelectLogAgent: (pubkey: string | null) => void;
 }) {
   const isLocal = agent.backend.type === "local";
-  const providerHarness =
-    agent.backend.type === "provider"
-      ? agent.backend.summary?.find(
-          (item) => item.label.trim().toLowerCase() === "harness",
-        )?.value
-      : null;
   const runtimeSource =
-    agent.backend.type === "provider"
-      ? [agent.backend.name ?? agent.backend.id, providerHarness]
-          .filter(Boolean)
-          .join(" · ")
-      : null;
+    agent.backend.type === "provider" ? `Remote (${agent.backend.id})` : null;
   const personaLabel = agent.personaId
     ? (personaLabelsById[agent.personaId] ?? null)
     : null;
@@ -134,7 +124,6 @@ export function ManagedAgentRow({
                 presenceLoaded={presenceLoaded}
                 presenceStatus={presenceStatus}
                 processDetail={processDetail}
-                providerLifecycleState={agent.providerLifecycleState}
                 status={agent.status}
               />
               <RuntimeBlock agent={agent} runtimeSource={runtimeSource} />
@@ -158,7 +147,6 @@ export function ManagedAgentRow({
                 presenceLoaded={presenceLoaded}
                 presenceStatus={presenceStatus}
                 processDetail={processDetail}
-                providerLifecycleState={agent.providerLifecycleState}
                 status={agent.status}
               />
               <RuntimeBlock agent={agent} runtimeSource={runtimeSource} />
@@ -370,7 +358,6 @@ function StatusBlock({
   presenceLoaded,
   presenceStatus,
   processDetail,
-  providerLifecycleState,
   status,
 }: {
   friendlyError: ReturnType<typeof friendlyAgentLastError>;
@@ -378,7 +365,6 @@ function StatusBlock({
   presenceLoaded: boolean;
   presenceStatus: PresenceStatus | undefined;
   processDetail: string;
-  providerLifecycleState: ManagedAgent["providerLifecycleState"];
   status: ManagedAgent["status"];
 }) {
   return (
@@ -388,16 +374,9 @@ function StatusBlock({
         isWorking={isWorking}
         presenceLoaded={presenceLoaded}
         presenceStatus={presenceStatus}
-        providerLifecycleState={providerLifecycleState}
         status={status}
       />
       <p className="text-xs text-muted-foreground">{processDetail}</p>
-      {providerLifecycleState?.error_code ? (
-        <p className="text-xs text-destructive">
-          {providerLifecycleState.error_code.replace(/_/g, " ")} · Support ID{" "}
-          {providerLifecycleState.correlation_id}
-        </p>
-      ) : null}
       {friendlyError ? (
         <p
           className={cn(
@@ -422,23 +401,16 @@ function RuntimeBlock({
   agent: ManagedAgent;
   runtimeSource: string | null;
 }) {
-  const providerModel =
-    agent.backend.type === "provider"
-      ? agent.backend.summary?.find(
-          (item) => item.label.trim().toLowerCase() === "model",
-        )?.value
-      : null;
-  const displayModel = providerModel ?? agent.model;
   return (
     <div className="space-y-1 lg:pt-0.5">
       <SubsectionLabel className="lg:hidden">Runtime</SubsectionLabel>
       <p className="truncate font-mono text-xs text-foreground">
         {agent.agentCommand}
       </p>
-      {runtimeSource || displayModel ? (
+      {runtimeSource || agent.model ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {runtimeSource ? <span>{runtimeSource}</span> : null}
-          {displayModel ? <span>{displayModel}</span> : null}
+          {agent.model ? <span>{agent.model}</span> : null}
         </div>
       ) : null}
     </div>

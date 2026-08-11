@@ -7,7 +7,6 @@ mod agent_metric_archive;
 mod agent_model_process;
 mod agent_models;
 mod agent_models_env;
-mod agent_provider_update;
 mod agent_providers;
 mod agent_settings;
 mod agent_update_rollback;
@@ -36,6 +35,8 @@ mod media_transcode;
 mod media_upload_progress;
 #[cfg(feature = "mesh-llm")]
 pub(crate) mod mesh_llm;
+#[cfg(feature = "mesh-llm")]
+pub(crate) mod mesh_readiness;
 mod messages;
 mod notifications;
 mod observer_archive;

@@ -36,7 +36,7 @@ fn collect_targets_with(
         .into_iter()
         .filter(|record| needs_reconciliation_with_policy(record, owner_only_access))
         .map(|record| match record.backend.clone() {
-            BackendKind::Provider { id, config, .. } => ProviderAccessTarget {
+            BackendKind::Provider { id, config } => ProviderAccessTarget {
                 agent_json: build_payload(&record),
                 pubkey: record.pubkey,
                 provider_id: id,
@@ -152,8 +152,6 @@ mod tests {
                 BackendKind::Provider {
                     id: "provider".into(),
                     config: serde_json::json!({"region": "test"}),
-                    name: None,
-                    summary: Vec::new(),
                 },
                 Some("existing"),
             ),
@@ -161,8 +159,6 @@ mod tests {
                 BackendKind::Provider {
                     id: "not-deployed".into(),
                     config: serde_json::json!({}),
-                    name: None,
-                    summary: Vec::new(),
                 },
                 None,
             ),
@@ -189,8 +185,6 @@ mod tests {
             BackendKind::Provider {
                 id: "provider".into(),
                 config: serde_json::json!({}),
-                name: None,
-                summary: Vec::new(),
             },
             Some("existing"),
         )];

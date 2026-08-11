@@ -95,7 +95,6 @@ enum RepoChange {
 fn build_updated_repo_announcement(
     existing: &Event,
     change: RepoChange,
-    now: Timestamp,
 ) -> Result<EventBuilder, CliError> {
     let repo_id = repo_id_from_event(existing)?;
     // What to strip beyond `auth` (always stripped), and what to append.
@@ -143,42 +142,16 @@ fn build_updated_repo_announcement(
         ))
     })?;
 
-    let next_created_at = next_repo_timestamp(existing, now)?;
-    buzz_sdk::build_repo_announcement_with_tags(repo_id, &existing.content, tags)
-        .map_err(|error| CliError::Other(format!("failed to build repository update: {error}")))
-        .map(|builder| builder.custom_created_at(next_created_at))
-}
-
-/// Select a relay-admissible timestamp that still advances strictly past the
-/// observed repository head. Old heads must use wall-clock time because the
-/// relay rejects signed events outside its bounded clock window; heads at or
-/// ahead of wall clock retain head+1 ordering.
-fn next_repo_timestamp(existing: &Event, now: Timestamp) -> Result<Timestamp, CliError> {
-    let head_next = existing
+    // Advance only the observed head. Using wall-clock time here would let a
+    // delayed writer leapfrog an intervening update and silently erase metadata.
+    let next_created_at = existing
         .created_at
         .as_secs()
         .checked_add(1)
         .ok_or_else(|| CliError::Other("repository timestamp cannot be advanced".into()))?;
-    Ok(Timestamp::from(head_next.max(now.as_secs())))
-}
-
-/// Build a NIP-09 coordinate tombstone strictly newer than the repository
-/// head it deletes. The tombstone contains only the addressable `a` target;
-/// an `e` target would take the relay's per-event path and leave the current
-/// kind:30617 coordinate alive.
-fn build_delete_repo_announcement(
-    existing: &Event,
-    now: Timestamp,
-) -> Result<EventBuilder, CliError> {
-    let repo_id = repo_id_from_event(existing)?;
-    let next_created_at = next_repo_timestamp(existing, now)?;
-    buzz_sdk::build_delete_addressable(
-        KIND_GIT_REPO_ANNOUNCEMENT,
-        &existing.pubkey.to_hex(),
-        repo_id,
-    )
-    .map_err(|error| CliError::Other(format!("failed to build repository deletion: {error}")))
-    .map(|builder| builder.custom_created_at(next_created_at))
+    buzz_sdk::build_repo_announcement_with_tags(repo_id, &existing.content, tags)
+        .map_err(|error| CliError::Other(format!("failed to build repository update: {error}")))
+        .map(|builder| builder.custom_created_at(Timestamp::from(next_created_at)))
 }
 
 fn protection_rules_json(event: &Event) -> Result<serde_json::Value, CliError> {
@@ -388,11 +361,8 @@ async fn cmd_protect_set(
         require_patch,
     )?;
     let event = current_repo(client, repo_id).await?;
-    let builder = build_updated_repo_announcement(
-        &event,
-        RepoChange::SetProtection(Box::new(tag)),
-        Timestamp::now(),
-    )?;
+    let builder =
+        build_updated_repo_announcement(&event, RepoChange::SetProtection(Box::new(tag)))?;
     submit_repo_update(client, builder).await
 }
 
@@ -416,7 +386,6 @@ async fn cmd_protect_remove(
     let builder = build_updated_repo_announcement(
         &event,
         RepoChange::RemoveProtection(ref_pattern.to_string()),
-        Timestamp::now(),
     )?;
     submit_repo_update(client, builder).await
 }
@@ -433,33 +402,9 @@ async fn cmd_protect_remove(
 /// latency.
 async fn cmd_bind_repo(client: &BuzzClient, repo_id: &str, channel: &str) -> Result<(), CliError> {
     let event = current_repo(client, repo_id).await?;
-    let builder = build_updated_repo_announcement(
-        &event,
-        RepoChange::BindChannel(channel.to_string()),
-        Timestamp::now(),
-    )?;
+    let builder =
+        build_updated_repo_announcement(&event, RepoChange::BindChannel(channel.to_string()))?;
     submit_repo_update(client, builder).await
-}
-
-/// Delete the current identity's repository announcement with a verified
-/// NIP-09 coordinate tombstone. A newer concurrent announcement wins safely
-/// and is reported as a conflict instead of a false successful deletion.
-async fn cmd_delete_repo(client: &BuzzClient, repo_id: &str) -> Result<(), CliError> {
-    let event = current_repo(client, repo_id).await?;
-    let builder = build_delete_repo_announcement(&event, Timestamp::now())?;
-    let deletion = client.sign_event(builder)?;
-    let raw = client.submit_event(deletion).await?;
-    let normalized = validate_write_response(&raw)?;
-
-    if let Some(survivor) = fetch_own_repo_announcement(client, repo_id).await? {
-        return Err(CliError::Conflict(format!(
-            "repository {repo_id:?} still exists (head at {}); a concurrent write raced the delete",
-            survivor.created_at.as_secs()
-        )));
-    }
-
-    println!("{normalized}");
-    Ok(())
 }
 
 pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), CliError> {
@@ -488,7 +433,6 @@ pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), C
         }
         ReposCmd::Get { id, owner } => cmd_get_repo(client, &id, owner.as_deref()).await,
         ReposCmd::List { owner, limit } => cmd_list_repos(client, owner.as_deref(), limit).await,
-        ReposCmd::Delete { id } => cmd_delete_repo(client, &id).await,
         ReposCmd::Bind { id, channel } => cmd_bind_repo(client, &id, &channel).await,
         ReposCmd::Protect(command) => match command {
             ReposProtectCmd::List { id } => cmd_protect_list(client, &id).await,
@@ -523,9 +467,8 @@ mod tests {
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
 
     use super::{
-        build_create_announcement, build_delete_repo_announcement, build_protection_tag,
-        build_updated_repo_announcement, next_repo_timestamp, protection_rules_json,
-        validate_write_response, RepoChange,
+        build_create_announcement, build_protection_tag, build_updated_repo_announcement,
+        protection_rules_json, validate_write_response, RepoChange,
     };
 
     fn signed_repo(tags: Vec<Tag>, content: &str, created_at: u64) -> nostr::Event {
@@ -561,7 +504,6 @@ mod tests {
         let updated = build_updated_repo_announcement(
             &existing,
             RepoChange::SetProtection(Box::new(replacement)),
-            Timestamp::from(0),
         )
         .expect("build update")
         .sign_with_keys(&Keys::generate())
@@ -624,7 +566,6 @@ mod tests {
         let updated = build_updated_repo_announcement(
             &existing,
             RepoChange::RemoveProtection("refs/heads/main".into()),
-            Timestamp::from(0),
         )
         .expect("build removal")
         .sign_with_keys(&Keys::generate())
@@ -662,7 +603,6 @@ mod tests {
         let error = build_updated_repo_announcement(
             &existing,
             RepoChange::SetProtection(Box::new(replacement)),
-            Timestamp::from(0),
         )
         .expect_err("malformed existing rule must fail closed");
 
@@ -689,7 +629,6 @@ mod tests {
         let error = build_updated_repo_announcement(
             &existing,
             RepoChange::SetProtection(Box::new(replacement)),
-            Timestamp::from(0),
         )
         .expect_err("the 51st rule must be rejected");
 
@@ -758,14 +697,11 @@ mod tests {
             100,
         );
 
-        let updated = build_updated_repo_announcement(
-            &existing,
-            RepoChange::BindChannel(channel.clone()),
-            Timestamp::from(0),
-        )
-        .expect("build bind update")
-        .sign_with_keys(&Keys::generate())
-        .expect("sign bind update");
+        let updated =
+            build_updated_repo_announcement(&existing, RepoChange::BindChannel(channel.clone()))
+                .expect("build bind update")
+                .sign_with_keys(&Keys::generate())
+                .expect("sign bind update");
 
         assert_eq!(updated.content, "repository content");
         assert_eq!(updated.created_at.as_secs(), 101);
@@ -801,14 +737,11 @@ mod tests {
         let channel = uuid::Uuid::new_v4().to_string();
         let existing = signed_repo(vec![tag(&["d", "demo"])], "", 10);
 
-        let updated = build_updated_repo_announcement(
-            &existing,
-            RepoChange::BindChannel(channel.clone()),
-            Timestamp::from(0),
-        )
-        .expect("build bind update")
-        .sign_with_keys(&Keys::generate())
-        .expect("sign bind update");
+        let updated =
+            build_updated_repo_announcement(&existing, RepoChange::BindChannel(channel.clone()))
+                .expect("build bind update")
+                .sign_with_keys(&Keys::generate())
+                .expect("sign bind update");
 
         assert!(updated
             .tags
@@ -820,73 +753,11 @@ mod tests {
     fn bind_channel_rejects_malformed_uuid() {
         let existing = signed_repo(vec![tag(&["d", "demo"])], "", 10);
 
-        let error = build_updated_repo_announcement(
-            &existing,
-            RepoChange::BindChannel("nope".into()),
-            Timestamp::from(0),
-        )
-        .expect_err("malformed channel id must not build an update");
+        let error =
+            build_updated_repo_announcement(&existing, RepoChange::BindChannel("nope".into()))
+                .expect_err("malformed channel id must not build an update");
 
         assert!(matches!(error, crate::error::CliError::Usage(_)));
-    }
-
-    #[test]
-    fn repository_timestamp_uses_wall_clock_when_head_is_stale() {
-        let existing = signed_repo(vec![tag(&["d", "demo"])], "", 100);
-        assert_eq!(
-            next_repo_timestamp(&existing, Timestamp::from(1_000))
-                .expect("select relay-admissible timestamp")
-                .as_secs(),
-            1_000
-        );
-    }
-
-    #[test]
-    fn repository_timestamp_advances_head_when_head_is_ahead_of_wall_clock() {
-        let existing = signed_repo(vec![tag(&["d", "demo"])], "", 1_000);
-        assert_eq!(
-            next_repo_timestamp(&existing, Timestamp::from(100))
-                .expect("advance observed head")
-                .as_secs(),
-            1_001
-        );
-    }
-
-    #[test]
-    fn delete_targets_only_the_own_addressable_coordinate_after_the_head() {
-        let keys = Keys::generate();
-        let existing = EventBuilder::new(Kind::Custom(30617), "repository content")
-            .tags(vec![
-                tag(&["d", "demo"]),
-                tag(&["buzz-channel", &uuid::Uuid::new_v4().to_string()]),
-            ])
-            .custom_created_at(Timestamp::from(100))
-            .sign_with_keys(&keys)
-            .expect("sign repository event");
-
-        let deletion = build_delete_repo_announcement(&existing, Timestamp::from(0))
-            .expect("build repository deletion")
-            .sign_with_keys(&keys)
-            .expect("sign repository deletion");
-        let expected_coordinate = format!("30617:{}:demo", existing.pubkey.to_hex());
-
-        assert_eq!(deletion.kind, Kind::EventDeletion);
-        assert_eq!(deletion.created_at.as_secs(), 101);
-        assert_eq!(deletion.pubkey, existing.pubkey);
-        assert_eq!(deletion.tags.len(), 1);
-        assert_eq!(
-            deletion
-                .tags
-                .iter()
-                .next()
-                .expect("coordinate deletion tag")
-                .as_slice(),
-            ["a", expected_coordinate.as_str()]
-        );
-        assert!(!deletion
-            .tags
-            .iter()
-            .any(|tag| tag.as_slice().first().map(String::as_str) == Some("e")));
     }
 
     /// Issue #3527: `repos create --channel` must emit exactly one

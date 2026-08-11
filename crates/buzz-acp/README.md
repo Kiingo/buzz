@@ -111,7 +111,7 @@ Core configuration is available through environment variables and matching CLI f
 | `BUZZ_CANONICAL_RELAY_URL` | no | `BUZZ_RELAY_URL` | Deployment-only community authority when `BUZZ_RELAY_URL` is a private transport address or edge alias. It supplies the WebSocket `Host` header and NIP-42/NIP-98 signing authority while the connection still dials `BUZZ_RELAY_URL`. Must be a credential-free `ws://` or `wss://` URL for the same relay. |
 | `BUZZ_ACP_AGENT_COMMAND` | no | `goose` | Agent binary to spawn. |
 | `BUZZ_ACP_AGENT_ARGS` | no | `acp` | Agent arguments (comma-separated). |
-| `BUZZ_ACP_KIINGO_PUBLICATION_ENABLED` | no | `false` | Enables the fenced, locally signed Kiingo publication extension. Use only with `kiingo-compute-acp`. |
+| `BUZZ_ACP_LOCAL_PUBLICATION_ENABLED` | no | `false` | Enables fenced, locally signed publications requested by an ACP adapter. Requires `BUZZ_ACP_PUBLICATION_API_BASE_URL` and `BUZZ_ACP_PUBLICATION_TOKEN`. |
 | `BUZZ_ACP_MCP_COMMAND` | no | `""` (empty) | Path to an optional MCP server binary to provide to the agent subprocess. |
 | `BUZZ_ACP_IDLE_TIMEOUT` | no | `620` | Idle timeout: max seconds of silence before cancelling a turn. Resets on any agent stdout activity. |
 | `BUZZ_ACP_MAX_TURN_DURATION` | no | `7200` | Absolute wall-clock cap per turn (safety valve). |

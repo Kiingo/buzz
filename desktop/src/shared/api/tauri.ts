@@ -159,7 +159,6 @@ export type RawManagedAgent = {
   auto_restart_on_config_change?: boolean;
   backend: ManagedAgentBackend;
   backend_agent_id: string | null;
-  provider_lifecycle_state?: ManagedAgent["providerLifecycleState"];
   // Pre-feature fixtures may omit these; mapped to "owner-only"/[] in fromRawManagedAgent.
   respond_to?: ManagedAgent["respondTo"];
   respond_to_allowlist?: string[];
@@ -715,7 +714,6 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     autoRestartOnConfigChange: agent.auto_restart_on_config_change ?? true,
     backend: agent.backend,
     backendAgentId: agent.backend_agent_id,
-    providerLifecycleState: agent.provider_lifecycle_state ?? null,
     respondTo: agent.respond_to ?? "owner-only",
     respondToAllowlist: agent.respond_to_allowlist ?? [],
   };
@@ -1096,11 +1094,9 @@ export async function discoverBackendProviders(): Promise<
 
 export async function probeBackendProvider(
   binaryPath: string,
-  providerId: string,
 ): Promise<BackendProviderProbeResult> {
   return invokeTauri<BackendProviderProbeResult>("probe_backend_provider", {
     binaryPath,
-    providerId,
   });
 }
 

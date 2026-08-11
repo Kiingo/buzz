@@ -26,9 +26,6 @@ pub(crate) use metadata::{
     DISPLAY_NAME_ENV_VAR, SESSION_TITLE_ENV_VAR,
 };
 
-mod provider_status;
-use provider_status::provider_control_status;
-
 mod stop;
 pub(crate) use stop::managed_agent_runtime_keys;
 pub use stop::{stop_managed_agent_process, stop_managed_agent_workspace_pair};
@@ -150,10 +147,10 @@ pub fn build_managed_agent_summary(
     let (status, pid, log_path) = if record.backend != BackendKind::Local {
         // Two-axis status model for remote agents:
         //
-        //   Control-plane (this field): follows the accepted desired state so the
-        //   next valid action is available immediately while provider observation
-        //   catches up. "not_deployed" still means no provider resource (or a
-        //   desired deletion).
+        //   Control-plane (this field): "deployed" = provider has been invoked and
+        //   returned a backend_agent_id. "not_deployed" = no deploy call yet (or it
+        //   failed). This axis tracks whether infrastructure *exists*, not whether
+        //   the process is currently running.
         //
         //   Live axis (relay presence, polled by frontend): online/away/offline.
         //   Shown as a PresenceDot next to the agent name. This is the real-time
@@ -163,7 +160,11 @@ pub fn build_managed_agent_summary(
         // (infrastructure still exists). This is intentional — the provider may
         // have allocated a VM/container that persists across process restarts.
         // A future provider `undeploy` operation (v2) will handle teardown.
-        let status = provider_control_status(record);
+        let status = if record.backend_agent_id.is_some() {
+            "deployed".to_string()
+        } else {
+            "not_deployed".to_string()
+        };
         (status, None, String::new())
     } else {
         let persisted_pid = record.runtime_pid.filter(|pid| process_is_running(*pid));
@@ -323,7 +324,6 @@ pub fn build_managed_agent_summary(
         env_vars: record.env_vars.clone(),
         backend: record.backend.clone(),
         backend_agent_id: record.backend_agent_id.clone(),
-        provider_lifecycle_state: record.provider_lifecycle_state.clone(),
         status,
         pid,
         created_at: record.created_at.clone(),
@@ -713,7 +713,19 @@ pub fn spawn_agent_child(
     } else {
         command.env_remove("BUZZ_ACP_SYSTEM_PROMPT");
     }
-    if let Some(model) = effective_model.as_deref() {
+    // Shared compute stores `auto`, but the wire name is MeshLLM's virtual
+    // `mesh` model. Translate here too, so the harness and the LLM client are
+    // told the same thing: `BUZZ_ACP_MODEL=auto` would name a model the mesh
+    // never advertises, leaving buzz-acp to warn and fall back on every new
+    // session while `BUZZ_AGENT_MODEL` said `mesh`.
+    #[cfg(feature = "mesh-llm")]
+    let acp_model = match (&mesh_model_id, effective_model.as_deref()) {
+        (Some(mesh_model_id), _) => Some(super::relay_mesh_wire_model(mesh_model_id).to_string()),
+        (None, model) => model.map(str::to_owned),
+    };
+    #[cfg(not(feature = "mesh-llm"))]
+    let acp_model = effective_model.as_deref().map(str::to_owned);
+    if let Some(model) = acp_model.as_deref() {
         command.env("BUZZ_ACP_MODEL", model);
     } else {
         command.env_remove("BUZZ_ACP_MODEL");

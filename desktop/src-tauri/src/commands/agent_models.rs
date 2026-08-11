@@ -12,10 +12,6 @@ use super::agent_models_env::env_value;
 use super::agent_models_env::{
     effective_discovery_provider, env_or_process_value, redaction_env_with_value, DiscoveryProvider,
 };
-use super::agent_provider_update::{
-    apply_model_provider_prompt_revision_update, apply_provider_update, prepare_provider_update,
-    updated_provider_backend, validate_requested_provider_backend,
-};
 use super::agent_update_rollback::{rollback_failed_agent_update, AgentUpdateRollback};
 
 use crate::{
@@ -700,6 +696,35 @@ use databricks::{
 };
 use databricks::{discover_databricks_models, DatabricksAuthIntent};
 
+/// Apply an `UpdateManagedAgentRequest`'s model/provider/system_prompt patch
+/// to `record`, enforcing the linked-instance write guard: a definition-linked
+/// record's model/provider/prompt are definition-authoritative (see
+/// `effective_config::resolve_linked`), so writes to these three fields are
+/// silently dropped for a linked instance rather than persisting a byte the
+/// resolver will never read. Definition-less instances accept the patch
+/// as-is. Extracted so the guard is exercised by both `update_managed_agent`
+/// and its regression tests — a test that reimplements this check instead of
+/// calling it can go green after the real guard is deleted.
+fn apply_model_provider_prompt_update(
+    record: &mut crate::managed_agents::ManagedAgentRecord,
+    model: Option<Option<String>>,
+    provider: Option<Option<String>>,
+    system_prompt: Option<Option<String>>,
+) {
+    if record.persona_id.is_some() {
+        return;
+    }
+    if let Some(model_update) = model {
+        record.model = model_update;
+    }
+    if let Some(provider_update) = provider {
+        record.provider = provider_update;
+    }
+    if let Some(prompt_update) = system_prompt {
+        record.system_prompt = prompt_update;
+    }
+}
+
 /// Update mutable fields on an existing managed agent record.
 ///
 /// Does NOT auto-restart the agent. Runtime config changes (system prompt,
@@ -711,10 +736,8 @@ pub async fn update_managed_agent(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<UpdateManagedAgentResponse, String> {
-    validate_requested_provider_backend(input.backend.as_ref())?;
-
     // Phase 1: local save (synchronous, under lock)
-    let (summary, sync_params, rollback, provider_update) = {
+    let (summary, sync_params, rollback) = {
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
@@ -732,15 +755,6 @@ pub async fn update_managed_agent(
 
         let record = find_managed_agent_mut(&mut records, &input.pubkey)?;
         let previous_record = record.clone();
-        let next_backend = input
-            .backend
-            .as_ref()
-            .map(|requested| updated_provider_backend(&record.backend, requested))
-            .transpose()?
-            .flatten();
-        if let Some(next_backend) = next_backend {
-            record.backend = next_backend;
-        }
 
         let mut name_changed = false;
         if let Some(name_update) = input.name {
@@ -750,13 +764,12 @@ pub async fn update_managed_agent(
                 name_changed = true;
             }
         }
-        apply_model_provider_prompt_revision_update(
+        apply_model_provider_prompt_update(
             record,
-            &previous_record,
             input.model,
             input.provider,
             input.system_prompt,
-        )?;
+        );
         if let Some(parallelism) = input.parallelism {
             record.parallelism = parallelism;
         }
@@ -888,9 +901,8 @@ pub async fn update_managed_agent(
                 &crate::managed_agents::load_global_agent_config(&app).unwrap_or_default(),
             )?
         };
-        let provider_update = prepare_provider_update(&app, &state, record, &previous_record)?;
         let rollback = name_changed.then(|| AgentUpdateRollback::new(previous_record, record));
-        (summary, sync_params, rollback, provider_update)
+        (summary, sync_params, rollback)
     }; // lock dropped here
 
     try_regenerate_nest(&app);
@@ -918,8 +930,6 @@ pub async fn update_managed_agent(
             ));
         }
     }
-
-    let summary = apply_provider_update(&app, &state, summary, provider_update).await?;
 
     Ok(UpdateManagedAgentResponse {
         agent: summary,
@@ -1009,9 +1019,6 @@ pub(super) fn normalize_agent_models(
     }
 }
 
-#[cfg(test)]
-#[path = "agent_provider_update_tests.rs"]
-mod provider_update_tests;
 #[cfg(test)]
 #[path = "agent_models_tests.rs"]
 mod tests;

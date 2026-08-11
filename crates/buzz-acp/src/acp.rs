@@ -13,7 +13,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 
-use crate::kiingo_publication::{KiingoPublicationIntent, LocalPublicationPublisher};
+use crate::local_publication::{LocalPublicationIntent, LocalPublicationPublisher};
 use crate::observer::{ObserverContext, ObserverHandle};
 use crate::usage::{TurnUsage, UsageTracker};
 
@@ -21,10 +21,10 @@ use crate::usage::{TurnUsage, UsageTracker};
 /// Lines exceeding this limit are rejected to prevent OOM from rogue agents.
 const MAX_LINE_SIZE: usize = 10_000_000; // 10 MB
 
-fn is_kiingo_publication_update(msg: &serde_json::Value) -> bool {
+fn is_local_publication_update(msg: &serde_json::Value) -> bool {
     msg.pointer("/params/update/sessionUpdate")
         .and_then(|value| value.as_str())
-        == Some("kiingo_buzz_publication")
+        == Some("buzz_local_publication")
 }
 
 /// An MCP server configuration passed to `session/new`.
@@ -218,10 +218,10 @@ pub struct AcpClient {
     /// deltas. Both goose and buzz-agent emit this notification; goose gates
     /// on client capability advertisement, buzz-agent emits unconditionally.
     goose_usage: UsageTracker,
-    /// Optional, explicitly enabled publisher for the Kiingo ACP extension.
+    /// Optional, explicitly enabled publisher for the local ACP extension.
     /// It holds the Buzz signer in this parent process; the child only emits
     /// validated publication intents and never receives private key material.
-    kiingo_publication_publisher: Option<LocalPublicationPublisher>,
+    local_publication_publisher: Option<LocalPublicationPublisher>,
     /// Structured Buzz envelope attached to the next `session/prompt` as a
     /// namespaced ACP extension. Custom agents can consume this instead of
     /// parsing the human-readable prompt; legacy agents ignore it.
@@ -565,19 +565,19 @@ impl AcpClient {
             steering_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
-            kiingo_publication_publisher: None,
+            local_publication_publisher: None,
             buzz_prompt_metadata: None,
         })
     }
 
-    /// Install (or clear) the local Kiingo publication boundary for this
+    /// Install (or clear) the local publication boundary for this
     /// process. Production enables it explicitly with
-    /// `BUZZ_ACP_KIINGO_PUBLICATION_ENABLED=true`.
-    pub(crate) fn set_kiingo_publication_publisher(
+    /// `BUZZ_ACP_LOCAL_PUBLICATION_ENABLED=true`.
+    pub(crate) fn set_local_publication_publisher(
         &mut self,
         publisher: Option<LocalPublicationPublisher>,
     ) {
-        self.kiingo_publication_publisher = publisher;
+        self.local_publication_publisher = publisher;
     }
 
     pub(crate) fn set_buzz_prompt_metadata(&mut self, metadata: Option<serde_json::Value>) {
@@ -621,7 +621,7 @@ impl AcpClient {
     /// local signer. Keep that body out of debug wire logs and observer frames;
     /// correlation identifiers and byte length remain observable.
     fn observe_acp_read(&self, msg: &serde_json::Value) {
-        if is_kiingo_publication_update(msg) {
+        if is_local_publication_update(msg) {
             let mut redacted = msg.clone();
             if let Some(update) = redacted.pointer_mut("/params/update") {
                 let content_bytes = update
@@ -634,7 +634,7 @@ impl AcpClient {
             }
             tracing::debug!(
                 target: "acp::wire",
-                "received redacted kiingo_buzz_publication update"
+                "received redacted buzz_local_publication update"
             );
             self.observe("acp_read", redacted);
             return;
@@ -1800,20 +1800,20 @@ impl AcpClient {
             .unwrap_or("unknown");
 
         match update_type {
-            "kiingo_buzz_publication" => {
-                let Some(publisher) = &self.kiingo_publication_publisher else {
+            "buzz_local_publication" => {
+                let Some(publisher) = &self.local_publication_publisher else {
                     tracing::warn!(
-                        target: "kiingo::publication",
-                        "discarded Kiingo publication update because the local publisher is disabled"
+                        target: "buzz::local_publication",
+                        "discarded local publication update because the publisher is disabled"
                     );
                     return false;
                 };
-                match serde_json::from_value::<KiingoPublicationIntent>(update.clone()) {
+                match serde_json::from_value::<LocalPublicationIntent>(update.clone()) {
                     Ok(intent) => publisher.enqueue(intent),
                     Err(error) => tracing::warn!(
-                        target: "kiingo::publication",
+                        target: "buzz::local_publication",
                         error = %error,
-                        "discarded malformed Kiingo publication update"
+                        "discarded malformed local publication update"
                     ),
                 }
                 false

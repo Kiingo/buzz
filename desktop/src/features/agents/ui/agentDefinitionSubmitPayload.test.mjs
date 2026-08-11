@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  buildRuntimeModelProviderPayload,
-  canPreserveUnchangedEdit,
-  preservesUnchangedEditConfiguration,
-} from "./agentDefinitionSubmitPayload.ts";
+import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload.ts";
 
 // Shared fixture for a builtin edit: previous runtime null, no saved model/provider.
 const BUILTIN_EDIT_BASE = {
@@ -93,101 +89,4 @@ test("explicit-runtime-chosen: runtime and model both persisted when user explic
   assert.equal(result.runtime, "buzz-agent", "runtime must be persisted");
   assert.equal(result.model, "claude-opus-4-8", "model must be persisted");
   assert.equal(result.provider, undefined, "empty provider must be omitted");
-});
-
-test("auto-seeded edit may preserve unchanged incomplete runtime configuration", () => {
-  assert.equal(
-    canPreserveUnchangedEdit(
-      {
-        id: "legacy-definition",
-        displayName: "Legacy",
-        systemPrompt: "Preserve me.",
-        envVars: { TOKEN: "preserved" },
-      },
-      {
-        envVars: { TOKEN: "preserved" },
-        model: "",
-        provider: "",
-        runtime: "buzz-agent",
-      },
-      true,
-    ),
-    true,
-  );
-});
-
-test("stored legacy runtime may be preserved by an unrelated edit", () => {
-  assert.equal(
-    preservesUnchangedEditConfiguration({
-      currentEnvVars: {},
-      currentModel: "",
-      currentProvider: "",
-      currentRuntime: "buzz-agent",
-      initialEnvVars: {},
-      initialModel: null,
-      initialRuntime: "buzz-agent",
-      initialProvider: undefined,
-      isAutoSeeded: false,
-      isEditMode: true,
-    }),
-    true,
-  );
-});
-
-test("unchanged-edit exception cannot bypass readiness after execution config changes", () => {
-  const base = {
-    currentEnvVars: { TOKEN: "preserved" },
-    currentModel: "",
-    currentProvider: "",
-    currentRuntime: "buzz-agent",
-    initialEnvVars: { TOKEN: "preserved" },
-    initialModel: null,
-    initialRuntime: "buzz-agent",
-    initialProvider: undefined,
-    isAutoSeeded: false,
-    isEditMode: true,
-  };
-
-  assert.equal(
-    preservesUnchangedEditConfiguration({
-      ...base,
-      currentProvider: "anthropic",
-    }),
-    false,
-  );
-  assert.equal(
-    preservesUnchangedEditConfiguration({
-      ...base,
-      currentModel: "explicit-model",
-    }),
-    false,
-  );
-  assert.equal(
-    preservesUnchangedEditConfiguration({
-      ...base,
-      currentEnvVars: { TOKEN: "changed" },
-    }),
-    false,
-  );
-  assert.equal(
-    preservesUnchangedEditConfiguration({
-      ...base,
-      currentRuntime: "codex",
-    }),
-    false,
-  );
-  assert.equal(
-    preservesUnchangedEditConfiguration({
-      ...base,
-      isEditMode: false,
-    }),
-    false,
-  );
-  assert.equal(
-    preservesUnchangedEditConfiguration({
-      ...base,
-      isAutoSeeded: true,
-    }),
-    false,
-  );
 });

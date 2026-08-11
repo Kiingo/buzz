@@ -754,7 +754,6 @@ async fn test_nip17_gift_wrap_recipient_receives() {
 
 /// Create a DM via REST, then subscribe as a participant to verify discovery events.
 /// Verify: kind:39000 event received with `hidden` and `private` tags.
-/// Verify: kind:41001 relay confirmation is listable by a participant but not an outsider.
 /// Verify: kind:44100 membership notification received.
 #[tokio::test]
 #[ignore]
@@ -858,63 +857,7 @@ async fn test_dm_discovery_events_emitted() {
         "kind:39000 missing 'private' tag. tags: {tags:?}"
     );
 
-    let sid_dm_created = sub_id("dm-discovery-41001");
-    let dm_created_filter = Filter::new()
-        .kind(Kind::Custom(41001))
-        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), channel_id.as_str());
-    client_a
-        .subscribe(&sid_dm_created, vec![dm_created_filter])
-        .await
-        .expect("subscribe DM confirmation");
-    let dm_created_events = client_a
-        .collect_until_eose(&sid_dm_created, Duration::from_secs(10))
-        .await
-        .expect("DM confirmation EOSE");
-    let dm_created = dm_created_events
-        .iter()
-        .find(|event| event.kind == Kind::Custom(41001))
-        .expect("kind:41001 relay-confirmed DM event");
-
-    for expected_tag in [
-        ["d", channel_id.as_str()],
-        ["h", channel_id.as_str()],
-        ["p", a_pubkey_hex.as_str()],
-        ["p", b_pubkey_hex.as_str()],
-    ] {
-        assert!(
-            dm_created.tags.iter().any(|tag| {
-                let parts = tag.as_slice();
-                parts.len() >= 2 && parts[0] == expected_tag[0] && parts[1] == expected_tag[1]
-            }),
-            "kind:41001 missing expected tag {expected_tag:?}. tags: {:?}",
-            dm_created.tags
-        );
-    }
-
-    let dm_created_id = dm_created.id;
-
     client_a.disconnect().await.expect("disconnect");
-
-    // The confirmation event is channel-scoped. A nonparticipant who learns its
-    // exact event id still receives no row through the kindless ids escape hatch.
-    let keys_c = Keys::generate();
-    let mut client_c = BuzzTestClient::connect(&url, &keys_c)
-        .await
-        .expect("client C connect");
-    let sid_outsider = sub_id("dm-discovery-41001-outsider");
-    client_c
-        .subscribe(&sid_outsider, vec![Filter::new().id(dm_created_id)])
-        .await
-        .expect("outsider subscribe by id");
-    let outsider_events = client_c
-        .collect_until_eose(&sid_outsider, Duration::from_secs(10))
-        .await
-        .expect("outsider EOSE");
-    assert!(
-        outsider_events.is_empty(),
-        "nonparticipant read channel-scoped kind:41001 by id: {outsider_events:?}"
-    );
-    client_c.disconnect().await.expect("disconnect C");
 }
 
 /// Send a non-broadcast NIP-10 reply AND a broadcast (`["broadcast","1"]`)

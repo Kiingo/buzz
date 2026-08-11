@@ -1,150 +1,168 @@
 import { Input } from "@/shared/ui/input";
 import { PersonaDropdownField } from "./PersonaDropdownField";
 
-type ProviderFieldOption = {
-  value: string;
+type ProviderConfigOption = {
   label: string;
-  description?: string;
+  value: string;
   [key: string]: unknown;
 };
 
-export function providerFieldVisible(
-  prop: Record<string, unknown>,
+export function providerConfigFieldVisible(
+  property: Record<string, unknown>,
   config: Record<string, string>,
 ): boolean {
   if (
-    prop["x-hide-when-no-options"] === true &&
-    providerFieldOptions(prop, config)?.length === 0
+    property["x-hide-when-no-options"] === true &&
+    providerConfigOptions(property, config)?.length === 0
   ) {
     return false;
   }
-  const condition = prop["x-visible-when"];
+  const condition = property["x-visible-when"];
   if (!condition || typeof condition !== "object" || Array.isArray(condition)) {
     return true;
   }
-  const field = (condition as Record<string, unknown>).field;
-  if (typeof field !== "string") return true;
-  const value = config[field] ?? "";
-  const equals = (condition as Record<string, unknown>).equals;
-  const not = (condition as Record<string, unknown>).not;
-  if (typeof equals === "string") return value === equals;
-  if (typeof not === "string") return value !== not;
+  const record = condition as Record<string, unknown>;
+  if (typeof record.field !== "string") return true;
+  const selected = config[record.field] ?? "";
+  if (typeof record.equals === "string") return selected === record.equals;
+  if (typeof record.not === "string") return selected !== record.not;
   return true;
 }
 
-export function providerFieldOptions(
-  prop: Record<string, unknown>,
-  config: Record<string, string>,
-): ProviderFieldOption[] | null {
-  const multiDependent = prop["x-options-by-fields"];
+export function providerConfigOptions(
+  property: Record<string, unknown>,
+  config: Record<string, string> = {},
+): ProviderConfigOption[] | null {
+  const multipleDependencies = property["x-options-by-fields"];
   if (
-    multiDependent &&
-    typeof multiDependent === "object" &&
-    !Array.isArray(multiDependent)
+    multipleDependencies &&
+    typeof multipleDependencies === "object" &&
+    !Array.isArray(multipleDependencies)
   ) {
-    const source = multiDependent as Record<string, unknown>;
+    const source = multipleDependencies as Record<string, unknown>;
     const fields = Array.isArray(source.fields)
       ? source.fields.filter(
           (field): field is string => typeof field === "string",
         )
       : [];
-    const options =
+    const optionMap =
       source.options &&
       typeof source.options === "object" &&
       !Array.isArray(source.options)
         ? (source.options as Record<string, unknown>)
         : null;
-    if (fields.length === 0 || fields.length > 4 || !options) return [];
-    const selectedOptions =
-      options[fields.map((field) => config[field] ?? "").join("|")];
-    return Array.isArray(selectedOptions)
-      ? selectedOptions.filter(
-          (entry): entry is ProviderFieldOption =>
-            Boolean(entry) &&
-            typeof entry === "object" &&
-            !Array.isArray(entry) &&
-            typeof (entry as ProviderFieldOption).value === "string" &&
-            typeof (entry as ProviderFieldOption).label === "string",
-        )
+    if (fields.length === 0 || fields.length > 4 || !optionMap) return [];
+    const selected =
+      optionMap[fields.map((field) => config[field] ?? "").join("|")];
+    return Array.isArray(selected)
+      ? selected.filter(isProviderConfigOption)
       : [];
   }
-  const dependent = prop["x-options-by-field"];
-  if (dependent && typeof dependent === "object" && !Array.isArray(dependent)) {
-    const source = dependent as Record<string, unknown>;
+
+  const dependency = property["x-options-by-field"];
+  if (
+    dependency &&
+    typeof dependency === "object" &&
+    !Array.isArray(dependency)
+  ) {
+    const source = dependency as Record<string, unknown>;
     const field = typeof source.field === "string" ? source.field : null;
-    const options =
+    const optionMap =
       source.options &&
       typeof source.options === "object" &&
       !Array.isArray(source.options)
         ? (source.options as Record<string, unknown>)
         : null;
-    const selected = field ? (config[field] ?? "") : null;
-    const selectedOptions = selected !== null ? options?.[selected] : undefined;
-    if (Array.isArray(selectedOptions)) {
-      let result = selectedOptions.filter(
-        (entry): entry is ProviderFieldOption =>
-          Boolean(entry) &&
-          typeof entry === "object" &&
-          !Array.isArray(entry) &&
-          typeof (entry as ProviderFieldOption).value === "string" &&
-          typeof (entry as ProviderFieldOption).label === "string",
-      );
-      const filter = prop["x-option-filter"];
-      if (filter && typeof filter === "object" && !Array.isArray(filter)) {
-        const filterRecord = filter as Record<string, unknown>;
-        const filterField =
-          typeof filterRecord.field === "string" ? filterRecord.field : null;
-        const optionProperty =
-          typeof filterRecord.option_property === "string"
-            ? filterRecord.option_property
-            : null;
-        if (filterField && optionProperty && config[filterField]) {
-          result = result.filter(
-            (entry) => entry[optionProperty] === config[filterField],
-          );
-        }
+    const selected = field ? optionMap?.[config[field] ?? ""] : null;
+    let options = Array.isArray(selected)
+      ? selected.filter(isProviderConfigOption)
+      : [];
+    const filter = property["x-option-filter"];
+    if (filter && typeof filter === "object" && !Array.isArray(filter)) {
+      const record = filter as Record<string, unknown>;
+      if (
+        typeof record.field === "string" &&
+        typeof record.option_property === "string" &&
+        config[record.field]
+      ) {
+        options = options.filter(
+          (option) =>
+            option[record.option_property as string] ===
+            config[record.field as string],
+        );
       }
-      return result;
     }
-    return [];
+    return options;
   }
 
-  if (Array.isArray(prop.enum)) {
+  if (Array.isArray(property.enum)) {
     const labels =
-      prop["x-enum-labels"] &&
-      typeof prop["x-enum-labels"] === "object" &&
-      !Array.isArray(prop["x-enum-labels"])
-        ? (prop["x-enum-labels"] as Record<string, unknown>)
+      property["x-enum-labels"] &&
+      typeof property["x-enum-labels"] === "object" &&
+      !Array.isArray(property["x-enum-labels"])
+        ? (property["x-enum-labels"] as Record<string, unknown>)
         : {};
-    return prop.enum
-      .filter(
-        (value): value is string | number | boolean =>
-          typeof value === "string" ||
-          typeof value === "number" ||
-          typeof value === "boolean",
+    return property.enum
+      .filter((value): value is string | number =>
+        ["string", "number"].includes(typeof value),
       )
       .map((value) => {
         const serialized = String(value);
         return {
-          value: serialized,
           label:
             typeof labels[serialized] === "string"
-              ? labels[serialized]
+              ? (labels[serialized] as string)
               : serialized,
+          value: serialized,
         };
       });
   }
-  if (prop.type === "boolean") {
+
+  if (Array.isArray(property.oneOf)) {
+    const options = property.oneOf.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const option = entry as Record<string, unknown>;
+      if (
+        typeof option.const !== "string" &&
+        typeof option.const !== "number"
+      ) {
+        return [];
+      }
+      return [
+        {
+          label:
+            typeof option.title === "string"
+              ? option.title
+              : String(option.const),
+          value: String(option.const),
+        },
+      ];
+    });
+    return options.length > 0 ? options : null;
+  }
+
+  if (property.type === "boolean") {
     return [
       { label: "Yes", value: "true" },
       { label: "No", value: "false" },
     ];
   }
+
   return null;
 }
 
+function isProviderConfigOption(value: unknown): value is ProviderConfigOption {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as ProviderConfigOption).value === "string" &&
+    typeof (value as ProviderConfigOption).label === "string"
+  );
+}
+
 /// Coerce string config values to their schema-declared types (number, boolean).
-/// Providers receive JSON — sending "3" instead of 3 for an integer field breaks
+/// Providers receive JSON; sending "3" instead of 3 for an integer field breaks
 /// typed config parsing on the provider side.
 export function coerceConfigValues(
   config: Record<string, string>,
@@ -196,14 +214,14 @@ export function ProviderConfigFields({
   const updateConfig = (key: string, value: string) => {
     const next = { ...config, [key]: value };
     for (const [dependentKey, dependentProperty] of entries) {
-      if (!providerFieldVisible(dependentProperty, next)) {
+      if (!providerConfigFieldVisible(dependentProperty, next)) {
         next[dependentKey] =
           dependentProperty.default == null
             ? ""
             : String(dependentProperty.default);
         continue;
       }
-      const options = providerFieldOptions(dependentProperty, next);
+      const options = providerConfigOptions(dependentProperty, next);
       if (
         options &&
         next[dependentKey] &&
@@ -226,13 +244,16 @@ export function ProviderConfigFields({
   return (
     <div className="space-y-3">
       {entries.map(([key, prop]) => {
-        if (!providerFieldVisible(prop, config)) return null;
-        const options = providerFieldOptions(prop, config);
-        const value =
-          config[key] ??
-          (prop.default === undefined || prop.default === null
-            ? ""
-            : String(prop.default));
+        if (!providerConfigFieldVisible(prop, config)) return null;
+        const options = providerConfigOptions(prop, config);
+        const defaultValue =
+          typeof prop.default === "string" ||
+          typeof prop.default === "number" ||
+          typeof prop.default === "boolean"
+            ? String(prop.default)
+            : "";
+        const value = config[key] ?? defaultValue;
+
         return (
           <div key={key} className="space-y-1.5">
             <label
@@ -266,10 +287,17 @@ export function ProviderConfigFields({
             ) : (
               <Input
                 id={`provider-cfg-${key}`}
-                onChange={(e) => updateConfig(key, e.target.value)}
+                max={
+                  typeof prop.maximum === "number" ? prop.maximum : undefined
+                }
+                min={
+                  typeof prop.minimum === "number" ? prop.minimum : undefined
+                }
+                onChange={(event) => updateConfig(key, event.target.value)}
                 placeholder={
                   typeof prop.description === "string" ? prop.description : ""
                 }
+                step={prop.type === "integer" ? 1 : undefined}
                 type={
                   prop.type === "integer" || prop.type === "number"
                     ? "number"

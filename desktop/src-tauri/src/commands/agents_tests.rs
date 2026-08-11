@@ -34,7 +34,6 @@ fn bare_agent_record(
         runtime_pid: None,
         backend: BackendKind::Local,
         backend_agent_id: None,
-        provider_lifecycle_state: None,
         provider_binary_path: None,
         team_id: None,
         persona_team_dir: None,
@@ -242,8 +241,6 @@ fn normalize_relay_mesh_rejects_non_local_backend() {
     let backend = BackendKind::Provider {
         id: "blox".to_string(),
         config: serde_json::json!({}),
-        name: None,
-        summary: Vec::new(),
     };
 
     assert_eq!(
@@ -560,8 +557,6 @@ fn current_build_deploy_payload_forwards_compiled_policy() {
     record.backend = BackendKind::Provider {
         id: "provider".to_string(),
         config: serde_json::json!({}),
-        name: None,
-        summary: Vec::new(),
     };
     record.respond_to = RespondTo::Anyone;
     record.respond_to_allowlist = vec!["a".repeat(64)];
@@ -610,8 +605,6 @@ fn provider_upgrade_reconciliation_targets_existing_deployments_only_in_marked_b
     record.backend = BackendKind::Provider {
         id: "provider".to_string(),
         config: serde_json::json!({}),
-        name: None,
-        summary: Vec::new(),
     };
     record.backend_agent_id = Some("existing-provider-agent".to_string());
     record.respond_to = crate::managed_agents::RespondTo::Anyone;
@@ -647,8 +640,6 @@ fn owner_only_access_deploy_payload_clamps_stale_access() {
     record.backend = BackendKind::Provider {
         id: "provider".to_string(),
         config: serde_json::json!({}),
-        name: None,
-        summary: Vec::new(),
     };
     record.respond_to = RespondTo::Anyone;
     record.respond_to_allowlist = vec!["a".repeat(64)];

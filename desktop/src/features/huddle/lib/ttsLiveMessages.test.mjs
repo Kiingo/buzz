@@ -140,20 +140,6 @@ test("strips attachment markup and skips attachment-only events", () => {
   );
 });
 
-test("strips attachment spoiler shells in linear time", () => {
-  const url = "https://cdn.example/voice.png";
-  const tags = [...base.tags, ["imeta", `url ${url}`, "m image/png"]];
-  const blankLines = "\n".repeat(10_000);
-  assert.equal(
-    speakableText({
-      ...base,
-      content: `before\n||\n![image](${url})${blankLines}||\nafter`,
-      tags,
-    }),
-    "before\nafter",
-  );
-});
-
 test("queues agent messages in live thread arrival order", async () => {
   const spoken = [];
   let releaseFirst;

@@ -42,7 +42,6 @@ fn make_agent(
         runtime_pid,
         backend: BackendKind::Local,
         backend_agent_id: None,
-        provider_lifecycle_state: None,
         provider_binary_path: None,
         team_id: None,
         persona_team_dir: None,
@@ -175,8 +174,6 @@ fn remote_deployed_cascade_target_blocks_delete() {
     deployed.backend = BackendKind::Provider {
         id: "blox".to_string(),
         config: serde_json::Value::Null,
-        name: None,
-        summary: Vec::new(),
     };
     deployed.backend_agent_id = Some("backend-1".to_string());
 
@@ -185,8 +182,6 @@ fn remote_deployed_cascade_target_blocks_delete() {
     undeployed.backend = BackendKind::Provider {
         id: "blox".to_string(),
         config: serde_json::Value::Null,
-        name: None,
-        summary: Vec::new(),
     };
 
     let agents = vec![

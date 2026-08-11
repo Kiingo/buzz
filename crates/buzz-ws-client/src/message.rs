@@ -188,31 +188,3 @@ pub fn build_auth_event(
         .sign_with_keys(keys)
         .map_err(|e| WsClientError::EventBuilder(e.to_string()))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn auth_event_binds_to_explicit_canonical_relay_url() {
-        let event = build_auth_event(
-            "bounded-challenge",
-            "wss://chat.kiingo.com",
-            &Keys::generate(),
-            None,
-        )
-        .unwrap();
-        let tags: Vec<Vec<String>> = event
-            .tags
-            .iter()
-            .map(|tag| tag.as_slice().to_vec())
-            .collect();
-
-        assert!(tags
-            .iter()
-            .any(|tag| tag.as_slice() == ["relay", "wss://chat.kiingo.com"]));
-        assert!(!tags
-            .iter()
-            .any(|tag| { tag.as_slice() == ["relay", "wss://buzz-preview.kiingo.com"] }));
-    }
-}

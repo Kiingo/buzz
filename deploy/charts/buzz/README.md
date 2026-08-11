@@ -1,12 +1,12 @@
 # Buzz Helm Chart
 
-[Buzz](https://github.com/block/buzz) is a Nostr-based messaging platform for human–agent collaboration: a single relay binary serving WebSocket + REST + web UI, backed by PostgreSQL, Redis, and S3-compatible or Azure Blob object storage.
+[Buzz](https://github.com/block/buzz) is a Nostr-based messaging platform for human–agent collaboration: a single relay binary serving WebSocket + REST + web UI, backed by PostgreSQL, Redis, and S3-compatible object storage.
 
 This chart has two operating profiles selected by values:
 
 | Profile | When | What you get |
 |---|---|---|
-| **Production** (default) | Self-hosted multi-tenant, regulated, or GitOps-managed | External managed Postgres/Redis/object storage, `secrets.existingSecret:`, no chart-side autogen, HA-capable (`replicaCount ≥ 2`) |
+| **Production** (default) | Self-hosted multi-tenant, regulated, or GitOps-managed | External managed Postgres/Redis/S3, `secrets.existingSecret:`, no chart-side autogen, HA-capable (`replicaCount ≥ 2`) |
 | **Quickstart** (eval) | Eval, single-node, one-off demo | In-cluster Postgres + Redis + MinIO subcharts/Deployments, chart auto-generates relay + service secrets, single replica |
 
 ## Quickstart (eval only)
@@ -34,12 +34,6 @@ CI installs). Eval-only: every bundled service is a single replica with no HA.
 The chart is designed for ArgoCD and Flux. Both render charts with `helm template`, in which mode Helm's `lookup` function returns empty — any chart-side `randAlphaNum` call would regenerate secrets on every sync. The chart-managed Secret path is **only** safe for `helm install` / `helm upgrade`.
 
 Production deploys MUST use `secrets.existingSecret:`. The Secret is consumed for any keys present and ignored for keys missing — extras are harmless.
-
-For Azure Blob Storage, set `objectStorage.backend=azure`, the storage account
-and two container names, and `objectStorage.azure.workloadIdentityClientId`.
-The chart labels the Pod and annotates its ServiceAccount for AKS workload
-identity; no storage account key is stored in Kubernetes. Grant that managed
-identity `Storage Blob Data Contributor` only on the two configured containers.
 
 See:
 
@@ -213,9 +207,8 @@ Save these. Losing any of them is data loss. See NOTES.txt printed by `helm inst
 
 1. `BUZZ_RELAY_PRIVATE_KEY` — relay identity. Rotating it = new identity (federation peers will not recognize the relay).
 2. PostgreSQL database — the canonical event store.
-3. Object storage — media blobs and the Git/CAS container. Azure deployments
-   should enable blob versioning, soft delete, and immutable backup retention.
-4. Git scratch volumes are disposable caches and are not backup sources.
+3. S3 bucket — media blobs (chart default bucket: `buzz-media`).
+4. Git PVC — repo on-disk state served by the relay's git endpoint.
 5. Owner private key — held by the operator, not by this chart. Restore by re-installing with the same `ownerPubkey`.
 
 ## Honest limitations (v1)

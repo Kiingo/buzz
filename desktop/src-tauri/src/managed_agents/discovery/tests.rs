@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use super::overrides::{divergent_agent_command_override, update_time_agent_command_override};
 use super::{
     apply_agent_command_update, classify_runtime, codex_adapter_availability,
-    codex_adapter_is_outdated, codex_adapter_is_outdated_with_path,
-    create_time_agent_command_override, default_agent_command, effective_agent_command,
-    find_nvm_default_bin, find_via_login_shell, is_login_shell_path_uninit, is_safe_nvm_tag,
-    managed_agent_avatar_url, normalize_agent_args, parse_semver_tag, probe_codex_acp_version,
-    record_agent_command, refresh_login_shell_path, try_record_agent_command,
-    BUZZ_AGENT_AVATAR_URL, CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL, GOOSE_AVATAR_URL,
+    codex_adapter_is_outdated, create_time_agent_command_override, default_agent_command,
+    effective_agent_command, find_nvm_default_bin, find_via_login_shell,
+    is_login_shell_path_uninit, is_safe_nvm_tag, managed_agent_avatar_url, normalize_agent_args,
+    parse_semver_tag, probe_codex_acp_version, record_agent_command, refresh_login_shell_path,
+    try_record_agent_command, BUZZ_AGENT_AVATAR_URL, CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL,
+    GOOSE_AVATAR_URL,
 };
 use crate::managed_agents::AcpAvailabilityStatus;
 
@@ -255,7 +255,6 @@ fn record_with(
         runtime_pid: None,
         backend: Default::default(),
         backend_agent_id: None,
-        provider_lifecycle_state: None,
         provider_binary_path: None,
         team_id: None,
         persona_team_dir: None,
@@ -289,7 +288,8 @@ fn record_with(
 
 #[test]
 fn record_agent_command_own_runtime_wins_over_persona() {
-    // A record with its own materialized runtime never consults the persona list — the unified-model resolution.
+    // A record with its own materialized runtime never consults the
+    // persona list — the unified-model resolution.
     let personas = vec![persona_with_runtime("p1", Some("goose"))];
     let record = record_with(Some("claude"), Some("p1"), None);
     assert_eq!(record_agent_command(&record, &personas), "claude-agent-acp");
@@ -748,10 +748,14 @@ fn codex_adapter_availability_available_for_minimum_supported_binary() {
     .expect("write script");
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod script");
 
-    let is_outdated = codex_adapter_is_outdated_with_path(&bin, Some("/usr/bin:/bin"));
+    let status = codex_adapter_availability(&bin);
     let _ = std::fs::remove_dir_all(dir);
 
-    assert!(!is_outdated, "minimum supported adapter must be available");
+    assert_eq!(
+        status,
+        AcpAvailabilityStatus::Available,
+        "minimum supported adapter must classify as Available"
+    );
 }
 
 #[cfg(unix)]

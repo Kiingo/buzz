@@ -61,59 +61,6 @@ test("provider draft resolves with coerced config values", () => {
   });
 });
 
-test("provider intent captures provider-owned friendly presentation", () => {
-  const intent = resolveBackendIntent(
-    providerDraft({
-      providerConfig: {
-        harness: "codex",
-        model_mode: "auto",
-        model_selector: "",
-      },
-      probedProvider: {
-        ok: true,
-        name: "Example Compute",
-        config_schema: {
-          properties: {
-            harness: {
-              type: "string",
-              title: "Harness",
-              enum: ["codex"],
-              "x-enum-labels": { codex: "Codex CLI" },
-            },
-            model_selector: { type: "string", title: "Model" },
-          },
-        },
-        capabilities: {
-          presentation: {
-            summary_fields: [
-              { field: "harness", label: "Harness" },
-              {
-                field: "model_selector",
-                label: "Model",
-                empty_label: "Automatic",
-              },
-            ],
-          },
-        },
-      },
-    }),
-  );
-  assert.deepEqual(intent, {
-    type: "provider",
-    id: "blox",
-    config: {
-      harness: "codex",
-      model_mode: "auto",
-      model_selector: "",
-    },
-    name: "Example Compute",
-    summary: [
-      { label: "Harness", value: "Codex CLI" },
-      { label: "Model", value: "Automatic" },
-    ],
-  });
-});
-
 // ── applyProbeResult: probe resolution must merge, not overwrite ─────────────
 //
 // Pins the seam that fixed the "Typewriter Eraser" (agent-create dialog's
