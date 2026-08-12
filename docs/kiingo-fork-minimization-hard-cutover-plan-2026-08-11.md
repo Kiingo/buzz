@@ -24,15 +24,15 @@ feature flag, duplicate implementation, or undocumented exception.
 - [x] Use the intentional `buzz-backend-*` provider discovery, `info`, `config_schema`, and idempotent `deploy` protocol as the primary desktop customization boundary.
 - [x] Keep Codex/Claude credentials exclusively in Kiingo Harness Connections and keep exact-sender authorization fail-closed with no owner, administrator, API-key, or other-employee fallback.
 - [ ] Preserve the existing Buzz agent public identity, encrypted private identity, hosted endpoint, profile revision, conversation/history, memory references, and audit data through the cutover and rollback.
-- [ ] Preserve the current production relay/community URL and community scope without a parallel relay, duplicate community, or user-visible migration.
+- [x] Preserve the current production relay/community URL and community scope without a parallel relay, duplicate community, or user-visible migration.
 - [x] Make every retained Buzz-core change provider-neutral, independently testable, and suitable for upstream contribution; no retained generic hook may recognize Kiingo.
 - [x] Do not persist live provider lifecycle projections throughout persona, team, snapshot, import/export, and managed-agent record formats when authoritative state can be queried through the provider.
 - [x] Do not add feature flags, dual old/new execution paths, temporary shims, fallback implementations, extra canaries, or unnecessary CI smoke jobs.
 
 ## Baseline, source safety, and authoritative inventory
 
-- [ ] Record the exact Kiingo `main`, upstream `main`, production desktop, provider, relay, API, supervisor, and Compute revisions before mutation.
-- [ ] Preserve the pre-cutover Kiingo fork branch and immutable production artifacts as rollback evidence without modifying the existing conflicted local checkout.
+- [x] Record the exact Kiingo `main`, upstream `main`, production desktop, provider, relay, API, supervisor, and Compute revisions before mutation.
+- [x] Preserve the pre-cutover Kiingo fork branch and immutable production artifacts as rollback evidence without modifying the existing conflicted local checkout.
 - [x] Start implementation in a dedicated clean worktree after fetching both remotes and merging current upstream `main`.
 - [x] Produce a machine-readable inventory of every fork-added and fork-modified file relative to the current upstream merge base, grouped by ownership and runtime purpose.
 - [x] Classify every downstream delta as `drop/upstream-present`, `move-to-kiingo`, `retain-generic`, or `obsolete`; do not leave an unclassified production delta.
@@ -71,9 +71,9 @@ feature flag, duplicate implementation, or undocumented exception.
 - [x] Update the production workflow to consume the Kiingo-owned Azure deployment package while building the relay from the exact reviewed Buzz source revision.
 - [x] Retain Azure Blob durability through a generic storage interface or independently upstreamable adapter with no Kiingo resource names or deployment policy in Buzz core.
 - [x] Minimize required generic storage glue in `buzz-media` and relay startup/state; keep Azure SDK/configuration details isolated in the adapter.
-- [ ] Preserve create-only writes, ETag CAS, GET/stream/range/HEAD/list/delete, version restore, soft-delete recovery, namespace isolation, private networking, and workload identity.
+- [x] Preserve create-only writes, ETag CAS, GET/stream/range/HEAD/list/delete, version restore, soft-delete recovery, namespace isolation, private networking, and workload identity.
 - [x] Move Kiingo-specific release, Azure, signing, and deployment workflows out of the Buzz fork unless the workflow is a generic upstream-equivalent check.
-- [ ] Preserve the current PostgreSQL, Blob, Redis, Key Vault, Front Door, AKS, relay, and community data without replacement or destructive migration.
+- [x] Preserve the current PostgreSQL, Blob, Redis, Key Vault, Front Door, AKS, relay, and community data without replacement or destructive migration.
 
 ## Fork and release mechanics
 
@@ -90,10 +90,10 @@ feature flag, duplicate implementation, or undocumented exception.
 ## Security, privacy, and data-integrity proof
 
 - [x] Re-run focused forged-signature, replay, cross-user, cross-community, inactive-member, ambiguous-connection, and no-fallback tests across the new boundary.
-- [ ] Prove agent private keys remain encrypted before leaving the desktop provider process and never enter logs, command lines, provider configuration, support output, or crash text.
+- [x] Prove agent private keys remain encrypted before leaving the desktop provider process and never enter logs, command lines, provider configuration, support output, or crash text.
 - [x] Prove provider schema/configuration cannot carry secret-like fields, nested unbounded values, unknown lifecycle shapes, or untrusted executable paths.
 - [x] Prove signed provider verification, immutable staging, catalog signature verification, profile revision checks, request idempotency, and two-phase deletion remain effective.
-- [ ] Resolve or explicitly disposition all open high/critical secret, dependency, code, and container alerts affecting shipped artifacts.
+- [x] Resolve or explicitly disposition all open high/critical secret, dependency, code, and container alerts affecting shipped artifacts.
 - [ ] Confirm no data migration or rollback path deletes or changes agent identity, histories, memory references, membership audit, or credential ownership.
 
 ## Scoped validation and CI
@@ -102,8 +102,8 @@ feature flag, duplicate implementation, or undocumented exception.
 - [x] Run formatting and the smallest Rust tests for each changed generic Buzz module and Kiingo-owned Rust application.
 - [x] Run only the focused desktop component/contract tests required by the retained patch; do not run Jest, TypeScript compilation, or a desktop build unless implementation or an authoritative gate requires it.
 - [x] Validate Kiingo monorepo API/provider/supervisor/IaC changes with package-scoped tests and repository guards.
-- [ ] Let protected CI perform required cross-platform builds and broad release packaging once local focused validation is green.
-- [ ] Fix every implementation-caused CI, security, review, and upstream-replay failure before merge; do not bypass protections or dequeue another PR.
+- [x] Let protected CI perform required cross-platform builds and broad release packaging once local focused validation is green.
+- [x] Fix every implementation-caused CI, security, review, and upstream-replay failure before merge; do not bypass protections or dequeue another PR.
 
 ## Dedicated fork-minimization eval ledger
 
@@ -111,7 +111,7 @@ feature flag, duplicate implementation, or undocumented exception.
 - [x] Prove current upstream can be incorporated by the documented process with zero unresolved conflicts and the footprint guard remains within budget.
 - [ ] Prove the Windows desktop discovers only the intended installed Kiingo provider and renders provider-owned Codex/Claude/model/reasoning configuration without local CLIs.
 - [ ] Prove creation of a hosted Codex agent with instructions, automatic model, and the exact sender's ChatGPT connection returns a real reply.
-- [ ] Prove creation of a hosted Claude agent with instructions, explicit model/reasoning, and the exact sender's Claude connection returns a real reply.
+- [x] Prove creation of a hosted Claude agent with instructions, explicit model/reasoning, and the exact sender's Claude connection returns a real reply.
 - [ ] Prove editing only the instructions changes the next hosted reply without replacing the Buzz public identity or losing conversation/memory continuity.
 - [ ] Prove edit, status, pause, resume, reconcile, deletion retry, completed deletion, and post-delete no-reply behavior through the retained generic lifecycle seam or its designated Kiingo management surface.
 - [ ] Prove a second authorized sender uses only their own connection and a missing/revoked connection fails visibly without cross-user fallback.
@@ -125,11 +125,11 @@ feature flag, duplicate implementation, or undocumented exception.
 ## Pull requests, deployment, and completion audit
 
 - [x] Commit this plan first on the dedicated Buzz feature branch, push it, and open the implementation PR before broad code changes.
-- [ ] Open linked Kiingo monorepo PR(s) for every moved component/workflow/IaC change; keep cross-repo source revisions immutable and reviewable.
-- [ ] Merge through normal protected queues after required checks pass without administrative bypass or queue interference.
+- [x] Open linked Kiingo monorepo PR(s) for every moved component/workflow/IaC change; keep cross-repo source revisions immutable and reviewable.
+- [x] Merge through normal protected queues after required checks pass without administrative bypass or queue interference.
 - [ ] Publish the reviewed desktop/provider release artifacts with checksums, provenance, and rollback references.
-- [ ] Deploy every affected API, supervisor, membership, relay, storage, Agent UI, and Compute component from its reviewed merge commit.
-- [ ] Verify production health, readiness, exact deployed revisions, alert coverage, and no unexpected resource replacement after deployment.
+- [x] Deploy every affected API, supervisor, membership, relay, storage, Agent UI, and Compute component from its reviewed merge commit.
+- [x] Verify production health, readiness, exact deployed revisions, alert coverage, and no unexpected resource replacement after deployment.
 - [ ] Update every checkbox with evidence only after the behavior is implemented and proven.
 - [ ] Re-read this plan skeptically against the final code, fork diff, CI, production state, and eval ledger; close every missing, incomplete, or weakly evidenced item.
 - [ ] Confirm the final fork metrics satisfy the budget and the complete user-visible Buzz/Kiingo Compute experience remains available.
@@ -161,3 +161,45 @@ feature flag, duplicate implementation, or undocumented exception.
   production source; the hardened final tree remains within the binding budget
   at 37 classified divergences, 25 modified upstream files, exactly 15 modified
   upstream production-source files, and zero Kiingo contamination.
+- 2026-08-11: A final upstream fetch advanced the baseline to
+  `f35930104bcbdb1332ff13735214ecb9fce1fc7b`. It merged with zero
+  conflicts across 179 upstream-changed files. Buzz PR `#65` passed the full
+  protected desktop, Windows, mesh, container, CodeQL, security, and release
+  candidate gates and merged normally as
+  `1286b7c44c9228e43c4b09eaf235d6766a876b7f`. One five-second
+  adapter subprocess probe failed once after passing twice in the same
+  2,400-test job; the unchanged failed-job retry passed, confirming a bounded
+  timing flake rather than an integration regression.
+- 2026-08-11: The final boundary guard against that upstream baseline reports
+  38 classified divergences, 26 modified upstream files, exactly 15 modified
+  upstream production-source files, and zero Kiingo-specific production
+  contamination. GitHub reports zero open secret-scanning alerts, zero open
+  code-scanning alerts, and zero open high/critical dependency alerts.
+- 2026-08-11: Kiingo membership idempotency PR `#9845` passed its focused Rust
+  tests, the 1,084-file API inventory validator, all 30 CI-planner fixtures,
+  the protected PR gate, and exact merge-group gates. It merged through the
+  normal queue as `e54ce2c4706f0644c16d071741d7123afd371e41` without
+  dequeuing or bypassing another entry.
+- 2026-08-11: Final production run `31551503026` deployed exact Buzz merge
+  `1286b7c44c9228e43c4b09eaf235d6766a876b7f` from Kiingo main
+  `e54ce2c4706f0644c16d071741d7123afd371e41`. The relay, generic agent,
+  and hosted components run immutable digests recorded in the Kiingo eval
+  ledger; ACR tag locks, provenance attestations, SBOMs, all three Trivy scans,
+  migrations, the seven-operation Azure deployment, AKS rollout, and public
+  health gate succeeded. Relay, supervisor, membership controller,
+  compatibility listener, and Redis are ready with zero pod restarts. API
+  App Service is 8/8 ready and its worker is 1/1 ready. No named production
+  resource was unexpectedly replaced.
+- 2026-08-11: An isolated membership-controller restart produced zero
+  already-absent member, admin-failure, or reconciliation-failure lines. A
+  bounded stateless Compute turnover maintained two ready workers and settled
+  on two replacement replicas with zero restarts while the six durable workers
+  remained untouched. Public API, readiness, and relay health stayed HTTP 200;
+  production table counts did not decrease and relay events advanced only by
+  normal append-only writes.
+- 2026-08-11: General employee distribution remains fail-closed. The Azure
+  Artifact Signing account has no Public Trust certificate profile, signed
+  release variables are absent, and the four stable release URLs return HTTP 404. Microsoft business validation, clean Windows signed-package proof, the
+  real private-desktop Codex/edit/lifecycle cases, and a second employee's
+  exact-user proof remain explicitly unchecked; automation must not impersonate
+  either employee to manufacture that evidence.
