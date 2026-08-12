@@ -90,6 +90,25 @@ const modifiedProduction = modified.filter((change) =>
   !dedicatedTestSourcePattern.test(change.path) &&
   !rustDiffIsConfinedToCfgTestModule(change.path)
 );
+const productionSourceDiffMetrics = modifiedProduction.reduce(
+  (metrics, change) => {
+    const numstat = runGit('diff', '--numstat', upstreamRef, '--', change.path)
+      .split(/\r?\n/)
+      .filter(Boolean);
+    for (const line of numstat) {
+      const [added, deleted] = line.split('\t');
+      const additions = Number(added);
+      const deletions = Number(deleted);
+      if (Number.isFinite(additions)) metrics.changedLines += additions;
+      if (Number.isFinite(deletions)) metrics.changedLines += deletions;
+    }
+    metrics.hunks += runGit('diff', '--unified=0', upstreamRef, '--', change.path)
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('@@ ')).length;
+    return metrics;
+  },
+  { changedLines: 0, hunks: 0 }
+);
 if (modified.length > inventory.budgets.modifiedUpstreamFiles) {
   fail(`modified upstream file budget exceeded: ${modified.length}`);
 }
@@ -98,6 +117,22 @@ if (
   inventory.budgets.modifiedUpstreamProductionSourceFiles
 ) {
   fail(`modified upstream production-source budget exceeded: ${modifiedProduction.length}`);
+}
+if (
+  productionSourceDiffMetrics.changedLines >
+  inventory.budgets.changedUpstreamProductionSourceLines
+) {
+  fail(
+    `changed upstream production-source line budget exceeded: ${productionSourceDiffMetrics.changedLines}`
+  );
+}
+if (
+  productionSourceDiffMetrics.hunks >
+  inventory.budgets.upstreamProductionSourceDiffHunks
+) {
+  fail(
+    `upstream production-source diff-hunk budget exceeded: ${productionSourceDiffMetrics.hunks}`
+  );
 }
 
 const forbidden = /\bkiingo\b|chat\.kiingo\.com|api\.kiingo\.com|dashboard\.kiingo\.com|harness connections/i;
@@ -116,6 +151,8 @@ process.stdout.write(
     divergentFiles: changes.length,
     modifiedUpstreamFiles: modified.length,
     modifiedUpstreamProductionSourceFiles: modifiedProduction.length,
+    changedUpstreamProductionSourceLines: productionSourceDiffMetrics.changedLines,
+    upstreamProductionSourceDiffHunks: productionSourceDiffMetrics.hunks,
     classifiedFiles: inventoryPaths.size,
     kiingoProductionContamination: 0
   })}\n`

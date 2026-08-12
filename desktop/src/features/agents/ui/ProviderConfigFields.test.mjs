@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { coerceConfigValues } from "./ProviderConfigFields.tsx";
+import { providerSchemaUsesExtendedPresentation } from "./ProviderConfigSchemaFields.tsx";
 import {
-  coerceConfigValues,
   providerConfigFieldVisible,
   providerConfigOptions,
-} from "./ProviderConfigFields.tsx";
+  reconcileProviderConfig,
+} from "./providerConfigSchema.ts";
 
 const schema = {
   properties: {
@@ -119,6 +121,62 @@ describe("providerConfigOptions", () => {
         model_selector: "",
       }),
       false,
+    );
+  });
+
+  it("clears a dependent value that is invalid for the new selection", () => {
+    const entries = [
+      ["harness", { enum: ["codex", "claude-code"] }],
+      [
+        "model",
+        {
+          default: "auto",
+          "x-options-by-field": {
+            field: "harness",
+            options: {
+              codex: [{ value: "gpt", label: "GPT" }],
+              "claude-code": [{ value: "opus", label: "Opus" }],
+            },
+          },
+        },
+      ],
+    ];
+    assert.deepEqual(
+      reconcileProviderConfig(
+        entries,
+        { harness: "codex", model: "gpt" },
+        "harness",
+        "claude-code",
+      ),
+      { harness: "claude-code", model: "" },
+    );
+  });
+});
+
+describe("providerSchemaUsesExtendedPresentation", () => {
+  it("leaves upstream string-only schemas on the upstream renderer", () => {
+    assert.equal(
+      providerSchemaUsesExtendedPresentation({
+        properties: { label: { type: "string", default: "" } },
+      }),
+      false,
+    );
+  });
+
+  it("routes bounded and dependent schemas through the generic extension", () => {
+    assert.equal(
+      providerSchemaUsesExtendedPresentation({
+        properties: { harness: { enum: ["codex", "claude-code"] } },
+      }),
+      true,
+    );
+    assert.equal(
+      providerSchemaUsesExtendedPresentation({
+        properties: {
+          model: { "x-visible-when": { field: "harness", equals: "codex" } },
+        },
+      }),
+      true,
     );
   });
 });

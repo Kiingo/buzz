@@ -26,12 +26,15 @@
 
 use std::sync::Arc;
 
-use buzz_azure_storage::{AzureBlobStore, BlobVersion, ConditionalWrite};
 use bytes::Bytes;
 use s3::creds::Credentials;
 use s3::error::S3Error;
 use s3::{Bucket, Region};
 use sha2::{Digest, Sha256};
+
+#[path = "store/azure.rs"]
+mod azure;
+use azure::AzureGitStore;
 
 /// Opaque object-store ETag (used for `If-Match` on pointer CAS).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,7 +176,7 @@ impl From<ProbeFailure> for StoreError {
 #[derive(Clone)]
 enum GitBackend {
     S3(Arc<Bucket>),
-    Azure(AzureBlobStore),
+    Azure(AzureGitStore),
 }
 
 #[derive(Clone)]
@@ -272,14 +275,14 @@ impl GitStore {
     /// Build an Azure Git backend from the Azure credential environment.
     pub fn new_azure(account: &str, container: &str) -> Result<Self, StoreError> {
         Ok(Self {
-            backend: GitBackend::Azure(AzureBlobStore::from_env(account, container)?),
+            backend: GitBackend::Azure(AzureGitStore::from_env(account, container)?),
         })
     }
 
     #[cfg(test)]
     fn new_azurite(container: &str) -> Result<Self, StoreError> {
         Ok(Self {
-            backend: GitBackend::Azure(AzureBlobStore::for_azurite(container)?),
+            backend: GitBackend::Azure(AzureGitStore::for_azurite(container)?),
         })
     }
 
@@ -350,9 +353,7 @@ impl GitStore {
                 }
             }
             GitBackend::Azure(store) => {
-                store
-                    .create(&key, Bytes::copy_from_slice(bytes), content_type)
-                    .await?;
+                store.create_idempotent(&key, bytes, content_type).await?;
                 Ok(key)
             }
         }
@@ -397,11 +398,7 @@ impl GitStore {
             }
             GitBackend::Azure(store) => {
                 store
-                    .create(
-                        &key,
-                        Bytes::copy_from_slice(idx_bytes),
-                        "application/x-git-index",
-                    )
+                    .create_idempotent(&key, idx_bytes, "application/x-git-index")
                     .await?;
                 Ok(key)
             }
@@ -444,11 +441,7 @@ impl GitStore {
                 Err(S3Error::HttpFailWithBody(404, _)) => Err(StoreError::NotFound(key.into())),
                 Err(e) => Err(StoreError::Backend(e)),
             },
-            GitBackend::Azure(store) => match store.get(key).await {
-                Ok(object) => Ok(object.bytes),
-                Err(error) if error.is_not_found() => Err(StoreError::NotFound(key.into())),
-                Err(error) => Err(StoreError::AzureBackend(error)),
-            },
+            GitBackend::Azure(store) => store.get(key).await,
         }
     }
 
@@ -522,7 +515,7 @@ impl GitStore {
                 head.content_length
                     .map(|size| u64::try_from(size).unwrap_or(u64::MAX))
             }
-            GitBackend::Azure(store) => store.head(key).await?.map(|meta| meta.size),
+            GitBackend::Azure(store) => store.size(key).await?,
         };
         let Some(size) = object_size else {
             if matches!(&self.backend, GitBackend::Azure(_)) {
@@ -586,11 +579,7 @@ impl GitStore {
                 Err(S3Error::HttpFailWithBody(404, _)) => Ok(None),
                 Err(e) => Err(StoreError::Backend(e)),
             },
-            GitBackend::Azure(store) => match store.get(key).await {
-                Ok(object) => Ok(Some((ETag(object.version.etag), object.bytes))),
-                Err(error) if error.is_not_found() => Ok(None),
-                Err(error) => Err(StoreError::AzureBackend(error)),
-            },
+            GitBackend::Azure(store) => store.get_pointer(key).await,
         }
     }
 
@@ -634,32 +623,7 @@ impl GitStore {
                     .await;
                 Self::classify_cas(result)
             }
-            GitBackend::Azure(store) => {
-                let result = match precond {
-                    Precond::IfNoneMatchStar => {
-                        store
-                            .create(key, Bytes::copy_from_slice(body), "application/json")
-                            .await?
-                    }
-                    Precond::IfMatch(ETag(etag)) => {
-                        store
-                            .update(
-                                key,
-                                Bytes::copy_from_slice(body),
-                                "application/json",
-                                BlobVersion {
-                                    etag,
-                                    version: None,
-                                },
-                            )
-                            .await?
-                    }
-                };
-                Ok(match result {
-                    ConditionalWrite::Won(version) => CasOutcome::Won(ETag(version.etag)),
-                    ConditionalWrite::LostRace => CasOutcome::LostRace,
-                })
-            }
+            GitBackend::Azure(store) => store.put_pointer(key, body, precond).await,
         }
     }
 
@@ -1061,19 +1025,7 @@ impl GitStore {
                     Err(e) => Err(StoreError::Backend(e)),
                 }
             }
-            GitBackend::Azure(store) => Ok(
-                match store
-                    .create(
-                        key,
-                        Bytes::copy_from_slice(bytes),
-                        "application/octet-stream",
-                    )
-                    .await?
-                {
-                    ConditionalWrite::Won(_) => 201,
-                    ConditionalWrite::LostRace => 412,
-                },
-            ),
+            GitBackend::Azure(store) => store.put_immutable_raw(key, bytes).await,
         }
     }
 
@@ -1083,7 +1035,7 @@ impl GitStore {
                 Ok(_) | Err(S3Error::HttpFailWithBody(404, _)) => Ok(()),
                 Err(error) => Err(StoreError::Backend(error)),
             },
-            GitBackend::Azure(store) => Ok(store.delete_if_exists(key).await?),
+            GitBackend::Azure(store) => store.delete_if_exists(key).await,
         }
     }
 

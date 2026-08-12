@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
+#[path = "provider_platform.rs"]
+mod provider_platform;
+
 const STDERR_CAP: usize = 65536;
 /// Provider responses should be small JSON objects. Cap stdout to prevent a
 /// buggy or malicious provider from OOM-ing the desktop process.
@@ -481,7 +484,7 @@ fn stage_provider(
     std::fs::set_permissions(&staged_path, permissions)
         .map_err(|error| format!("failed to protect staged provider: {error}"))?;
     drop(staged);
-    verify_provider_platform_signature(&staged_path)?;
+    provider_platform::verify_provider_platform_signature(&staged_path)?;
 
     #[cfg(windows)]
     let execution_guard = {
@@ -503,60 +506,6 @@ fn stage_provider(
         hex::encode(hasher.finalize()),
         execution_guard,
     ))
-}
-
-#[cfg(windows)]
-fn verify_provider_platform_signature(binary: &Path) -> Result<(), String> {
-    let configured = option_env!("BUZZ_TRUSTED_PROVIDER_SIGNER_SUBJECTS").unwrap_or("");
-    let expected: Vec<_> = configured
-        .split(';')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .collect();
-    if expected.is_empty() {
-        return Ok(());
-    }
-    let system_root = std::env::var_os("SystemRoot")
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            "Windows system root is unavailable for provider verification".to_string()
-        })?;
-    let powershell = system_root
-        .join("System32")
-        .join("WindowsPowerShell")
-        .join("v1.0")
-        .join("powershell.exe");
-    let script = r#"$signature = Get-AuthenticodeSignature -LiteralPath $env:BUZZ_PROVIDER_SIGNATURE_TARGET; if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) { exit 41 }; [Console]::Out.Write($signature.SignerCertificate.Subject)"#;
-    let output = std::process::Command::new(powershell)
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            script,
-        ])
-        .env("BUZZ_PROVIDER_SIGNATURE_TARGET", binary)
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .map_err(|error| format!("provider signature verification failed to run: {error}"))?;
-    if !output.status.success() {
-        return Err("provider has no valid trusted Authenticode signature".to_string());
-    }
-    let subject = String::from_utf8(output.stdout)
-        .map_err(|_| "provider signer subject is not valid UTF-8".to_string())?;
-    if !expected
-        .iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(subject.trim()))
-    {
-        return Err("provider Authenticode signer is not approved by this Buzz build".to_string());
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn verify_provider_platform_signature(_binary: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 /// Deploy through one immutable staged copy: negotiate protocol v1 before the
@@ -625,17 +574,7 @@ pub fn validate_provider_config(config: &serde_json::Value) -> Result<(), String
 /// Windows leaves the executable/script extension, which is not part of the
 /// provider id.
 fn provider_id_from_filename(name: &str) -> Option<&str> {
-    let raw = name.strip_prefix("buzz-backend-")?;
-    let id = [".exe", ".bat", ".cmd"]
-        .into_iter()
-        .find_map(|extension| {
-            raw.get(raw.len().saturating_sub(extension.len())..)
-                .filter(|suffix| suffix.eq_ignore_ascii_case(extension))
-                .map(|_| &raw[..raw.len() - extension.len()])
-        })
-        .unwrap_or(raw);
-
-    (!id.is_empty()).then_some(id)
+    provider_platform::provider_id_from_filename(name)
 }
 
 /// Enumerate PATH for buzz-backend-* executables. Returns (id, path) pairs.
@@ -673,15 +612,7 @@ pub fn discover_provider_candidates() -> Vec<(String, PathBuf)> {
         }
     }
 
-    // Companion installers can place provider executables in a stable,
-    // user-scoped directory without mutating PATH or the built-in runtime list.
-    #[cfg(windows)]
-    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        let provider_dir = PathBuf::from(local_app_data).join("Buzz").join("providers");
-        if !dirs.contains(&provider_dir) {
-            dirs.insert(0, provider_dir);
-        }
-    }
+    provider_platform::augment_provider_search_dirs(&mut dirs);
 
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else {
