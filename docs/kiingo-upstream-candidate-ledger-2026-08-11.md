@@ -1,8 +1,8 @@
 # Kiingo Buzz Upstream Candidate Ledger
 
-Date reviewed: 2026-08-11
+Date reviewed: 2026-08-12
 
-Upstream baseline: `block/buzz@4b3570671eb2786594267758af18784ac6e82972`
+Upstream baseline: `block/buzz@c966b862fe8b9018c68c384b1680ca0173d0128c`
 
 This ledger separates generally useful Buzz changes from Kiingo's production
 composition. It is evidence and patch provenance, not a dependency: Kiingo
@@ -22,6 +22,7 @@ again for equivalent upstream work.
 | Azure Blob object-store adapter | `9ae994550` plus the Azure isolation commit in Kiingo PR #68 | No Azure Blob adapter or matching pull request found in current upstream review | `buzz-azure-storage` unit/Azurite conformance, `buzz-media` tests, Git store tests, and startup conformance admission |
 | Provider-owned JSON-schema presentation | The desktop schema-isolation commit in Kiingo PR #68 | No equivalent schema-keyword renderer found in current upstream | `ProviderConfigFields.test.mjs` and desktop protected CI |
 | Platform provider discovery and optional signer enforcement | The desktop platform-isolation commit in Kiingo PR #68 | No equivalent user-scoped Windows provider directory or build-pinned signer policy found in current upstream | provider platform/backend tests and signed/unsigned Windows release checks appropriate to the build policy |
+| Restart-safe DM recipient hydration | The DM recipient-hydration commit following the `c966b862f` upstream merge | Current upstream can paint a persisted DM snapshot before its participant arrays are authoritative, allowing a top-level event with `h` but no recipient `p` tag | restart-empty pair and group DM tests, cached/authoritative membership tests, fail-closed coverage, channel-binding tests, and a restarted installed-desktop live round-trip |
 
 ## ACP candidate sequence
 

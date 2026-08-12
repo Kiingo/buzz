@@ -36,16 +36,16 @@ fork branch.
 Run `node scripts/check-kiingo-fork-boundary.mjs` before pushing. The guard
 requires the fetched `upstream/main` tip to be incorporated, compares the final
 tree (not historical merge noise), and verifies every divergent path against
-`docs/kiingo-fork-inventory.json`. Its hard budgets are 15 modified upstream
-production-source files, 26 modified upstream files overall, 1,708 changed
-upstream production-source lines, 168 upstream production-source diff hunks,
+`docs/kiingo-fork-inventory.json`. Its hard budgets are 16 modified upstream
+production-source files, 27 modified upstream files overall, 1,721 changed
+upstream production-source lines, 170 upstream production-source diff hunks,
 and zero Kiingo business-logic lines in upstream-owned production source.
 
 The production-source metrics exclude dedicated `*.test.*`/`tests/` files and
 Rust diffs whose every hunk is below the file's final `#[cfg(test)]` boundary.
 The guard derives that classification from the current diff; it is not a path
 waiver. This keeps scanner-only fixture changes from consuming the production
-budgets while still counting their files in the overall 26-file limit. Changed
+budgets while still counting their files in the overall 27-file limit. Changed
 lines are additions plus deletions from `git diff --numstat`; hunk count is the
 number of `@@` records in a zero-context final-tree diff. These two measurements
 make a large embedded customization fail even when it does not add another
@@ -91,6 +91,11 @@ not own:
 - `buzz-relay/src/api/git/store.rs` retains content addressing, digest checks,
   bounded reads, CAS classification, and conformance admission. Azure result
   translation lives in `store/azure.rs` and the same Azure adapter crate.
+- `features/messages/hooks.ts` retains send orchestration. Its single generic
+  recipient-resolution hook delegates restart-safe DM membership hydration and
+  fail-closed recipient completeness to
+  `extensions/messages/dmRecipientHydration.ts`; stream and complete-DM sends
+  remain on the local fast path.
 
 Do not move upstream S3 or Git business semantics into downstream files merely
 to make a line-count metric smaller. On upstream replay, preserve the one-call

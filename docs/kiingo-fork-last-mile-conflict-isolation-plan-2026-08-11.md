@@ -380,6 +380,60 @@ provider-neutral ACP durability work into a Kiingo-only service or sidecar.
   its targeted workflow rerun passed without a source change. No failure was
   concealed, bypassed, or retried broadly.
 
+## Post-deploy restart-DM regression closure (2026-08-12)
+
+The later exact-revision production deployment remained healthy, but the
+required fresh-desktop live evaluation exposed one additional generic desktop
+correctness gap. A direct message accepted at `2026-08-12T15:03:22Z` carried
+the correct channel `h` tag but no recipient `p` tag. Relay storage therefore
+worked, while the resident hosted agent correctly did not receive the event and
+no Kiingo inbound receipt or reply was created. The same DM's earlier successful
+event carried both tags. This is observed production evidence, not an inference:
+the restarted desktop had composed from an incomplete cached DM channel before
+authoritative membership was present in that send path.
+
+- [x] Merge fetched `upstream/main` through
+  `c966b862fe8b9018c68c384b1680ca0173d0128c` in the clean implementation
+  worktree, resolve only the lockfile overlap, and prove upstream remains an
+  ancestor of the final fork revision.
+- [x] Make DM send resolution merge the already-cached authoritative channel
+  membership and query relay membership only when the local DM participant set
+  is incomplete; normal stream sends and complete DMs must retain their local
+  fast path.
+- [x] Fail the send visibly if authoritative membership still cannot identify
+  every expected DM recipient, rather than publishing an unreachable message
+  without recipient tags.
+- [x] Add focused coverage for restart-empty pair DMs, cached membership,
+  relay-hydrated membership, incomplete group DMs, fail-closed behavior, and
+  unchanged stream behavior.
+
+Scoped pre-PR evidence: nine resolver/integration regressions pass, the related
+message-addressing and channel-binding tests pass, touched desktop files pass
+Biome and the file-size guard, and the clean upstream replay reports `49 / 27 /
+16 / 1,721 / 170 / 0` (classified paths / modified upstream paths / modified
+upstream production paths / changed production lines / production hunks /
+Kiingo contamination). The only new upstream-owned source hook is a seven-line
+addition/six-line replacement in `features/messages/hooks.ts`; the hydration,
+cache, authoritative-read, and fail-closed policy lives in two added extension
+files.
+
+- [ ] Push a DCO-signed protected Buzz PR, let all required checks complete,
+  merge normally without protection or queue bypass, and verify post-merge CI.
+- [ ] Build and install the unsigned Windows desktop from the exact merged
+  revision. Restart that installed app before validation so the test exercises
+  persisted channel rehydration rather than an in-memory channel object.
+- [ ] Deploy every server artifact affected by the current upstream merge using
+  the existing production workflow and exact reviewed revision/digest pins;
+  verify healthy relay and hosted-agent workloads with zero unexpected restarts.
+- [ ] From the restarted installed desktop, send a new plain top-level DM to the
+  hosted High Agency agent and prove, in sequence, relay acceptance with both
+  `h` and recipient `p` tags, durable Kiingo inbound receipt, instruction-
+  following final reply, and visible desktop rendering.
+- [ ] Re-run the read-only production continuity and boundary evidence after the
+  final deploy, update this ledger with exact redacted SHAs/runs/digests/counts,
+  and remove only disposable resources and local artifacts created for this
+  regression closure.
+
 ## Final reconciliation and cleanup
 
 - [x] Skeptically reconcile every checkbox against the final merged tree, CI
