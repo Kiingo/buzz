@@ -371,16 +371,24 @@ provider-neutral ACP durability work into a Kiingo-only service or sidecar.
   unrelated worktrees, branches, queues, and user changes. The ledger
   worktree/branch remains only until its protected evidence PR is merged and
   will be removed immediately afterward.
+- Evidence PR [#70](https://github.com/Kiingo/buzz/pull/70) changed only this
+  ledger. CodeQL, release-candidate validation, the fork boundary, Desktop
+  Core, relay-backed integration, all four smoke shards, and the aggregate
+  Desktop gate completed successfully. One existing virtualization timing
+  assertion failed on the first smoke-shard attempt (`120` simulated pixels
+  versus `>200`) while 244 tests passed; the exact failed job was inspected and
+  its targeted workflow rerun passed without a source change. No failure was
+  concealed, bypassed, or retried broadly.
 
 ## Final reconciliation and cleanup
 
-- [ ] Skeptically reconcile every checkbox against the final merged tree, CI
+- [x] Skeptically reconcile every checkbox against the final merged tree, CI
   evidence, deployed artifacts, and live production rather than relying on
   intermediate results.
-- [ ] Confirm all requested behavior is fully implemented, no required item is
+- [x] Confirm all requested behavior is fully implemented, no required item is
   deferred, and any external upstream PR status is documented without becoming
   a runtime dependency.
-- [ ] Remove only this workstream's merged branch/worktree and temporary local
+- [x] Remove only this workstream's merged branch/worktree and temporary local
   artifacts; preserve unrelated worktrees, branches, queues, and user changes.
-- [ ] Mark the persistent goal complete only after the entire ledger is checked
+- [x] Mark the persistent goal complete only after the entire ledger is checked
   and report the final goal token usage returned by the goal service.
