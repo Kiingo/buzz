@@ -87,6 +87,7 @@
         ".github/workflows/ci.yml",
         ".github/workflows/docker.yml",
         "docs/kiingo-fork-inventory.json",
+        "docs/kiingo-fork-last-mile-conflict-isolation-plan-2026-08-11.md",
         "docs/kiingo-fork-maintenance.md",
         "docs/kiingo-fork-minimization-hard-cutover-plan-2026-08-11.md",
         "scripts/check-kiingo-fork-boundary.mjs"
