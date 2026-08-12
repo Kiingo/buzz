@@ -440,6 +440,30 @@ the expected S3/Azure media-storage seam.
   surface; modified upstream files remain 27, modified upstream production
   files remain 16, and Kiingo contamination remains zero.
 
+Final release-freeze refresh evidence: immediately before opening the release
+PR, a fresh remote fetch found five additional upstream commits after
+`8a2c9af2dbe0cf315e77f43a4560d3572da5e554`. The release snapshot is therefore
+explicitly frozen at `c6c6e7eca70d6b526c43af925e596e8616b19fb8`, which includes
+ACP lazy-pool idle re-sleep, batched observer-store publication, mention and
+link-preview fixes, and coalesced thread-activity persistence. This bounded
+freeze prevents an indefinitely moving upstream target while still ensuring
+the release was current at its final pre-PR fetch.
+
+- [x] Merge upstream through the frozen
+  `c6c6e7eca70d6b526c43af925e596e8616b19fb8` snapshot. The only source
+  conflict was the ACP queue seam; the resolution retains both the fork's
+  retry-deadline calculation and upstream's undispatched-work signal because
+  they are complementary rather than competing behaviors.
+- [x] Validate the refresh without a resource-heavy desktop build: all 13 new
+  ACP idle-sleep/queue regressions pass serially, 124 focused desktop tests
+  pass, ACP all-target clippy passes with warnings denied, and all 17 touched
+  desktop files plus the file-size guard pass. The serial ACP execution avoids
+  unrelated Windows tests that mutate shared process environment in parallel;
+  the protected Linux checks remain the authoritative full-suite gate.
+- [x] Replay the boundary guard against that exact upstream snapshot. The
+  result remains `49 / 27 / 16 / 1,768 / 172 / 0`; the refresh adds no new
+  fork-owned production overlap and no Kiingo contamination.
+
 - [ ] Push a DCO-signed protected Buzz PR, let all required checks complete,
   merge normally without protection or queue bypass, and verify post-merge CI.
 - [ ] Build and install the unsigned Windows desktop from the exact merged
