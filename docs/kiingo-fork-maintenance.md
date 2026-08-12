@@ -33,13 +33,28 @@ fork branch.
 8. Merge through the normal protected-branch workflow. Production images must
    be built from the reviewed merge commit and pinned by digest.
 
-Run `node scripts/check-kiingo-fork-boundary.mjs` before pushing. The guard
-requires the fetched `upstream/main` tip to be incorporated, compares the final
-tree (not historical merge noise), and verifies every divergent path against
-`docs/kiingo-fork-inventory.json`. Its hard budgets are 16 modified upstream
-production-source files, 27 modified upstream files overall, 1,721 changed
-upstream production-source lines, 170 upstream production-source diff hunks,
-and zero Kiingo business-logic lines in upstream-owned production source.
+Run `node scripts/check-kiingo-fork-boundary.mjs` before pushing. Each upstream
+integration PR records the exact reviewed commit in the inventory's
+`upstreamSnapshot`. The guard requires that immutable snapshot to be an
+ancestor of the fork, compares the final tree against it (not historical merge
+noise), and verifies every divergent path against
+`docs/kiingo-fork-inventory.json`. It also fetches and reports the live
+`upstream/main` tip plus the number of commits landed after the snapshot. That
+drift is informational for the next synchronization cycle: it must not make a
+reviewed release retroactively fail merely because upstream changed while the
+protected PR or post-merge CI was running.
+
+Update `upstreamSnapshot` only in the same protected PR that incorporates that
+exact commit. At the final pre-PR fetch, the snapshot must equal the then-live
+upstream tip. If upstream advances afterward, keep the reviewed snapshot fixed,
+record the reported drift, and merge the newer commits in the next dedicated
+synchronization PR. Never move the snapshot ahead of the fork or edit it only
+to make the guard pass.
+
+The hard budgets are 16 modified upstream production-source files, 27 modified
+upstream files overall, 1,768 changed upstream production-source lines, 172
+upstream production-source diff hunks, and zero Kiingo business-logic lines in
+upstream-owned production source.
 
 The production-source metrics exclude dedicated `*.test.*`/`tests/` files and
 Rust diffs whose every hunk is below the file's final `#[cfg(test)]` boundary.
