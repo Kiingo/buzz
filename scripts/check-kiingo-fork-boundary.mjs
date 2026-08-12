@@ -3,7 +3,6 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-const upstreamRef = process.env.BUZZ_UPSTREAM_REF || 'upstream/main';
 const inventoryPath = 'docs/kiingo-fork-inventory.json';
 const runGit = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -12,21 +11,47 @@ const fail = (message) => {
   process.exit(1);
 };
 
-try {
-  runGit('rev-parse', '--verify', `${upstreamRef}^{commit}`);
-} catch {
-  fail(`missing upstream reference ${upstreamRef}`);
+const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8'));
+if (inventory.schemaVersion !== 2) {
+  fail(`unsupported inventory schema version ${inventory.schemaVersion}`);
+}
+const snapshotRef = process.env.BUZZ_UPSTREAM_REF || inventory.upstreamSnapshot;
+const liveUpstreamRef =
+  process.env.BUZZ_UPSTREAM_LIVE_REF || inventory.upstreamReference || 'upstream/main';
+if (!/^[a-f0-9]{40}$/.test(snapshotRef ?? '')) {
+  fail('inventory upstreamSnapshot must be an exact lowercase 40-character commit');
 }
 
 try {
-  execFileSync('git', ['merge-base', '--is-ancestor', upstreamRef, 'HEAD'], {
+  runGit('rev-parse', '--verify', `${snapshotRef}^{commit}`);
+} catch {
+  fail(`missing frozen upstream snapshot ${snapshotRef}`);
+}
+
+try {
+  execFileSync('git', ['merge-base', '--is-ancestor', snapshotRef, 'HEAD'], {
     stdio: 'ignore'
   });
 } catch {
-  fail(`${upstreamRef} is not incorporated into HEAD; merge current upstream first`);
+  fail(`frozen upstream snapshot ${snapshotRef} is not incorporated into HEAD`);
 }
 
-const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8'));
+try {
+  runGit('rev-parse', '--verify', `${liveUpstreamRef}^{commit}`);
+} catch {
+  fail(`missing live upstream reference ${liveUpstreamRef}`);
+}
+try {
+  execFileSync('git', ['merge-base', '--is-ancestor', snapshotRef, liveUpstreamRef], {
+    stdio: 'ignore'
+  });
+} catch {
+  fail(`live upstream reference ${liveUpstreamRef} no longer descends from frozen snapshot`);
+}
+const liveUpstreamTip = runGit('rev-parse', liveUpstreamRef);
+const upstreamCommitsAfterSnapshot = Number(
+  runGit('rev-list', '--count', `${snapshotRef}..${liveUpstreamRef}`)
+);
 const entries = inventory.deltas.flatMap((delta) =>
   delta.paths.map((path) => ({ path, classification: delta.classification }))
 );
@@ -46,7 +71,7 @@ for (const entry of entries) {
   }
 }
 
-const trackedChanges = runGit('diff', '--name-status', upstreamRef)
+const trackedChanges = runGit('diff', '--name-status', snapshotRef)
   .split(/\r?\n/)
   .filter(Boolean)
   .map((line) => {
@@ -77,7 +102,7 @@ const rustDiffIsConfinedToCfgTestModule = (path) => {
   const lines = readFileSync(path, 'utf8').split(/\r?\n/);
   const cfgTestLine = lines.findLastIndex((line) => /^\s*#\[cfg\(test\)\]/.test(line));
   if (cfgTestLine < 0) return false;
-  const hunkStarts = runGit('diff', '--unified=0', upstreamRef, '--', path)
+  const hunkStarts = runGit('diff', '--unified=0', snapshotRef, '--', path)
     .split(/\r?\n/)
     .flatMap((line) => {
       const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
@@ -92,7 +117,7 @@ const modifiedProduction = modified.filter((change) =>
 );
 const productionSourceDiffMetrics = modifiedProduction.reduce(
   (metrics, change) => {
-    const numstat = runGit('diff', '--numstat', upstreamRef, '--', change.path)
+    const numstat = runGit('diff', '--numstat', snapshotRef, '--', change.path)
       .split(/\r?\n/)
       .filter(Boolean);
     for (const line of numstat) {
@@ -102,7 +127,7 @@ const productionSourceDiffMetrics = modifiedProduction.reduce(
       if (Number.isFinite(additions)) metrics.changedLines += additions;
       if (Number.isFinite(deletions)) metrics.changedLines += deletions;
     }
-    metrics.hunks += runGit('diff', '--unified=0', upstreamRef, '--', change.path)
+    metrics.hunks += runGit('diff', '--unified=0', snapshotRef, '--', change.path)
       .split(/\r?\n/)
       .filter((line) => line.startsWith('@@ ')).length;
     return metrics;
@@ -147,7 +172,10 @@ if (contaminated.length) {
 
 process.stdout.write(
   `${JSON.stringify({
-    upstreamRef,
+    upstreamSnapshot: snapshotRef,
+    liveUpstreamRef,
+    liveUpstreamTip,
+    upstreamCommitsAfterSnapshot,
     divergentFiles: changes.length,
     modifiedUpstreamFiles: modified.length,
     modifiedUpstreamProductionSourceFiles: modifiedProduction.length,

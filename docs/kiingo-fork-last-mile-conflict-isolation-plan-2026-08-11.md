@@ -464,6 +464,27 @@ the release was current at its final pre-PR fetch.
   result remains `49 / 27 / 16 / 1,768 / 172 / 0`; the refresh adds no new
   fork-owned production overlap and no Kiingo contamination.
 
+Post-merge release-freeze guard correction: main-branch CI run
+[31645647788](https://github.com/Kiingo/buzz/actions/runs/31645647788)
+fetched upstream after protected PR #75 had completed. At that later instant,
+`upstream/main` was `7634fe74563ea7f3c86fb6017a0ad647a9934477`, four commits
+past the reviewed `c6c6e7eca70d6b526c43af925e596e8616b19fb8` snapshot. The
+old guard therefore failed the already-reviewed merge solely because its
+comparison target moved during CI. This was a release-policy contradiction,
+not a new source overlap or application failure.
+
+- [x] Make the deterministic inventory carry the exact immutable upstream
+  snapshot incorporated by the release, and make the guard diff, classify,
+  budget, and require ancestry against that snapshot.
+- [x] Keep fetching the live upstream reference, require that it still
+  descends from the recorded snapshot, and report both its exact tip and
+  commit distance without retroactively invalidating the reviewed release.
+- [x] Document that the snapshot may move only in the same protected PR that
+  incorporates that exact commit, and that newly reported drift belongs in
+  the next synchronization cycle. Default replay passes at
+  `49 / 27 / 16 / 1,768 / 172 / 0` while reporting four later commits; forcing
+  the unmerged live tip as the snapshot fails closed.
+
 - [ ] Push a DCO-signed protected Buzz PR, let all required checks complete,
   merge normally without protection or queue bypass, and verify post-merge CI.
 - [ ] Build and install the unsigned Windows desktop from the exact merged
