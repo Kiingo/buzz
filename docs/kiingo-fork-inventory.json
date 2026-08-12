@@ -3,10 +3,10 @@
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 15,
-    "modifiedUpstreamFiles": 26,
-    "changedUpstreamProductionSourceLines": 1708,
-    "upstreamProductionSourceDiffHunks": 168,
+    "modifiedUpstreamProductionSourceFiles": 16,
+    "modifiedUpstreamFiles": 27,
+    "changedUpstreamProductionSourceLines": 1721,
+    "upstreamProductionSourceDiffHunks": 170,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -74,9 +74,9 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz desktop maintainers",
-      "purpose": "Provider-owned JSON-schema presentation, user-scoped provider discovery, immutable staging, optional build-pinned Windows signer enforcement, and retained provider-neutral security fixes required by CodeQL.",
-      "upstreamStatus": "candidate for upstream provider UI contribution",
-      "removalCondition": "Remove when block/buzz supports the same provider-neutral schema keywords.",
+      "purpose": "Provider-owned JSON-schema presentation, user-scoped provider discovery, immutable staging, optional build-pinned Windows signer enforcement, restart-safe DM recipient hydration, and retained provider-neutral security fixes required by CodeQL.",
+      "upstreamStatus": "candidate for upstream provider UI and DM correctness contributions",
+      "removalCondition": "Remove each retained patch when block/buzz supports equivalent behavior.",
       "paths": [
         "desktop/src-tauri/Cargo.lock",
         "desktop/src-tauri/src/managed_agents/backend.rs",
@@ -85,12 +85,15 @@
         "desktop/src/features/agents/ui/ProviderConfigFields.tsx",
         "desktop/src/features/agents/ui/ProviderConfigSchemaFields.tsx",
         "desktop/src/features/agents/ui/providerConfigSchema.ts",
+        "desktop/src/features/messages/hooks.ts",
         "desktop/src/features/huddle/lib/ttsLiveMessages.security.test.mjs",
         "desktop/src/features/huddle/lib/ttsLiveMessageSanitizer.ts",
         "desktop/src/features/huddle/lib/ttsLiveMessages.ts",
         "desktop/src/features/projects/lib/projectReadmeMarkdown.test.mjs",
         "desktop/src/features/projects/lib/projectReadmeMarkdown.ts",
-        "desktop/src/features/projects/ui/ProjectReadmePanel.tsx"
+        "desktop/src/features/projects/ui/ProjectReadmePanel.tsx",
+        "desktop/src/extensions/messages/dmRecipientHydration.test.mjs",
+        "desktop/src/extensions/messages/dmRecipientHydration.ts"
       ]
     },
     {
