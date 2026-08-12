@@ -4,7 +4,6 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use buzz_azure_storage::AzureBlobStore;
 use buzz_core::tenant::{CommunityId, TenantContext};
 
 use crate::config::{MediaConfig, S3AddressingStyle};
@@ -14,13 +13,17 @@ use s3::creds::Credentials;
 use s3::{Bucket, Region};
 use serde::{Deserialize, Serialize};
 
+#[path = "storage/azure.rs"]
+mod azure;
+use azure::AzureMediaStore;
+
 /// A stream of object bytes usable with `axum::body::Body::from_stream()`.
 pub type ByteStream = Pin<Box<dyn futures_core::Stream<Item = Result<Bytes, MediaError>> + Send>>;
 
 #[derive(Clone)]
 enum MediaBackend {
     S3(Arc<Bucket>),
-    Azure(AzureBlobStore),
+    Azure(AzureMediaStore),
 }
 
 /// Object storage client selected explicitly from the runtime configuration.
@@ -106,7 +109,7 @@ impl MediaStorage {
     /// Create an Azure media backend using the Azure credential environment.
     pub fn new_azure(account: &str, container: &str) -> Result<Self, MediaError> {
         Ok(Self {
-            backend: MediaBackend::Azure(AzureBlobStore::from_env(account, container)?),
+            backend: MediaBackend::Azure(AzureMediaStore::from_env(account, container)?),
         })
     }
 
@@ -122,9 +125,7 @@ impl MediaStorage {
                     .await?;
             }
             MediaBackend::Azure(store) => {
-                store
-                    .put(key, Bytes::copy_from_slice(bytes), content_type)
-                    .await?;
+                store.put(key, bytes, content_type).await?;
             }
         }
         Ok(())
@@ -168,7 +169,7 @@ impl MediaStorage {
                 Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Err(MediaError::NotFound),
                 Err(e) => Err(MediaError::StorageError(e.to_string())),
             },
-            MediaBackend::Azure(store) => Ok(store.get(key).await?.bytes.to_vec()),
+            MediaBackend::Azure(store) => store.get(key).await,
         }
     }
 
@@ -186,12 +187,7 @@ impl MediaStorage {
                     Err(e) => Err(MediaError::StorageError(e.to_string())),
                 }
             }
-            MediaBackend::Azure(store) => {
-                let end_exclusive = end.checked_add(1).ok_or_else(|| {
-                    MediaError::StorageError("invalid inclusive range end".to_string())
-                })?;
-                Ok(store.get_range(key, start..end_exclusive).await?.to_vec())
-            }
+            MediaBackend::Azure(store) => store.get_range_inclusive(key, start, end).await,
         }
     }
 
@@ -215,12 +211,7 @@ impl MediaStorage {
                 });
                 Ok(Box::pin(stream))
             }
-            MediaBackend::Azure(store) => {
-                let stream = store.get_stream(key).await?;
-                Ok(Box::pin(futures_util::StreamExt::map(stream, |chunk| {
-                    chunk.map_err(MediaError::from)
-                })))
-            }
+            MediaBackend::Azure(store) => store.get_stream(key).await,
         }
     }
 
@@ -232,7 +223,7 @@ impl MediaStorage {
                 Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Ok(false),
                 Err(e) => Err(MediaError::StorageError(e.to_string())),
             },
-            MediaBackend::Azure(store) => Ok(store.head(key).await?.is_some()),
+            MediaBackend::Azure(store) => store.exists(key).await,
         }
     }
 
@@ -260,9 +251,9 @@ impl MediaStorage {
                 Err(s3::error::S3Error::HttpFailWithBody(404, _)) => Ok(None),
                 Err(e) => Err(MediaError::StorageError(e.to_string())),
             },
-            MediaBackend::Azure(store) => Ok(store.head(key).await?.map(|metadata| BlobHeadMeta {
-                size: metadata.size,
-            })),
+            MediaBackend::Azure(store) => {
+                Ok(store.size(key).await?.map(|size| BlobHeadMeta { size }))
+            }
         }
     }
 
@@ -357,19 +348,7 @@ impl MediaStorage {
                     is_truncated: result.is_truncated,
                 })
             }
-            MediaBackend::Azure(store) => {
-                let page = store.list_page(None, continuation_token, max_keys).await?;
-                let is_truncated = page.continuation_token.is_some();
-                Ok(crate::bucket_index::Page {
-                    objects: page
-                        .objects
-                        .into_iter()
-                        .map(|object| (object.key, object.size))
-                        .collect(),
-                    next_continuation_token: page.continuation_token,
-                    is_truncated,
-                })
-            }
+            MediaBackend::Azure(store) => store.list_page(continuation_token, max_keys).await,
         }
     }
 }

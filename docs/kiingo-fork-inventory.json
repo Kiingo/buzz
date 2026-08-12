@@ -5,6 +5,8 @@
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 15,
     "modifiedUpstreamFiles": 26,
+    "changedUpstreamProductionSourceLines": 1708,
+    "upstreamProductionSourceDiffHunks": 168,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -16,6 +18,14 @@
     "insertions": 12882,
     "deletions": 1312,
     "recentUpstreamOverlapFiles": 100
+  },
+  "lastMileBaseline": {
+    "kiingoMain": "811a5ef1cc360b06b3d504398738aaea215958f9",
+    "upstreamMain": "4b3570671eb2786594267758af18784ac6e82972",
+    "modifiedUpstreamProductionSourceFiles": 15,
+    "modifiedUpstreamFiles": 26,
+    "changedUpstreamProductionSourceLines": 2113,
+    "upstreamProductionSourceDiffHunks": 171
   },
   "deltas": [
     {
@@ -53,8 +63,10 @@
         "crates/buzz-media/Cargo.toml",
         "crates/buzz-media/src/error.rs",
         "crates/buzz-media/src/storage.rs",
+        "crates/buzz-media/src/storage/azure.rs",
         "crates/buzz-relay/Cargo.toml",
         "crates/buzz-relay/src/api/git/store.rs",
+        "crates/buzz-relay/src/api/git/store/azure.rs",
         "crates/buzz-relay/src/main.rs",
         "crates/buzz-relay/src/state.rs"
       ]
@@ -68,9 +80,13 @@
       "paths": [
         "desktop/src-tauri/Cargo.lock",
         "desktop/src-tauri/src/managed_agents/backend.rs",
+        "desktop/src-tauri/src/managed_agents/provider_platform.rs",
         "desktop/src/features/agents/ui/ProviderConfigFields.test.mjs",
         "desktop/src/features/agents/ui/ProviderConfigFields.tsx",
+        "desktop/src/features/agents/ui/ProviderConfigSchemaFields.tsx",
+        "desktop/src/features/agents/ui/providerConfigSchema.ts",
         "desktop/src/features/huddle/lib/ttsLiveMessages.security.test.mjs",
+        "desktop/src/features/huddle/lib/ttsLiveMessageSanitizer.ts",
         "desktop/src/features/huddle/lib/ttsLiveMessages.ts",
         "desktop/src/features/projects/lib/projectReadmeMarkdown.test.mjs",
         "desktop/src/features/projects/lib/projectReadmeMarkdown.ts",
@@ -87,8 +103,10 @@
         ".github/workflows/ci.yml",
         ".github/workflows/docker.yml",
         "docs/kiingo-fork-inventory.json",
+        "docs/kiingo-fork-last-mile-conflict-isolation-plan-2026-08-11.md",
         "docs/kiingo-fork-maintenance.md",
         "docs/kiingo-fork-minimization-hard-cutover-plan-2026-08-11.md",
+        "docs/kiingo-upstream-candidate-ledger-2026-08-11.md",
         "scripts/check-kiingo-fork-boundary.mjs"
       ]
     }

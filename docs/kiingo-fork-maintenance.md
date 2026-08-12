@@ -37,14 +37,19 @@ Run `node scripts/check-kiingo-fork-boundary.mjs` before pushing. The guard
 requires the fetched `upstream/main` tip to be incorporated, compares the final
 tree (not historical merge noise), and verifies every divergent path against
 `docs/kiingo-fork-inventory.json`. Its hard budgets are 15 modified upstream
-production-source files, 25 modified upstream files overall, and zero Kiingo
-business-logic lines in upstream-owned production source.
+production-source files, 26 modified upstream files overall, 1,708 changed
+upstream production-source lines, 168 upstream production-source diff hunks,
+and zero Kiingo business-logic lines in upstream-owned production source.
 
-The production-source metric excludes dedicated `*.test.*`/`tests/` files and
+The production-source metrics exclude dedicated `*.test.*`/`tests/` files and
 Rust diffs whose every hunk is below the file's final `#[cfg(test)]` boundary.
 The guard derives that classification from the current diff; it is not a path
 waiver. This keeps scanner-only fixture changes from consuming the production
-budget while still counting their files in the overall 25-file limit.
+budgets while still counting their files in the overall 26-file limit. Changed
+lines are additions plus deletions from `git diff --numstat`; hunk count is the
+number of `@@` records in a zero-context final-tree diff. These two measurements
+make a large embedded customization fail even when it does not add another
+modified path.
 
 The inventory is the deterministic patch ledger. Each group records purpose,
 owner, upstream status, and removal condition. Add a path there only after
@@ -66,6 +71,33 @@ or `obsolete`; CI rejects both unclassified paths and stale entries.
   remove the downstream patches as soon as an equivalent upstream commit lands.
 - Record intentional long-lived divergences in the Kiingo implementation plan
   and in the pull request that introduces them.
+
+## Stable composition hooks
+
+The last-mile isolation keeps upstream semantics beside upstream code while
+moving concrete extension implementations into added files that upstream does
+not own:
+
+- `ProviderConfigFields.tsx` retains the upstream string-only renderer. Its
+  stable hook delegates only schemas that declare bounded, typed, read-only, or
+  `x-*` presentation to `ProviderConfigSchemaFields.tsx` and
+  `providerConfigSchema.ts`. Provider IDs never appear in the renderer.
+- `managed_agents/backend.rs` retains immutable staging and provider execution.
+  Its stable hooks delegate filename normalization, platform search directories,
+  and optional Windows signer verification to `provider_platform.rs`.
+- `buzz-media/src/storage.rs` retains public media and S3/MinIO behavior. Azure
+  SDK adaptation lives in `storage/azure.rs` and the existing
+  `buzz-azure-storage` crate.
+- `buzz-relay/src/api/git/store.rs` retains content addressing, digest checks,
+  bounded reads, CAS classification, and conformance admission. Azure result
+  translation lives in `store/azure.rs` and the same Azure adapter crate.
+
+Do not move upstream S3 or Git business semantics into downstream files merely
+to make a line-count metric smaller. On upstream replay, preserve the one-call
+hooks, accept upstream changes in the surrounding implementation, then run the
+focused provider, media, Git, and boundary checks. The deterministic upstream
+candidate and removal ledger is
+`docs/kiingo-upstream-candidate-ledger-2026-08-11.md`.
 
 ## Recovery
 
