@@ -116,7 +116,7 @@ feature flag, duplicate implementation, or undocumented exception.
 - [ ] Prove edit, status, pause, resume, reconcile, deletion retry, completed deletion, and post-delete no-reply behavior through the retained generic lifecycle seam or its designated Kiingo management surface.
 - [ ] Prove a second authorized sender uses only their own connection and a missing/revoked connection fails visibly without cross-user fallback.
 - [ ] Prove relay reconnect, desktop restart, provider restart, API deployment, listener recycle, Redis restart, and warm-worker turnover preserve durable state and do not duplicate execution/publication.
-- [ ] Prove Azure Blob read/write/CAS/range/version/soft-delete recovery and PostgreSQL/Blob reconstruction after the ownership move.
+- [x] Prove Azure Blob read/write/CAS/range/version/soft-delete recovery and PostgreSQL/Blob reconstruction after the ownership move.
 - [ ] Prove live acknowledgement/capacity/claim/first-activity/terminal telemetry, zero interactive cold Job starts, and expected low-frequency ten-person capacity.
 - [ ] Prove the production onboarding wizard, public download, identity link, both subscription cards, hosted-agent summary, and first-reply path remain functional.
 - [ ] Prove rollback to the retained prior desktop/provider/relay/API revisions preserves hosted identities, profiles, history, and memory references, then restore the new release.
@@ -212,3 +212,16 @@ feature flag, duplicate implementation, or undocumented exception.
   15 modified upstream production-source files, and zero Kiingo production
   contamination. The release is incorporated in the fork; team distribution
   remains intentionally blocked until the signed-publication gates above pass.
+- 2026-08-11: The production Azure storage contract passed create-only writes,
+  reads, ETag CAS, ranges, HEAD, list, delete, version restore, soft-delete
+  recovery, namespace isolation, and private workload-identity access. A
+  separate digest-pinned recovery job reconstructed a deleted disposable Blob
+  object. An out-of-place PostgreSQL 16 point-in-time restore at
+  `2026-08-12T02:46:17.616858Z` used the existing private subnet and private DNS
+  zone with public access disabled and matched the source snapshot exactly
+  across all ten recorded critical table/migration counts. Fresh relay pods
+  with empty local state continued from PostgreSQL and Blob state. The restore
+  target and both disposable query jobs were deleted, production remained
+  `Ready`, and API/readiness/relay health remained HTTP 200. The redacted
+  evidence merged through Kiingo PR `#9852` as protected queue commit
+  `f60baeb325bd96ec40277f4f818e5cc55810fb44`.
