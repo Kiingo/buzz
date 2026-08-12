@@ -417,6 +417,29 @@ addition/six-line replacement in `features/messages/hooks.ts`; the hydration,
 cache, authoritative-read, and fail-closed policy lives in two added extension
 files.
 
+Release-finalization refresh evidence: after the first protected PR merged,
+`upstream/main` advanced from `63f961c7e4818a1d29f1185002c123e486bd4a19`
+to `8a2c9af2dbe0cf315e77f43a4560d3572da5e554` with the live-channel timeline
+fix and durable whole-community deletion. The refresh auto-merged the desktop
+DM recipient hook with upstream's timeline fix. Its only source conflict was
+the expected S3/Azure media-storage seam.
+
+- [x] Re-fetch and merge upstream through
+  `8a2c9af2dbe0cf315e77f43a4560d3572da5e554`, preserving both the generic DM
+  recipient hydration hook and upstream's live-channel timeline behavior.
+- [x] Extend the downstream Azure media adapter with upstream's exact bounded
+  prefix-listing, versioning fail-closed, and idempotent per-key deletion
+  contracts instead of reintroducing S3 assumptions into provider-neutral
+  media logic. The resolved media package passes 117 tests; the upstream
+  deletion package passes all 10 runnable tests with nine integration tests
+  correctly ignored because they require Postgres/S3 fixtures.
+- [x] Re-measure rather than conceal the fork boundary after the new upstream
+  storage contract: the changed-upstream production budget moves from 1,721
+  lines / 170 hunks to the observed 1,768 lines / 172 hunks. The 47-line / two-
+  hunk increase is the provider-neutral integration of the new deletion
+  surface; modified upstream files remain 27, modified upstream production
+  files remain 16, and Kiingo contamination remains zero.
+
 - [ ] Push a DCO-signed protected Buzz PR, let all required checks complete,
   merge normally without protection or queue bypass, and verify post-merge CI.
 - [ ] Build and install the unsigned Windows desktop from the exact merged

@@ -8,7 +8,7 @@ use bytes::Bytes;
 use crate::bucket_index::Page;
 use crate::error::MediaError;
 
-use super::ByteStream;
+use super::{BulkDeleteOutcome, ByteStream};
 
 /// Azure implementation details kept outside the upstream S3 media semantics.
 #[derive(Clone)]
@@ -94,15 +94,55 @@ impl AzureMediaStore {
         Ok(self.store.head(key).await?.map(|metadata| metadata.size))
     }
 
-    /// Return one bounded Azure listing page in the media sweep shape.
-    pub(super) async fn list_page(
+    /// Probe whether Azure Blob versioning is enabled, then remove the probe.
+    pub(super) async fn versioning_detected(&self, key: &str) -> Result<bool, MediaError> {
+        self.store
+            .put(
+                key,
+                Bytes::from_static(b"buzz deletion versioning probe"),
+                "text/plain",
+            )
+            .await?;
+        let inspected = self.store.get(key).await;
+        let removed = self.store.delete_if_exists(key).await;
+        let versioned = inspected?.version.version.is_some();
+        removed?;
+        Ok(versioned)
+    }
+
+    /// Delete a bounded manifest chunk while preserving per-key outcomes.
+    pub(super) async fn delete_objects(
         &self,
+        keys: &[String],
+    ) -> Result<BulkDeleteOutcome, MediaError> {
+        let mut outcome = BulkDeleteOutcome::default();
+        for key in keys {
+            match self.store.delete_if_exists(key).await {
+                Ok(()) => outcome.deleted += 1,
+                Err(error) => {
+                    outcome
+                        .failed
+                        .push((key.clone(), "AzureDelete".to_string(), error.to_string()))
+                }
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// Return one bounded Azure listing page under an exact key prefix.
+    pub(super) async fn list_prefix_page(
+        &self,
+        prefix: &str,
         continuation_token: Option<String>,
         max_keys: usize,
     ) -> Result<Page, MediaError> {
         let page = self
             .store
-            .list_page(None, continuation_token, max_keys)
+            .list_page(
+                (!prefix.is_empty()).then_some(prefix),
+                continuation_token,
+                max_keys,
+            )
             .await?;
         Ok(Page {
             is_truncated: page.continuation_token.is_some(),
