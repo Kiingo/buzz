@@ -393,7 +393,7 @@ the restarted desktop had composed from an incomplete cached DM channel before
 authoritative membership was present in that send path.
 
 - [x] Merge fetched `upstream/main` through
-  `c966b862fe8b9018c68c384b1680ca0173d0128c` in the clean implementation
+  `63f961c7e4818a1d29f1185002c123e486bd4a19` in the clean implementation
   worktree, resolve only the lockfile overlap, and prove upstream remains an
   ancestor of the final fork revision.
 - [x] Make DM send resolution merge the already-cached authoritative channel
