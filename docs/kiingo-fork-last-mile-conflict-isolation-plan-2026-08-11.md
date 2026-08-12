@@ -532,13 +532,13 @@ not a new source overlap or application failure.
 
 ## Final reconciliation and cleanup
 
-- [x] Skeptically reconcile every checkbox against the final merged tree, CI
+- [ ] Skeptically reconcile every checkbox against the final merged tree, CI
   evidence, deployed artifacts, and live production rather than relying on
   intermediate results.
-- [x] Confirm all requested behavior is fully implemented, no required item is
+- [ ] Confirm all requested behavior is fully implemented, no required item is
   deferred, and any external upstream PR status is documented without becoming
   a runtime dependency.
-- [x] Remove only this workstream's merged branch/worktree and temporary local
+- [ ] Remove only this workstream's merged branch/worktree and temporary local
   artifacts; preserve unrelated worktrees, branches, queues, and user changes.
-- [x] Mark the persistent goal complete only after the entire ledger is checked
+- [ ] Mark the persistent goal complete only after the entire ledger is checked
   and report the final goal token usage returned by the goal service.
