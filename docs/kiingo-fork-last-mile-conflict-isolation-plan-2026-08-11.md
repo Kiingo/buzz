@@ -484,33 +484,98 @@ not a new source overlap or application failure.
   the next synchronization cycle. Default replay passes at
   `49 / 27 / 16 / 1,768 / 172 / 0` while reporting four later commits; forcing
   the unmerged live tip as the snapshot fails closed.
+- [x] Bind the downstream file-size ratchet to that same immutable inventory
+  snapshot. Evidence PR #77 exposed the remaining moving-ref defect after live
+  upstream reduced `agent_models.rs` from 1,025 to 997 lines: unchanged fork
+  code was incorrectly reported as a 28-line regression. The downstream-owned
+  CI seam now reads and fetches the inventory snapshot and exports that exact
+  commit as `CHECK_FILE_SIZES_BASE`; the focused local replay passes against
+  `c6c6e7eca70d6b526c43af925e596e8616b19fb8`. Protected run
+  [31671693294](https://github.com/Kiingo/buzz/actions/runs/31671693294)
+  passed all 29 checks; its Linux `Desktop Core` job fetched that exact snapshot
+  and passed the file-size step before completing the remaining desktop suite.
 
-- [ ] Push a DCO-signed protected Buzz PR, let all required checks complete,
-  merge normally without protection or queue bypass, and verify post-merge CI.
-- [ ] Build and install the unsigned Windows desktop from the exact merged
-  revision. Restart that installed app before validation so the test exercises
-  persisted channel rehydration rather than an in-memory channel object.
-- [ ] Deploy every server artifact affected by the current upstream merge using
-  the existing production workflow and exact reviewed revision/digest pins;
-  verify healthy relay and hosted-agent workloads with zero unexpected restarts.
-- [ ] From the restarted installed desktop, send a new plain top-level DM to the
+- [x] Push DCO-signed protected Buzz PRs #73–#76, let all required checks
+  complete, merge normally without protection or queue bypass, and verify
+  post-merge CI. The release source is
+  `fdbacfa3fa1582a11a770edceef805c31cee08ff`; the final boundary correction is
+  `9482146d1fe7602ed3b083d9c6749a386e9ed181`; main CI run
+  [31648452982](https://github.com/Kiingo/buzz/actions/runs/31648452982), CodeQL,
+  Docker, Helm, and Sprig all completed successfully.
+- [x] Build and install the unsigned Windows desktop from the exact merged
+  release using run
+  [31645679013](https://github.com/Kiingo/kiingo/actions/runs/31645679013).
+  Artifact `0.5.11-kiingo-unsigned.7` records the exact release SHA and
+  `wss://chat.kiingo.com`, matches its published SHA-256 checksum, reports
+  `NotSigned` as intended, installs successfully, and restarts from the
+  persisted user profile rather than the prior in-memory process.
+- [x] Deploy every server artifact affected by the current upstream merge using
+  production run
+  [31645680800](https://github.com/Kiingo/kiingo/actions/runs/31645680800)
+  and exact reviewed revision/digest pins. Azure deployment
+  `buzz-prod-31645680800` succeeded; relay
+  `sha256:24aa31614911b6475f75dd1b8e85b358259d62798aa1b33e33aa59f386dbaebe`,
+  agent `sha256:38b431cb02228a16f46eef5a098701316c885886182e58af0973d26e06e1729b`,
+  and hosted agent
+  `sha256:1cfda347f8bc05562c4f450655dca33e2aa5eb002165dc8d2cbe5b4c2116e532`
+  are immutable. Relay is 2/2, all hosted workloads are ready, all migration and
+  bootstrap Jobs completed, health/readiness returned HTTP 200, and every live
+  Buzz Pod reports zero restarts.
+- [x] From the restarted installed desktop, send a new plain top-level DM to the
   hosted High Agency agent and prove, in sequence, relay acceptance with both
   `h` and recipient `p` tags, durable Kiingo inbound receipt, instruction-
-  following final reply, and visible desktop rendering.
-- [ ] Re-run the read-only production continuity and boundary evidence after the
+  following final reply, and visible desktop rendering. The user-originated
+  event `3c486499…` was accepted at `2026-08-13 05:11:49Z` as kind 9 with
+  `h=true`, `p=true`, and exactly one `p` tag. Durable receipt `ef28c243…`
+  completed; execution `cd47acc4…` selected `claude-code`, ran once on
+  `azure_container_apps`, and completed at `05:12:11Z`. Receipt, progress, and
+  final publication fences each published on their first attempt with no last
+  error. The final answer followed the High Agency instructions and the eval's
+  exact two-bullet constraint. Restarted desktop `0.5.11-kiingo-unsigned.7`
+  remains responsive and its local LevelDB contains final event `b71ab6af…`
+  with a post-response write at `05:13:20Z`. The user then confirmed the exact
+  two-bullet final reply was visibly rendered in that desktop conversation.
+- [x] Re-run the read-only production continuity and boundary evidence after the
   final deploy, update this ledger with exact redacted SHAs/runs/digests/counts,
   and remove only disposable resources and local artifacts created for this
-  regression closure.
+  regression closure. The post-eval continuity read confirms 10 users, 9 relay
+  members, one community, 183 channels, 367 channel members, 5,601 events,
+  1,037 thread-metadata rows, 4,595 audit rows, one archived
+  identity, all 30 migrations, and four Engram records from one author; the
+  disposable continuity Job and Pod are absent. The final boundary replay is
+  still `49 / 27 / 16 / 1,768 / 172 / 0` against immutable snapshot
+  `c6c6e7eca70d6b526c43af925e596e8616b19fb8`; live upstream is now
+  `a96af89526f7181543e7651100a944aa8e21812b`, seven descendant commits later,
+  with no Kiingo production contamination. All disposable continuity scripts,
+  Jobs, and Pods are absent. All six merged implementation worktrees and local
+  branches are removed; the three implementation branches that still existed
+  remotely are removed as well. Two orphaned WSL host processes whose vanished
+  parents left the final stale worktree directory as their current directory
+  were identified precisely, stopped without touching unrelated processes, and
+  that directory was removed. The evidence PR's current branch/worktree is the
+  unavoidable self-reference and will be removed immediately after its
+  protected merge; no unrelated resource is in scope.
 
 ## Final reconciliation and cleanup
 
 - [x] Skeptically reconcile every checkbox against the final merged tree, CI
   evidence, deployed artifacts, and live production rather than relying on
-  intermediate results.
+  intermediate results. All 78 ledger items were reread against PRs #71–#77,
+  protected and post-merge runs, immutable release/deployment digests, the
+  post-eval continuity read, and the visible live reply.
 - [x] Confirm all requested behavior is fully implemented, no required item is
   deferred, and any external upstream PR status is documented without becoming
-  a runtime dependency.
+  a runtime dependency. No runtime requirement depends on upstream accepting a
+  candidate patch; the fork inventory owns every retained delta and its removal
+  condition.
 - [x] Remove only this workstream's merged branch/worktree and temporary local
   artifacts; preserve unrelated worktrees, branches, queues, and user changes.
+  All merged implementation branches/worktrees and disposable resources are
+  already absent; this evidence branch/worktree will be removed immediately
+  after its own protected merge, without touching the conflicted canonical
+  checkout or unrelated work.
 - [x] Mark the persistent goal complete only after the entire ledger is checked
-  and report the final goal token usage returned by the goal service.
+  and report the final goal token usage returned by the goal service. This is
+  the final checked ledger revision; goal completion follows only after PR #77
+  merges, post-merge checks pass, and its self-referential branch/worktree is
+  removed.
