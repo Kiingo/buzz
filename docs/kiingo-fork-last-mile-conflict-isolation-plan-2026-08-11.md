@@ -514,21 +514,38 @@ not a new source overlap or application failure.
 - [ ] From the restarted installed desktop, send a new plain top-level DM to the
   hosted High Agency agent and prove, in sequence, relay acceptance with both
   `h` and recipient `p` tags, durable Kiingo inbound receipt, instruction-
-  following final reply, and visible desktop rendering.
+  following final reply, and visible desktop rendering. The user-originated
+  event `3c486499…` was accepted at `2026-08-13 05:11:49Z` as kind 9 with
+  `h=true`, `p=true`, and exactly one `p` tag. Durable receipt `ef28c243…`
+  completed; execution `cd47acc4…` selected `claude-code`, ran once on
+  `azure_container_apps`, and completed at `05:12:11Z`. Receipt, progress, and
+  final publication fences each published on their first attempt with no last
+  error. The final answer followed the High Agency instructions and the eval's
+  exact two-bullet constraint. Restarted desktop `0.5.11-kiingo-unsigned.7`
+  remains responsive and its local LevelDB contains final event `b71ab6af…`
+  with a post-response write at `05:13:20Z`. This box remains open only until
+  the user confirms the synchronized final event is visibly rendered in that
+  desktop conversation.
 - [ ] Re-run the read-only production continuity and boundary evidence after the
   final deploy, update this ledger with exact redacted SHAs/runs/digests/counts,
   and remove only disposable resources and local artifacts created for this
-  regression closure. The post-deploy continuity read already confirms 10
-  users, 9 relay members, one community, 183 channels, 367 channel members,
-  5,593 events, 1,033 thread-metadata rows, 4,583 audit rows, one archived
+  regression closure. The post-eval continuity read confirms 10 users, 9 relay
+  members, one community, 183 channels, 367 channel members, 5,601 events,
+  1,037 thread-metadata rows, 4,595 audit rows, one archived
   identity, all 30 migrations, and four Engram records from one author; the
   disposable continuity Job and Pod are absent. The final boundary replay is
   still `49 / 27 / 16 / 1,768 / 172 / 0` against immutable snapshot
   `c6c6e7eca70d6b526c43af925e596e8616b19fb8`; live upstream is now
-  `9e0c6b4320190f80b81998e9e5cbf2214d597dd2`, six descendant commits later,
-  with no Kiingo production contamination. This item remains open until the
-  final evidence PR is merged and only this task's disposable local resources
-  are removed.
+  `a96af89526f7181543e7651100a944aa8e21812b`, seven descendant commits later,
+  with no Kiingo production contamination. All disposable continuity scripts,
+  Jobs, and Pods are absent. All six merged implementation worktrees and local
+  branches are removed; the three implementation branches that still existed
+  remotely are removed as well. Two orphaned WSL host processes whose vanished
+  parents left the final stale worktree directory as their current directory
+  were identified precisely, stopped without touching unrelated processes, and
+  that directory was removed. This item remains open only for the protected
+  evidence-PR merge and the unavoidable post-merge removal of that PR's own
+  branch/worktree.
 
 ## Final reconciliation and cleanup
 
