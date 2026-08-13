@@ -44,6 +44,12 @@ drift is informational for the next synchronization cycle: it must not make a
 reviewed release retroactively fail merely because upstream changed while the
 protected PR or post-merge CI was running.
 
+The Kiingo CI file-size ratchet follows the same rule. Its downstream-owned
+workflow seam reads `upstreamSnapshot` from the inventory, fetches that exact
+commit, and exports it as `CHECK_FILE_SIZES_BASE`; it must never compare a
+reviewed fork revision against the moving `upstream/main` ref. This keeps the
+size discipline deterministic while the next synchronization cycle is pending.
+
 Update `upstreamSnapshot` only in the same protected PR that incorporates that
 exact commit. At the final pre-PR fetch, the snapshot must equal the then-live
 upstream tip. If upstream advances afterward, keep the reviewed snapshot fixed,

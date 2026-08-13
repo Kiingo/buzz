@@ -484,6 +484,14 @@ not a new source overlap or application failure.
   the next synchronization cycle. Default replay passes at
   `49 / 27 / 16 / 1,768 / 172 / 0` while reporting four later commits; forcing
   the unmerged live tip as the snapshot fails closed.
+- [ ] Bind the downstream file-size ratchet to that same immutable inventory
+  snapshot. Evidence PR #77 exposed the remaining moving-ref defect after live
+  upstream reduced `agent_models.rs` from 1,025 to 997 lines: unchanged fork
+  code was incorrectly reported as a 28-line regression. The downstream-owned
+  CI seam now reads and fetches the inventory snapshot and exports that exact
+  commit as `CHECK_FILE_SIZES_BASE`; the focused local replay passes against
+  `c6c6e7eca70d6b526c43af925e596e8616b19fb8`. Check this item only after the
+  protected Linux `Desktop Core` job proves the same behavior.
 
 - [x] Push DCO-signed protected Buzz PRs #73–#76, let all required checks
   complete, merge normally without protection or queue bypass, and verify
