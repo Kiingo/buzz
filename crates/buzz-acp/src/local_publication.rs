@@ -6,10 +6,17 @@
 //! message locally, submits it through the normal relay REST path, and reports
 //! the resulting Nostr event id to the configured completion endpoint.
 
-use std::time::Duration;
+use std::{
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
-use nostr::{Alphabet, Filter, Kind, SingleLetterTag};
+use nostr::{Alphabet, EventBuilder, Filter, Kind, SingleLetterTag, Tag, Timestamp};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::relay::RestClient;
@@ -44,6 +51,8 @@ pub(crate) struct LocalPublicationIntent {
     pub agent_public_key: String,
     pub receipt_id: String,
     pub fence_id: String,
+    #[serde(default)]
+    pub status_surface_fence_id: Option<String>,
     pub channel_id: String,
     pub thread_root_event_id: Option<String>,
     pub reply_to_event_id: String,
@@ -53,9 +62,23 @@ pub(crate) struct LocalPublicationIntent {
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalPublicationPublisher {
+    worker: Arc<LocalPublicationWorker>,
+    queue: mpsc::UnboundedSender<LocalPublicationIntent>,
+}
+
+#[derive(Debug)]
+struct LocalPublicationWorker {
     rest: RestClient,
     completion_api_base_url: String,
     internal_token: String,
+    last_status_edit_created_at: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalPublicationMode {
+    Create,
+    EditStatusSurface,
+    DeleteStatusSurfaceThenCreate,
 }
 
 impl LocalPublicationPublisher {
@@ -87,15 +110,24 @@ impl LocalPublicationPublisher {
         if internal_token.trim().is_empty() {
             return None;
         }
-        Some(Self {
+        let worker = Arc::new(LocalPublicationWorker {
             rest,
             completion_api_base_url,
             internal_token,
-        })
+            last_status_edit_created_at: AtomicU64::new(0),
+        });
+        let (queue, mut receiver) = mpsc::unbounded_channel();
+        let queued_worker = Arc::clone(&worker);
+        tokio::spawn(async move {
+            while let Some(intent) = receiver.recv().await {
+                queued_worker.publish_with_retry(intent).await;
+            }
+        });
+        Some(Self { worker, queue })
     }
 
     pub(crate) fn enqueue(&self, intent: LocalPublicationIntent) {
-        if let Err(error) = validate_intent(&intent, &self.rest) {
+        if let Err(error) = validate_intent(&intent, &self.worker.rest) {
             tracing::error!(
                 target: "buzz::local_publication",
                 receipt_id = %intent.receipt_id,
@@ -106,49 +138,79 @@ impl LocalPublicationPublisher {
             );
             return;
         }
-        let publisher = self.clone();
-        tokio::spawn(async move {
-            let started_at = tokio::time::Instant::now();
-            let mut attempt = 1usize;
-            loop {
-                match publisher.publish(&intent).await {
-                    Ok(()) => return,
-                    Err(error) => {
-                        let delay = publication_retry_delay(attempt);
-                        if started_at.elapsed().saturating_add(delay) > PUBLISH_RETRY_MAX_ELAPSED {
-                            tracing::error!(
-                                target: "buzz::local_publication",
-                                receipt_id = %intent.receipt_id,
-                                fence_id = %intent.fence_id,
-                                publication_kind = %intent.publication_kind,
-                                attempt,
-                                error = %error,
-                                "local Buzz publication exhausted its relay-recovery window"
-                            );
-                            return;
-                        }
-                        tracing::warn!(
+        if self.queue.send(intent).is_err() {
+            tracing::error!(
+                target: "buzz::local_publication",
+                "local Buzz publication queue is unavailable"
+            );
+        }
+    }
+}
+
+impl LocalPublicationWorker {
+    async fn publish_with_retry(&self, intent: LocalPublicationIntent) {
+        let started_at = tokio::time::Instant::now();
+        let mut attempt = 1usize;
+        loop {
+            match self.publish(&intent).await {
+                Ok(()) => return,
+                Err(error) => {
+                    let delay = publication_retry_delay(attempt);
+                    if started_at.elapsed().saturating_add(delay) > PUBLISH_RETRY_MAX_ELAPSED {
+                        tracing::error!(
                             target: "buzz::local_publication",
                             receipt_id = %intent.receipt_id,
                             fence_id = %intent.fence_id,
                             publication_kind = %intent.publication_kind,
                             attempt,
-                            retry_delay_ms = delay.as_millis(),
                             error = %error,
-                            "local Buzz publication will retry after a transient boundary failure"
+                            "local Buzz publication exhausted its relay-recovery window"
                         );
-                        tokio::time::sleep(delay).await;
-                        attempt = attempt.saturating_add(1);
+                        return;
                     }
+                    tracing::warn!(
+                        target: "buzz::local_publication",
+                        receipt_id = %intent.receipt_id,
+                        fence_id = %intent.fence_id,
+                        publication_kind = %intent.publication_kind,
+                        attempt,
+                        retry_delay_ms = delay.as_millis(),
+                        error = %error,
+                        "local Buzz publication will retry after a transient boundary failure"
+                    );
+                    tokio::time::sleep(delay).await;
+                    attempt = attempt.saturating_add(1);
                 }
             }
-        });
+        }
     }
 
     async fn publish(&self, intent: &LocalPublicationIntent) -> Result<(), String> {
         validate_intent(intent, &self.rest)?;
+        match publication_mode(intent) {
+            LocalPublicationMode::EditStatusSurface => {
+                let status_surface_fence_id = intent
+                    .status_surface_fence_id
+                    .as_deref()
+                    .ok_or_else(|| "status edit is missing its target fence".to_string())?;
+                self.publish_status_edit(intent, status_surface_fence_id)
+                    .await
+            }
+            LocalPublicationMode::DeleteStatusSurfaceThenCreate => {
+                let status_surface_fence_id =
+                    intent.status_surface_fence_id.as_deref().ok_or_else(|| {
+                        "terminal publication is missing its target fence".to_string()
+                    })?;
+                self.publish_terminal(intent, status_surface_fence_id).await
+            }
+            LocalPublicationMode::Create => self.publish_message(intent).await,
+        }
+    }
+
+    async fn publish_message(&self, intent: &LocalPublicationIntent) -> Result<(), String> {
         let fence_tag_value = format!("buzz-local-publication:{}", intent.fence_id);
-        if let Some(event_id) = self.find_existing_event(&fence_tag_value).await? {
+        if let Some(event) = self.find_existing_event(9, &fence_tag_value).await? {
+            let event_id = event_id(&event)?;
             self.complete_fence(intent, &event_id).await?;
             tracing::info!(
                 target: "buzz::local_publication",
@@ -183,14 +245,7 @@ impl LocalPublicationPublisher {
             &[vec!["d".to_string(), fence_tag_value]],
         )
         .map_err(|error| format!("publication build failed: {error}"))?;
-        let event = builder
-            .sign_with_keys(&self.rest.keys)
-            .map_err(|error| format!("publication signing failed: {error}"))?;
-        let event_id = event.id.to_hex();
-        tokio::time::timeout(Duration::from_secs(5), self.rest.submit_event(&event))
-            .await
-            .map_err(|_| "publication relay submission timed out".to_string())?
-            .map_err(|error| format!("publication relay submission failed: {error}"))?;
+        let event_id = self.submit_builder(builder).await?;
         self.complete_fence(intent, &event_id).await?;
         tracing::info!(
             target: "buzz::local_publication",
@@ -203,9 +258,129 @@ impl LocalPublicationPublisher {
         Ok(())
     }
 
-    async fn find_existing_event(&self, fence_tag_value: &str) -> Result<Option<String>, String> {
+    async fn publish_status_edit(
+        &self,
+        intent: &LocalPublicationIntent,
+        status_surface_fence_id: &str,
+    ) -> Result<(), String> {
+        let fence_tag_value = format!("buzz-local-publication:{}", intent.fence_id);
+        if let Some(event) = self.find_existing_event(40003, &fence_tag_value).await? {
+            let event_id = event_id(&event)?;
+            self.complete_fence(intent, &event_id).await?;
+            return Ok(());
+        }
+        let target_event_id = self
+            .find_status_surface_event_id(status_surface_fence_id)
+            .await?
+            .ok_or_else(|| "status surface is not visible on the relay yet".to_string())?;
+        let channel_id = Uuid::parse_str(&intent.channel_id)
+            .map_err(|_| "publication channel_id is not a UUID".to_string())?;
+        let builder = build_status_mutation(
+            40003,
+            channel_id,
+            &target_event_id,
+            &intent.content,
+            &fence_tag_value,
+        )?
+        .custom_created_at(self.next_status_edit_created_at());
+        let event_id = self.submit_builder(builder).await?;
+        self.complete_fence(intent, &event_id).await?;
+        tracing::info!(
+            target: "buzz::local_publication",
+            receipt_id = %intent.receipt_id,
+            fence_id = %intent.fence_id,
+            publication_kind = %intent.publication_kind,
+            buzz_event_id = %event_id,
+            "edited the locally signed Buzz progress surface"
+        );
+        Ok(())
+    }
+
+    async fn publish_terminal(
+        &self,
+        intent: &LocalPublicationIntent,
+        status_surface_fence_id: &str,
+    ) -> Result<(), String> {
+        self.delete_status_surface(intent, status_surface_fence_id)
+            .await?;
+        self.publish_message(intent).await
+    }
+
+    async fn delete_status_surface(
+        &self,
+        intent: &LocalPublicationIntent,
+        status_surface_fence_id: &str,
+    ) -> Result<(), String> {
+        let delete_tag_value = format!("buzz-local-publication:{}:status-delete", intent.fence_id);
+        if self
+            .find_existing_event(5, &delete_tag_value)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let target_event_id = self
+            .find_status_surface_event_id(status_surface_fence_id)
+            .await?
+            .ok_or_else(|| "status surface is not visible on the relay yet".to_string())?;
+        let channel_id = Uuid::parse_str(&intent.channel_id)
+            .map_err(|_| "publication channel_id is not a UUID".to_string())?;
+        let builder =
+            build_status_mutation(5, channel_id, &target_event_id, "", &delete_tag_value)?;
+        let delete_event_id = self.submit_builder(builder).await?;
+        tracing::info!(
+            target: "buzz::local_publication",
+            receipt_id = %intent.receipt_id,
+            fence_id = %intent.fence_id,
+            buzz_event_id = %delete_event_id,
+            "deleted the completed Buzz progress surface"
+        );
+        Ok(())
+    }
+
+    async fn find_status_surface_event_id(
+        &self,
+        status_surface_fence_id: &str,
+    ) -> Result<Option<String>, String> {
+        let status_tag_value = format!("buzz-local-publication:{status_surface_fence_id}");
+        self.find_existing_event(9, &status_tag_value)
+            .await?
+            .map(|event| event_id(&event))
+            .transpose()
+    }
+
+    async fn submit_builder(&self, builder: EventBuilder) -> Result<String, String> {
+        let event = builder
+            .sign_with_keys(&self.rest.keys)
+            .map_err(|error| format!("publication signing failed: {error}"))?;
+        let event_id = event.id.to_hex();
+        tokio::time::timeout(Duration::from_secs(5), self.rest.submit_event(&event))
+            .await
+            .map_err(|_| "publication relay submission timed out".to_string())?
+            .map_err(|error| format!("publication relay submission failed: {error}"))?;
+        Ok(event_id)
+    }
+
+    fn next_status_edit_created_at(&self) -> Timestamp {
+        let now = Timestamp::now().as_secs();
+        let created_at = self
+            .last_status_edit_created_at
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |previous| {
+                Some(monotonic_status_edit_created_at(now, previous))
+            })
+            .map_or(now, |previous| {
+                monotonic_status_edit_created_at(now, previous)
+            });
+        Timestamp::from(created_at)
+    }
+
+    async fn find_existing_event(
+        &self,
+        kind: u16,
+        fence_tag_value: &str,
+    ) -> Result<Option<serde_json::Value>, String> {
         let filter = Filter::new()
-            .kind(Kind::Custom(9))
+            .kind(Kind::Custom(kind))
             .author(self.rest.keys.public_key())
             .custom_tags(SingleLetterTag::lowercase(Alphabet::D), [fence_tag_value])
             .limit(1);
@@ -216,9 +391,7 @@ impl LocalPublicationPublisher {
         Ok(response
             .as_array()
             .and_then(|events| events.first())
-            .and_then(|event| event.get("id"))
-            .and_then(|id| id.as_str())
-            .map(str::to_string))
+            .cloned())
     }
 
     async fn complete_fence(
@@ -269,6 +442,64 @@ impl LocalPublicationPublisher {
     }
 }
 
+fn event_id(event: &serde_json::Value) -> Result<String, String> {
+    event
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| {
+            value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit())
+        })
+        .map(str::to_string)
+        .ok_or_else(|| "publication reconciliation returned an invalid event id".to_string())
+}
+
+fn publication_tag(parts: &[&str]) -> Result<Tag, String> {
+    Tag::parse(parts.iter().copied())
+        .map_err(|error| format!("publication tag build failed: {error}"))
+}
+
+fn build_status_mutation(
+    kind: u16,
+    channel_id: Uuid,
+    target_event_id: &str,
+    content: &str,
+    fence_tag_value: &str,
+) -> Result<EventBuilder, String> {
+    if !matches!(kind, 5 | 40003) {
+        return Err("status mutation kind is not allowed".to_string());
+    }
+    if kind == 40003 && content.trim().is_empty() {
+        return Err("status edit content is empty".to_string());
+    }
+    let target = nostr::EventId::from_hex(target_event_id)
+        .map_err(|_| "status mutation target event id is invalid".to_string())?;
+    let channel = channel_id.to_string();
+    let target = target.to_hex();
+    let tags = vec![
+        publication_tag(&["h", &channel])?,
+        publication_tag(&["e", &target])?,
+        publication_tag(&["d", fence_tag_value])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(kind), content).tags(tags))
+}
+
+fn monotonic_status_edit_created_at(now: u64, previous: u64) -> u64 {
+    now.max(previous.saturating_add(1))
+}
+
+fn publication_mode(intent: &LocalPublicationIntent) -> LocalPublicationMode {
+    match (
+        intent.publication_kind.as_str(),
+        intent.status_surface_fence_id.as_deref(),
+    ) {
+        ("progress" | "capacity", Some(_)) => LocalPublicationMode::EditStatusSurface,
+        ("final" | "error" | "cancelled", Some(_)) => {
+            LocalPublicationMode::DeleteStatusSurfaceThenCreate
+        }
+        _ => LocalPublicationMode::Create,
+    }
+}
+
 fn publication_retry_delay(attempt: usize) -> Duration {
     PUBLISH_RETRY_DELAYS
         .get(attempt.saturating_sub(1))
@@ -294,6 +525,10 @@ fn validate_intent(intent: &LocalPublicationIntent, rest: &RestClient) -> Result
             .all(|character| character.is_ascii_hexdigit())
         || intent.content.trim().is_empty()
         || intent.content.len() > 64 * 1024
+        || intent
+            .status_surface_fence_id
+            .as_deref()
+            .is_some_and(|fence_id| fence_id.trim().is_empty() || fence_id.len() > 256)
     {
         return Err("publication intent failed local validation".to_string());
     }
@@ -332,6 +567,7 @@ mod tests {
             agent_public_key,
             receipt_id: Uuid::new_v4().to_string(),
             fence_id: Uuid::new_v4().to_string(),
+            status_surface_fence_id: None,
             channel_id: Uuid::new_v4().to_string(),
             thread_root_event_id: None,
             reply_to_event_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -339,6 +575,14 @@ mod tests {
             publication_kind: "final".to_string(),
             content: "Done".to_string(),
         }
+    }
+
+    fn has_tag(event: &nostr::Event, key: &str, value: &str) -> bool {
+        event.tags.iter().any(|tag| {
+            let parts = tag.as_slice();
+            parts.first().map(String::as_str) == Some(key)
+                && parts.get(1).map(String::as_str) == Some(value)
+        })
     }
 
     #[test]
@@ -363,6 +607,86 @@ mod tests {
     }
 
     #[test]
+    fn accepts_legacy_intents_without_a_status_surface() {
+        let keys = Keys::generate();
+        let mut value = serde_json::to_value(intent(keys.public_key().to_hex())).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("status_surface_fence_id");
+
+        let parsed = serde_json::from_value::<LocalPublicationIntent>(value).unwrap();
+        assert!(parsed.status_surface_fence_id.is_none());
+        assert_eq!(publication_mode(&parsed), LocalPublicationMode::Create);
+    }
+
+    #[test]
+    fn routes_progress_to_edit_and_terminal_output_to_delete_then_create() {
+        let keys = Keys::generate();
+        let mut progress = intent(keys.public_key().to_hex());
+        progress.publication_kind = "progress".to_string();
+        progress.status_surface_fence_id = Some(Uuid::new_v4().to_string());
+        assert_eq!(
+            publication_mode(&progress),
+            LocalPublicationMode::EditStatusSurface
+        );
+
+        progress.publication_kind = "final".to_string();
+        assert_eq!(
+            publication_mode(&progress),
+            LocalPublicationMode::DeleteStatusSurfaceThenCreate
+        );
+
+        progress.publication_kind = "action".to_string();
+        assert_eq!(publication_mode(&progress), LocalPublicationMode::Create);
+    }
+
+    #[test]
+    fn builds_scoped_idempotent_status_edits_and_deletes() {
+        let keys = Keys::generate();
+        let channel_id = Uuid::new_v4();
+        let target = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let edit_tag = "buzz-local-publication:edit-fence";
+        let edit = build_status_mutation(40003, channel_id, target, "Working...", edit_tag)
+            .unwrap()
+            .sign_with_keys(&keys)
+            .unwrap();
+        assert_eq!(edit.kind.as_u16(), 40003);
+        assert_eq!(edit.content, "Working...");
+        assert!(has_tag(&edit, "h", &channel_id.to_string()));
+        assert!(has_tag(&edit, "e", target));
+        assert!(has_tag(&edit, "d", edit_tag));
+
+        let delete_tag = "buzz-local-publication:terminal-fence:status-delete";
+        let delete = build_status_mutation(5, channel_id, target, "", delete_tag)
+            .unwrap()
+            .sign_with_keys(&keys)
+            .unwrap();
+        assert_eq!(delete.kind.as_u16(), 5);
+        assert!(delete.content.is_empty());
+        assert!(has_tag(&delete, "h", &channel_id.to_string()));
+        assert!(has_tag(&delete, "e", target));
+        assert!(has_tag(&delete, "d", delete_tag));
+    }
+
+    #[test]
+    fn rejects_invalid_status_surface_targets_and_mutation_kinds() {
+        let keys = Keys::generate();
+        let rest = rest(keys.clone());
+        let mut invalid = intent(keys.public_key().to_hex());
+        invalid.status_surface_fence_id = Some("   ".to_string());
+        assert!(validate_intent(&invalid, &rest).is_err());
+        assert!(build_status_mutation(
+            9,
+            Uuid::new_v4(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "message",
+            "fence"
+        )
+        .is_err());
+    }
+
+    #[test]
     fn accepts_scoped_action_publications_claimed_by_the_bridge() {
         let keys = Keys::generate();
         let rest = rest(keys.clone());
@@ -378,5 +702,13 @@ mod tests {
         assert_eq!(publication_retry_delay(4), Duration::from_secs(1));
         assert_eq!(publication_retry_delay(9), Duration::from_secs(30));
         assert_eq!(publication_retry_delay(10_000), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn status_edit_timestamps_are_strictly_monotonic_within_one_second() {
+        assert_eq!(monotonic_status_edit_created_at(1_000, 0), 1_000);
+        assert_eq!(monotonic_status_edit_created_at(1_000, 1_000), 1_001);
+        assert_eq!(monotonic_status_edit_created_at(1_000, 1_001), 1_002);
+        assert_eq!(monotonic_status_edit_created_at(1_005, 1_002), 1_005);
     }
 }
