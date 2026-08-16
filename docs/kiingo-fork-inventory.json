@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
-  "upstreamSnapshot": "1f4c69eccf012dc58737e9265498397215c706c5",
+  "upstreamSnapshot": "78cbffeb64c01220e705adf0aa9690fdbd0d7a37",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 16,
     "modifiedUpstreamFiles": 27,
