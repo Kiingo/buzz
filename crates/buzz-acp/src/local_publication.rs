@@ -7,11 +7,12 @@
 //! the resulting Nostr event id to the configured completion endpoint.
 
 use std::{
+    collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use nostr::{Alphabet, EventBuilder, Filter, Kind, SingleLetterTag, Tag, Timestamp};
@@ -41,6 +42,9 @@ const PUBLISH_RETRY_DELAYS: [Duration; 9] = [
     Duration::from_secs(30),
 ];
 const PUBLISH_RETRY_MAX_ELAPSED: Duration = Duration::from_secs(15 * 60);
+const STATUS_PUBLISH_RETRY_MAX_ELAPSED: Duration = Duration::from_secs(15);
+const STATUS_PUBLISH_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
+const TERMINAL_RECEIPT_RETENTION: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +85,142 @@ enum LocalPublicationMode {
     DeleteStatusSurfaceThenCreate,
 }
 
+#[derive(Debug, Default)]
+struct LocalPublicationQueueState {
+    pending: VecDeque<LocalPublicationIntent>,
+    superseded: HashMap<String, Vec<LocalPublicationIntent>>,
+    terminal_receipts: HashMap<String, TerminalPublicationState>,
+}
+
+#[derive(Debug)]
+struct TerminalPublicationState {
+    event_id: Option<String>,
+    updated_at: Instant,
+}
+
+impl LocalPublicationQueueState {
+    fn accept(&mut self, intent: LocalPublicationIntent) {
+        self.prune_terminal_receipts();
+        if is_terminal_publication(&intent) {
+            let receipt_id = intent.receipt_id.clone();
+            self.terminal_receipts
+                .entry(receipt_id.clone())
+                .or_insert_with(|| TerminalPublicationState {
+                    event_id: None,
+                    updated_at: Instant::now(),
+                });
+            let mut retained = VecDeque::with_capacity(self.pending.len());
+            while let Some(pending) = self.pending.pop_front() {
+                if pending.receipt_id == receipt_id && is_status_publication(&pending) {
+                    self.supersede(pending);
+                } else {
+                    retained.push_back(pending);
+                }
+            }
+            self.pending = retained;
+            self.pending.push_front(intent);
+            return;
+        }
+
+        if is_status_publication(&intent) {
+            if self.terminal_receipts.contains_key(&intent.receipt_id) {
+                self.supersede(intent);
+                return;
+            }
+            if let Some(position) = self.pending.iter().position(|pending| {
+                pending.receipt_id == intent.receipt_id && is_status_publication(pending)
+            }) {
+                if let Some(previous) = self.pending.remove(position) {
+                    self.supersede(previous);
+                }
+                self.pending.insert(position, intent);
+                return;
+            }
+        }
+
+        self.pending.push_back(intent);
+    }
+
+    fn should_preempt(
+        &self,
+        current: &LocalPublicationIntent,
+        incoming: &LocalPublicationIntent,
+    ) -> bool {
+        if is_terminal_publication(incoming) && !is_terminal_publication(current) {
+            // A terminal edit depends on the original receipt/status surface. Let that
+            // one publication finish if it happens to be in flight already.
+            return incoming.status_surface_fence_id.as_deref() != Some(current.fence_id.as_str());
+        }
+        is_status_publication(current)
+            && is_status_publication(incoming)
+            && current.receipt_id == incoming.receipt_id
+    }
+
+    fn requeue_preempted(&mut self, intent: LocalPublicationIntent) {
+        if is_status_publication(&intent) {
+            self.supersede(intent);
+        } else {
+            self.pending.push_back(intent);
+        }
+    }
+
+    fn supersede(&mut self, intent: LocalPublicationIntent) {
+        self.superseded
+            .entry(intent.receipt_id.clone())
+            .or_default()
+            .push(intent);
+    }
+
+    fn take_next(&mut self) -> Option<LocalPublicationIntent> {
+        self.pending.pop_front()
+    }
+
+    fn take_superseded(&mut self, receipt_id: &str) -> Vec<LocalPublicationIntent> {
+        self.superseded.remove(receipt_id).unwrap_or_default()
+    }
+
+    fn mark_terminal_published(&mut self, receipt_id: &str, event_id: &str) {
+        self.terminal_receipts.insert(
+            receipt_id.to_string(),
+            TerminalPublicationState {
+                event_id: Some(event_id.to_string()),
+                updated_at: Instant::now(),
+            },
+        );
+    }
+
+    fn take_terminal_reconciliations(&mut self) -> Vec<(Vec<LocalPublicationIntent>, String)> {
+        let ready = self
+            .terminal_receipts
+            .iter()
+            .filter_map(|(receipt_id, terminal)| {
+                terminal
+                    .event_id
+                    .as_ref()
+                    .filter(|_| self.superseded.contains_key(receipt_id))
+                    .map(|event_id| (receipt_id.clone(), event_id.clone()))
+            })
+            .collect::<Vec<_>>();
+        ready
+            .into_iter()
+            .filter_map(|(receipt_id, event_id)| {
+                self.superseded
+                    .remove(&receipt_id)
+                    .map(|intents| (intents, event_id))
+            })
+            .collect()
+    }
+
+    fn prune_terminal_receipts(&mut self) {
+        let superseded = &self.superseded;
+        self.terminal_receipts.retain(|receipt_id, terminal| {
+            terminal.event_id.is_none()
+                || terminal.updated_at.elapsed() < TERMINAL_RECEIPT_RETENTION
+                || superseded.contains_key(receipt_id)
+        });
+    }
+}
+
 impl LocalPublicationPublisher {
     pub(crate) fn from_env(rest: RestClient) -> Option<Self> {
         if !matches!(
@@ -119,9 +259,7 @@ impl LocalPublicationPublisher {
         let (queue, mut receiver) = mpsc::unbounded_channel();
         let queued_worker = Arc::clone(&worker);
         tokio::spawn(async move {
-            while let Some(intent) = receiver.recv().await {
-                queued_worker.publish_with_retry(intent).await;
-            }
+            queued_worker.run(&mut receiver).await;
         });
         Some(Self { worker, queue })
     }
@@ -148,15 +286,155 @@ impl LocalPublicationPublisher {
 }
 
 impl LocalPublicationWorker {
-    async fn publish_with_retry(&self, intent: LocalPublicationIntent) {
+    async fn run(self: Arc<Self>, receiver: &mut mpsc::UnboundedReceiver<LocalPublicationIntent>) {
+        let mut state = LocalPublicationQueueState::default();
+        let mut input_open = true;
+        loop {
+            while let Ok(intent) = receiver.try_recv() {
+                state.accept(intent);
+            }
+            self.spawn_terminal_reconciliations(&mut state);
+
+            let Some(intent) = state.take_next() else {
+                if !input_open {
+                    return;
+                }
+                match receiver.recv().await {
+                    Some(intent) => {
+                        state.accept(intent);
+                        continue;
+                    }
+                    None => {
+                        input_open = false;
+                        continue;
+                    }
+                }
+            };
+
+            let mut preempted = false;
+            let mut published_event_id = None;
+            let mut publication = Box::pin(self.publish_with_retry(&intent));
+            loop {
+                tokio::select! {
+                    biased;
+                    incoming = receiver.recv(), if input_open && !is_terminal_publication(&intent) => {
+                        match incoming {
+                            Some(incoming) => {
+                                let should_preempt = state.should_preempt(&intent, &incoming);
+                                state.accept(incoming);
+                                if should_preempt {
+                                    preempted = true;
+                                    break;
+                                }
+                            }
+                            None => input_open = false,
+                        }
+                    }
+                    result = &mut publication => {
+                        published_event_id = result;
+                        break;
+                    }
+                }
+            }
+            drop(publication);
+
+            if preempted {
+                tracing::debug!(
+                    target: "buzz::local_publication",
+                    receipt_id = %intent.receipt_id,
+                    fence_id = %intent.fence_id,
+                    publication_kind = %intent.publication_kind,
+                    "preempted a local Buzz publication for newer or terminal output"
+                );
+                state.requeue_preempted(intent);
+                continue;
+            }
+
+            if let Some(event_id) = published_event_id {
+                let receipt_id = intent.receipt_id.clone();
+                if is_terminal_publication(&intent) {
+                    state.mark_terminal_published(&receipt_id, &event_id);
+                }
+                if is_status_publication(&intent) || is_terminal_publication(&intent) {
+                    let superseded = state.take_superseded(&receipt_id);
+                    self.spawn_superseded_reconciliation(superseded, event_id);
+                }
+            }
+        }
+    }
+
+    fn spawn_terminal_reconciliations(self: &Arc<Self>, state: &mut LocalPublicationQueueState) {
+        for (intents, event_id) in state.take_terminal_reconciliations() {
+            self.spawn_superseded_reconciliation(intents, event_id);
+        }
+    }
+
+    fn spawn_superseded_reconciliation(
+        self: &Arc<Self>,
+        intents: Vec<LocalPublicationIntent>,
+        replacement_event_id: String,
+    ) {
+        if intents.is_empty() {
+            return;
+        }
+        let worker = Arc::clone(self);
+        tokio::spawn(async move {
+            for intent in intents {
+                worker
+                    .reconcile_superseded_fence(&intent, &replacement_event_id)
+                    .await;
+            }
+        });
+    }
+
+    async fn reconcile_superseded_fence(
+        &self,
+        intent: &LocalPublicationIntent,
+        replacement_event_id: &str,
+    ) {
+        let fence_tag_value = format!("buzz-local-publication:{}", intent.fence_id);
+        let event_id = match self.find_existing_event(40003, &fence_tag_value).await {
+            Ok(Some(event)) => {
+                event_id(&event).unwrap_or_else(|_| replacement_event_id.to_string())
+            }
+            Ok(None) | Err(_) => replacement_event_id.to_string(),
+        };
+        match self.complete_fence(intent, &event_id).await {
+            Ok(()) => tracing::debug!(
+                target: "buzz::local_publication",
+                receipt_id = %intent.receipt_id,
+                fence_id = %intent.fence_id,
+                "reconciled a superseded Buzz progress publication"
+            ),
+            Err(error) => tracing::warn!(
+                target: "buzz::local_publication",
+                receipt_id = %intent.receipt_id,
+                fence_id = %intent.fence_id,
+                error = %error,
+                "could not reconcile a superseded Buzz progress publication"
+            ),
+        }
+    }
+
+    async fn publish_with_retry(&self, intent: &LocalPublicationIntent) -> Option<String> {
         let started_at = tokio::time::Instant::now();
         let mut attempt = 1usize;
         loop {
-            match self.publish(&intent).await {
-                Ok(()) => return,
+            let result = if is_status_publication(intent) {
+                tokio::time::timeout(STATUS_PUBLISH_ATTEMPT_TIMEOUT, self.publish(intent))
+                    .await
+                    .map_err(|_| "status publication attempt timed out".to_string())
+                    .and_then(|result| result)
+            } else {
+                self.publish(intent).await
+            };
+            match result {
+                Ok(event_id) => return Some(event_id),
                 Err(error) => {
                     let delay = publication_retry_delay(attempt);
-                    if started_at.elapsed().saturating_add(delay) > PUBLISH_RETRY_MAX_ELAPSED {
+                    if started_at.elapsed().saturating_add(delay)
+                        > publication_retry_max_elapsed(intent)
+                    {
                         tracing::error!(
                             target: "buzz::local_publication",
                             receipt_id = %intent.receipt_id,
@@ -166,7 +444,7 @@ impl LocalPublicationWorker {
                             error = %error,
                             "local Buzz publication exhausted its relay-recovery window"
                         );
-                        return;
+                        return None;
                     }
                     tracing::warn!(
                         target: "buzz::local_publication",
@@ -185,7 +463,7 @@ impl LocalPublicationWorker {
         }
     }
 
-    async fn publish(&self, intent: &LocalPublicationIntent) -> Result<(), String> {
+    async fn publish(&self, intent: &LocalPublicationIntent) -> Result<String, String> {
         validate_intent(intent, &self.rest)?;
         match publication_mode(intent) {
             LocalPublicationMode::EditStatusSurface => {
@@ -207,7 +485,7 @@ impl LocalPublicationWorker {
         }
     }
 
-    async fn publish_message(&self, intent: &LocalPublicationIntent) -> Result<(), String> {
+    async fn publish_message(&self, intent: &LocalPublicationIntent) -> Result<String, String> {
         let fence_tag_value = format!("buzz-local-publication:{}", intent.fence_id);
         if let Some(event) = self.find_existing_event(9, &fence_tag_value).await? {
             let event_id = event_id(&event)?;
@@ -219,7 +497,7 @@ impl LocalPublicationWorker {
                 buzz_event_id = %event_id,
                 "reconciled an already-published Buzz event"
             );
-            return Ok(());
+            return Ok(event_id);
         }
 
         let channel_id = Uuid::parse_str(&intent.channel_id)
@@ -255,19 +533,19 @@ impl LocalPublicationWorker {
             buzz_event_id = %event_id,
             "published locally signed adapter output"
         );
-        Ok(())
+        Ok(event_id)
     }
 
     async fn publish_status_edit(
         &self,
         intent: &LocalPublicationIntent,
         status_surface_fence_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         let fence_tag_value = format!("buzz-local-publication:{}", intent.fence_id);
         if let Some(event) = self.find_existing_event(40003, &fence_tag_value).await? {
             let event_id = event_id(&event)?;
             self.complete_fence(intent, &event_id).await?;
-            return Ok(());
+            return Ok(event_id);
         }
         let target_event_id = self
             .find_status_surface_event_id(status_surface_fence_id)
@@ -293,14 +571,14 @@ impl LocalPublicationWorker {
             buzz_event_id = %event_id,
             "edited the locally signed Buzz progress surface"
         );
-        Ok(())
+        Ok(event_id)
     }
 
     async fn publish_terminal(
         &self,
         intent: &LocalPublicationIntent,
         status_surface_fence_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         self.delete_status_surface(intent, status_surface_fence_id)
             .await?;
         self.publish_message(intent).await
@@ -497,6 +775,25 @@ fn publication_mode(intent: &LocalPublicationIntent) -> LocalPublicationMode {
             LocalPublicationMode::DeleteStatusSurfaceThenCreate
         }
         _ => LocalPublicationMode::Create,
+    }
+}
+
+fn is_status_publication(intent: &LocalPublicationIntent) -> bool {
+    publication_mode(intent) == LocalPublicationMode::EditStatusSurface
+}
+
+fn is_terminal_publication(intent: &LocalPublicationIntent) -> bool {
+    matches!(
+        intent.publication_kind.as_str(),
+        "final" | "error" | "cancelled"
+    )
+}
+
+fn publication_retry_max_elapsed(intent: &LocalPublicationIntent) -> Duration {
+    if is_status_publication(intent) {
+        STATUS_PUBLISH_RETRY_MAX_ELAPSED
+    } else {
+        PUBLISH_RETRY_MAX_ELAPSED
     }
 }
 
@@ -697,11 +994,110 @@ mod tests {
     }
 
     #[test]
+    fn coalesces_queued_progress_per_receipt_without_cross_receipt_loss() {
+        let keys = Keys::generate();
+        let mut first = intent(keys.public_key().to_hex());
+        first.receipt_id = "receipt-one".to_string();
+        first.publication_kind = "progress".to_string();
+        first.status_surface_fence_id = Some("surface-one".to_string());
+        first.content = "Preparing capacity...".to_string();
+        let mut latest = first.clone();
+        latest.fence_id = Uuid::new_v4().to_string();
+        latest.content = "Starting Codex...".to_string();
+        let mut other = first.clone();
+        other.receipt_id = "receipt-two".to_string();
+        other.fence_id = Uuid::new_v4().to_string();
+        other.content = "Preparing another turn...".to_string();
+
+        let mut state = LocalPublicationQueueState::default();
+        state.accept(first);
+        state.accept(latest.clone());
+        state.accept(other.clone());
+
+        assert_eq!(state.pending.len(), 2);
+        assert_eq!(state.superseded["receipt-one"].len(), 1);
+        assert_eq!(
+            state.take_next().map(|item| item.content),
+            Some(latest.content)
+        );
+        assert_eq!(
+            state.take_next().map(|item| item.content),
+            Some(other.content)
+        );
+    }
+
+    #[test]
+    fn terminal_output_discards_pending_and_late_progress_for_its_receipt() {
+        let keys = Keys::generate();
+        let mut progress = intent(keys.public_key().to_hex());
+        progress.receipt_id = "terminal-receipt".to_string();
+        progress.publication_kind = "progress".to_string();
+        progress.status_surface_fence_id = Some("status-surface".to_string());
+        let mut terminal = progress.clone();
+        terminal.fence_id = Uuid::new_v4().to_string();
+        terminal.publication_kind = "final".to_string();
+        terminal.content = "Finished".to_string();
+        let mut late_progress = progress.clone();
+        late_progress.fence_id = Uuid::new_v4().to_string();
+
+        let mut state = LocalPublicationQueueState::default();
+        state.accept(progress);
+        state.accept(terminal.clone());
+        state.accept(late_progress);
+
+        assert_eq!(
+            state.take_next().map(|item| item.fence_id),
+            Some(terminal.fence_id)
+        );
+        assert!(state.take_next().is_none());
+        assert_eq!(state.superseded["terminal-receipt"].len(), 2);
+
+        state.mark_terminal_published("terminal-receipt", "terminal-event");
+        let reconciliations = state.take_terminal_reconciliations();
+        assert_eq!(reconciliations.len(), 1);
+        assert_eq!(reconciliations[0].0.len(), 2);
+        assert_eq!(reconciliations[0].1, "terminal-event");
+    }
+
+    #[test]
+    fn terminal_preempts_status_but_not_its_in_flight_surface_creation() {
+        let keys = Keys::generate();
+        let mut receipt = intent(keys.public_key().to_hex());
+        receipt.publication_kind = "receipt".to_string();
+        receipt.fence_id = "surface-fence".to_string();
+        let mut progress = receipt.clone();
+        progress.publication_kind = "progress".to_string();
+        progress.fence_id = "progress-fence".to_string();
+        progress.status_surface_fence_id = Some("surface-fence".to_string());
+        let mut terminal = progress.clone();
+        terminal.publication_kind = "final".to_string();
+        terminal.fence_id = "terminal-fence".to_string();
+
+        let state = LocalPublicationQueueState::default();
+        assert!(state.should_preempt(&progress, &terminal));
+        assert!(!state.should_preempt(&receipt, &terminal));
+    }
+
+    #[test]
     fn publication_retry_backoff_is_fast_then_bounded() {
         assert_eq!(publication_retry_delay(1), Duration::from_millis(100));
         assert_eq!(publication_retry_delay(4), Duration::from_secs(1));
         assert_eq!(publication_retry_delay(9), Duration::from_secs(30));
         assert_eq!(publication_retry_delay(10_000), Duration::from_secs(30));
+
+        let keys = Keys::generate();
+        let mut status = intent(keys.public_key().to_hex());
+        status.publication_kind = "progress".to_string();
+        status.status_surface_fence_id = Some("surface-fence".to_string());
+        assert_eq!(
+            publication_retry_max_elapsed(&status),
+            STATUS_PUBLISH_RETRY_MAX_ELAPSED
+        );
+        status.publication_kind = "final".to_string();
+        assert_eq!(
+            publication_retry_max_elapsed(&status),
+            PUBLISH_RETRY_MAX_ELAPSED
+        );
     }
 
     #[test]
