@@ -147,9 +147,12 @@ impl LocalPublicationQueueState {
         incoming: &LocalPublicationIntent,
     ) -> bool {
         if is_terminal_publication(incoming) && !is_terminal_publication(current) {
-            // A terminal edit depends on the original receipt/status surface. Let that
-            // one publication finish if it happens to be in flight already.
-            return incoming.status_surface_fence_id.as_deref() != Some(current.fence_id.as_str());
+            // A terminal edit depends on the original receipt/status surface, and a
+            // same-turn approval/action must remain visible before the final response.
+            // Let either critical publication finish if it is already in flight.
+            return incoming.status_surface_fence_id.as_deref() != Some(current.fence_id.as_str())
+                && !(current.publication_kind == "action"
+                    && current.receipt_id == incoming.receipt_id);
         }
         is_status_publication(current)
             && is_status_publication(incoming)
@@ -1060,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_preempts_status_but_not_its_in_flight_surface_creation() {
+    fn terminal_preempts_status_but_not_same_turn_surface_or_action_creation() {
         let keys = Keys::generate();
         let mut receipt = intent(keys.public_key().to_hex());
         receipt.publication_kind = "receipt".to_string();
@@ -1072,10 +1075,17 @@ mod tests {
         let mut terminal = progress.clone();
         terminal.publication_kind = "final".to_string();
         terminal.fence_id = "terminal-fence".to_string();
+        let mut action = progress.clone();
+        action.publication_kind = "action".to_string();
+        action.fence_id = "action-fence".to_string();
+        let mut unrelated_action = action.clone();
+        unrelated_action.receipt_id = "another-receipt".to_string();
 
         let state = LocalPublicationQueueState::default();
         assert!(state.should_preempt(&progress, &terminal));
         assert!(!state.should_preempt(&receipt, &terminal));
+        assert!(!state.should_preempt(&action, &terminal));
+        assert!(state.should_preempt(&unrelated_action, &terminal));
     }
 
     #[test]
