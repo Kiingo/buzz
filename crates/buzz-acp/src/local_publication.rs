@@ -602,8 +602,21 @@ impl LocalPublicationWorker {
         }
         let target_event_id = self
             .find_status_surface_event_id(status_surface_fence_id)
-            .await?
-            .ok_or_else(|| "status surface is not visible on the relay yet".to_string())?;
+            .await?;
+        let Some(target_event_id) = target_event_id else {
+            // NIP-09 deletions remove the status event from normal relay queries.
+            // If a terminal retry reaches this point after deletion succeeded but
+            // final creation or fence completion failed, absence therefore means
+            // cleanup is already complete. Continue to the idempotent final create
+            // instead of retrying the now-impossible status lookup forever.
+            tracing::debug!(
+                target: "buzz::local_publication",
+                receipt_id = %intent.receipt_id,
+                fence_id = %intent.fence_id,
+                "terminal status surface is already absent"
+            );
+            return Ok(());
+        };
         let channel_id = Uuid::parse_str(&intent.channel_id)
             .map_err(|_| "publication channel_id is not a UUID".to_string())?;
         let builder =
@@ -850,6 +863,7 @@ fn validate_intent(intent: &LocalPublicationIntent, rest: &RestClient) -> Result
 mod tests {
     use super::*;
     use nostr::Keys;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn rest(keys: Keys) -> RestClient {
         RestClient {
@@ -883,6 +897,60 @@ mod tests {
             parts.first().map(String::as_str) == Some(key)
                 && parts.get(1).map(String::as_str) == Some(value)
         })
+    }
+
+    async fn empty_query_server(request_count: usize) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            for _ in 0..request_count {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                loop {
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]",
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        (format!("http://{address}"), task)
+    }
+
+    #[tokio::test]
+    async fn terminal_retry_treats_an_absent_status_surface_as_already_deleted() {
+        let keys = Keys::generate();
+        let (base_url, server) = empty_query_server(2).await;
+        let worker = LocalPublicationWorker {
+            rest: RestClient {
+                http: reqwest::Client::new(),
+                base_url,
+                keys: keys.clone(),
+                auth_tag_json: None,
+            },
+            completion_api_base_url: "http://127.0.0.1:1".to_string(),
+            internal_token: "test-token".to_string(),
+            last_status_edit_created_at: AtomicU64::new(0),
+        };
+        let mut terminal = intent(keys.public_key().to_hex());
+        terminal.status_surface_fence_id = Some("already-deleted-surface".to_string());
+
+        assert!(worker
+            .delete_status_surface(&terminal, "already-deleted-surface")
+            .await
+            .is_ok());
+        server.await.unwrap();
     }
 
     #[test]
