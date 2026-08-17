@@ -197,6 +197,16 @@ with a TypeScript lookup table or an id comparison in a component.
    fields, and profile-wide activity selection. Caller context may control the
    panel shell or return navigation, but must not filter or replace profile
    content.
+14. **Definition-edit readiness is scoped to the execution-config delta.** A
+   create always satisfies the current runtime/provider/model/credential
+   readiness policy, and an edit that changes any of those execution fields
+   must satisfy it too. An existing definition may save profile, instructions,
+   access, or behavior changes while preserving its runtime, provider, model,
+   and environment map exactly, even when that inherited or remotely-owned
+   execution configuration is not locally ready. Keep this generic and compare
+   the normalized submit projection in
+   `agentDefinitionExecutionReadiness.ts`; do not add provider-ID branches or
+   make metadata edits depend on machine-local defaults.
 
 ## The tests that enforce this
 
@@ -226,6 +236,9 @@ with a TypeScript lookup table or an id comparison in a component.
   every profile tab when opened from Agents and from the agent's DM.
 - `ui/AgentConfigPanelPresentation.test.mjs` — shared profile/agent config rows
   show only effective values, with an em dash for unknown values.
+- `ui/agentDefinitionExecutionReadiness.test.mjs` — unchanged definition edits
+  bypass local execution readiness, while creates and execution-config deltas
+  remain gated.
 - `desktop/tests/e2e/onboarding-agent-defaults.spec.ts` — onboarding behavior
   acceptance coverage for readiness, failure states, defaults, session-draft
   restoration, zero-write Skip, Next save failure/retry, navigation, and
