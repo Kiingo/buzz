@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "78cbffeb64c01220e705adf0aa9690fdbd0d7a37",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 18,
-    "modifiedUpstreamFiles": 30,
-    "changedUpstreamProductionSourceLines": 1863,
-    "upstreamProductionSourceDiffHunks": 189,
+    "modifiedUpstreamProductionSourceFiles": 19,
+    "modifiedUpstreamFiles": 32,
+    "changedUpstreamProductionSourceLines": 1867,
+    "upstreamProductionSourceDiffHunks": 190,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -100,7 +100,9 @@
         "desktop/src/features/projects/lib/projectReadmeMarkdown.ts",
         "desktop/src/features/projects/ui/ProjectReadmePanel.tsx",
         "desktop/src/extensions/messages/dmRecipientHydration.test.mjs",
-        "desktop/src/extensions/messages/dmRecipientHydration.ts"
+        "desktop/src/extensions/messages/dmRecipientHydration.ts",
+        "desktop/src/features/settings/ui/CustomHarnessForm.tsx",
+        "desktop/tests/e2e/global-agent-config-screenshots.spec.ts"
       ]
     },
     {
