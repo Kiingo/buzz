@@ -121,3 +121,43 @@ export async function resolveMessageRecipientPubkeys({
       ).map((member) => member.pubkey),
   });
 }
+
+type ResolveInboxReplyRecipientPubkeysInput = {
+  channel: Channel | null;
+  channelId: string;
+  senderPubkey: string | null | undefined;
+  explicitMentions?: readonly string[];
+  queryClient: QueryClient;
+};
+
+/**
+ * Resolve the recipients for the Home inbox composer through the same guarded
+ * path as the full channel composer.
+ *
+ * Home renders from feed state before its channel snapshot is necessarily
+ * available. Publishing in that gap would silently create an unaddressed DM,
+ * so fail visibly until both the channel and sender identity are authoritative.
+ */
+export async function resolveInboxReplyRecipientPubkeys({
+  channel,
+  channelId,
+  senderPubkey,
+  explicitMentions,
+  queryClient,
+}: ResolveInboxReplyRecipientPubkeysInput): Promise<string[]> {
+  if (!channel || channel.id !== channelId) {
+    throw new Error("Channel details are still loading. Try sending again.");
+  }
+
+  const sender = normalizePubkey(senderPubkey ?? "");
+  if (!sender) {
+    throw new Error("Your identity is still loading. Try sending again.");
+  }
+
+  return resolveMessageRecipientPubkeys({
+    channel,
+    senderPubkey: sender,
+    explicitMentions,
+    queryClient,
+  });
+}

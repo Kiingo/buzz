@@ -1,8 +1,10 @@
 import * as React from "react";
 import { RefreshCcw } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useAppShell } from "@/app/AppShellContext";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import { resolveInboxReplyRecipientPubkeys } from "@/extensions/messages/dmRecipientHydration";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { useChannelsQuery, useOpenDmMutation } from "@/features/channels/hooks";
 import { RightAuxiliaryPane } from "@/features/channels/ui/RightAuxiliaryPane";
@@ -104,6 +106,7 @@ export function HomeView({
   onOpenContext,
   onRefresh,
 }: HomeViewProps) {
+  const queryClient = useQueryClient();
   const relaySelfPubkey = useRelaySelfQuery().data;
   const [homeInboxRef, homeInboxWidthPx] = useElementWidth<HTMLDivElement>();
   const isNarrowHomeViewport =
@@ -849,12 +852,20 @@ export function HomeView({
                     emojiTags,
                     mentionTags,
                   } = splitOutgoingTags(mediaTags);
+                  const recipientPubkeys =
+                    await resolveInboxReplyRecipientPubkeys({
+                      channel: selectedChannel,
+                      channelId,
+                      senderPubkey: currentPubkey ?? relaySelfPubkey,
+                      explicitMentions: mentionPubkeys,
+                      queryClient,
+                    });
                   const result = await sendChannelMessage(
                     channelId,
                     content,
                     parentEventId,
                     imetaTags,
-                    mentionPubkeys,
+                    recipientPubkeys,
                     undefined,
                     emojiTags,
                     mentionTags,
