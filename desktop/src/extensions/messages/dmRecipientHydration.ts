@@ -165,7 +165,7 @@ export async function resolveInboxReplyRecipientPubkeys({
 
 type SendInboxReplyInput = ResolveInboxReplyRecipientPubkeysInput & {
   content: string;
-  mediaTags: string[][];
+  mediaTags?: string[][];
   mentionPubkeys: string[];
   parentEventId: string | null;
 };
