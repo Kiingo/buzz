@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   dmRecipientPubkeysNeedHydration,
   resolveHydratedMessageRecipientPubkeys,
+  resolveInboxReplyRecipientPubkeys,
   resolveMessageRecipientPubkeys,
 } from "./dmRecipientHydration.ts";
 
@@ -165,4 +166,47 @@ test("the send hook forces an authoritative members query for incomplete cache s
   assert.deepEqual(recipients, ["agent"]);
   assert.deepEqual(fetchOptions.queryKey, ["channels", "dm-1", "members"]);
   assert.equal(fetchOptions.staleTime, 0);
+});
+
+test("the inbox composer addresses every DM recipient through the shared send path", async () => {
+  let fetchCalls = 0;
+  const recipients = await resolveInboxReplyRecipientPubkeys({
+    channel: channel({ memberPubkeys: [], participantPubkeys: [] }),
+    channelId: "dm-1",
+    senderPubkey: "owner",
+    queryClient: {
+      getQueryData: () => [{ pubkey: "OWNER" }, { pubkey: "AGENT" }],
+      fetchQuery: async () => {
+        fetchCalls += 1;
+        return [];
+      },
+    },
+  });
+
+  assert.deepEqual(recipients, ["agent"]);
+  assert.equal(fetchCalls, 0);
+});
+
+test("the inbox composer refuses to publish before its channel snapshot is ready", async () => {
+  await assert.rejects(
+    resolveInboxReplyRecipientPubkeys({
+      channel: null,
+      channelId: "dm-1",
+      senderPubkey: "owner",
+      queryClient: {},
+    }),
+    /channel details are still loading/i,
+  );
+});
+
+test("the inbox composer refuses to publish before its sender identity is ready", async () => {
+  await assert.rejects(
+    resolveInboxReplyRecipientPubkeys({
+      channel: channel(),
+      channelId: "dm-1",
+      senderPubkey: null,
+      queryClient: {},
+    }),
+    /identity is still loading/i,
+  );
 });

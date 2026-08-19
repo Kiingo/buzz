@@ -1,7 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 
+import { splitOutgoingTags } from "@/features/messages/lib/imetaMediaMarkdown";
 import { messageMentionPubkeys } from "@/features/messages/lib/messageMentionPubkeys";
-import { getChannelMembers } from "@/shared/api/tauri";
+import { getChannelMembers, sendChannelMessage } from "@/shared/api/tauri";
 import type { Channel, ChannelMember } from "@/shared/api/types";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
@@ -120,4 +121,90 @@ export async function resolveMessageRecipientPubkeys({
         })
       ).map((member) => member.pubkey),
   });
+}
+
+type ResolveInboxReplyRecipientPubkeysInput = {
+  channel: Channel | null;
+  channelId: string;
+  senderPubkey: string | null | undefined;
+  explicitMentions?: readonly string[];
+  queryClient: QueryClient;
+};
+
+/**
+ * Resolve the recipients for the Home inbox composer through the same guarded
+ * path as the full channel composer.
+ *
+ * Home renders from feed state before its channel snapshot is necessarily
+ * available. Publishing in that gap would silently create an unaddressed DM,
+ * so fail visibly until both the channel and sender identity are authoritative.
+ */
+export async function resolveInboxReplyRecipientPubkeys({
+  channel,
+  channelId,
+  senderPubkey,
+  explicitMentions,
+  queryClient,
+}: ResolveInboxReplyRecipientPubkeysInput): Promise<string[]> {
+  if (!channel || channel.id !== channelId) {
+    throw new Error("Channel details are still loading. Try sending again.");
+  }
+
+  const sender = normalizePubkey(senderPubkey ?? "");
+  if (!sender) {
+    throw new Error("Your identity is still loading. Try sending again.");
+  }
+
+  return resolveMessageRecipientPubkeys({
+    channel,
+    senderPubkey: sender,
+    explicitMentions,
+    queryClient,
+  });
+}
+
+type SendInboxReplyInput = ResolveInboxReplyRecipientPubkeysInput & {
+  content: string;
+  mediaTags?: string[][];
+  mentionPubkeys: string[];
+  parentEventId: string | null;
+};
+
+/**
+ * Keep the Home inbox call site thin while applying the same tag splitting and
+ * guarded recipient resolution as the full composer.
+ */
+export async function sendInboxReply({
+  channel,
+  channelId,
+  senderPubkey,
+  content,
+  mediaTags,
+  mentionPubkeys,
+  parentEventId,
+  queryClient,
+}: SendInboxReplyInput) {
+  const {
+    mediaTags: imetaTags,
+    emojiTags,
+    mentionTags,
+  } = splitOutgoingTags(mediaTags);
+  const recipientPubkeys = await resolveInboxReplyRecipientPubkeys({
+    channel,
+    channelId,
+    senderPubkey,
+    explicitMentions: mentionPubkeys,
+    queryClient,
+  });
+  const result = await sendChannelMessage(
+    channelId,
+    content,
+    parentEventId,
+    imetaTags,
+    recipientPubkeys,
+    undefined,
+    emojiTags,
+    mentionTags,
+  );
+  return { emojiTags, imetaTags, mentionTags, result };
 }
