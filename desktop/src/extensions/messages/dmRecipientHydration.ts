@@ -1,7 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 
+import { splitOutgoingTags } from "@/features/messages/lib/imetaMediaMarkdown";
 import { messageMentionPubkeys } from "@/features/messages/lib/messageMentionPubkeys";
-import { getChannelMembers } from "@/shared/api/tauri";
+import { getChannelMembers, sendChannelMessage } from "@/shared/api/tauri";
 import type { Channel, ChannelMember } from "@/shared/api/types";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
@@ -160,4 +161,50 @@ export async function resolveInboxReplyRecipientPubkeys({
     explicitMentions,
     queryClient,
   });
+}
+
+type SendInboxReplyInput = ResolveInboxReplyRecipientPubkeysInput & {
+  content: string;
+  mediaTags: string[][];
+  mentionPubkeys: string[];
+  parentEventId: string | null;
+};
+
+/**
+ * Keep the Home inbox call site thin while applying the same tag splitting and
+ * guarded recipient resolution as the full composer.
+ */
+export async function sendInboxReply({
+  channel,
+  channelId,
+  senderPubkey,
+  content,
+  mediaTags,
+  mentionPubkeys,
+  parentEventId,
+  queryClient,
+}: SendInboxReplyInput) {
+  const {
+    mediaTags: imetaTags,
+    emojiTags,
+    mentionTags,
+  } = splitOutgoingTags(mediaTags);
+  const recipientPubkeys = await resolveInboxReplyRecipientPubkeys({
+    channel,
+    channelId,
+    senderPubkey,
+    explicitMentions: mentionPubkeys,
+    queryClient,
+  });
+  const result = await sendChannelMessage(
+    channelId,
+    content,
+    parentEventId,
+    imetaTags,
+    recipientPubkeys,
+    undefined,
+    emojiTags,
+    mentionTags,
+  );
+  return { emojiTags, imetaTags, mentionTags, result };
 }

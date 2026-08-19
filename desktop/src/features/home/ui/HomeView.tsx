@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { useAppShell } from "@/app/AppShellContext";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
-import { resolveInboxReplyRecipientPubkeys } from "@/extensions/messages/dmRecipientHydration";
+import { sendInboxReply } from "@/extensions/messages/dmRecipientHydration";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { useChannelsQuery, useOpenDmMutation } from "@/features/channels/hooks";
 import { RightAuxiliaryPane } from "@/features/channels/ui/RightAuxiliaryPane";
@@ -56,13 +56,12 @@ import {
 import { collectMessageMentionPubkeys } from "@/features/messages/lib/formatTimelineMessages";
 import { formatTime } from "@/features/messages/lib/dateFormatters";
 import { DeleteMessageConfirmDialog } from "@/features/messages/ui/DeleteMessageConfirmDialog";
-import { splitOutgoingTags } from "@/features/messages/lib/imetaMediaMarkdown";
 import { getThreadReference } from "@/features/messages/lib/threading";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { useRelaySelfQuery } from "@/features/moderation/hooks";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
 import { useRemindLater } from "@/features/reminders/ui/RemindMeLaterProvider";
-import { deleteMessage, sendChannelMessage } from "@/shared/api/tauri";
+import { deleteMessage } from "@/shared/api/tauri";
 import type { Channel, HomeFeedResponse } from "@/shared/api/types";
 import { KIND_REACTION } from "@/shared/constants/kinds";
 import { topChromeInset } from "@/shared/layout/chromeLayout";
@@ -847,29 +846,17 @@ export function HomeView({
                 const itemToReply = selectedItem;
                 setIsSendingReply(true);
                 try {
-                  const {
-                    mediaTags: imetaTags,
-                    emojiTags,
-                    mentionTags,
-                  } = splitOutgoingTags(mediaTags);
-                  const recipientPubkeys =
-                    await resolveInboxReplyRecipientPubkeys({
+                  const { emojiTags, imetaTags, mentionTags, result } =
+                    await sendInboxReply({
                       channel: selectedChannel,
                       channelId,
                       senderPubkey: currentPubkey ?? relaySelfPubkey,
-                      explicitMentions: mentionPubkeys,
+                      content,
+                      mediaTags,
+                      mentionPubkeys,
+                      parentEventId,
                       queryClient,
                     });
-                  const result = await sendChannelMessage(
-                    channelId,
-                    content,
-                    parentEventId,
-                    imetaTags,
-                    recipientPubkeys,
-                    undefined,
-                    emojiTags,
-                    mentionTags,
-                  );
                   const authorPubkey = currentPubkey ?? itemToReply.item.pubkey;
                   const reply: InboxReply = {
                     authorLabel: currentPubkey
