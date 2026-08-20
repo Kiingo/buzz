@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
-  "upstreamSnapshot": "2a236e413723f207c2f6c1e8921fab4f071d0445",
+  "upstreamSnapshot": "2e7583bf5ad5926ca32367af9954bc79d108e42d",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 19,
     "modifiedUpstreamFiles": 32,
@@ -11,12 +11,12 @@
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
-    "kiingoMain": "d444f46c3f57a75e3eb9c9090707c0487fa294e4",
-    "upstreamMain": "2a236e413723f207c2f6c1e8921fab4f071d0445",
+    "kiingoMain": "8c119b9bc8554ce9434d00eceb05c0df638d6f25",
+    "upstreamMain": "2e7583bf5ad5926ca32367af9954bc79d108e42d",
     "changedFiles": 60,
     "addedFiles": 28,
     "modifiedFiles": 32,
-    "insertions": 7743,
+    "insertions": 7751,
     "deletions": 519,
     "recentUpstreamOverlapFiles": 0
   },
