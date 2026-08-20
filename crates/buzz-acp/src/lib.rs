@@ -4,6 +4,7 @@ mod acp;
 mod config;
 mod engram_fetch;
 mod filter;
+mod local_publication;
 mod observer;
 mod pool;
 mod pool_lifecycle;
@@ -2385,6 +2386,7 @@ async fn tokio_main() -> Result<()> {
         Panic(tokio::task::JoinError),
         SteerAck(SteerAckEvent),
         Wake(u32, Result<AgentPool, String>),
+        QueueRetryReady,
     }
 
     loop {
@@ -2517,6 +2519,17 @@ async fn tokio_main() -> Result<()> {
             }
         }
 
+        // A failed batch may be the only work on an otherwise quiet relay.
+        // Snapshot its exact deadline before splitting the pool borrow so the
+        // select loop can wake and redispatch it without external traffic.
+        let queue_retry_deadline = if pool_ready {
+            queue
+                .next_retry_deadline()
+                .map(tokio::time::Instant::from_std)
+        } else {
+            None
+        };
+
         // Borrow result_rx and join_set simultaneously via split-borrow helper.
         let pool_event: Option<PoolEvent> = {
             let (result_rx, join_set) = pool.rx_and_join_set();
@@ -2548,6 +2561,12 @@ async fn tokio_main() -> Result<()> {
                 Some((attempt, result)) = wake_rx.recv(), if config.lazy_pool && !pool_ready => {
                     Some(PoolEvent::Wake(attempt, result))
                 }
+                _ = async {
+                    match queue_retry_deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => Some(PoolEvent::QueueRetryReady),
                 // Gated on pending work: with an empty queue there is nothing
                 // for the retry to dispatch, and a past `retry_at` would
                 // otherwise complete instantly on every iteration (busy spin).
@@ -2762,13 +2781,17 @@ async fn tokio_main() -> Result<()> {
                                 // contain "!shutdown" from a non-owner.
                             }
 
-                            // Mirrors !shutdown: kind:9, content "!cancel", from
-                            // owner, mentions THIS agent. Must be BEFORE
-                            // queue.push() — the event content is moved by push.
+                            // Mirrors !shutdown: kind:9, content "!cancel",
+                            // mentions THIS agent. Must be BEFORE queue.push()
+                            // — the event content is moved by push.
                             //
                             // Mode-independent: !cancel fires regardless of
                             // --multiple-event-handling. It is explicit user
-                            // intent, not an automatic policy decision.
+                            // intent, not an automatic policy decision. Owners
+                            // retain channel-wide cancellation authority here.
+                            // Other authorized members are handled after the
+                            // inbound author gate and may cancel only a turn
+                            // triggered by their own event.
                             let is_cancel = is_owner_control_command(
                                 &buzz_event.event,
                                 kind_u32,
@@ -2792,7 +2815,8 @@ async fn tokio_main() -> Result<()> {
                                         continue; // consume event — do NOT push to queue
                                     }
                                 }
-                                // Not from owner — fall through to normal prompt handling.
+                                // Non-owner control commands continue through
+                                // the author gate, then are consumed below.
                             }
 
                             // Mirrors !shutdown / !cancel: kind:9, content
@@ -2877,6 +2901,24 @@ async fn tokio_main() -> Result<()> {
                                     );
                                     continue;
                                 }
+                            }
+
+                            if is_cancel {
+                                let author = buzz_event.event.pubkey.to_hex();
+                                let fired = signal_in_flight_task_for_author(
+                                    &mut pool,
+                                    buzz_event.channel_id,
+                                    &author,
+                                    ControlSignal::Cancel,
+                                );
+                                if !fired {
+                                    tracing::warn!(
+                                        channel_id = %buzz_event.channel_id,
+                                        author = %author,
+                                        "!cancel received but no in-flight turn from this author — no-op"
+                                    );
+                                }
+                                continue; // consume control event; never queue as a prompt
                             }
 
                             let matched = filter::match_event(&buzz_event.event, buzz_event.channel_id, &rules, &pubkey_hex).await;
@@ -3190,6 +3232,13 @@ async fn tokio_main() -> Result<()> {
                     tracing::error!("all agents dead — exiting");
                     break;
                 }
+                for (channel_id, thread_tags) in
+                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
+                {
+                    typing_channels.insert(channel_id, thread_tags);
+                }
+            }
+            Some(PoolEvent::QueueRetryReady) => {
                 for (channel_id, thread_tags) in
                     dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity)
                 {
@@ -3594,6 +3643,38 @@ fn signal_in_flight_task(
     false
 }
 
+/// Send a control signal only when the in-flight turn was triggered by an
+/// event from `author_pubkey`. This lets an authorized community member cancel
+/// their own turn without granting channel-wide cancellation authority.
+fn signal_in_flight_task_for_author(
+    pool: &mut AgentPool,
+    channel_id: uuid::Uuid,
+    author_pubkey: &str,
+    mode: ControlSignal,
+) -> bool {
+    let entry = pool.task_map_mut().values_mut().find(|meta| {
+        meta.channel_id == Some(channel_id)
+            && meta
+                .prompt_author_pubkeys
+                .iter()
+                .any(|pubkey| pubkey == author_pubkey)
+    });
+
+    if let Some(meta) = entry {
+        if let Some(tx) = meta.control_tx.take() {
+            tracing::info!(
+                channel = %channel_id,
+                author = %author_pubkey,
+                ?mode,
+                "author-scoped control signal sent to in-flight task"
+            );
+            let _ = tx.send(mode);
+            return true;
+        }
+    }
+    false
+}
+
 /// Attempt the non-cancelling (ACP) steer for a freshly-queued event.
 ///
 /// Caller invariants:
@@ -3735,6 +3816,14 @@ fn dispatch_pending(
         };
         tracing::debug!(agent = agent.index, channel = %channel_id, affinity_hit, "agent_claimed");
 
+        let prompt_author_pubkeys = batch
+            .events
+            .iter()
+            .chain(batch.cancelled_events.iter())
+            .map(|entry| entry.event.pubkey.to_hex())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         let recoverable_batch = match ctx.dedup_mode {
             DedupMode::Queue => Some(batch.clone()),
             DedupMode::Drop => None,
@@ -3781,6 +3870,7 @@ fn dispatch_pending(
             pool::TaskMeta {
                 agent_index,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys,
                 turn_id,
                 recoverable_batch,
                 control_tx: Some(control_tx),
@@ -3900,7 +3990,6 @@ fn handle_prompt_result(
     // branch below records what actually happened; only the hard-timeout
     // match arm in the death_message construction reads it.
     let mut hard_timeout_fate_suffix: Option<&'static str> = None;
-
     // Requeue BEFORE mark_complete: requeue() sets retry_after with a future
     // deadline, and mark_complete() checks for it to decide whether to preserve
     // retry_counts. If mark_complete runs first, retry_counts is cleared and
@@ -4417,6 +4506,7 @@ fn dispatch_heartbeat(
         pool::TaskMeta {
             agent_index,
             channel_id: None,
+            prompt_author_pubkeys: Vec::new(),
             turn_id,
             recoverable_batch: None,
             control_tx: None,
@@ -5059,6 +5149,17 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
                     });
                 }
             }
+            // Preserve the canonical auth authority when the harness dials a
+            // restricted edge alias. Child MCP tools can use the same trusted
+            // community identity instead of treating the alias as a tenant.
+            if let Ok(canonical_relay_url) = std::env::var("BUZZ_CANONICAL_RELAY_URL") {
+                if !canonical_relay_url.trim().is_empty() {
+                    env.push(EnvVar {
+                        name: "BUZZ_CANONICAL_RELAY_URL".into(),
+                        value: canonical_relay_url,
+                    });
+                }
+            }
             // Forward the agent's display name so dev-mcp can use it as the git
             // author name instead of the raw npub. Read from the process env
             // rather than Config: this is a pass-through of a contract owned
@@ -5216,6 +5317,7 @@ mod owner_control_command_tests {
             pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys: vec!["author-a".to_string()],
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: Some(control_tx),
@@ -5239,6 +5341,51 @@ mod owner_control_command_tests {
             &mut pool,
             channel_id,
             ControlSignal::Rotate
+        ));
+    }
+
+    #[tokio::test]
+    async fn author_scoped_cancel_only_signals_the_triggering_author() {
+        let mut pool = AgentPool::from_slots(vec![]);
+        let channel_id = Uuid::new_v4();
+        let (control_tx, control_rx) = tokio::sync::oneshot::channel();
+
+        let abort_handle = pool.join_set.spawn(async {});
+        pool.task_map_mut().insert(
+            abort_handle.id(),
+            pool::TaskMeta {
+                agent_index: 0,
+                channel_id: Some(channel_id),
+                prompt_author_pubkeys: vec!["author-a".to_string()],
+                turn_id: "author-scoped-turn".to_string(),
+                recoverable_batch: None,
+                control_tx: Some(control_tx),
+                steer_tx: None,
+                successful_steer_deliveries: HashSet::new(),
+            },
+        );
+
+        assert!(
+            !signal_in_flight_task_for_author(
+                &mut pool,
+                channel_id,
+                "author-b",
+                ControlSignal::Cancel,
+            ),
+            "another authorized member must not cancel this author's turn"
+        );
+        assert!(signal_in_flight_task_for_author(
+            &mut pool,
+            channel_id,
+            "author-a",
+            ControlSignal::Cancel,
+        ));
+        assert_eq!(control_rx.await.unwrap(), ControlSignal::Cancel);
+        assert!(!signal_in_flight_task_for_author(
+            &mut pool,
+            channel_id,
+            "author-a",
+            ControlSignal::Cancel,
         ));
     }
 
@@ -6840,6 +6987,24 @@ mod build_mcp_servers_tests {
     }
 
     #[test]
+    fn session_new_mcp_server_forwards_canonical_relay_url() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("BUZZ_CANONICAL_RELAY_URL", "wss://relay.example");
+        let config = test_config();
+        let servers = build_mcp_servers(&config);
+        std::env::remove_var("BUZZ_CANONICAL_RELAY_URL");
+
+        let canonical_env = servers[0]
+            .env
+            .iter()
+            .find(|entry| entry.name == "BUZZ_CANONICAL_RELAY_URL");
+        assert_eq!(
+            canonical_env.map(|entry| entry.value.as_str()),
+            Some("wss://relay.example")
+        );
+    }
+
+    #[test]
     fn test_display_name_set_is_forwarded_to_mcp_server() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("BUZZ_ACP_DISPLAY_NAME", "Duncan");
@@ -7034,11 +7199,16 @@ mod error_outcome_emission_tests {
     /// an `OwnedAgent` to move into respawn or return to the pool. The error
     /// branches never talk to the subprocess.
     async fn dummy_agent(index: usize) -> OwnedAgent {
+        #[cfg(windows)]
+        let (command, args): (&str, Vec<String>) =
+            ("cmd", vec!["/C".to_string(), "more".to_string()]);
+        #[cfg(not(windows))]
+        let (command, args): (&str, Vec<String>) = ("cat", vec![]);
         OwnedAgent {
             index,
-            acp: AcpClient::spawn("cat", &[], &[], false)
+            acp: AcpClient::spawn(command, &args, &[], false)
                 .await
-                .expect("spawn cat as inert agent"),
+                .expect("spawn inert agent"),
             state: Default::default(),
             model_capabilities: None,
             desired_model: None,
@@ -7075,6 +7245,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7147,6 +7318,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7262,6 +7434,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".into(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7327,6 +7500,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7404,6 +7578,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "panic-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7497,6 +7672,7 @@ mod error_outcome_emission_tests {
                 crate::pool::TaskMeta {
                     agent_index: 0,
                     channel_id: None,
+                    prompt_author_pubkeys: Vec::new(),
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -7589,6 +7765,7 @@ mod error_outcome_emission_tests {
                 crate::pool::TaskMeta {
                     agent_index: 0,
                     channel_id: None,
+                    prompt_author_pubkeys: Vec::new(),
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -7695,6 +7872,7 @@ mod error_outcome_emission_tests {
                 crate::pool::TaskMeta {
                     agent_index: 0,
                     channel_id: None,
+                    prompt_author_pubkeys: Vec::new(),
                     turn_id: "test-turn-id".to_string(),
                     recoverable_batch: None,
                     control_tx: None,
@@ -7772,6 +7950,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7867,6 +8046,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -7984,6 +8164,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -8124,6 +8305,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -8276,13 +8458,7 @@ mod error_outcome_emission_tests {
         );
     }
 
-    // ── auth error dead-letter behavior ────────────────────────────────────
-
-    /// An auth-class `PromptOutcome::Error` must dead-letter immediately
-    /// (the batch is never requeued) so the user sees a re-auth hint at once
-    /// rather than after 10 futile retries.
-    #[tokio::test]
-    async fn auth_error_dead_letters_immediately_without_requeueing() {
+    async fn assert_agent_error_dead_letters_immediately(error: acp::AcpError) {
         let keys = nostr::Keys::generate();
         let event = nostr::EventBuilder::new(nostr::Kind::Custom(9), "test")
             .sign_with_keys(&keys)
@@ -8298,13 +8474,6 @@ mod error_outcome_emission_tests {
             cancelled_events: vec![],
             cancel_reason: None,
         };
-
-        let auth_error = acp::AcpError::AgentError {
-            code: -32000,
-            message: "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
-                .to_string(),
-        };
-
         let agent = dummy_agent(0).await;
         let mut pool = AgentPool::from_slots(vec![None]);
         let task_id = pool.join_set.spawn(async {}).id();
@@ -8313,6 +8482,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
@@ -8335,7 +8505,7 @@ mod error_outcome_emission_tests {
             agent,
             source: PromptSource::Channel(channel_id),
             turn_id: "test-turn-id".to_string(),
-            outcome: PromptOutcome::Error(auth_error),
+            outcome: PromptOutcome::Error(error),
             batch: Some(batch),
         };
         handle_prompt_result(
@@ -8352,17 +8522,23 @@ mod error_outcome_emission_tests {
             None,
         );
 
-        // The batch must not be requeued: pending_channels returns 0.
-        assert_eq!(
-            queue.pending_channels(),
-            0,
-            "auth error must dead-letter immediately — batch must not be requeued"
-        );
-        assert_eq!(
-            queue.queued_event_count(&channel_id),
-            0,
-            "auth error must dead-letter immediately — no events should be pending"
-        );
+        assert_eq!(queue.pending_channels(), 0);
+        assert_eq!(queue.queued_event_count(&channel_id), 0);
+    }
+
+    // ── auth error dead-letter behavior ────────────────────────────────────
+
+    /// An auth-class `PromptOutcome::Error` must dead-letter immediately
+    /// (the batch is never requeued) so the user sees a re-auth hint at once
+    /// rather than after 10 futile retries.
+    #[tokio::test]
+    async fn auth_error_dead_letters_immediately_without_requeueing() {
+        let auth_error = acp::AcpError::AgentError {
+            code: -32000,
+            message: "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
+                .to_string(),
+        };
+        assert_agent_error_dead_letters_immediately(auth_error).await;
     }
 
     /// A non-auth application error (e.g. usage credits) must still follow the
@@ -8399,6 +8575,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: None,
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "test-turn-id".to_string(),
                 recoverable_batch: None,
                 control_tx: None,
