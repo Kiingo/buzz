@@ -1,0 +1,88 @@
+name: Upstream sync rehearsal
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 13 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-sync-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    if: github.repository == 'Kiingo/buzz'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout reviewed fork
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Attempt isolated upstream merge and report patch overlap
+        id: rehearsal
+        continue-on-error: true
+        shell: bash
+        run: |
+          node scripts/rehearse-upstream-sync.mjs \
+            --json "${RUNNER_TEMP}/upstream-sync-rehearsal.json" \
+            --markdown "${RUNNER_TEMP}/upstream-sync-rehearsal.md"
+
+      - name: Publish human-readable rehearsal report
+        if: always()
+        shell: bash
+        run: cat "${RUNNER_TEMP}/upstream-sync-rehearsal.md" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload machine-readable rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-sync-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/upstream-sync-rehearsal.json
+            ${{ runner.temp }}/upstream-sync-rehearsal.md
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Run deterministic rehearsal and boundary tests
+        if: steps.rehearsal.outcome == 'success'
+        run: |
+          node --test scripts/rehearse-upstream-sync.test.mjs
+          node scripts/check-kiingo-fork-boundary.mjs
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        if: steps.rehearsal.outcome == 'success'
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: steps.rehearsal.outcome == 'success'
+        with:
+          node-version: 24.14.1
+          cache: pnpm
+
+      - name: Install exact dependencies for focused desktop contracts
+        if: steps.rehearsal.outcome == 'success'
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate generic provider, routing, and rendering seams
+        if: steps.rehearsal.outcome == 'success'
+        working-directory: desktop
+        run: >-
+          node --import ./test-loader.mjs --experimental-strip-types --test
+          src/features/agents/ui/ProviderConfigFields.test.mjs
+          src/features/agents/ui/agentDefinitionExecutionReadiness.test.mjs
+          src/extensions/messages/dmRecipientHydration.test.mjs
+          src/features/projects/lib/projectReadmeMarkdown.test.mjs
+          src/features/huddle/lib/ttsLiveMessages.security.test.mjs
+
+      - name: Validate durable progress lifecycle
+        if: steps.rehearsal.outcome == 'success'
+        run: cargo test -p buzz-acp local_publication --locked
+
+      - name: Fail on merge conflict, inventory drift, or budget regression
+        if: always() && steps.rehearsal.outcome != 'success'
+        run: exit 1
