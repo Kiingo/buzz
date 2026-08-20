@@ -1,24 +1,24 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
-  "upstreamSnapshot": "78cbffeb64c01220e705adf0aa9690fdbd0d7a37",
+  "upstreamSnapshot": "3c228b1082a93aca302c7b6a67ec274c51ed5eaf",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 19,
     "modifiedUpstreamFiles": 32,
-    "changedUpstreamProductionSourceLines": 1867,
+    "changedUpstreamProductionSourceLines": 1861,
     "upstreamProductionSourceDiffHunks": 190,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
-    "kiingoMain": "501a3a887c95a3eed4e83c339471c0baa5db33eb",
-    "upstreamMain": "be48ce98bd163899197b79a82ad5b2bcf0bc9b54",
-    "changedFiles": 171,
-    "addedFiles": 41,
-    "modifiedFiles": 130,
-    "insertions": 12882,
-    "deletions": 1312,
-    "recentUpstreamOverlapFiles": 100
+    "kiingoMain": "b69e430fd92469f91ff7ddc00875823523551cdb",
+    "upstreamMain": "3c228b1082a93aca302c7b6a67ec274c51ed5eaf",
+    "changedFiles": 60,
+    "addedFiles": 28,
+    "modifiedFiles": 32,
+    "insertions": 7819,
+    "deletions": 519,
+    "recentUpstreamOverlapFiles": 0
   },
   "lastMileBaseline": {
     "kiingoMain": "811a5ef1cc360b06b3d504398738aaea215958f9",
@@ -28,16 +28,77 @@
     "changedUpstreamProductionSourceLines": 2113,
     "upstreamProductionSourceDiffHunks": 171
   },
+  "forbiddenUpstreamProductionPatterns": [
+    "\\bkiingo\\b",
+    "chat\\.kiingo\\.com",
+    "api\\.kiingo\\.com",
+    "dashboard\\.kiingo\\.com",
+    "harness connections"
+  ],
+  "ownershipBoundaries": [
+    {
+      "hook": "desktop/src/features/agents/ui/ProviderConfigFields.tsx",
+      "implementations": [
+        "desktop/src/features/agents/ui/ProviderConfigSchemaFields.tsx",
+        "desktop/src/features/agents/ui/providerConfigSchema.ts"
+      ],
+      "contract": "Provider-neutral JSON-schema rendering and reconciliation; provider IDs and vendor URLs are forbidden.",
+      "focusedTests": [
+        "desktop/src/features/agents/ui/ProviderConfigFields.test.mjs",
+        "desktop/src/features/agents/ui/agentDefinitionExecutionReadiness.test.mjs"
+      ]
+    },
+    {
+      "hook": "desktop/src-tauri/src/managed_agents/backend.rs",
+      "implementations": ["desktop/src-tauri/src/managed_agents/provider_platform.rs"],
+      "contract": "Generic immutable provider staging, platform lookup, and optional signer policy.",
+      "focusedTests": ["desktop/src-tauri/src/managed_agents/provider_platform.rs"]
+    },
+    {
+      "hook": "desktop/src/features/messages/hooks.ts",
+      "implementations": ["desktop/src/extensions/messages/dmRecipientHydration.ts"],
+      "contract": "Provider-neutral, fail-closed DM recipient hydration with no remote or tenant assumptions.",
+      "focusedTests": ["desktop/src/extensions/messages/dmRecipientHydration.test.mjs"]
+    },
+    {
+      "hook": "desktop/src/features/projects/ui/ProjectReadmePanel.tsx",
+      "implementations": ["desktop/src/features/projects/lib/projectReadmeMarkdown.ts"],
+      "contract": "Repository-provider-neutral README normalization.",
+      "focusedTests": ["desktop/src/features/projects/lib/projectReadmeMarkdown.test.mjs"]
+    },
+    {
+      "hook": "desktop/src/features/huddle/lib/ttsLiveMessages.ts",
+      "implementations": ["desktop/src/features/huddle/lib/ttsLiveMessageSanitizer.ts"],
+      "contract": "Provider-neutral TTS message sanitization.",
+      "focusedTests": ["desktop/src/features/huddle/lib/ttsLiveMessages.security.test.mjs"]
+    },
+    {
+      "hook": "crates/buzz-acp/src/lib.rs",
+      "implementations": ["crates/buzz-acp/src/local_publication.rs"],
+      "contract": "Generic durable receipt, progress-edit, terminal delete/final, and legacy publication lifecycle.",
+      "focusedTests": ["cargo test -p buzz-acp local_publication --locked"]
+    },
+    {
+      "hook": "crates/buzz-media/src/storage.rs",
+      "implementations": ["crates/buzz-media/src/storage/azure.rs", "crates/buzz-azure-storage/src/lib.rs"],
+      "contract": "Storage-backend-neutral media behavior with Azure adaptation outside the upstream switch.",
+      "focusedTests": ["cargo test -p buzz-azure-storage --locked"]
+    },
+    {
+      "hook": "crates/buzz-relay/src/api/git/store.rs",
+      "implementations": ["crates/buzz-relay/src/api/git/store/azure.rs", "crates/buzz-azure-storage/src/lib.rs"],
+      "contract": "Storage-backend-neutral Git object semantics with Azure result translation isolated.",
+      "focusedTests": ["cargo test -p buzz-relay git_store --locked"]
+    }
+  ],
   "deltas": [
     {
       "classification": "retain-generic",
       "owner": "Buzz runtime maintainers",
       "purpose": "Provider-neutral ACP durability, bounded queueing, relay recovery, and local publication transport.",
-      "upstreamStatus": "composition-boundary; split into independently upstreamable fixes",
+      "upstreamStatus": "submitted as block/buzz PRs #6414 (canonical relay), #6417 (durable hosted turns), and #6418 (generic ACP runtime image)",
       "removalCondition": "Remove each patch when block/buzz ships equivalent behavior.",
       "paths": [
-        "Cargo.lock",
-        "Cargo.toml",
         "Dockerfile",
         "crates/buzz-acp/README.md",
         "crates/buzz-acp/src/acp.rs",
@@ -53,9 +114,11 @@
       "classification": "retain-generic",
       "owner": "Buzz storage maintainers",
       "purpose": "Backend-neutral Azure Blob implementation, minimal media/relay storage integration, and scanner-safe reconstruction of a nonfunctional database fixture.",
-      "upstreamStatus": "composition-boundary; candidate for upstream storage adapter contribution",
+      "upstreamStatus": "submitted as block/buzz PRs #6410 (scanner-safe fixture) and #6412 (Azure Blob adapter)",
       "removalCondition": "Remove when block/buzz exposes and ships an equivalent Azure Blob adapter contract.",
       "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
         "crates/buzz-db/src/lib.rs",
         "crates/buzz-azure-storage/Cargo.toml",
         "crates/buzz-azure-storage/README.md",
@@ -76,7 +139,7 @@
       "classification": "retain-generic",
       "owner": "Buzz desktop maintainers",
       "purpose": "Provider-owned JSON-schema presentation, user-scoped provider discovery, immutable staging, optional build-pinned Windows signer enforcement, hosted-agent definition readiness, restart-safe DM recipient hydration across every composer, and retained provider-neutral security fixes required by CodeQL.",
-      "upstreamStatus": "candidate for upstream provider UI and DM correctness contributions",
+      "upstreamStatus": "submitted as block/buzz PRs #6403-#6406 and #6408-#6409",
       "removalCondition": "Remove each retained patch when block/buzz supports equivalent behavior.",
       "paths": [
         "desktop/src-tauri/Cargo.lock",
@@ -106,6 +169,14 @@
       ]
     },
     {
+      "classification": "retain-generic",
+      "owner": "Buzz release maintainers",
+      "purpose": "Fork-neutral relay and push-gateway image, cache, attestation, and verification namespaces.",
+      "upstreamStatus": "submitted as block/buzz PR #6413",
+      "removalCondition": "Remove when block/buzz derives both container namespaces from the repository owner or explicit repository variables.",
+      "paths": [".github/workflows/docker.yml"]
+    },
+    {
       "classification": "move-to-kiingo",
       "owner": "Kiingo platform engineering",
       "purpose": "Fork inventory, replay/footprint policy, maintenance runbook, implementation evidence, and fork-safe CI permissions that never write upstream-owned registry caches.",
@@ -113,13 +184,15 @@
       "removalCondition": "Remove only if Kiingo stops distributing a Buzz composition.",
       "paths": [
         ".github/workflows/ci.yml",
-        ".github/workflows/docker.yml",
         "docs/kiingo-fork-inventory.json",
         "docs/kiingo-fork-last-mile-conflict-isolation-plan-2026-08-11.md",
         "docs/kiingo-fork-maintenance.md",
         "docs/kiingo-fork-minimization-hard-cutover-plan-2026-08-11.md",
         "docs/kiingo-upstream-candidate-ledger-2026-08-11.md",
-        "scripts/check-kiingo-fork-boundary.mjs"
+        "scripts/check-kiingo-fork-boundary.mjs",
+        "scripts/rehearse-upstream-sync.mjs",
+        "scripts/rehearse-upstream-sync.test.mjs",
+        ".github/workflows/upstream-sync-rehearsal.yml"
       ]
     }
   ]

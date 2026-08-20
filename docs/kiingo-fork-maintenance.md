@@ -18,20 +18,40 @@ fork branch.
 ## Synchronization procedure
 
 1. Start from a clean Kiingo worktree and a dedicated branch.
-2. Fetch `origin` and `upstream` without pruning or force-updating local work.
-3. Merge `upstream/main` into the Kiingo branch. Do not rebase published Kiingo
+2. Run the read-only rehearsal described below and archive its JSON/Markdown
+   report with the update PR.
+3. Fetch `origin` and `upstream` without pruning or force-updating local work.
+4. Merge `upstream/main` into the Kiingo branch. Do not rebase published Kiingo
    commits or force-push the shared branch.
-4. Resolve conflicts by preserving upstream behavior unless a documented
+5. Resolve conflicts by preserving upstream behavior unless a documented
    Kiingo production requirement intentionally differs.
-5. Keep every commit DCO-compliant with `git commit -s` and retain upstream
+6. Keep every commit DCO-compliant with `git commit -s` and retain upstream
    authorship and commit history.
-6. Run the targeted checks required by the changed crates and deployment
+7. Run the targeted checks required by the changed crates and deployment
    surfaces. For Rust changes this includes formatting plus the smallest
    relevant crate tests.
-7. Open or update the Kiingo pull request with the upstream commit merged,
+8. Re-run the boundary guard and rehearsal against the final reviewed commit.
+9. Open or update the Kiingo pull request with the upstream commit merged,
    conflict decisions, exact checks, and any operational migration notes.
-8. Merge through the normal protected-branch workflow. Production images must
+10. Merge through the normal protected-branch workflow. Production images must
    be built from the reviewed merge commit and pinned by digest.
+
+## Read-only rehearsal
+
+Run `node scripts/rehearse-upstream-sync.mjs --json <outside-worktree>.json
+--markdown <outside-worktree>.md`. The script resolves the upstream branch with
+`git ls-remote`, fetches only its exact object using `--no-write-fetch-head`,
+and uses `git merge-tree`; it does not check out files, update the index, switch
+branches, create commits, or move refs. It fails on merge conflicts, inventory
+drift, or patch-budget regression and reports exact refs, conflicts, upstream
+overlap, patch metrics, and the smallest relevant validation commands.
+
+The scheduled/manual `Upstream sync rehearsal` workflow has read-only contents
+permission, publishes both report forms, and runs only the fork boundary,
+rehearsal fixtures, generic desktop seams, and durable progress tests. It never
+opens a PR, pushes a branch, publishes an artifact to a release, or deploys.
+Pull-request CI remains pinned to the inventory snapshot rather than a moving
+upstream ref.
 
 Run `node scripts/check-kiingo-fork-boundary.mjs` before pushing. Each upstream
 integration PR records the exact reviewed commit in the inventory's
@@ -57,8 +77,8 @@ record the reported drift, and merge the newer commits in the next dedicated
 synchronization PR. Never move the snapshot ahead of the fork or edit it only
 to make the guard pass.
 
-The hard budgets are 16 modified upstream production-source files, 27 modified
-upstream files overall, 1,768 changed upstream production-source lines, 172
+The hard budgets are 19 modified upstream production-source files, 32 modified
+upstream files overall, 1,861 changed upstream production-source lines, 190
 upstream production-source diff hunks, and zero Kiingo business-logic lines in
 upstream-owned production source.
 
@@ -76,6 +96,11 @@ The inventory is the deterministic patch ledger. Each group records purpose,
 owner, upstream status, and removal condition. Add a path there only after
 classifying it as `drop/upstream-present`, `move-to-kiingo`, `retain-generic`,
 or `obsolete`; CI rejects both unclassified paths and stale entries.
+Schema version 3 also records each intentionally tiny upstream-owned hook, its
+downstream-added implementation files, its provider-neutral contract, and its
+focused tests. The boundary guard rejects missing hook/implementation paths and
+builds its forbidden Kiingo-content scanner from the inventory's explicit
+pattern list.
 
 ## License and patch boundaries
 
