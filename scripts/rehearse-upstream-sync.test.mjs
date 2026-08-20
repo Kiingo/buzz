@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -92,13 +92,22 @@ test("rehearses a clean merge with upstream rename and fork add without mutation
         write(repository, "fork-only.txt", "fork\n");
       },
     },
-    (report) => {
+    (report, current) => {
       assert.equal(report.merge.status, "clean");
       assert.deepEqual(report.merge.conflictPaths, []);
       assert.equal(
         report.mutationCheck.workingTreeIndexBranchesAndRefsUnchanged,
         true,
       );
+      const repeated = rehearseUpstreamSync({
+        repositoryRoot: current.repository,
+        baseRef: current.forkSha,
+        upstreamSha: current.upstreamSha,
+        inventoryPath: current.inventoryPath,
+      });
+      const withoutTimestamp = ({ generatedAt: _generatedAt, ...value }) =>
+        value;
+      assert.deepEqual(withoutTimestamp(repeated), withoutTimestamp(report));
     },
   );
 });
@@ -153,4 +162,63 @@ test("reports add/add and modify/delete conflict edges", async (t) => {
       },
     ),
   );
+});
+
+test("reports unclassified and stale inventory paths without mutating the repository", () => {
+  const current = fixture({
+    upstream(repository) {
+      write(repository, "upstream-only.txt", "upstream\n");
+    },
+    fork(repository) {
+      write(repository, "fork-only.txt", "fork\n");
+    },
+  });
+  try {
+    const inventory = JSON.parse(readFileSync(current.inventoryPath, "utf8"));
+    inventory.deltas[0].paths = ["stale-only.txt"];
+    writeFileSync(current.inventoryPath, JSON.stringify(inventory));
+    const refsBefore = runGit(current.repository, "show-ref");
+    const report = rehearseUpstreamSync({
+      repositoryRoot: current.repository,
+      baseRef: current.forkSha,
+      upstreamSha: current.upstreamSha,
+      inventoryPath: current.inventoryPath,
+    });
+    assert.deepEqual(report.patchSurface.unclassifiedPaths, ["fork-only.txt"]);
+    assert.deepEqual(report.patchSurface.staleInventoryPaths, [
+      "stale-only.txt",
+    ]);
+    assert.equal(runGit(current.repository, "show-ref"), refsBefore);
+    assert.equal(runGit(current.repository, "status", "--porcelain"), "");
+  } finally {
+    rmSync(current.parent, { recursive: true, force: true });
+  }
+});
+
+test("rejects an unavailable frozen upstream commit without moving refs", () => {
+  const current = fixture({
+    upstream(repository) {
+      write(repository, "upstream-only.txt", "upstream\n");
+    },
+    fork(repository) {
+      write(repository, "fork-only.txt", "fork\n");
+    },
+  });
+  try {
+    const refsBefore = runGit(current.repository, "show-ref");
+    assert.throws(
+      () =>
+        rehearseUpstreamSync({
+          repositoryRoot: current.repository,
+          baseRef: current.forkSha,
+          upstreamSha: "f".repeat(40),
+          inventoryPath: current.inventoryPath,
+        }),
+      /git rev-parse --verify .* failed/,
+    );
+    assert.equal(runGit(current.repository, "show-ref"), refsBefore);
+    assert.equal(runGit(current.repository, "status", "--porcelain"), "");
+  } finally {
+    rmSync(current.parent, { recursive: true, force: true });
+  }
 });
