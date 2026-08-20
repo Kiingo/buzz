@@ -78,7 +78,7 @@ synchronization PR. Never move the snapshot ahead of the fork or edit it only
 to make the guard pass.
 
 The hard budgets are 19 modified upstream production-source files, 32 modified
-upstream files overall, 1,860 changed upstream production-source lines, 190
+upstream files overall, 1,861 changed upstream production-source lines, 190
 upstream production-source diff hunks, and zero Kiingo business-logic lines in
 upstream-owned production source.
 
