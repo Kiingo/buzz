@@ -26,7 +26,7 @@ test("issue comments use the project activity timeline", async ({ page }) => {
   await installMockBridge(page);
   await openBuzzProject(page);
 
-  await page.getByRole("tab", { name: "Issues", exact: true }).click();
+  await page.getByRole("tab", { name: "Tasks", exact: true }).click();
   const issueRow = page.getByTestId("project-issue-row").first();
   await expect(issueRow).toBeVisible({ timeout: 10_000 });
   await issueRow.getByRole("button", { name: /^#/ }).click();
@@ -75,10 +75,48 @@ test("issue assignees can be assigned and unassigned", async ({ page }) => {
   await installMockBridge(page);
   await openBuzzProject(page);
 
-  await page.getByRole("tab", { name: "Issues", exact: true }).click();
+  await page.getByRole("tab", { name: "Tasks", exact: true }).click();
   const issueRow = page.getByTestId("project-issue-row").first();
   await expect(issueRow).toBeVisible({ timeout: 10_000 });
   await issueRow.getByRole("button", { name: /^#/ }).click();
+
+  const issueHeader = page
+    .getByTestId("project-issue-detail")
+    .locator("header")
+    .first();
+  await expect(issueHeader).toContainText("Task created");
+  await expect(issueHeader).not.toContainText("alice");
+  await expect(issueHeader.locator("img")).toHaveCount(0);
+  const contextAssignment = page.getByTestId("project-context-task-assignment");
+  await expect(contextAssignment).toBeVisible();
+  await expect(contextAssignment.locator("img")).toHaveCount(0);
+  const selfAssign = page.getByTestId("project-context-issue-self-assign");
+  await expect(selfAssign).toBeVisible();
+  await expect(page.getByTestId("project-context-issue-assign")).toBeVisible();
+  const createTask = page
+    .getByTestId("project-repository-actions-panel")
+    .getByRole("button", { name: "Create task", exact: true });
+  await expect(createTask).toBeVisible();
+  await expect(selfAssign.locator("svg")).toHaveCount(1);
+  const actionGeometry = await Promise.all(
+    [selfAssign, createTask].map((action) =>
+      action.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          height: bounds.height,
+          left: bounds.left,
+          width: bounds.width,
+        };
+      }),
+    ),
+  );
+  expect(actionGeometry[0]).toEqual(actionGeometry[1]);
+  await selfAssign.click();
+  await expect(contextAssignment).toContainText("Assigned to me");
+  await expect(page.getByTestId("project-detail-section").first()).toHaveCSS(
+    "border-top-width",
+    "0px",
+  );
 
   await page.getByTestId("project-issue-assign").click();
   const candidate = page
@@ -94,6 +132,6 @@ test("issue assignees can be assigned and unassigned", async ({ page }) => {
   const unassign = page.getByTestId(`project-issue-unassign-${assignee}`);
   await expect(unassign).toBeVisible({ timeout: 10_000 });
   await unassign.click();
-  await expect(page.getByText("Issue unassigned.")).toBeVisible();
+  await expect(page.getByText("Task unassigned.")).toBeVisible();
   await expect(unassign).toHaveCount(0, { timeout: 10_000 });
 });
