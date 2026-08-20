@@ -36,7 +36,6 @@ export function findReadmeFile(files: ProjectRepoFile[]) {
   return readmes.find((file) => !file.path.includes("/")) ?? readmes[0] ?? null;
 }
 
-
 export function ReadmePanel({
   accessChannelId,
   file,
