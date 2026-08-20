@@ -96,11 +96,9 @@
       "classification": "retain-generic",
       "owner": "Buzz runtime maintainers",
       "purpose": "Provider-neutral ACP durability, bounded queueing, relay recovery, and local publication transport.",
-      "upstreamStatus": "composition-boundary; split into independently upstreamable fixes",
+      "upstreamStatus": "submitted as block/buzz PRs #6414 (canonical relay), #6417 (durable hosted turns), and #6418 (generic ACP runtime image)",
       "removalCondition": "Remove each patch when block/buzz ships equivalent behavior.",
       "paths": [
-        "Cargo.lock",
-        "Cargo.toml",
         "Dockerfile",
         "crates/buzz-acp/README.md",
         "crates/buzz-acp/src/acp.rs",
@@ -116,9 +114,11 @@
       "classification": "retain-generic",
       "owner": "Buzz storage maintainers",
       "purpose": "Backend-neutral Azure Blob implementation, minimal media/relay storage integration, and scanner-safe reconstruction of a nonfunctional database fixture.",
-      "upstreamStatus": "composition-boundary; candidate for upstream storage adapter contribution",
+      "upstreamStatus": "submitted as block/buzz PRs #6410 (scanner-safe fixture) and #6412 (Azure Blob adapter)",
       "removalCondition": "Remove when block/buzz exposes and ships an equivalent Azure Blob adapter contract.",
       "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
         "crates/buzz-db/src/lib.rs",
         "crates/buzz-azure-storage/Cargo.toml",
         "crates/buzz-azure-storage/README.md",
@@ -139,7 +139,7 @@
       "classification": "retain-generic",
       "owner": "Buzz desktop maintainers",
       "purpose": "Provider-owned JSON-schema presentation, user-scoped provider discovery, immutable staging, optional build-pinned Windows signer enforcement, hosted-agent definition readiness, restart-safe DM recipient hydration across every composer, and retained provider-neutral security fixes required by CodeQL.",
-      "upstreamStatus": "candidate for upstream provider UI and DM correctness contributions",
+      "upstreamStatus": "submitted as block/buzz PRs #6403-#6406 and #6408-#6409",
       "removalCondition": "Remove each retained patch when block/buzz supports equivalent behavior.",
       "paths": [
         "desktop/src-tauri/Cargo.lock",
@@ -169,6 +169,14 @@
       ]
     },
     {
+      "classification": "retain-generic",
+      "owner": "Buzz release maintainers",
+      "purpose": "Fork-neutral relay and push-gateway image, cache, attestation, and verification namespaces.",
+      "upstreamStatus": "submitted as block/buzz PR #6413",
+      "removalCondition": "Remove when block/buzz derives both container namespaces from the repository owner or explicit repository variables.",
+      "paths": [".github/workflows/docker.yml"]
+    },
+    {
       "classification": "move-to-kiingo",
       "owner": "Kiingo platform engineering",
       "purpose": "Fork inventory, replay/footprint policy, maintenance runbook, implementation evidence, and fork-safe CI permissions that never write upstream-owned registry caches.",
@@ -176,7 +184,6 @@
       "removalCondition": "Remove only if Kiingo stops distributing a Buzz composition.",
       "paths": [
         ".github/workflows/ci.yml",
-        ".github/workflows/docker.yml",
         "docs/kiingo-fork-inventory.json",
         "docs/kiingo-fork-last-mile-conflict-isolation-plan-2026-08-11.md",
         "docs/kiingo-fork-maintenance.md",
