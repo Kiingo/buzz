@@ -5,7 +5,7 @@
   "upstreamSnapshot": "47526784d5c1967de6b2c5d1ee642bccfefbfab9",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 19,
-    "modifiedUpstreamFiles": 32,
+    "modifiedUpstreamFiles": 33,
     "changedUpstreamProductionSourceLines": 1861,
     "upstreamProductionSourceDiffHunks": 190,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -13,11 +13,11 @@
   "baseline": {
     "kiingoMain": "ca2ada0239df296ea6ee863d4a03f9c820ece635",
     "upstreamMain": "47526784d5c1967de6b2c5d1ee642bccfefbfab9",
-    "changedFiles": 60,
+    "changedFiles": 61,
     "addedFiles": 28,
-    "modifiedFiles": 32,
-    "insertions": 7819,
-    "deletions": 519,
+    "modifiedFiles": 33,
+    "insertions": 7832,
+    "deletions": 526,
     "recentUpstreamOverlapFiles": 0
   },
   "lastMileBaseline": {
@@ -162,6 +162,7 @@
         "desktop/src/features/projects/lib/projectReadmeMarkdown.test.mjs",
         "desktop/src/features/projects/lib/projectReadmeMarkdown.ts",
         "desktop/src/features/projects/ui/ProjectReadmePanel.tsx",
+        "desktop/src/shared/ui/markdown.test.mjs",
         "desktop/src/extensions/messages/dmRecipientHydration.test.mjs",
         "desktop/src/extensions/messages/dmRecipientHydration.ts",
         "desktop/src/features/settings/ui/CustomHarnessForm.tsx",
