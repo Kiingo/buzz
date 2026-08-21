@@ -353,7 +353,7 @@ pub(super) async fn hosted_canary(
             .as_ref()
             .ok_or_else(|| "identity_rotation_canary_identity_missing".to_string())?;
         let opened = submit_event_at_with_keys(
-            crate::events::build_dm_open(&[agent.clone()])?,
+            crate::events::build_dm_open(std::slice::from_ref(agent))?,
             state,
             &base,
             owner,

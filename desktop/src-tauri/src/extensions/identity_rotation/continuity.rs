@@ -382,7 +382,7 @@ pub(crate) async fn migrate_agent_memory(
         }
     }
     let mut tombstones = 0u32;
-    for (_, (prior, body)) in &heads {
+    for (prior, body) in heads.values() {
         let migrated = rebuilt_memory_event(
             prior,
             body,

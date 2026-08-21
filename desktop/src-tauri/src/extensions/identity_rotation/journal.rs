@@ -34,7 +34,7 @@ pub(crate) struct RotationAgentJournal {
     pub local_runtime_was_running: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct ContinuityJournal {
     pub relay_memberships_verified: u32,
     pub channel_memberships_verified: u32,
@@ -51,24 +51,6 @@ pub(crate) struct ContinuityJournal {
     #[serde(default)]
     pub owner_archive_event_id: Option<String>,
     pub evidence_sha256: Option<String>,
-}
-
-impl Default for ContinuityJournal {
-    fn default() -> Self {
-        Self {
-            relay_memberships_verified: 0,
-            channel_memberships_verified: 0,
-            profiles_verified: 0,
-            memory_heads_migrated: 0,
-            memory_tombstones_preserved: 0,
-            archive_pointers_verified: 0,
-            owner_profile_verified: false,
-            owner_profile_event_id: None,
-            owner_archive_verified: false,
-            owner_archive_event_id: None,
-            evidence_sha256: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
