@@ -701,7 +701,9 @@ pub(crate) fn handle_deep_link_url(app: &tauri::AppHandle, url_str: &str) {
             }
         },
         Some(action) => {
-            eprintln!("buzz-desktop: unknown deep link action: {action}");
+            if !crate::extensions::try_handle_deep_link(app, &url) {
+                eprintln!("buzz-desktop: unknown deep link action: {action}");
+            }
         }
         None => {
             eprintln!("buzz-desktop: deep link missing action: {url_str}");

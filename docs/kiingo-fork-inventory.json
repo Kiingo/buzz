@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "3c228b1082a93aca302c7b6a67ec274c51ed5eaf",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 19,
-    "modifiedUpstreamFiles": 32,
-    "changedUpstreamProductionSourceLines": 1861,
-    "upstreamProductionSourceDiffHunks": 190,
+    "modifiedUpstreamProductionSourceFiles": 23,
+    "modifiedUpstreamFiles": 35,
+    "changedUpstreamProductionSourceLines": 1930,
+    "upstreamProductionSourceDiffHunks": 205,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -50,9 +50,15 @@
     },
     {
       "hook": "desktop/src-tauri/src/managed_agents/backend.rs",
-      "implementations": ["desktop/src-tauri/src/managed_agents/provider_platform.rs"],
-      "contract": "Generic immutable provider staging, platform lookup, and optional signer policy.",
-      "focusedTests": ["desktop/src-tauri/src/managed_agents/provider_platform.rs"]
+      "implementations": [
+        "desktop/src-tauri/src/managed_agents/provider_platform.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/provider.rs"
+      ],
+      "contract": "Generic immutable provider staging, platform lookup, optional signer policy, and caller-owned zeroizing request buffers.",
+      "focusedTests": [
+        "desktop/src-tauri/src/managed_agents/provider_platform.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/provider.rs"
+      ]
     },
     {
       "hook": "desktop/src/features/messages/hooks.ts",
@@ -89,6 +95,42 @@
       "implementations": ["crates/buzz-relay/src/api/git/store/azure.rs", "crates/buzz-azure-storage/src/lib.rs"],
       "contract": "Storage-backend-neutral Git object semantics with Azure result translation isolated.",
       "focusedTests": ["cargo test -p buzz-relay git_store --locked"]
+    },
+    {
+      "hook": "desktop/src-tauri/src/deep_link.rs",
+      "implementations": [
+        "desktop/src-tauri/src/extensions/mod.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/handoff.rs"
+      ],
+      "contract": "Provider-neutral dispatch of unknown deep-link actions into separately owned extensions; no tenant, vendor, or coordinator assumptions.",
+      "focusedTests": [
+        "desktop/src-tauri/src/extensions/identity_rotation/handoff.rs"
+      ]
+    },
+    {
+      "hook": "desktop/src-tauri/src/lib.rs",
+      "implementations": [
+        "desktop/src-tauri/src/extensions/mod.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/mod.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/workflow.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/journal.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/crypto.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/continuity.rs"
+      ],
+      "contract": "Provider-neutral Tauri state and command registration for a separately owned, secret-local identity lifecycle extension.",
+      "focusedTests": [
+        "cargo test --lib extensions::identity_rotation --locked"
+      ]
+    },
+    {
+      "hook": "desktop/src/app/AppShell.tsx",
+      "implementations": [
+        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.tsx"
+      ],
+      "contract": "Provider-neutral rendering seam for a self-contained identity lifecycle dialog with no configured coordinator or tenant knowledge.",
+      "focusedTests": [
+        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs"
+      ]
     }
   ],
   "deltas": [
@@ -175,6 +217,28 @@
       "upstreamStatus": "submitted as block/buzz PR #6413",
       "removalCondition": "Remove when block/buzz derives both container namespaces from the repository owner or explicit repository variables.",
       "paths": [".github/workflows/docker.yml"]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz identity lifecycle maintainers",
+      "purpose": "Provider-neutral, secret-local, crash-resumable human and managed-agent identity rotation with signed coordinator handoff and relay continuity.",
+      "upstreamStatus": "downstream-isolated candidate pending equivalent upstream extension lifecycle support",
+      "removalCondition": "Remove when block/buzz ships an equivalent provider-neutral identity lifecycle extension and stable registration seams.",
+      "paths": [
+        "desktop/src-tauri/src/deep_link.rs",
+        "desktop/src-tauri/src/lib.rs",
+        "desktop/src/app/AppShell.tsx",
+        "desktop/src-tauri/src/extensions/mod.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/mod.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/handoff.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/workflow.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/journal.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/crypto.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/provider.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/continuity.rs",
+        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.tsx",
+        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs"
+      ]
     },
     {
       "classification": "move-to-kiingo",

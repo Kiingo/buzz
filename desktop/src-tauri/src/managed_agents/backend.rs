@@ -80,11 +80,38 @@ pub fn invoke_provider(
     request: &serde_json::Value,
     timeout: Duration,
 ) -> Result<serde_json::Value, String> {
+    let env_secrets = env_secrets_from_request(request);
+    let env_secret_refs: Vec<&str> = env_secrets.iter().map(String::as_str).collect();
     let request_bytes = format!(
         "{}\n",
         serde_json::to_string(request).map_err(|e| e.to_string())?
     );
+    invoke_provider_serialized(binary, &request_bytes, timeout, &env_secret_refs)
+}
 
+/// Invoke a provider with a caller-owned, zeroizing JSON buffer.
+///
+/// Identity lifecycle extensions use this entry point so private material is
+/// never copied into a long-lived `serde_json::Value`. The caller keeps the
+/// `Zeroizing<String>` alive through this call and it is scrubbed on drop.
+pub fn invoke_provider_sensitive(
+    binary: &Path,
+    request_bytes: &zeroize::Zeroizing<String>,
+    sensitive_values: &[&str],
+    timeout: Duration,
+) -> Result<serde_json::Value, String> {
+    if request_bytes.len() > 1_048_576 {
+        return Err("provider request exceeds maximum size".to_string());
+    }
+    invoke_provider_serialized(binary, request_bytes, timeout, sensitive_values)
+}
+
+fn invoke_provider_serialized(
+    binary: &Path,
+    request_bytes: &str,
+    timeout: Duration,
+    sensitive_values: &[&str],
+) -> Result<serde_json::Value, String> {
     let mut cmd = std::process::Command::new(binary);
     if let Some(home) = super::default_agent_workdir() {
         cmd.current_dir(home);
@@ -239,9 +266,7 @@ pub fn invoke_provider(
     stdout_buf.truncate(STDOUT_CAP);
 
     let stderr = String::from_utf8_lossy(&stderr_bytes);
-    let env_secrets = env_secrets_from_request(request);
-    let env_secret_refs: Vec<&str> = env_secrets.iter().map(String::as_str).collect();
-    let stderr_redacted = redact_secrets_with(&stderr, &env_secret_refs);
+    let stderr_redacted = redact_secrets_with(&stderr, sensitive_values);
 
     let exit_info = exit_status
         .code()
@@ -284,7 +309,7 @@ pub fn invoke_provider(
 
     if response.get("ok").and_then(|v| v.as_bool()) == Some(false) {
         let error = response["error"].as_str().unwrap_or("unknown error");
-        return Err(redact_secrets_with(error, &env_secret_refs));
+        return Err(redact_secrets_with(error, sensitive_values));
     }
 
     Ok(response)

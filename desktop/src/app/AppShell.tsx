@@ -102,6 +102,7 @@ import { useSidebarRelayConnectionCard } from "@/features/sidebar/ui/useSidebarR
 import { AppShellTrayMenu } from "@/app/useAppShellTrayMenu";
 import { AppProfilePanelProvider } from "@/app/AppProfilePanelProvider";
 import { LazySettingsScreen } from "@/app/LazySettingsScreen";
+import { IdentityRotationExtension } from "@/extensions/identity-rotation/IdentityRotationExtension";
 const EMPTY_CHANNELS: Channel[] = [];
 export function AppShell() {
   useWebviewZoomShortcuts();
@@ -697,6 +698,7 @@ export function AppShell() {
           openCreateChannel={handleOpenCreateChannel}
         />
       ) : null}
+      {!isHuddleRoom ? <IdentityRotationExtension /> : null}
       <ChannelNavigationProvider channels={channels}>
         <AppShellProvider
           value={{
