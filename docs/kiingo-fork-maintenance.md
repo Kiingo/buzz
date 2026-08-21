@@ -77,8 +77,8 @@ record the reported drift, and merge the newer commits in the next dedicated
 synchronization PR. Never move the snapshot ahead of the fork or edit it only
 to make the guard pass.
 
-The hard budgets are 23 modified upstream production-source files, 35 modified
-upstream files overall, 1,930 changed upstream production-source lines, 205
+The hard budgets are 22 modified upstream production-source files, 35 modified
+upstream files overall, 1,913 changed upstream production-source lines, 202
 upstream production-source diff hunks, and zero Kiingo business-logic lines in
 upstream-owned production source.
 

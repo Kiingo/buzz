@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "3c228b1082a93aca302c7b6a67ec274c51ed5eaf",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 23,
+    "modifiedUpstreamProductionSourceFiles": 22,
     "modifiedUpstreamFiles": 35,
-    "changedUpstreamProductionSourceLines": 1930,
-    "upstreamProductionSourceDiffHunks": 205,
+    "changedUpstreamProductionSourceLines": 1913,
+    "upstreamProductionSourceDiffHunks": 202,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
