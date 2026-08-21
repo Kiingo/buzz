@@ -284,7 +284,9 @@ export function IdentityRotationExtension() {
                 <li>
                   A native save dialog creates your encrypted NIP-49 backup.
                 </li>
-                <li>No private key or passphrase is sent to the coordinator.</li>
+                <li>
+                  No private key or passphrase is sent to the coordinator.
+                </li>
                 <li>
                   Old authority remains active until continuity and hosted
                   capacity verify.

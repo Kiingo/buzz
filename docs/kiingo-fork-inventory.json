@@ -112,7 +112,9 @@
       "implementations": [
         "desktop/src-tauri/src/extensions/mod.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/mod.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/coordinator.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/workflow.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/local.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/journal.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/crypto.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/continuity.rs"
@@ -231,7 +233,9 @@
         "desktop/src-tauri/src/extensions/mod.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/mod.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/handoff.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/coordinator.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/workflow.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/local.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/journal.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/crypto.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/provider.rs",
