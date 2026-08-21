@@ -2,22 +2,22 @@
   "schemaVersion": 3,
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
-  "upstreamSnapshot": "3c228b1082a93aca302c7b6a67ec274c51ed5eaf",
+  "upstreamSnapshot": "47526784d5c1967de6b2c5d1ee642bccfefbfab9",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 19,
-    "modifiedUpstreamFiles": 32,
+    "modifiedUpstreamFiles": 33,
     "changedUpstreamProductionSourceLines": 1861,
     "upstreamProductionSourceDiffHunks": 190,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
-    "kiingoMain": "b69e430fd92469f91ff7ddc00875823523551cdb",
-    "upstreamMain": "3c228b1082a93aca302c7b6a67ec274c51ed5eaf",
-    "changedFiles": 60,
+    "kiingoMain": "ca2ada0239df296ea6ee863d4a03f9c820ece635",
+    "upstreamMain": "47526784d5c1967de6b2c5d1ee642bccfefbfab9",
+    "changedFiles": 61,
     "addedFiles": 28,
-    "modifiedFiles": 32,
-    "insertions": 7819,
-    "deletions": 519,
+    "modifiedFiles": 33,
+    "insertions": 7832,
+    "deletions": 526,
     "recentUpstreamOverlapFiles": 0
   },
   "lastMileBaseline": {
@@ -162,6 +162,7 @@
         "desktop/src/features/projects/lib/projectReadmeMarkdown.test.mjs",
         "desktop/src/features/projects/lib/projectReadmeMarkdown.ts",
         "desktop/src/features/projects/ui/ProjectReadmePanel.tsx",
+        "desktop/src/shared/ui/markdown.test.mjs",
         "desktop/src/extensions/messages/dmRecipientHydration.test.mjs",
         "desktop/src/extensions/messages/dmRecipientHydration.ts",
         "desktop/src/features/settings/ui/CustomHarnessForm.tsx",
