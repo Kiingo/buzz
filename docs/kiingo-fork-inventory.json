@@ -5,7 +5,7 @@
   "upstreamSnapshot": "47526784d5c1967de6b2c5d1ee642bccfefbfab9",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 22,
-    "modifiedUpstreamFiles": 35,
+    "modifiedUpstreamFiles": 36,
     "changedUpstreamProductionSourceLines": 1913,
     "upstreamProductionSourceDiffHunks": 202,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
