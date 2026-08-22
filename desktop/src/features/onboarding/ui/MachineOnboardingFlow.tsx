@@ -64,6 +64,7 @@ export function MachineOnboardingFlow({
   complete,
   continueWithIdentity,
   continueWithRecoveredIdentity,
+  existingIdentityPubkey,
   identityLost,
   initialPage,
   queryClient,
@@ -72,6 +73,7 @@ export function MachineOnboardingFlow({
   complete: (pubkey?: string) => void;
   continueWithIdentity: (pubkey: string) => void;
   continueWithRecoveredIdentity: (pubkey: string) => void;
+  existingIdentityPubkey?: string | null;
   identityLost: boolean;
   initialPage?: MachineOnboardingPage;
   queryClient: QueryClient;
@@ -100,7 +102,7 @@ export function MachineOnboardingFlow({
   >(null);
   const [phoneRecoveryStep, setPhoneRecoveryStep] = React.useState("loading");
   const [selectedPubkey, setSelectedPubkey] = React.useState<string | null>(
-    null,
+    existingIdentityPubkey ?? null,
   );
   const [identityStorage, setIdentityStorage] = React.useState<
     IdentityStorage | undefined
