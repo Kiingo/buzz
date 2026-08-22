@@ -68,7 +68,7 @@ const parseNameStatus = (value) =>
 const productionSourcePattern =
   /^(?:crates|desktop|web|mobile)\/.+\.(?:rs|ts|tsx|js|jsx|mjs|cjs)$/;
 const dedicatedTestSourcePattern =
-  /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:test|spec)\./;
+  /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:test|spec)\.|(?:^|\/)[^/]+_tests\.rs$/;
 
 const rustDiffIsConfinedToCfgTestModule = (
   repositoryRoot,

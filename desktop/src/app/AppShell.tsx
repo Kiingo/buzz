@@ -103,6 +103,7 @@ import { AppShellTrayMenu } from "@/app/useAppShellTrayMenu";
 import { AppProfilePanelProvider } from "@/app/AppProfilePanelProvider";
 import { AppWorkflowEditorOverlayProvider } from "@/app/AppWorkflowEditorOverlayProvider";
 import { LazySettingsScreen } from "@/app/LazySettingsScreen";
+import { IdentityRotationExtension } from "@/extensions/identity-rotation/IdentityRotationExtension";
 const EMPTY_CHANNELS: Channel[] = [];
 export function AppShell() {
   useWebviewZoomShortcuts();
@@ -698,6 +699,7 @@ export function AppShell() {
           openCreateChannel={handleOpenCreateChannel}
         />
       ) : null}
+      {!isHuddleRoom ? <IdentityRotationExtension /> : null}
       <ChannelNavigationProvider channels={channels}>
         <AppShellProvider
           value={{

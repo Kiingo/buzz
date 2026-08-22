@@ -1,0 +1,398 @@
+import * as React from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import {
+  CheckCircle2,
+  KeyRound,
+  LoaderCircle,
+  ShieldAlert,
+} from "lucide-react";
+
+import { Button } from "@/shared/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
+import { Input } from "@/shared/ui/input";
+
+type PublicHandoff = {
+  id: string;
+  contractVersion: number;
+  rotationId: string;
+  resume: boolean;
+  recoveryBackupRequired: boolean;
+  assistedReminder: boolean;
+};
+
+type RotationPreview = {
+  mode: "human" | "agent" | "all";
+  managedAgentCount: number;
+  hostedAgentCount: number;
+  agentNames: string[];
+  recoveryBackupRequired: boolean;
+};
+
+type RotationProgress = {
+  rotationId: string;
+  state: string;
+  message: string;
+  terminal: boolean;
+  errorCode?: string | null;
+};
+
+const INITIAL_MESSAGE =
+  "Buzz will verify a recovery backup, stage replacement identities in secure storage, preserve continuity, test hosted agents, and only then revoke old authority.";
+
+const safeErrorCode = (value: unknown): string | null =>
+  typeof value === "string" &&
+  /^(?:buzz_)?identity_rotation_[a-z0-9_]{1,80}$/.test(value)
+    ? value
+    : null;
+
+const safeProgress = (value: RotationProgress): RotationProgress => {
+  const hasControlCharacter =
+    typeof value.message === "string" &&
+    Array.from(value.message).some((character) => character.charCodeAt(0) < 32);
+  const message =
+    typeof value.message === "string" &&
+    value.message.length <= 320 &&
+    !hasControlCharacter &&
+    !/nsec1|ncryptsec1|private_key|resume_token|password|ciphertext/i.test(
+      value.message,
+    )
+      ? value.message
+      : "Identity rotation status updated.";
+  const errorCode = safeErrorCode(value.errorCode);
+  return { ...value, message, errorCode };
+};
+
+export function IdentityRotationExtension() {
+  const [handoff, setHandoff] = React.useState<PublicHandoff | null>(null);
+  const [confirmed, setConfirmed] = React.useState(false);
+  const [passphrase, setPassphrase] = React.useState("");
+  const [passphraseAgain, setPassphraseAgain] = React.useState("");
+  const [running, setRunning] = React.useState(false);
+  const [recoveryBackupRequired, setRecoveryBackupRequired] =
+    React.useState(true);
+  const [progress, setProgress] = React.useState<RotationProgress | null>(null);
+  const [preview, setPreview] = React.useState<RotationPreview | null>(null);
+
+  React.useEffect(() => {
+    let disposed = false;
+    const inspect = (pending: PublicHandoff) => {
+      setPreview(null);
+      setRecoveryBackupRequired(true);
+      void invoke<RotationPreview>("inspect_identity_rotation_handoff", {
+        id: pending.id,
+      })
+        .then((value) => {
+          if (!disposed) {
+            setPreview(value);
+            setRecoveryBackupRequired(value.recoveryBackupRequired);
+          }
+        })
+        .catch((error) => {
+          if (!disposed) {
+            setProgress({
+              rotationId: pending.rotationId,
+              state: "failed",
+              message:
+                "Buzz could not verify this rotation plan. Return to your identity security settings and request a fresh handoff or resume link.",
+              terminal: true,
+              errorCode:
+                safeErrorCode(error) ?? "identity_rotation_preview_failed",
+            });
+          }
+        });
+    };
+    void invoke<PublicHandoff | null>("take_pending_identity_rotation").then(
+      (pending) => {
+        if (!disposed && pending) {
+          setHandoff(pending);
+          inspect(pending);
+        }
+      },
+    );
+    const unlisten = listen<PublicHandoff>(
+      "deep-link-identity-rotation",
+      ({ payload }) => {
+        if (!disposed) {
+          setHandoff(payload);
+          setProgress(null);
+          setPreview(null);
+          setConfirmed(false);
+          setPassphrase("");
+          setPassphraseAgain("");
+          inspect(payload);
+        }
+      },
+    );
+    const unlistenProgress = listen<RotationProgress>(
+      "identity-rotation-progress",
+      ({ payload }) => {
+        if (!disposed) setProgress(safeProgress(payload));
+      },
+    );
+    return () => {
+      disposed = true;
+      void unlisten.then((stop) => stop());
+      void unlistenProgress.then((stop) => stop());
+    };
+  }, []);
+
+  const passphraseValid =
+    !recoveryBackupRequired ||
+    (passphrase.length >= 12 && passphrase === passphraseAgain);
+  const complete = progress?.state === "complete";
+  const scopeSummary = preview
+    ? preview.mode === "human"
+      ? "your human Buzz identity"
+      : preview.mode === "agent"
+        ? `one managed agent${preview.agentNames[0] ? ` (${preview.agentNames[0]})` : ""}`
+        : `your human identity and ${preview.managedAgentCount} managed agent${preview.managedAgentCount === 1 ? "" : "s"}`
+    : "the signed rotation scope";
+
+  const close = React.useCallback(async () => {
+    if (running || !handoff) return;
+    if (complete) {
+      await invoke("acknowledge_pending_identity_rotation", {
+        id: handoff.id,
+      });
+    }
+    setHandoff(null);
+    setPassphrase("");
+    setPassphraseAgain("");
+  }, [complete, handoff, running]);
+
+  const start = React.useCallback(async () => {
+    if (!handoff || !preview || !confirmed || !passphraseValid || running)
+      return;
+    setRunning(true);
+    setProgress({
+      rotationId: handoff.rotationId,
+      state: "starting",
+      message: "Verifying the signed rotation plan…",
+      terminal: false,
+    });
+    try {
+      await invoke("run_identity_rotation", {
+        request: {
+          handoffId: handoff.id,
+          recoveryPassphrase: recoveryBackupRequired ? passphrase : null,
+        },
+      });
+    } catch (error) {
+      setProgress((current) => ({
+        rotationId: handoff.rotationId,
+        state: "recoverable",
+        message:
+          current?.message ??
+          "Rotation paused safely. Resolve the issue and open the rotation link again to resume.",
+        terminal: true,
+        errorCode: safeErrorCode(error) ?? "identity_rotation_failed",
+      }));
+    } finally {
+      setPassphrase("");
+      setPassphraseAgain("");
+      setRunning(false);
+    }
+  }, [
+    confirmed,
+    handoff,
+    passphrase,
+    passphraseValid,
+    preview,
+    recoveryBackupRequired,
+    running,
+  ]);
+
+  return (
+    <Dialog
+      open={Boolean(handoff)}
+      onOpenChange={(open) => !open && void close()}
+    >
+      <DialogContent
+        aria-describedby="identity-rotation-description"
+        className="max-w-xl"
+        onEscapeKeyDown={(event) => running && event.preventDefault()}
+        onInteractOutside={(event) => running && event.preventDefault()}
+        showCloseButton={!running}
+      >
+        <DialogHeader>
+          <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            {complete ? (
+              <CheckCircle2 aria-hidden="true" />
+            ) : progress?.terminal ? (
+              <ShieldAlert aria-hidden="true" />
+            ) : (
+              <KeyRound aria-hidden="true" />
+            )}
+          </div>
+          <DialogTitle>Rotate Buzz identity keys</DialogTitle>
+          <DialogDescription id="identity-rotation-description">
+            {handoff?.assistedReminder
+              ? `Your assisted key-rotation reminder is due. ${INITIAL_MESSAGE}`
+              : INITIAL_MESSAGE}
+          </DialogDescription>
+        </DialogHeader>
+
+        {progress ? (
+          <div
+            aria-live="polite"
+            className="rounded-xl border border-border/60 bg-muted/40 p-4"
+            role="status"
+          >
+            <div className="flex items-start gap-3">
+              {!progress.terminal ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="mt-0.5 h-5 w-5 animate-spin text-primary"
+                />
+              ) : null}
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{progress.message}</p>
+                {progress.errorCode ? (
+                  <p className="mt-2 break-all font-mono text-xs text-destructive">
+                    {progress.errorCode}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : preview ? (
+          <div className="space-y-4">
+            <section
+              aria-label="Verified rotation scope"
+              className="rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm"
+            >
+              <p className="font-medium text-foreground">
+                This hard cutover will rotate {scopeSummary}.
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                {preview.hostedAgentCount} hosted and{" "}
+                {preview.managedAgentCount - preview.hostedAgentCount} local
+                agent identities are included.
+              </p>
+            </section>
+            <div className="rounded-xl border border-border/60 p-4 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">Before cutover</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                <li>
+                  A native save dialog creates your encrypted NIP-49 backup.
+                </li>
+                <li>
+                  No private key or passphrase is sent to the coordinator.
+                </li>
+                <li>
+                  Old authority remains active until continuity and hosted
+                  capacity verify.
+                </li>
+              </ul>
+            </div>
+            {recoveryBackupRequired ? (
+              <>
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor="rotation-passphrase"
+                >
+                  <span className="font-medium">
+                    Recovery backup passphrase
+                  </span>
+                  <Input
+                    autoComplete="new-password"
+                    id="rotation-passphrase"
+                    minLength={12}
+                    onChange={(event) => setPassphrase(event.target.value)}
+                    type="password"
+                    value={passphrase}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    At least 12 characters. Buzz does not save it.
+                  </span>
+                </label>
+                <label
+                  className="grid gap-1.5 text-sm"
+                  htmlFor="rotation-passphrase-confirm"
+                >
+                  <span className="font-medium">Confirm passphrase</span>
+                  <Input
+                    autoComplete="new-password"
+                    id="rotation-passphrase-confirm"
+                    onChange={(event) => setPassphraseAgain(event.target.value)}
+                    type="password"
+                    value={passphraseAgain}
+                  />
+                  {passphraseAgain && passphrase !== passphraseAgain ? (
+                    <span className="text-xs text-destructive">
+                      Passphrases do not match.
+                    </span>
+                  ) : null}
+                </label>
+              </>
+            ) : (
+              <div className="rounded-lg border border-border/60 p-3 text-sm text-muted-foreground">
+                The required human recovery backup was already verified, or this
+                rotation changes only an agent identity.
+              </div>
+            )}
+            <label className="flex items-start gap-3 rounded-lg p-1 text-sm">
+              <input
+                checked={confirmed}
+                className="mt-0.5 h-4 w-4"
+                onChange={(event) => setConfirmed(event.target.checked)}
+                type="checkbox"
+              />
+              <span>
+                I understand this is a hard cutover after verification and that
+                the prior authority for {scopeSummary} will be revoked after
+                continuity and live canaries pass.
+              </span>
+            </label>
+          </div>
+        ) : (
+          <div
+            aria-live="polite"
+            className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/40 p-4 text-sm"
+            role="status"
+          >
+            <LoaderCircle
+              aria-hidden="true"
+              className="h-5 w-5 animate-spin text-primary"
+            />
+            Verifying the signed scope and local managed-agent inventory…
+          </div>
+        )}
+
+        <DialogFooter>
+          {complete || progress?.terminal ? (
+            <Button onClick={() => void close()} type="button">
+              {complete ? "Done" : "Close"}
+            </Button>
+          ) : (
+            <>
+              <Button
+                disabled={running}
+                onClick={() => void close()}
+                type="button"
+                variant="outline"
+              >
+                Not now
+              </Button>
+              <Button
+                disabled={!preview || !confirmed || !passphraseValid || running}
+                onClick={() => void start()}
+                type="button"
+              >
+                {running ? "Rotating…" : "Verify backup and rotate"}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

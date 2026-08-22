@@ -8,6 +8,7 @@ mod deep_link;
 mod egress_guard;
 mod event_sync;
 mod events;
+mod extensions;
 mod huddle;
 mod identity_storage;
 mod initial_window;
@@ -61,6 +62,11 @@ use deep_link::{
     handle_deep_link_url, take_pending_community_deep_link, take_pending_entity_deep_link,
     take_pending_navigation_deep_link, PendingCommunityDeepLinks, PendingEntityDeepLinks,
     PendingNavigationDeepLinks,
+};
+use extensions::{
+    abort_identity_rotation, acknowledge_pending_identity_rotation, identity_rotation_status,
+    inspect_identity_rotation_handoff, run_identity_rotation, take_pending_identity_rotation,
+    IdentityRotationExtensionState,
 };
 use huddle::{
     add_agent_to_huddle,
@@ -227,6 +233,7 @@ pub fn run() {
         .manage(PendingCommunityDeepLinks::default())
         .manage(PendingNavigationDeepLinks::default())
         .manage(PendingEntityDeepLinks::default())
+        .manage(IdentityRotationExtensionState::default())
         .manage(BuilderlabSession::default())
         .manage(BuilderlabLogin::default())
         .manage(commands::pairing::PairingHandle::new())
@@ -534,6 +541,12 @@ pub fn run() {
             clear_pending_navigation_deep_links,
             take_pending_entity_deep_link,
             acknowledge_pending_entity_deep_link,
+            take_pending_identity_rotation,
+            acknowledge_pending_identity_rotation,
+            identity_rotation_status,
+            inspect_identity_rotation_handoff,
+            run_identity_rotation,
+            abort_identity_rotation,
             start_builderlab_login,
             cancel_builderlab_login,
             get_builderlab_auth,

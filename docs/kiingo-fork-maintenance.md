@@ -77,8 +77,8 @@ record the reported drift, and merge the newer commits in the next dedicated
 synchronization PR. Never move the snapshot ahead of the fork or edit it only
 to make the guard pass.
 
-The hard budgets are 19 modified upstream production-source files, 32 modified
-upstream files overall, 1,861 changed upstream production-source lines, 190
+The hard budgets are 22 modified upstream production-source files, 37 modified
+upstream files overall, 1,913 changed upstream production-source lines, 202
 upstream production-source diff hunks, and zero Kiingo business-logic lines in
 upstream-owned production source.
 
@@ -86,7 +86,7 @@ The production-source metrics exclude dedicated `*.test.*`/`tests/` files and
 Rust diffs whose every hunk is below the file's final `#[cfg(test)]` boundary.
 The guard derives that classification from the current diff; it is not a path
 waiver. This keeps scanner-only fixture changes from consuming the production
-budgets while still counting their files in the overall 27-file limit. Changed
+budgets while still counting their files in the overall 35-file limit. Changed
 lines are additions plus deletions from `git diff --numstat`; hunk count is the
 number of `@@` records in a zero-context final-tree diff. These two measurements
 make a large embedded customization fail even when it does not add another
@@ -142,6 +142,13 @@ not own:
   fail-closed recipient completeness to
   `extensions/messages/dmRecipientHydration.ts`; stream and complete-DM sends
   remain on the local fast path.
+- `deep_link.rs`, `lib.rs`, and `AppShell.tsx` retain only provider-neutral
+  registration calls for optional desktop extensions. The complete identity
+  lifecycle, secret handling, coordinator client, relay continuity, journal,
+  and dialog live under the added `extensions/identity_rotation` and
+  `extensions/identity-rotation` trees. `managed_agents/backend.rs` exposes one
+  generic caller-owned zeroizing provider-input seam; it contains no rotation,
+  vendor, tenant, or coordinator policy.
 
 Do not move upstream S3 or Git business semantics into downstream files merely
 to make a line-count metric smaller. On upstream replay, preserve the one-call

@@ -147,7 +147,7 @@ const modified = changes.filter((change) => change.status.startsWith("M"));
 const productionSourcePattern =
   /^(?:crates|desktop|web|mobile)\/.+\.(?:rs|ts|tsx|js|jsx|mjs|cjs)$/;
 const dedicatedTestSourcePattern =
-  /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:test|spec)\./;
+  /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:test|spec)\.|(?:^|\/)[^/]+_tests\.rs$/;
 const rustDiffIsConfinedToCfgTestModule = (path) => {
   if (!path.endsWith(".rs")) return false;
   const lines = readFileSync(path, "utf8").split(/\r?\n/);
