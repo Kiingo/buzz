@@ -174,35 +174,39 @@ pub(crate) fn compute_agent_auth_tag(
         .map_err(|_| "identity_rotation_auth_tag_failed".to_string())
 }
 
+pub(crate) struct RotationProofRequest<'a> {
+    pub(crate) keys: &'a Keys,
+    pub(crate) rotation_id: &'a str,
+    pub(crate) action: &'a str,
+    pub(crate) challenge_hash: &'a str,
+    pub(crate) community_id: &'a str,
+    pub(crate) old_public_key: &'a str,
+    pub(crate) new_public_key: &'a str,
+    pub(crate) proof_kind: u16,
+    pub(crate) proof_content: &'a str,
+}
+
 pub(crate) fn build_rotation_proof(
-    keys: &Keys,
-    rotation_id: &str,
-    action: &str,
-    challenge_hash: &str,
-    community_id: &str,
-    old_public_key: &str,
-    new_public_key: &str,
-    proof_kind: u16,
-    proof_content: &str,
+    request: RotationProofRequest<'_>,
 ) -> Result<serde_json::Value, String> {
-    if proof_kind != 27_236 || proof_content != "buzz-identity-rotation-v1" {
+    if request.proof_kind != 27_236 || request.proof_content != "buzz-identity-rotation-v1" {
         return Err("identity_rotation_contract_unsupported".into());
     }
     let tags = [
-        Tag::parse(["rotation", rotation_id]),
-        Tag::parse(["action", action]),
-        Tag::parse(["challenge", challenge_hash]),
-        Tag::parse(["community", community_id]),
-        Tag::parse(["old", old_public_key]),
-        Tag::parse(["new", new_public_key]),
+        Tag::parse(["rotation", request.rotation_id]),
+        Tag::parse(["action", request.action]),
+        Tag::parse(["challenge", request.challenge_hash]),
+        Tag::parse(["community", request.community_id]),
+        Tag::parse(["old", request.old_public_key]),
+        Tag::parse(["new", request.new_public_key]),
     ]
     .into_iter()
     .collect::<Result<Vec<_>, _>>()
     .map_err(|_| "identity_rotation_proof_failed".to_string())?;
-    let event = EventBuilder::new(Kind::Custom(proof_kind), proof_content)
+    let event = EventBuilder::new(Kind::Custom(request.proof_kind), request.proof_content)
         .tags(tags)
         .custom_created_at(Timestamp::now())
-        .sign_with_keys(keys)
+        .sign_with_keys(request.keys)
         .map_err(|_| "identity_rotation_proof_failed".to_string())?;
     serde_json::to_value(event).map_err(|_| "identity_rotation_proof_failed".to_string())
 }
@@ -257,17 +261,20 @@ mod tests {
     #[test]
     fn proofs_bind_every_rotation_dimension() {
         let keys = Keys::generate();
-        let proof = build_rotation_proof(
-            &keys,
-            "20000000-0000-4000-8000-000000000001",
-            "prepare",
-            &"a".repeat(64),
-            "chat.example.com",
-            &"b".repeat(64),
-            &"c".repeat(64),
-            27_236,
-            "buzz-identity-rotation-v1",
-        )
+        let challenge = "a".repeat(64);
+        let old = "b".repeat(64);
+        let new = "c".repeat(64);
+        let proof = build_rotation_proof(RotationProofRequest {
+            keys: &keys,
+            rotation_id: "20000000-0000-4000-8000-000000000001",
+            action: "prepare",
+            challenge_hash: &challenge,
+            community_id: "chat.example.com",
+            old_public_key: &old,
+            new_public_key: &new,
+            proof_kind: 27_236,
+            proof_content: "buzz-identity-rotation-v1",
+        })
         .unwrap();
         assert_eq!(proof["pubkey"], keys.public_key().to_hex());
         let tags = proof["tags"].as_array().unwrap();
@@ -284,17 +291,21 @@ mod tests {
 
     #[test]
     fn rejects_non_catalog_proof_parameters() {
-        assert!(build_rotation_proof(
-            &Keys::generate(),
-            "20000000-0000-4000-8000-000000000001",
-            "prepare",
-            &"a".repeat(64),
-            "chat.example.com",
-            &"b".repeat(64),
-            &"c".repeat(64),
-            1,
-            "other",
-        )
+        let keys = Keys::generate();
+        let challenge = "a".repeat(64);
+        let old = "b".repeat(64);
+        let new = "c".repeat(64);
+        assert!(build_rotation_proof(RotationProofRequest {
+            keys: &keys,
+            rotation_id: "20000000-0000-4000-8000-000000000001",
+            action: "prepare",
+            challenge_hash: &challenge,
+            community_id: "chat.example.com",
+            old_public_key: &old,
+            new_public_key: &new,
+            proof_kind: 1,
+            proof_content: "other",
+        })
         .is_err());
     }
 

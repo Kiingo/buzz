@@ -9,11 +9,14 @@ use crate::app_state::AppState;
 use super::{
     crypto::{
         build_rotation_proof, load_handoff_challenge, load_human_keys, load_resume_token,
-        sha256_hex,
+        sha256_hex, RotationProofRequest,
     },
     journal::{ContinuityJournal, IdentityRotationJournal, RotationMode},
     local::StagedAgent,
-    provider::{discover_rotation_provider, prepare_identity_envelope, RotationProvider},
+    provider::{
+        discover_rotation_provider, prepare_identity_envelope, PrepareIdentityEnvelopeRequest,
+        RotationProvider,
+    },
 };
 
 const MAX_COORDINATOR_RESPONSE: usize = 2 * 1024 * 1024;
@@ -181,17 +184,18 @@ fn proofs(
     new: &str,
 ) -> Result<Value, String> {
     let challenge = load_handoff_challenge(&journal.rotation_id)?;
-    build_rotation_proof(
+    let challenge_hash = sha256_hex(challenge.as_bytes());
+    build_rotation_proof(RotationProofRequest {
         keys,
-        &journal.rotation_id,
+        rotation_id: &journal.rotation_id,
         action,
-        &sha256_hex(challenge.as_bytes()),
-        &journal.community_id,
-        old,
-        new,
-        journal.proof_kind,
-        &journal.proof_content,
-    )
+        challenge_hash: &challenge_hash,
+        community_id: &journal.community_id,
+        old_public_key: old,
+        new_public_key: new,
+        proof_kind: journal.proof_kind,
+        proof_content: &journal.proof_content,
+    })
 }
 
 pub(super) async fn prepare_coordinator(
@@ -220,16 +224,16 @@ pub(super) async fn prepare_coordinator(
                 .as_ref()
                 .ok_or_else(|| "identity_rotation_hosted_provider_config_missing".to_string())?;
             Some(
-                prepare_identity_envelope(
+                prepare_identity_envelope(PrepareIdentityEnvelopeRequest {
                     provider,
-                    &journal.rotation_id,
-                    &journal.community_id,
-                    &journal.relay_url,
-                    &agent.new.public_key().to_hex(),
-                    &nsec,
-                    &agent.new_auth_tag,
-                    config,
-                )?
+                    rotation_id: &journal.rotation_id,
+                    community_id: &journal.community_id,
+                    relay_url: &journal.relay_url,
+                    new_public_key: &agent.new.public_key().to_hex(),
+                    private_key_nsec: &nsec,
+                    auth_tag: &agent.new_auth_tag,
+                    provider_config: config,
+                })?
                 .identity_envelope,
             )
         } else {
@@ -265,24 +269,27 @@ pub(super) async fn prepare_coordinator(
         .map_err(|_| "identity_rotation_coordinator_response_invalid".to_string())
 }
 
-pub(super) async fn advance(
-    state: &AppState,
-    provider: &RotationProvider,
-    journal: &IdentityRotationJournal,
-    status: &CoordinatorStatus,
-    action: &str,
-    owner: Option<&Keys>,
-    continuity: Option<Value>,
-    error_code: Option<&str>,
-) -> Result<CoordinatorStatus, String> {
-    let resume = load_resume_token(&journal.rotation_id)?;
-    let owner_proof = match owner {
+pub(super) struct AdvanceRequest<'a> {
+    pub(super) state: &'a AppState,
+    pub(super) provider: &'a RotationProvider,
+    pub(super) journal: &'a IdentityRotationJournal,
+    pub(super) status: &'a CoordinatorStatus,
+    pub(super) action: &'a str,
+    pub(super) owner: Option<&'a Keys>,
+    pub(super) continuity: Option<Value>,
+    pub(super) error_code: Option<&'a str>,
+}
+
+pub(super) async fn advance(input: AdvanceRequest<'_>) -> Result<CoordinatorStatus, String> {
+    let resume = load_resume_token(&input.journal.rotation_id)?;
+    let owner_proof = match input.owner {
         Some(owner) => Some(proofs(
             owner,
-            journal,
-            action,
-            &journal.old_owner_public_key,
-            journal
+            input.journal,
+            input.action,
+            &input.journal.old_owner_public_key,
+            input
+                .journal
                 .new_owner_public_key
                 .as_deref()
                 .ok_or_else(|| "identity_rotation_journal_corrupt".to_string())?,
@@ -290,20 +297,20 @@ pub(super) async fn advance(
         None => None,
     };
     let value = post_json(
-        state,
+        input.state,
         endpoint(
-            &provider.coordinator_origin,
-            &provider.advance_path,
-            &journal.rotation_id,
+            &input.provider.coordinator_origin,
+            &input.provider.advance_path,
+            &input.journal.rotation_id,
         )?,
         &json!({
             "contract_version": 1,
             "resume_token": resume.as_str(),
-            "expected_state_version": status.state_version,
-            "action": action,
+            "expected_state_version": input.status.state_version,
+            "action": input.action,
             "owner_proof": owner_proof,
-            "continuity": continuity,
-            "error_code": error_code
+            "continuity": input.continuity,
+            "error_code": input.error_code
         }),
     )
     .await?;
@@ -317,9 +324,16 @@ pub(super) async fn coordinator_status(
     journal: &IdentityRotationJournal,
     current: &CoordinatorStatus,
 ) -> Result<CoordinatorStatus, String> {
-    advance(
-        state, provider, journal, current, "status", None, None, None,
-    )
+    advance(AdvanceRequest {
+        state,
+        provider,
+        journal,
+        status: current,
+        action: "status",
+        owner: None,
+        continuity: None,
+        error_code: None,
+    })
     .await
 }
 
@@ -348,16 +362,16 @@ pub(super) async fn report_recoverable(
         return Ok(());
     }
     let new_owner = load_human_keys(&journal.rotation_id, true)?;
-    advance(
-        &state,
-        &provider,
+    advance(AdvanceRequest {
+        state: &state,
+        provider: &provider,
         journal,
-        &status,
-        "report_recoverable",
-        Some(&new_owner),
-        None,
-        Some(error_code),
-    )
+        status: &status,
+        action: "report_recoverable",
+        owner: Some(&new_owner),
+        continuity: None,
+        error_code: Some(error_code),
+    })
     .await?;
     Ok(())
 }

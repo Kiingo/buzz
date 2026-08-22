@@ -123,29 +123,33 @@ pub(crate) struct PreparedIdentityEnvelope {
     pub identity_envelope: Value,
 }
 
+pub(crate) struct PrepareIdentityEnvelopeRequest<'a> {
+    pub(crate) provider: &'a RotationProvider,
+    pub(crate) rotation_id: &'a str,
+    pub(crate) community_id: &'a str,
+    pub(crate) relay_url: &'a str,
+    pub(crate) new_public_key: &'a str,
+    pub(crate) private_key_nsec: &'a Zeroizing<String>,
+    pub(crate) auth_tag: &'a Zeroizing<String>,
+    pub(crate) provider_config: &'a Value,
+}
+
 pub(crate) fn prepare_identity_envelope(
-    provider: &RotationProvider,
-    rotation_id: &str,
-    community_id: &str,
-    relay_url: &str,
-    new_public_key: &str,
-    private_key_nsec: &Zeroizing<String>,
-    auth_tag: &Zeroizing<String>,
-    provider_config: &Value,
+    input: PrepareIdentityEnvelopeRequest<'_>,
 ) -> Result<PreparedIdentityEnvelope, String> {
     let request = SensitivePrepareRequest {
         op: "prepare_identity_rotation",
-        coordinator_origin: &provider.coordinator_origin,
-        provider_config,
+        coordinator_origin: &input.provider.coordinator_origin,
+        provider_config: input.provider_config,
         rotation: RotationContext {
-            rotation_id,
-            community_id,
-            new_public_key,
+            rotation_id: input.rotation_id,
+            community_id: input.community_id,
+            new_public_key: input.new_public_key,
         },
         agent: SensitiveAgent {
-            private_key_nsec,
-            auth_tag,
-            relay_url,
+            private_key_nsec: input.private_key_nsec,
+            auth_tag: input.auth_tag,
+            relay_url: input.relay_url,
         },
     };
     let serialized = Zeroizing::new(
@@ -154,23 +158,23 @@ pub(crate) fn prepare_identity_envelope(
             + "\n",
     );
     let raw = invoke_provider_sensitive(
-        &provider.binary,
+        &input.provider.binary,
         &serialized,
-        &[private_key_nsec.as_str(), auth_tag.as_str()],
+        &[input.private_key_nsec.as_str(), input.auth_tag.as_str()],
         Duration::from_secs(30),
     )?;
     let rendered = serde_json::to_string(&raw)
         .map_err(|_| "identity_rotation_provider_response_invalid".to_string())?;
     if rendered.contains("nsec1")
         || rendered.contains("private_key_nsec")
-        || rendered.contains(auth_tag.as_str())
+        || rendered.contains(input.auth_tag.as_str())
     {
         return Err("identity_rotation_provider_leaked_private_material".into());
     }
     let prepared: PreparedIdentityEnvelope = serde_json::from_value(raw)
         .map_err(|_| "identity_rotation_provider_response_invalid".to_string())?;
-    if prepared.rotation_id != rotation_id
-        || prepared.agent_public_key != new_public_key
+    if prepared.rotation_id != input.rotation_id
+        || prepared.agent_public_key != input.new_public_key
         || prepared.provider_config_sha256.len() != 64
         || !prepared
             .provider_config_sha256

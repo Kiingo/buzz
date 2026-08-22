@@ -5,7 +5,7 @@
   "upstreamSnapshot": "0e48ff26915aa32d5f05208847b9aba75f4f19cd",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 22,
-    "modifiedUpstreamFiles": 37,
+    "modifiedUpstreamFiles": 38,
     "changedUpstreamProductionSourceLines": 1913,
     "upstreamProductionSourceDiffHunks": 202,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -230,6 +230,7 @@
       "removalCondition": "Remove when block/buzz ships an equivalent provider-neutral identity lifecycle extension and stable registration seams.",
       "paths": [
         "desktop/src-tauri/src/deep_link.rs",
+        "desktop/src-tauri/src/egress_guard_tests.rs",
         "desktop/src-tauri/src/lib.rs",
         "desktop/src/app/AppShell.tsx",
         "desktop/src-tauri/src/extensions/mod.rs",

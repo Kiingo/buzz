@@ -16,6 +16,12 @@ use crate::{
 
 use super::{crypto::sha256_hex, journal::ContinuityJournal};
 
+fn guarded_event_body(event: &Event) -> Result<Vec<u8>, String> {
+    let body = event.as_json().into_bytes();
+    crate::egress_guard::assert_no_key_backup_bytes(&body, "identity rotation relay event")?;
+    Ok(body)
+}
+
 async fn submit_signed_event_at_with_keys_and_auth(
     event: &Event,
     state: &AppState,
@@ -28,8 +34,7 @@ async fn submit_signed_event_at_with_keys_and_auth(
     }
     crate::relay_admission::wait_for_rate_limit().await;
     let url = format!("{}/events", api_base_url.trim_end_matches('/'));
-    let body = event.as_json().into_bytes();
-    crate::egress_guard::assert_no_key_backup_bytes(&body, "identity rotation relay event")?;
+    let body = guarded_event_body(event)?;
     let auth = build_nip98_auth_header_for_keys(keys, &Method::POST, &url, &body)?;
     let mut request = state
         .http_client
@@ -634,6 +639,17 @@ pub(crate) fn finalize_evidence(journal: &mut ContinuityJournal) -> Result<(), S
 mod tests {
     use super::*;
     use nostr::{EventBuilder, Kind};
+
+    #[test]
+    fn rotation_event_egress_rejects_embedded_key_backup_material() {
+        let keys = Keys::generate();
+        let backup_prefix = ["ncrypt", "sec1"].concat();
+        let event = EventBuilder::new(Kind::TextNote, format!("{backup_prefix}must-not-leave"))
+            .sign_with_keys(&keys)
+            .unwrap();
+
+        assert!(guarded_event_body(&event).is_err());
+    }
 
     #[test]
     fn exact_roles_are_preserved_by_snapshot_parsers() {

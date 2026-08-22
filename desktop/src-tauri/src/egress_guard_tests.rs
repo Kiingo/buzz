@@ -268,6 +268,10 @@ const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
     ("src/commands/team_snapshot.rs", 1, 1),            // boundary 6
     ("src/commands/personas/snapshot/import.rs", 2, 1), // boundary 7 + its in-file injection-test fixture URL
     ("src/native_websocket.rs", 0, 2),                  // boundary 8 (WS frames; no events URL)
+    // Downstream extension boundary. Its in-file injection test proves the
+    // event body is rejected before request construction when it contains
+    // backup material.
+    ("src/extensions/identity_rotation/continuity.rs", 1, 1),
     // Test-only fixtures — no production egress, no guard:
     ("src/relay_admission.rs", 1, 0),
     ("src/archive/mod_tests.rs", 1, 0),
@@ -444,6 +448,11 @@ fn ncryptsec_handling_is_confined_to_allowlisted_files() {
         "src/commands/team_snapshot/tests.rs",
         "src/commands/personas/snapshot/import.rs",
         "src/native_websocket.rs",
+        // Downstream identity-rotation boundaries: the public journal rejects
+        // backup material, and the local recovery picker intentionally owns
+        // the encrypted-backup extension shown to the user.
+        "src/extensions/identity_rotation/journal.rs",
+        "src/extensions/identity_rotation/local.rs",
     ];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

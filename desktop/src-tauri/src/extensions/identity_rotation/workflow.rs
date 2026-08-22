@@ -16,8 +16,8 @@ use super::{
     },
     coordinator::{
         advance, continuity_value, coordinator_status, prepare_coordinator,
-        public_rotation_error_code, report_recoverable, resolve_plan, CoordinatorStatus,
-        DesktopPlan,
+        public_rotation_error_code, report_recoverable, resolve_plan, AdvanceRequest,
+        CoordinatorStatus, DesktopPlan,
     },
     crypto::{
         load_handoff_challenge, load_resume_token, purge_staged_secrets, store_handoff_challenge,
@@ -418,16 +418,16 @@ async fn execute_rotation(
             false,
             None,
         );
-        status = advance(
-            &state,
-            &provider,
-            &journal,
-            &status,
-            "resume",
-            Some(&new_owner),
-            None,
-            None,
-        )
+        status = advance(AdvanceRequest {
+            state: &state,
+            provider: &provider,
+            journal: &journal,
+            status: &status,
+            action: "resume",
+            owner: Some(&new_owner),
+            continuity: None,
+            error_code: None,
+        })
         .await?;
         journal.error_code = None;
         journal.state = status.state.clone();
@@ -532,16 +532,16 @@ async fn execute_rotation(
         finalize_evidence(&mut journal.continuity)?;
         journal.state = "continuity_migrated".into();
         journal::save(app, &mut journal)?;
-        status = advance(
-            &state,
-            &provider,
-            &journal,
-            &status,
-            "continuity_migrated",
-            Some(&new_owner),
-            Some(continuity_value(&journal.continuity, &journal)?),
-            None,
-        )
+        status = advance(AdvanceRequest {
+            state: &state,
+            provider: &provider,
+            journal: &journal,
+            status: &status,
+            action: "continuity_migrated",
+            owner: Some(&new_owner),
+            continuity: Some(continuity_value(&journal.continuity, &journal)?),
+            error_code: None,
+        })
         .await?;
     }
 
@@ -555,16 +555,16 @@ async fn execute_rotation(
             false,
             None,
         );
-        status = advance(
-            &state,
-            &provider,
-            &journal,
-            &status,
-            "commit",
-            Some(&new_owner),
-            None,
-            None,
-        )
+        status = advance(AdvanceRequest {
+            state: &state,
+            provider: &provider,
+            journal: &journal,
+            status: &status,
+            action: "commit",
+            owner: Some(&new_owner),
+            continuity: None,
+            error_code: None,
+        })
         .await?;
     }
     if status.state == "committed" && !journal.committed_locally {
@@ -596,16 +596,16 @@ async fn execute_rotation(
                 item.canary_verified = true;
             }
         }
-        status = advance(
-            &state,
-            &provider,
-            &journal,
-            &status,
-            "canary_verified",
-            Some(&new_owner),
-            None,
-            None,
-        )
+        status = advance(AdvanceRequest {
+            state: &state,
+            provider: &provider,
+            journal: &journal,
+            status: &status,
+            action: "canary_verified",
+            owner: Some(&new_owner),
+            continuity: None,
+            error_code: None,
+        })
         .await?;
         journal.state = "canary_verified".into();
         journal::save(app, &mut journal)?;
@@ -666,16 +666,16 @@ async fn execute_rotation(
             new_auth_tag: None,
         };
         revoke_old_authorities(&state, &journal.relay_url, &owner_pair, &pairs).await?;
-        status = advance(
-            &state,
-            &provider,
-            &journal,
-            &status,
-            "old_revoked",
-            Some(&new_owner),
-            Some(continuity_value(&journal.continuity, &journal)?),
-            None,
-        )
+        status = advance(AdvanceRequest {
+            state: &state,
+            provider: &provider,
+            journal: &journal,
+            status: &status,
+            action: "old_revoked",
+            owner: Some(&new_owner),
+            continuity: Some(continuity_value(&journal.continuity, &journal)?),
+            error_code: None,
+        })
         .await?;
         journal.state = "old_revoked".into();
         journal::save(app, &mut journal)?;
@@ -692,16 +692,16 @@ async fn execute_rotation(
         );
         let mut complete = None;
         for _ in 0..90 {
-            match advance(
-                &state,
-                &provider,
-                &journal,
-                &status,
-                "complete",
-                Some(&new_owner),
-                None,
-                None,
-            )
+            match advance(AdvanceRequest {
+                state: &state,
+                provider: &provider,
+                journal: &journal,
+                status: &status,
+                action: "complete",
+                owner: Some(&new_owner),
+                continuity: None,
+                error_code: None,
+            })
             .await
             {
                 Ok(value) => {
@@ -825,9 +825,16 @@ pub(crate) async fn abort_identity_rotation(
             return Ok(journal);
         }
         if status.state != "aborted" {
-            advance(
-                &state, &provider, &journal, &status, "abort", None, None, None,
-            )
+            advance(AdvanceRequest {
+                state: &state,
+                provider: &provider,
+                journal: &journal,
+                status: &status,
+                action: "abort",
+                owner: None,
+                continuity: None,
+                error_code: None,
+            })
             .await?;
         }
     }
