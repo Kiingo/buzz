@@ -37,6 +37,9 @@ const ALLOWLIST = [
   "features/settings/ui/BackupTestFlow.tsx",
   "features/settings/ui/EncryptedBackupCreator.tsx",
   "features/settings/ui/ProfileSettingsCard.tsx",
+  // Provider-neutral rotation UI rejects encrypted backup/private-key material
+  // before rendering; actual backup handling remains in egress-guarded Rust.
+  "extensions/identity-rotation/IdentityRotationExtension.tsx",
   // e2e-only mock bridge (never in the production bundle):
   "testing/e2eBridge.ts",
   // this scan:

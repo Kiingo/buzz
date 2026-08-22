@@ -5,7 +5,7 @@
   "upstreamSnapshot": "47526784d5c1967de6b2c5d1ee642bccfefbfab9",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 22,
-    "modifiedUpstreamFiles": 36,
+    "modifiedUpstreamFiles": 37,
     "changedUpstreamProductionSourceLines": 1913,
     "upstreamProductionSourceDiffHunks": 202,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -131,7 +131,8 @@
       ],
       "contract": "Provider-neutral rendering seam for a self-contained identity lifecycle dialog with no configured coordinator or tenant knowledge.",
       "focusedTests": [
-        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs"
+        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs",
+        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs"
       ]
     }
   ],
@@ -242,7 +243,8 @@
         "desktop/src-tauri/src/extensions/identity_rotation/provider.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/continuity.rs",
         "desktop/src/extensions/identity-rotation/IdentityRotationExtension.tsx",
-        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs"
+        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs",
+        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs"
       ]
     },
     {
