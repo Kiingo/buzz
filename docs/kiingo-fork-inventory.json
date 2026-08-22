@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "0e48ff26915aa32d5f05208847b9aba75f4f19cd",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 22,
-    "modifiedUpstreamFiles": 38,
-    "changedUpstreamProductionSourceLines": 1913,
-    "upstreamProductionSourceDiffHunks": 202,
+    "modifiedUpstreamProductionSourceFiles": 25,
+    "modifiedUpstreamFiles": 42,
+    "changedUpstreamProductionSourceLines": 1940,
+    "upstreamProductionSourceDiffHunks": 208,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -225,13 +225,14 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz identity lifecycle maintainers",
-      "purpose": "Provider-neutral, secret-local, crash-resumable human and managed-agent identity rotation with signed coordinator handoff and relay continuity.",
+      "purpose": "Provider-neutral, secret-local, crash-resumable human and managed-agent identity rotation with signed coordinator handoff, relay continuity, and upgrade-safe machine-onboarding identity continuity.",
       "upstreamStatus": "downstream-isolated candidate pending equivalent upstream extension lifecycle support",
       "removalCondition": "Remove when block/buzz ships an equivalent provider-neutral identity lifecycle extension and stable registration seams.",
       "paths": [
         "desktop/src-tauri/src/deep_link.rs",
         "desktop/src-tauri/src/egress_guard_tests.rs",
         "desktop/src-tauri/src/lib.rs",
+        "desktop/src/app/App.tsx",
         "desktop/src/app/AppShell.tsx",
         "desktop/src-tauri/src/extensions/mod.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/mod.rs",
@@ -245,6 +246,9 @@
         "desktop/src-tauri/src/extensions/identity_rotation/continuity.rs",
         "desktop/src/extensions/identity-rotation/IdentityRotationExtension.tsx",
         "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs",
+        "desktop/src/features/onboarding/machineOnboarding.test.mjs",
+        "desktop/src/features/onboarding/machineOnboarding.ts",
+        "desktop/src/features/onboarding/ui/MachineOnboardingFlow.tsx",
         "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs"
       ]
     },
