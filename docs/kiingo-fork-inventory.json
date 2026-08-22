@@ -5,7 +5,7 @@
   "upstreamSnapshot": "0e48ff26915aa32d5f05208847b9aba75f4f19cd",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 25,
-    "modifiedUpstreamFiles": 42,
+    "modifiedUpstreamFiles": 43,
     "changedUpstreamProductionSourceLines": 1940,
     "upstreamProductionSourceDiffHunks": 208,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -226,7 +226,7 @@
       "classification": "retain-generic",
       "owner": "Buzz identity lifecycle maintainers",
       "purpose": "Provider-neutral, secret-local, crash-resumable human and managed-agent identity rotation with signed coordinator handoff, relay continuity, and upgrade-safe machine-onboarding identity continuity.",
-      "upstreamStatus": "downstream-isolated candidate pending equivalent upstream extension lifecycle support",
+      "upstreamStatus": "generic machine-onboarding continuity patch submitted as block/buzz PR #6552; rotation extension remains downstream-isolated pending equivalent upstream lifecycle support",
       "removalCondition": "Remove when block/buzz ships an equivalent provider-neutral identity lifecycle extension and stable registration seams.",
       "paths": [
         "desktop/src-tauri/src/deep_link.rs",
@@ -249,7 +249,8 @@
         "desktop/src/features/onboarding/machineOnboarding.test.mjs",
         "desktop/src/features/onboarding/machineOnboarding.ts",
         "desktop/src/features/onboarding/ui/MachineOnboardingFlow.tsx",
-        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs"
+        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs",
+        "desktop/tests/e2e/harness-management.spec.ts"
       ]
     },
     {
