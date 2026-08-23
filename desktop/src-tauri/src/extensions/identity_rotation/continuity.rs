@@ -224,6 +224,44 @@ async fn wait_for_relay_role(
     Err("identity_rotation_membership_controller_timeout".into())
 }
 
+async fn wait_for_relay_absence(
+    state: &AppState,
+    base: &str,
+    keys: &Keys,
+    public_key: &str,
+) -> Result<(), String> {
+    for _ in 0..30 {
+        let snapshot = relay_membership_snapshot(state, base, keys).await?;
+        if relay_role(&snapshot, public_key).is_none() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    Err("identity_rotation_membership_controller_timeout".into())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum RelayMembershipTransition {
+    Ready,
+    WaitForRole(String),
+    WaitForAbsence,
+}
+
+fn relay_membership_transition(
+    source_role: Option<&str>,
+    replacement_role: Option<&str>,
+) -> Result<RelayMembershipTransition, String> {
+    match (source_role, replacement_role) {
+        (Some(source), Some(replacement)) if source == replacement => {
+            Ok(RelayMembershipTransition::Ready)
+        }
+        (Some(_), Some(_)) => Err("identity_rotation_relay_membership_role_conflict".into()),
+        (Some(source), None) => Ok(RelayMembershipTransition::WaitForRole(source.to_string())),
+        (None, Some(_)) => Ok(RelayMembershipTransition::WaitForAbsence),
+        (None, None) => Ok(RelayMembershipTransition::Ready),
+    }
+}
+
 /// Prove that the committed owner key can authenticate to the pinned relay
 /// and read back its authoritative membership snapshot. The HTTP request is
 /// NIP-98 signed by the supplied key, and the returned snapshot is also
@@ -254,9 +292,10 @@ pub(crate) async fn signed_owner_relay_canary(
     Ok(())
 }
 
-/// Add the replacement identities with exact relay/channel roles while the
-/// old owner is still authoritative, then query the relay's canonical
-/// snapshots and fail before cutover if any role is missing.
+/// Mirror the replacement identities to the old identities' exact relay and
+/// channel access while the old owner is still authoritative. Direct relay
+/// membership is optional for NIP-OA agents, so authoritative absence is
+/// preserved just as strictly as an explicit role.
 pub(crate) async fn migrate_memberships(
     state: &AppState,
     relay_url: &str,
@@ -270,12 +309,11 @@ pub(crate) async fn migrate_memberships(
         let old_public_key = identity.old.public_key().to_hex();
         let new_public_key = identity.new.public_key().to_hex();
         let relay_snapshot = relay_membership_snapshot(state, &base, owner.old).await?;
-        let role = relay_role(&relay_snapshot, &old_public_key)
-            .ok_or_else(|| "identity_rotation_old_membership_missing".to_string())?;
-        match relay_role(&relay_snapshot, &new_public_key).as_deref() {
-            Some(replacement_role) if replacement_role == role => {}
-            Some(_) => return Err("identity_rotation_relay_membership_role_conflict".into()),
-            None => {
+        let role = relay_role(&relay_snapshot, &old_public_key);
+        let replacement_role = relay_role(&relay_snapshot, &new_public_key);
+        match relay_membership_transition(role.as_deref(), replacement_role.as_deref())? {
+            RelayMembershipTransition::Ready => {}
+            RelayMembershipTransition::WaitForRole(role) => {
                 let owner_role = relay_role(&relay_snapshot, &owner.old.public_key().to_hex());
                 if matches!(owner_role.as_deref(), Some("owner" | "admin")) {
                     submit_event_at_with_keys(
@@ -289,6 +327,9 @@ pub(crate) async fn migrate_memberships(
                 } else {
                     wait_for_relay_role(state, &base, owner.old, &new_public_key, &role).await?;
                 }
+            }
+            RelayMembershipTransition::WaitForAbsence => {
+                wait_for_relay_absence(state, &base, owner.old, &new_public_key).await?;
             }
         }
         relay_count += 1;
@@ -738,6 +779,31 @@ mod tests {
                 .map(String::as_str),
             Some("bot")
         );
+    }
+
+    #[test]
+    fn relay_continuity_preserves_nip_oa_membership_absence() {
+        assert_eq!(
+            relay_membership_transition(None, None).unwrap(),
+            RelayMembershipTransition::Ready
+        );
+        assert_eq!(
+            relay_membership_transition(None, Some("member")).unwrap(),
+            RelayMembershipTransition::WaitForAbsence
+        );
+    }
+
+    #[test]
+    fn relay_continuity_waits_for_exact_role_and_rejects_conflicts() {
+        assert_eq!(
+            relay_membership_transition(Some("admin"), None).unwrap(),
+            RelayMembershipTransition::WaitForRole("admin".into())
+        );
+        assert_eq!(
+            relay_membership_transition(Some("member"), Some("member")).unwrap(),
+            RelayMembershipTransition::Ready
+        );
+        assert!(relay_membership_transition(Some("admin"), Some("member")).is_err());
     }
 
     #[test]
