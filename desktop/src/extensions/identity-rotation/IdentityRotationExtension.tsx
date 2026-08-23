@@ -67,7 +67,27 @@ const safeProgress = (value: RotationProgress): RotationProgress => {
       ? value.message
       : "Identity rotation status updated.";
   const errorCode = safeErrorCode(value.errorCode);
-  return { ...value, message, errorCode };
+  const actionableMessage = errorCode
+    ? ROTATION_ERROR_MESSAGES[errorCode]
+    : undefined;
+  return { ...value, message: actionableMessage ?? message, errorCode };
+};
+
+const ROTATION_ERROR_MESSAGES: Record<string, string> = {
+  identity_rotation_backup_file_exists:
+    "That backup filename already exists. Choose a different filename so Buzz never overwrites an existing recovery backup.",
+  identity_rotation_membership_controller_timeout:
+    "Kiingo could not copy the replacement relay memberships in time. Your old keys remain active; contact Kiingo support before resuming.",
+  identity_rotation_relay_membership_role_conflict:
+    "A replacement identity already has a different relay role. Your old keys remain active; Kiingo must reconcile the conflicting role before you resume.",
+  identity_rotation_channel_membership_role_conflict:
+    "A replacement identity already has a different channel role. Your old keys remain active; reconcile that role before resuming.",
+  identity_rotation_relay_membership_admin_required:
+    "This relay membership change requires the Kiingo membership controller. Your old keys remain active; update Buzz and resume after the controller is available.",
+  identity_rotation_relay_owner_transfer_required:
+    "The relay owner identity needs an operator-assisted ownership transfer. Your old keys remain active; contact Kiingo support before resuming.",
+  identity_rotation_coordinator_recoverable:
+    "The coordinator paused at a durable checkpoint without a specific public error. Your old keys remain active; request a fresh resume link after Kiingo checks the coordinator.",
 };
 
 export function IdentityRotationExtension() {

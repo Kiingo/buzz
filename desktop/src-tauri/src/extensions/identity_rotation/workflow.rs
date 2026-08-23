@@ -414,6 +414,7 @@ async fn execute_rotation(
                 state_version: journal.state_version,
                 old_owner_public_key: journal.old_owner_public_key.clone(),
                 new_owner_public_key: journal.new_owner_public_key.clone(),
+                error_code: journal.error_code.clone(),
                 items: Vec::new(),
             };
             coordinator_status(&state, &provider, &journal, &status_context).await?
@@ -743,7 +744,12 @@ async fn execute_rotation(
         status = complete.ok_or_else(|| "identity_rotation_old_endpoint_timeout".to_string())?;
     }
     if status.state != "complete" {
-        return Err("identity_rotation_unexpected_final_state".into());
+        return Err(status
+            .error_code
+            .as_deref()
+            .filter(|code| super::coordinator::is_public_rotation_error_code(code))
+            .unwrap_or("identity_rotation_coordinator_recoverable")
+            .to_string());
     }
     purge_old_agent_keys(&staged)?;
     purge_staged_secrets(&journal)?;
@@ -834,6 +840,7 @@ pub(crate) async fn abort_identity_rotation(
             state_version: journal.state_version,
             old_owner_public_key: journal.old_owner_public_key.clone(),
             new_owner_public_key: journal.new_owner_public_key.clone(),
+            error_code: journal.error_code.clone(),
             items: Vec::new(),
         };
         let status = coordinator_status(&state, &provider, &journal, &status_context).await?;
