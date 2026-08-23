@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp, ToBech32};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
@@ -12,6 +13,63 @@ pub(crate) fn sha256_hex(value: &[u8]) -> String {
 
 fn secret_store() -> &'static SecretStore {
     SecretStore::shared(keyring_service())
+}
+
+// Windows Credential Manager limits a generic credential blob to 2,560 bytes.
+// SecretStore intentionally keeps the application's ordinary secrets in one
+// JSON blob, which is already close to that limit for established users. A
+// full identity rotation temporarily stages old/new owner and agent keys, so
+// putting those values into the ordinary blob deterministically exceeds the
+// Windows limit. Rotation secrets therefore use one dedicated,
+// content-addressed SecretStore service per logical secret. Values are base64
+// encoded and bounded so each backing credential stays below that limit.
+const ROTATION_SECRET_MAX_BYTES: usize = 768;
+const ROTATION_SECRET_ENTRY_KEY: &str = "payload";
+
+fn rotation_secret_service(name: &str) -> String {
+    format!(
+        "{}.identity-rotation.{}",
+        keyring_service(),
+        sha256_hex(name.as_bytes())
+    )
+}
+
+fn rotation_secret_store(name: &str) -> SecretStore {
+    SecretStore::keyring(rotation_secret_service(name))
+}
+
+fn encode_rotation_secret(value: &str) -> Result<Zeroizing<String>, String> {
+    if value.is_empty() || value.len() > ROTATION_SECRET_MAX_BYTES {
+        return Err("identity_rotation_secure_store_value_too_large".into());
+    }
+    Ok(Zeroizing::new(BASE64_STANDARD.encode(value.as_bytes())))
+}
+
+fn decode_rotation_secret(encoded: &str) -> Result<Zeroizing<String>, String> {
+    let decoded = Zeroizing::new(
+        BASE64_STANDARD
+            .decode(encoded)
+            .map_err(|_| "identity_rotation_secure_store_corrupt".to_string())?,
+    );
+    String::from_utf8(decoded.to_vec())
+        .map(Zeroizing::new)
+        .map_err(|_| "identity_rotation_secure_store_corrupt".to_string())
+}
+
+fn load_scoped_secret(name: &str) -> Result<Option<Zeroizing<String>>, String> {
+    let Some(encoded) = rotation_secret_store(name)
+        .load(ROTATION_SECRET_ENTRY_KEY)
+        .map_err(|_| "identity_rotation_secure_store_unavailable".to_string())?
+    else {
+        return Ok(None);
+    };
+    decode_rotation_secret(&encoded).map(Some)
+}
+
+fn delete_scoped_secret(name: &str) -> Result<(), String> {
+    rotation_secret_store(name)
+        .delete_all_with_legacy_cleanup()
+        .map_err(|_| "identity_rotation_secure_purge_failed".to_string())
 }
 
 fn secret_name(rotation_id: &str, kind: &str, discriminator: &str) -> Result<String, String> {
@@ -34,26 +92,46 @@ fn secret_name(rotation_id: &str, kind: &str, discriminator: &str) -> Result<Str
 }
 
 fn store_secret(name: &str, value: &str) -> Result<(), String> {
-    let store = secret_store();
+    let encoded = encode_rotation_secret(value)?;
+    let store = rotation_secret_store(name);
     store
-        .store(name, value)
+        .store(ROTATION_SECRET_ENTRY_KEY, encoded.as_str())
         .map_err(|_| "identity_rotation_secure_store_unavailable".to_string())?;
     if !store
-        .verify_stored_raw(name, value)
+        .verify_stored_raw(ROTATION_SECRET_ENTRY_KEY, encoded.as_str())
         .map_err(|_| "identity_rotation_secure_store_unavailable".to_string())?
     {
-        let _ = store.delete(name);
+        let _ = store.delete_all_with_legacy_cleanup();
         return Err("identity_rotation_secure_store_readback_failed".into());
     }
+    // Values written by desktop versions before the scoped format are only
+    // removed after the new copy has passed an OS-backed readback check.
+    secret_store()
+        .delete(name)
+        .map_err(|_| "identity_rotation_secure_store_unavailable".to_string())?;
     Ok(())
 }
 
 fn load_secret(name: &str) -> Result<Zeroizing<String>, String> {
-    secret_store()
+    let scoped_error = match load_scoped_secret(name) {
+        Ok(Some(value)) => return Ok(value),
+        Ok(None) => None,
+        Err(error) => Some(error),
+    };
+
+    // Seamlessly resume journals created by the pre-scoped desktop. Keep the
+    // legacy value until the new copy has been stored and read back from the
+    // OS, then remove it from the capacity-constrained application blob.
+    let legacy = secret_store()
         .load(name)
-        .map_err(|_| "identity_rotation_secure_store_unavailable".to_string())?
-        .map(Zeroizing::new)
-        .ok_or_else(|| "identity_rotation_staged_secret_missing".to_string())
+        .map_err(|_| "identity_rotation_secure_store_unavailable".to_string())?;
+    let Some(legacy) = legacy.map(Zeroizing::new) else {
+        return Err(
+            scoped_error.unwrap_or_else(|| "identity_rotation_staged_secret_missing".to_string())
+        );
+    };
+    store_secret(name, legacy.as_str())?;
+    Ok(legacy)
 }
 
 pub(crate) fn store_handoff_challenge(rotation_id: &str, challenge: &str) -> Result<(), String> {
@@ -212,7 +290,6 @@ pub(crate) fn build_rotation_proof(
 }
 
 pub(crate) fn purge_staged_secrets(journal: &IdentityRotationJournal) -> Result<(), String> {
-    let store = secret_store();
     let mut names = vec![
         secret_name(&journal.rotation_id, "challenge", "coordinator")?,
         secret_name(&journal.rotation_id, "resume-token", "coordinator")?,
@@ -243,7 +320,9 @@ pub(crate) fn purge_staged_secrets(journal: &IdentityRotationJournal) -> Result<
     }
     let mut failed = false;
     for name in names {
-        if store.delete(&name).is_err() {
+        let scoped_failed = delete_scoped_secret(&name).is_err();
+        let legacy_failed = secret_store().delete(&name).is_err();
+        if scoped_failed || legacy_failed {
             failed = true;
         }
     }
@@ -319,5 +398,57 @@ mod tests {
         assert!(secret_name(id, "agent-new", "../owner").is_err());
         assert!(secret_name("not-a-uuid", "agent-new", "owner").is_err());
         assert!(secret_name(id, "Agent-New", "owner").is_err());
+    }
+
+    #[test]
+    fn rotation_secret_entry_fits_windows_credential_manager() {
+        let encoded = encode_rotation_secret(&"a".repeat(ROTATION_SECRET_MAX_BYTES)).unwrap();
+        let wrapped = serde_json::to_string(&std::collections::HashMap::from([(
+            ROTATION_SECRET_ENTRY_KEY,
+            encoded.as_str(),
+        )]))
+        .unwrap();
+        let windows_password_bytes = wrapped.encode_utf16().count() * 2;
+        assert!(
+            windows_password_bytes <= 2_560,
+            "rotation backing credential was {windows_password_bytes} bytes"
+        );
+    }
+
+    #[test]
+    fn every_rotation_secret_shape_fits_the_scoped_entry_contract() {
+        let owner = Keys::generate();
+        let agent = Keys::generate();
+        let nsec = owner.secret_key().to_bech32().unwrap();
+        let auth = compute_agent_auth_tag(&owner, &agent).unwrap();
+        for value in ["a".repeat(43), nsec, auth] {
+            assert!(encode_rotation_secret(&value).is_ok());
+        }
+    }
+
+    #[test]
+    fn rotation_secret_encoding_round_trips_and_detects_corruption() {
+        let value = "portable secret \u{1f41d} ".repeat(20);
+        let encoded = encode_rotation_secret(&value).unwrap();
+        assert_eq!(
+            decode_rotation_secret(encoded.as_str()).unwrap().as_str(),
+            value
+        );
+        assert_eq!(
+            decode_rotation_secret("not-base64***").unwrap_err(),
+            "identity_rotation_secure_store_corrupt"
+        );
+    }
+
+    #[test]
+    fn rotation_secret_services_hide_logical_names() {
+        let logical_name = concat!(
+            "identity-rotation:20000000-0000-4000-8000-000000000001:",
+            "agent-new:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        let service = rotation_secret_service(logical_name);
+        assert!(!service.contains(logical_name));
+        assert!(!service.contains("aaaaaaaaaaaaaaaa"));
+        assert!(service.starts_with(keyring_service()));
     }
 }
