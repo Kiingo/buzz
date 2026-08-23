@@ -263,6 +263,35 @@ test("resume handoffs preserve the exact scope and invoke the existing handoff i
   assert.equal(request.recoveryPassphrase, null);
 });
 
+test("command failures render actionable guidance instead of a raw internal fallback", async () => {
+  setup({
+    mode: "agent",
+    managedAgentCount: 1,
+    hostedAgentCount: 1,
+    agentNames: ["High Agency"],
+    recoveryBackupRequired: false,
+  });
+  handlers.set("run_identity_rotation", () =>
+    Promise.reject("identity_rotation_internal"),
+  );
+
+  renderExtension();
+  await screen.findByLabelText("Verified rotation scope");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /verify backup and rotate/i }),
+  );
+
+  await screen.findByText(/unexpected error before cutover/i);
+  assert.match(document.body.textContent, /old keys remain active/i);
+  assert.match(
+    document.body.textContent,
+    /support code: identity_rotation_internal/i,
+  );
+});
+
 test("pre-commit dismissal leaves the handoff unacknowledged and returns focus", async () => {
   setup({
     mode: "human",
