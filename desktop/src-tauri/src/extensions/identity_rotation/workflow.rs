@@ -168,7 +168,7 @@ fn selected_records(
 ) -> Result<Vec<ManagedAgentRecord>, String> {
     let candidates: Vec<_> = records
         .iter()
-        .filter(|record| record.relay_url.trim_end_matches('/') == plan.relay_url)
+        .filter(|record| record_is_in_plan_scope(plan, record))
         .cloned()
         .collect();
     let selected = match (&plan.mode, journal) {
@@ -207,6 +207,9 @@ fn selected_records(
                 .find(|item| item.old_public_key == hosted.public_key)
         });
         let found = selected.iter().find(|record| {
+            if !matches!(&record.backend, BackendKind::Provider { .. }) {
+                return false;
+            }
             let public_key_matches = record.pubkey == hosted.public_key
                 || lineage.is_some_and(|item| record.pubkey == item.new_public_key);
             let provider_id_matches = record.backend_agent_id.as_deref()
@@ -221,6 +224,28 @@ fn selected_records(
         }
     }
     Ok(selected)
+}
+
+fn record_is_in_plan_scope(plan: &DesktopPlan, record: &ManagedAgentRecord) -> bool {
+    match &record.backend {
+        BackendKind::Local => {
+            record.relay_url.trim_end_matches('/') == plan.relay_url.trim_end_matches('/')
+        }
+        BackendKind::Provider { .. } => {
+            hosted_identity_is_in_plan(plan, &record.pubkey, record.backend_agent_id.as_deref())
+        }
+    }
+}
+
+fn hosted_identity_is_in_plan(
+    plan: &DesktopPlan,
+    public_key: &str,
+    provider_agent_id: Option<&str>,
+) -> bool {
+    plan.inventory.hosted_agents.iter().any(|hosted| {
+        public_key == hosted.public_key
+            && provider_agent_id == Some(hosted.provider_agent_id.as_str())
+    })
 }
 
 fn initial_journal(
@@ -853,4 +878,49 @@ pub(crate) async fn abort_identity_rotation(
         None,
     );
     Ok(journal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan() -> DesktopPlan {
+        DesktopPlan {
+            contract_version: 1,
+            rotation_id: "00000000-0000-4000-8000-000000000001".into(),
+            mode: RotationMode::All,
+            community_id: "chat.example.com".into(),
+            relay_url: "wss://chat.example.com".into(),
+            old_owner_public_key: "owner".into(),
+            selected_agent_public_key: None,
+            challenge_expires_at: "2099-01-01T00:00:00Z".into(),
+            inventory: super::super::coordinator::Inventory {
+                hosted_agents: vec![super::super::coordinator::HostedInventory {
+                    public_key: "hosted-key".into(),
+                    provider_agent_id: "provider-agent-id".into(),
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn relayless_hosted_identity_is_scoped_by_exact_inventory_pair() {
+        let plan = plan();
+        assert!(hosted_identity_is_in_plan(
+            &plan,
+            "hosted-key",
+            Some("provider-agent-id")
+        ));
+        assert!(!hosted_identity_is_in_plan(
+            &plan,
+            "hosted-key",
+            Some("different-provider-agent-id")
+        ));
+        assert!(!hosted_identity_is_in_plan(
+            &plan,
+            "different-hosted-key",
+            Some("provider-agent-id")
+        ));
+        assert!(!hosted_identity_is_in_plan(&plan, "hosted-key", None));
+    }
 }
