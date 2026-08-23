@@ -212,8 +212,9 @@ export function IdentityRotationExtension() {
         },
       });
     } catch (error) {
-      setProgress((current) =>
-        safeProgress({
+      setProgress((current) => {
+        if (current?.terminal && current.errorCode) return current;
+        return safeProgress({
           rotationId: handoff.rotationId,
           state: "recoverable",
           message:
@@ -221,8 +222,8 @@ export function IdentityRotationExtension() {
             "Rotation paused safely. Resolve the issue and open the rotation link again to resume.",
           terminal: true,
           errorCode: safeErrorCode(error) ?? "identity_rotation_failed",
-        }),
-      );
+        });
+      });
     } finally {
       setPassphrase("");
       setPassphraseAgain("");
