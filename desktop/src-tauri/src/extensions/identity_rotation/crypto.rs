@@ -51,6 +51,9 @@ fn decode_rotation_secret(encoded: &str) -> Result<Zeroizing<String>, String> {
             .decode(encoded)
             .map_err(|_| "identity_rotation_secure_store_corrupt".to_string())?,
     );
+    if decoded.is_empty() || decoded.len() > ROTATION_SECRET_MAX_BYTES {
+        return Err("identity_rotation_secure_store_corrupt".into());
+    }
     String::from_utf8(decoded.to_vec())
         .map(Zeroizing::new)
         .map_err(|_| "identity_rotation_secure_store_corrupt".to_string())
@@ -438,6 +441,9 @@ mod tests {
             decode_rotation_secret("not-base64***").unwrap_err(),
             "identity_rotation_secure_store_corrupt"
         );
+        assert!(decode_rotation_secret("").is_err());
+        let oversized = BASE64_STANDARD.encode("a".repeat(ROTATION_SECRET_MAX_BYTES + 1));
+        assert!(decode_rotation_secret(&oversized).is_err());
     }
 
     #[test]
