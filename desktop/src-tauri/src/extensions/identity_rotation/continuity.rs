@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind};
+use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind, Tag};
 use reqwest::Method;
 use serde::Serialize;
 
@@ -188,6 +188,42 @@ async fn verify_relay_role(
     Ok(())
 }
 
+async fn relay_membership_snapshot(
+    state: &AppState,
+    base: &str,
+    keys: &Keys,
+) -> Result<Event, String> {
+    query_relay_at_with_keys(
+        state,
+        base,
+        &[serde_json::json!({"kinds": [13534], "limit": 1})],
+        keys,
+        None,
+    )
+    .await?
+    .into_iter()
+    .next()
+    .ok_or_else(|| "identity_rotation_relay_membership_snapshot_missing".to_string())
+}
+
+async fn wait_for_relay_role(
+    state: &AppState,
+    base: &str,
+    keys: &Keys,
+    public_key: &str,
+    expected_role: &str,
+) -> Result<(), String> {
+    for _ in 0..30 {
+        let snapshot = relay_membership_snapshot(state, base, keys).await?;
+        match relay_role(&snapshot, public_key).as_deref() {
+            Some(role) if role == expected_role => return Ok(()),
+            Some(_) => return Err("identity_rotation_relay_membership_role_conflict".into()),
+            None => tokio::time::sleep(std::time::Duration::from_secs(2)).await,
+        }
+    }
+    Err("identity_rotation_membership_controller_timeout".into())
+}
+
 /// Prove that the committed owner key can authenticate to the pinned relay
 /// and read back its authoritative membership snapshot. The HTTP request is
 /// NIP-98 signed by the supplied key, and the returned snapshot is also
@@ -233,26 +269,28 @@ pub(crate) async fn migrate_memberships(
     for identity in identities {
         let old_public_key = identity.old.public_key().to_hex();
         let new_public_key = identity.new.public_key().to_hex();
-        let relay_events = query_relay_at_with_keys(
-            state,
-            &base,
-            &[serde_json::json!({"kinds": [13534], "limit": 1})],
-            owner.old,
-            None,
-        )
-        .await?;
-        let role = relay_events
-            .first()
-            .and_then(|event| relay_role(event, &old_public_key))
+        let relay_snapshot = relay_membership_snapshot(state, &base, owner.old).await?;
+        let role = relay_role(&relay_snapshot, &old_public_key)
             .ok_or_else(|| "identity_rotation_old_membership_missing".to_string())?;
-        submit_event_at_with_keys(
-            events::build_relay_admin_add(&new_public_key, &role)?,
-            state,
-            &base,
-            owner.old,
-        )
-        .await?;
-        verify_relay_role(state, &base, owner.old, &new_public_key, &role).await?;
+        match relay_role(&relay_snapshot, &new_public_key).as_deref() {
+            Some(replacement_role) if replacement_role == role => {}
+            Some(_) => return Err("identity_rotation_relay_membership_role_conflict".into()),
+            None => {
+                let owner_role = relay_role(&relay_snapshot, &owner.old.public_key().to_hex());
+                if matches!(owner_role.as_deref(), Some("owner" | "admin")) {
+                    submit_event_at_with_keys(
+                        events::build_relay_admin_add(&new_public_key, &role)?,
+                        state,
+                        &base,
+                        owner.old,
+                    )
+                    .await?;
+                    verify_relay_role(state, &base, owner.old, &new_public_key, &role).await?;
+                } else {
+                    wait_for_relay_role(state, &base, owner.old, &new_public_key, &role).await?;
+                }
+            }
+        }
         relay_count += 1;
 
         let snapshots = query_relay_at_with_keys(
@@ -266,14 +304,7 @@ pub(crate) async fn migrate_memberships(
         for (channel_id, channel_role) in channel_roles(&snapshots, &old_public_key) {
             let channel = uuid::Uuid::parse_str(&channel_id)
                 .map_err(|_| "identity_rotation_channel_snapshot_invalid".to_string())?;
-            submit_event_at_with_keys(
-                events::build_add_member(channel, &new_public_key, Some(&channel_role))?,
-                state,
-                &base,
-                owner.old,
-            )
-            .await?;
-            let verified = query_relay_at_with_keys(
+            let before = query_relay_at_with_keys(
                 state,
                 &base,
                 &[serde_json::json!({"kinds": [39002], "#d": [channel_id], "limit": 1})],
@@ -281,8 +312,33 @@ pub(crate) async fn migrate_memberships(
                 None,
             )
             .await?;
-            if channel_roles(&verified, &new_public_key).get(&channel_id) != Some(&channel_role) {
-                return Err("identity_rotation_channel_membership_verification_failed".into());
+            match channel_roles(&before, &new_public_key).get(&channel_id) {
+                Some(replacement_role) if replacement_role == &channel_role => {}
+                Some(_) => return Err("identity_rotation_channel_membership_role_conflict".into()),
+                None => {
+                    submit_event_at_with_keys(
+                        events::build_add_member(channel, &new_public_key, Some(&channel_role))?,
+                        state,
+                        &base,
+                        owner.old,
+                    )
+                    .await?;
+                    let verified = query_relay_at_with_keys(
+                        state,
+                        &base,
+                        &[serde_json::json!({"kinds": [39002], "#d": [channel_id], "limit": 1})],
+                        owner.old,
+                        None,
+                    )
+                    .await?;
+                    if channel_roles(&verified, &new_public_key).get(&channel_id)
+                        != Some(&channel_role)
+                    {
+                        return Err(
+                            "identity_rotation_channel_membership_verification_failed".into()
+                        );
+                    }
+                }
             }
             channel_count += 1;
         }
@@ -527,11 +583,12 @@ pub(crate) async fn revoke_old_authorities(
         for channel_id in old_channels.keys() {
             let channel = uuid::Uuid::parse_str(channel_id)
                 .map_err(|_| "identity_rotation_channel_snapshot_invalid".to_string())?;
-            submit_event_at_with_keys(
-                events::build_remove_member(channel, &old)?,
+            submit_event_at_with_keys_and_auth(
+                events::build_leave(channel)?,
                 state,
                 &base,
-                owner.new,
+                identity.old,
+                identity.old_auth_tag,
             )
             .await?;
             let verified = query_relay_at_with_keys(
@@ -570,13 +627,22 @@ pub(crate) async fn revoke_old_authorities(
                 return Err("identity_rotation_old_channel_write_allowed".into());
             }
         }
-        submit_event_at_with_keys(
-            events::build_relay_admin_remove(&old)?,
-            state,
-            &base,
-            owner.new,
-        )
-        .await?;
+        let relay_before = relay_membership_snapshot(state, &base, owner.new).await?;
+        if let Some(role) = relay_role(&relay_before, &old) {
+            if role == "owner" {
+                return Err("identity_rotation_relay_owner_transfer_required".into());
+            }
+            let leave = EventBuilder::new(Kind::Custom(28_936), "").tags([Tag::parse(["-"])
+                .map_err(|_| "identity_rotation_relay_leave_build_failed".to_string())?]);
+            submit_event_at_with_keys_and_auth(
+                leave,
+                state,
+                &base,
+                identity.old,
+                identity.old_auth_tag,
+            )
+            .await?;
+        }
         let relay = query_relay_at_with_keys(
             state,
             &base,

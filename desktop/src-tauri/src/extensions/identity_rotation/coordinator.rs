@@ -63,6 +63,8 @@ pub(super) struct CoordinatorStatus {
     pub(super) state_version: u32,
     pub(super) old_owner_public_key: String,
     pub(super) new_owner_public_key: Option<String>,
+    #[serde(default)]
+    pub(super) error_code: Option<String>,
     pub(super) items: Vec<RotationItemStatus>,
 }
 
@@ -104,6 +106,10 @@ pub(super) fn is_public_rotation_error_code(code: &str) -> bool {
 pub(super) fn public_rotation_error_code(error: &str) -> String {
     if is_public_rotation_error_code(error) {
         error.to_string()
+    } else if error.contains("backup file already exists") {
+        "identity_rotation_backup_file_exists".into()
+    } else if error.contains("actor not authorized: must be admin or owner") {
+        "identity_rotation_relay_membership_admin_required".into()
     } else {
         "identity_rotation_internal".into()
     }
@@ -352,6 +358,7 @@ pub(super) async fn report_recoverable(
         state_version: journal.state_version,
         old_owner_public_key: journal.old_owner_public_key.clone(),
         new_owner_public_key: journal.new_owner_public_key.clone(),
+        error_code: journal.error_code.clone(),
         items: Vec::new(),
     };
     let status = coordinator_status(&state, &provider, journal, &status_context).await?;
@@ -445,6 +452,20 @@ mod tests {
                 Some(&json!({"error": "<html>secret"}))
             ),
             "identity_rotation_coordinator_http_502"
+        );
+    }
+
+    #[test]
+    fn local_failures_are_mapped_to_actionable_public_codes() {
+        assert_eq!(
+            public_rotation_error_code("backup file already exists; choose another"),
+            "identity_rotation_backup_file_exists"
+        );
+        assert_eq!(
+            public_rotation_error_code(
+                "relay rejected event: actor not authorized: must be admin or owner"
+            ),
+            "identity_rotation_relay_membership_admin_required"
         );
     }
 }
