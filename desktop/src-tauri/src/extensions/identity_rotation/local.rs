@@ -231,7 +231,7 @@ pub(super) fn commit_local(
                 && status_item
                     .new_provider_agent_id
                     .as_deref()
-                    .map_or(true, |value| value.trim().is_empty()))
+                    .is_none_or(|value| value.trim().is_empty()))
         {
             return Err("identity_rotation_coordinator_response_invalid".into());
         }
