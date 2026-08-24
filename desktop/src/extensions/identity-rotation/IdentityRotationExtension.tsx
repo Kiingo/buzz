@@ -88,12 +88,24 @@ const ROTATION_ERROR_MESSAGES: Record<string, string> = {
     "This relay membership change requires the Kiingo membership controller. Your old keys remain active; update Buzz and resume after the controller is available.",
   identity_rotation_relay_owner_transfer_required:
     "The relay owner identity needs an operator-assisted ownership transfer. Your old keys remain active; contact Kiingo support before resuming.",
+  identity_rotation_hosted_inventory_conflict:
+    "Buzz found a mismatch between the signed hosted-agent inventory and this device. No identities were changed; ask Kiingo support to reconcile the inventory before resuming this same rotation.",
+  identity_rotation_postcommit_hosted_inventory_conflict:
+    "Your replacement identity is already active on this device, but Buzz could not verify its hosted deployment lineage. The prior authority has not been purged. Do not start another rotation; update Buzz and resume this same rotation.",
+  identity_rotation_owner_canary_failed:
+    "Your replacement identity is active locally, but its signed relay canary failed. The prior authority has not been purged. Check relay connectivity, then resume this same rotation.",
+  identity_rotation_hosted_canary_failed:
+    "Your replacement identity is active locally, but a hosted-agent canary could not run. The prior authority has not been purged. Ask Kiingo support to check hosted capacity, then resume this same rotation.",
+  identity_rotation_hosted_canary_timeout:
+    "Your replacement identity is active locally, but a hosted agent did not answer its private canary in time. The prior authority has not been purged. Check hosted capacity, then resume this same rotation.",
   identity_rotation_coordinator_recoverable:
     "The coordinator paused at a durable checkpoint without a specific public error. Your old keys remain active; request a fresh resume link after Kiingo checks the coordinator.",
   identity_rotation_unexpected_final_state:
     "Buzz could not confirm the coordinator's final state. Your old keys remain active; do not start another rotation. Contact Kiingo support so this rotation can be verified and resumed safely.",
   identity_rotation_internal:
     "Buzz encountered an unexpected error before cutover. Your old keys remain active; install the latest Buzz update and resume this same rotation. If it repeats, contact Kiingo support with the support code below.",
+  identity_rotation_postcommit_internal:
+    "Buzz encountered an unexpected error after committing the replacement identity locally. The prior authority has not been purged. Do not start another rotation; install the latest Buzz update and resume this same rotation.",
 };
 
 export function IdentityRotationExtension() {
@@ -123,15 +135,17 @@ export function IdentityRotationExtension() {
         })
         .catch((error) => {
           if (!disposed) {
-            setProgress({
-              rotationId: pending.rotationId,
-              state: "failed",
-              message:
-                "Buzz could not verify this rotation plan. Return to your identity security settings and request a fresh handoff or resume link.",
-              terminal: true,
-              errorCode:
-                safeErrorCode(error) ?? "identity_rotation_preview_failed",
-            });
+            setProgress(
+              safeProgress({
+                rotationId: pending.rotationId,
+                state: "failed",
+                message:
+                  "Buzz could not verify this rotation plan. Return to your identity security settings and request a fresh handoff or resume link.",
+                terminal: true,
+                errorCode:
+                  safeErrorCode(error) ?? "identity_rotation_preview_failed",
+              }),
+            );
           }
         });
     };
@@ -416,7 +430,13 @@ export function IdentityRotationExtension() {
                 onClick={() => void start()}
                 type="button"
               >
-                {running ? "Rotating…" : "Verify backup and rotate"}
+                {running
+                  ? handoff?.resume
+                    ? "Resuming…"
+                    : "Rotating…"
+                  : handoff?.resume
+                    ? "Resume rotation"
+                    : "Verify backup and rotate"}
               </Button>
             </>
           )}

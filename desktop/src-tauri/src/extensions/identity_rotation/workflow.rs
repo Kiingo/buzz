@@ -17,7 +17,7 @@ use super::{
     coordinator::{
         advance, continuity_value, coordinator_status, prepare_coordinator,
         public_rotation_error_code, report_recoverable, resolve_plan, AdvanceRequest,
-        CoordinatorStatus, DesktopPlan,
+        CoordinatorStatus, DesktopPlan, RotationItemStatus,
     },
     crypto::{
         load_handoff_challenge, load_resume_token, purge_staged_secrets, store_handoff_challenge,
@@ -201,29 +201,137 @@ fn selected_records(
     }
     for hosted in &plan.inventory.hosted_agents {
         let lineage = journal.and_then(|value| {
-            value
-                .agents
-                .iter()
-                .find(|item| item.old_public_key == hosted.public_key)
+            value.agents.iter().find(|item| {
+                item.hosted
+                    && item.old_public_key == hosted.public_key
+                    && item.old_provider_agent_id.as_deref()
+                        == Some(hosted.provider_agent_id.as_str())
+            })
         });
         let found = selected.iter().find(|record| {
             if !matches!(&record.backend, BackendKind::Provider { .. }) {
                 return false;
             }
-            let public_key_matches = record.pubkey == hosted.public_key
-                || lineage.is_some_and(|item| record.pubkey == item.new_public_key);
-            let provider_id_matches = record.backend_agent_id.as_deref()
-                == Some(&hosted.provider_agent_id)
-                || lineage.is_some_and(|item| {
-                    record.backend_agent_id.as_deref() == item.new_provider_agent_id.as_deref()
-                });
-            public_key_matches && provider_id_matches
+            hosted_record_matches_inventory(
+                hosted,
+                lineage,
+                &record.pubkey,
+                record.backend_agent_id.as_deref(),
+                journal.is_some_and(|value| value.committed_locally),
+            )
         });
         if found.is_none() {
-            return Err("identity_rotation_hosted_inventory_conflict".into());
+            return Err(if journal.is_some_and(|value| value.committed_locally) {
+                "identity_rotation_postcommit_hosted_inventory_conflict"
+            } else {
+                "identity_rotation_hosted_inventory_conflict"
+            }
+            .into());
         }
     }
     Ok(selected)
+}
+
+fn hosted_record_matches_inventory(
+    hosted: &super::coordinator::HostedInventory,
+    lineage: Option<&RotationAgentJournal>,
+    record_public_key: &str,
+    record_provider_agent_id: Option<&str>,
+    committed_locally: bool,
+) -> bool {
+    if record_public_key == hosted.public_key {
+        return record_provider_agent_id == Some(hosted.provider_agent_id.as_str());
+    }
+    let Some(lineage) = lineage else {
+        return false;
+    };
+    if record_public_key != lineage.new_public_key {
+        return false;
+    }
+    match lineage.new_provider_agent_id.as_deref() {
+        Some(expected) => record_provider_agent_id == Some(expected),
+        None => {
+            // v0.5.18-kiingo.8 committed the provider deployment ID to the
+            // managed-agent store but omitted it from the durable journal.
+            // Permit only this exact post-commit lineage long enough to fetch
+            // the authenticated coordinator status; reconciliation below then
+            // requires the store and coordinator to agree before any canary or
+            // revocation may run.
+            committed_locally && record_provider_agent_id.is_some()
+        }
+    }
+}
+
+fn reconcile_postcommit_provider_lineage(
+    journal: &mut IdentityRotationJournal,
+    records: &[ManagedAgentRecord],
+    status: &CoordinatorStatus,
+) -> Result<bool, String> {
+    if !journal.committed_locally {
+        return Ok(false);
+    }
+    let mut changed = false;
+    for item in journal.agents.iter_mut().filter(|item| item.hosted) {
+        let status_item = status
+            .items
+            .iter()
+            .find(|candidate| candidate.old_public_key == item.old_public_key)
+            .ok_or_else(|| "identity_rotation_postcommit_hosted_inventory_conflict".to_string())?;
+        let replacement_public_key = status_item
+            .new_public_key
+            .as_deref()
+            .filter(|value| *value == item.new_public_key)
+            .ok_or_else(|| "identity_rotation_postcommit_hosted_inventory_conflict".to_string())?;
+        let record = records
+            .iter()
+            .find(|record| {
+                record.pubkey == replacement_public_key
+                    && matches!(&record.backend, BackendKind::Provider { .. })
+            })
+            .ok_or_else(|| "identity_rotation_postcommit_hosted_inventory_conflict".to_string())?;
+        changed |= reconcile_provider_lineage_item(
+            item,
+            status_item,
+            &record.pubkey,
+            record.backend_agent_id.as_deref(),
+        )?;
+    }
+    Ok(changed)
+}
+
+fn reconcile_provider_lineage_item(
+    item: &mut RotationAgentJournal,
+    status_item: &RotationItemStatus,
+    record_public_key: &str,
+    record_provider_agent_id: Option<&str>,
+) -> Result<bool, String> {
+    let replacement_public_key = status_item
+        .new_public_key
+        .as_deref()
+        .filter(|value| *value == item.new_public_key && *value == record_public_key)
+        .ok_or_else(|| "identity_rotation_postcommit_hosted_inventory_conflict".to_string())?;
+    let replacement_provider_id = status_item
+        .new_provider_agent_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "identity_rotation_postcommit_hosted_inventory_conflict".to_string())?;
+    if status_item.old_public_key != item.old_public_key
+        || status_item.old_provider_agent_id.as_deref() != item.old_provider_agent_id.as_deref()
+        || !status_item.hosted
+        || record_public_key != replacement_public_key
+        || record_provider_agent_id != Some(replacement_provider_id)
+        || item
+            .new_provider_agent_id
+            .as_deref()
+            .is_some_and(|value| value != replacement_provider_id)
+    {
+        return Err("identity_rotation_postcommit_hosted_inventory_conflict".into());
+    }
+    if item.new_provider_agent_id.is_some() {
+        return Ok(false);
+    }
+    item.new_provider_agent_id = Some(replacement_provider_id.to_string());
+    Ok(true)
 }
 
 fn record_is_in_plan_scope(plan: &DesktopPlan, record: &ManagedAgentRecord) -> bool {
@@ -435,6 +543,9 @@ async fn execute_rotation(
             prepared.status
         }
     };
+    if reconcile_postcommit_provider_lineage(&mut journal, &records, &status)? {
+        journal::save(app, &mut journal)?;
+    }
     if status.state == "recoverable" {
         emit_progress(
             app,
@@ -607,7 +718,15 @@ async fn execute_rotation(
             false,
             None,
         );
-        signed_owner_relay_canary(&state, &journal.relay_url, &new_owner).await?;
+        signed_owner_relay_canary(&state, &journal.relay_url, &new_owner)
+            .await
+            .map_err(|error| {
+                if super::coordinator::is_public_rotation_error_code(&error) {
+                    error
+                } else {
+                    "identity_rotation_owner_canary_failed".to_string()
+                }
+            })?;
         emit_progress(
             app,
             &journal.rotation_id,
@@ -616,7 +735,15 @@ async fn execute_rotation(
             false,
             None,
         );
-        hosted_canary(&state, &journal, &new_owner, &status).await?;
+        hosted_canary(&state, &journal, &new_owner, &status)
+            .await
+            .map_err(|error| {
+                if super::coordinator::is_public_rotation_error_code(&error) {
+                    error
+                } else {
+                    "identity_rotation_hosted_canary_failed".to_string()
+                }
+            })?;
         for item in &mut journal.agents {
             if item.hosted {
                 item.canary_verified = true;
@@ -795,8 +922,11 @@ pub(crate) async fn run_identity_rotation(
     match execute_rotation(&app, handoff, passphrase).await {
         Ok(journal) => Ok(journal),
         Err(code) => {
-            let public_code = public_rotation_error_code(&code);
+            let mut public_code = public_rotation_error_code(&code);
             if let Ok(Some(mut journal)) = journal::load(&app, &rotation_id) {
+                if public_code == "identity_rotation_internal" && journal.committed_locally {
+                    public_code = "identity_rotation_postcommit_internal".into();
+                }
                 // The local journal remains authoritative when the network is
                 // unavailable. When reachable, mirror the pause to the
                 // coordinator so another launch resumes the exact checkpoint.
@@ -891,6 +1021,35 @@ pub(crate) async fn abort_identity_rotation(
 mod tests {
     use super::*;
 
+    fn hosted_lineage(new_provider_agent_id: Option<&str>) -> RotationAgentJournal {
+        RotationAgentJournal {
+            old_public_key: "hosted-key".into(),
+            new_public_key: "replacement-key".into(),
+            hosted: true,
+            provider_id: Some("kiingo".into()),
+            old_provider_agent_id: Some("provider-agent-id".into()),
+            new_provider_agent_id: new_provider_agent_id.map(str::to_string),
+            profile_verified: true,
+            profile_event_id: Some("profile-event".into()),
+            memory_heads_migrated: 0,
+            memory_tombstones_preserved: 0,
+            archive_verified: false,
+            archive_event_id: None,
+            canary_verified: false,
+            local_runtime_was_running: false,
+        }
+    }
+
+    fn committed_status_item() -> RotationItemStatus {
+        RotationItemStatus {
+            old_public_key: "hosted-key".into(),
+            new_public_key: Some("replacement-key".into()),
+            hosted: true,
+            old_provider_agent_id: Some("provider-agent-id".into()),
+            new_provider_agent_id: Some("replacement-provider-agent-id".into()),
+        }
+    }
+
     fn plan() -> DesktopPlan {
         DesktopPlan {
             contract_version: 1,
@@ -929,5 +1088,86 @@ mod tests {
             Some("provider-agent-id")
         ));
         assert!(!hosted_identity_is_in_plan(&plan, "hosted-key", None));
+    }
+
+    #[test]
+    fn postcommit_inventory_accepts_only_exact_journaled_replacement_lineage() {
+        let plan = plan();
+        let hosted = &plan.inventory.hosted_agents[0];
+        let missing_provider_lineage = hosted_lineage(None);
+        assert!(hosted_record_matches_inventory(
+            hosted,
+            Some(&missing_provider_lineage),
+            "replacement-key",
+            Some("replacement-provider-agent-id"),
+            true,
+        ));
+        assert!(!hosted_record_matches_inventory(
+            hosted,
+            Some(&missing_provider_lineage),
+            "replacement-key",
+            Some("replacement-provider-agent-id"),
+            false,
+        ));
+        assert!(!hosted_record_matches_inventory(
+            hosted,
+            Some(&missing_provider_lineage),
+            "different-replacement-key",
+            Some("replacement-provider-agent-id"),
+            true,
+        ));
+
+        let complete_lineage = hosted_lineage(Some("replacement-provider-agent-id"));
+        assert!(hosted_record_matches_inventory(
+            hosted,
+            Some(&complete_lineage),
+            "replacement-key",
+            Some("replacement-provider-agent-id"),
+            true,
+        ));
+        assert!(!hosted_record_matches_inventory(
+            hosted,
+            Some(&complete_lineage),
+            "replacement-key",
+            Some("different-provider-agent-id"),
+            true,
+        ));
+    }
+
+    #[test]
+    fn postcommit_reconciliation_repairs_legacy_journal_only_after_exact_match() {
+        let status = committed_status_item();
+        let mut item = hosted_lineage(None);
+        assert!(reconcile_provider_lineage_item(
+            &mut item,
+            &status,
+            "replacement-key",
+            Some("replacement-provider-agent-id"),
+        )
+        .is_ok_and(|changed| changed));
+        assert_eq!(
+            item.new_provider_agent_id.as_deref(),
+            Some("replacement-provider-agent-id")
+        );
+        assert!(reconcile_provider_lineage_item(
+            &mut item,
+            &status,
+            "replacement-key",
+            Some("replacement-provider-agent-id"),
+        )
+        .is_ok_and(|changed| !changed));
+
+        let mut mismatched = hosted_lineage(None);
+        assert_eq!(
+            reconcile_provider_lineage_item(
+                &mut mismatched,
+                &status,
+                "replacement-key",
+                Some("different-provider-agent-id"),
+            )
+            .expect_err("mismatched deployment must be rejected"),
+            "identity_rotation_postcommit_hosted_inventory_conflict"
+        );
+        assert!(mismatched.new_provider_agent_id.is_none());
     }
 }
