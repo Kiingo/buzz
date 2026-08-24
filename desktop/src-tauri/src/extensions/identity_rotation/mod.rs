@@ -2,6 +2,7 @@ mod continuity;
 mod coordinator;
 mod crypto;
 mod handoff;
+mod inventory;
 mod journal;
 mod local;
 mod provider;
