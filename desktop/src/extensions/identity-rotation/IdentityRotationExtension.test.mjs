@@ -263,6 +263,97 @@ test("resume handoffs preserve the exact scope and invoke the existing handoff i
   assert.equal(request.recoveryPassphrase, null);
 });
 
+test("command failures render actionable guidance instead of a raw internal fallback", async () => {
+  setup({
+    mode: "agent",
+    managedAgentCount: 1,
+    hostedAgentCount: 1,
+    agentNames: ["High Agency"],
+    recoveryBackupRequired: false,
+  });
+  handlers.set("run_identity_rotation", () =>
+    Promise.reject("identity_rotation_internal"),
+  );
+
+  renderExtension();
+  await screen.findByLabelText("Verified rotation scope");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /verify backup and rotate/i }),
+  );
+
+  await screen.findByText(/unexpected error before cutover/i);
+  assert.match(document.body.textContent, /old keys remain active/i);
+  assert.match(
+    document.body.textContent,
+    /support code: identity_rotation_internal/i,
+  );
+});
+
+test("durable recoverable progress is not overwritten by a later generic command failure", async () => {
+  setup({
+    mode: "agent",
+    managedAgentCount: 1,
+    hostedAgentCount: 1,
+    agentNames: ["High Agency"],
+    recoveryBackupRequired: false,
+  });
+  let rejectRun;
+  handlers.set(
+    "run_identity_rotation",
+    () =>
+      new Promise((_, reject) => {
+        rejectRun = reject;
+      }),
+  );
+
+  renderExtension();
+  await screen.findByLabelText("Verified rotation scope");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /verify backup and rotate/i }),
+  );
+  await waitFor(() =>
+    assert.equal(
+      typeof eventHandlers.get("identity-rotation-progress"),
+      "function",
+    ),
+  );
+
+  await act(async () => {
+    eventHandlers.get("identity-rotation-progress")({
+      event: "identity-rotation-progress",
+      id: 3,
+      payload: {
+        rotationId: handoff.rotationId,
+        state: "recoverable",
+        message: "Rotation paused safely.",
+        terminal: true,
+        errorCode: "identity_rotation_old_membership_missing",
+      },
+    });
+  });
+  await screen.findByText(/could not verify the source relay membership/i);
+
+  await act(async () => {
+    rejectRun("identity_rotation_internal");
+  });
+  assert.match(
+    document.body.textContent,
+    /support code: identity_rotation_old_membership_missing/i,
+  );
+  assert.equal(
+    document.body.textContent.includes(
+      "Support code: identity_rotation_internal",
+    ),
+    false,
+  );
+});
+
 test("pre-commit dismissal leaves the handoff unacknowledged and returns focus", async () => {
   setup({
     mode: "human",

@@ -76,6 +76,8 @@ const safeProgress = (value: RotationProgress): RotationProgress => {
 const ROTATION_ERROR_MESSAGES: Record<string, string> = {
   identity_rotation_backup_file_exists:
     "That backup filename already exists. Choose a different filename so Buzz never overwrites an existing recovery backup.",
+  identity_rotation_old_membership_missing:
+    "Buzz could not verify the source relay membership. Your old keys remain active; install the latest Buzz update and resume this same rotation.",
   identity_rotation_membership_controller_timeout:
     "Kiingo could not copy the replacement relay memberships in time. Your old keys remain active; contact Kiingo support before resuming.",
   identity_rotation_relay_membership_role_conflict:
@@ -88,6 +90,10 @@ const ROTATION_ERROR_MESSAGES: Record<string, string> = {
     "The relay owner identity needs an operator-assisted ownership transfer. Your old keys remain active; contact Kiingo support before resuming.",
   identity_rotation_coordinator_recoverable:
     "The coordinator paused at a durable checkpoint without a specific public error. Your old keys remain active; request a fresh resume link after Kiingo checks the coordinator.",
+  identity_rotation_unexpected_final_state:
+    "Buzz could not confirm the coordinator's final state. Your old keys remain active; do not start another rotation. Contact Kiingo support so this rotation can be verified and resumed safely.",
+  identity_rotation_internal:
+    "Buzz encountered an unexpected error before cutover. Your old keys remain active; install the latest Buzz update and resume this same rotation. If it repeats, contact Kiingo support with the support code below.",
 };
 
 export function IdentityRotationExtension() {
@@ -206,15 +212,18 @@ export function IdentityRotationExtension() {
         },
       });
     } catch (error) {
-      setProgress((current) => ({
-        rotationId: handoff.rotationId,
-        state: "recoverable",
-        message:
-          current?.message ??
-          "Rotation paused safely. Resolve the issue and open the rotation link again to resume.",
-        terminal: true,
-        errorCode: safeErrorCode(error) ?? "identity_rotation_failed",
-      }));
+      setProgress((current) => {
+        if (current?.terminal && current.errorCode) return current;
+        return safeProgress({
+          rotationId: handoff.rotationId,
+          state: "recoverable",
+          message:
+            current?.message ??
+            "Rotation paused safely. Resolve the issue and open the rotation link again to resume.",
+          terminal: true,
+          errorCode: safeErrorCode(error) ?? "identity_rotation_failed",
+        });
+      });
     } finally {
       setPassphrase("");
       setPassphraseAgain("");
@@ -277,7 +286,7 @@ export function IdentityRotationExtension() {
                 <p className="text-sm font-medium">{progress.message}</p>
                 {progress.errorCode ? (
                   <p className="mt-2 break-all font-mono text-xs text-destructive">
-                    {progress.errorCode}
+                    Support code: {progress.errorCode}
                   </p>
                 ) : null}
               </div>
