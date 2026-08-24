@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "0e48ff26915aa32d5f05208847b9aba75f4f19cd",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 25,
-    "modifiedUpstreamFiles": 43,
-    "changedUpstreamProductionSourceLines": 1984,
-    "upstreamProductionSourceDiffHunks": 212,
+    "modifiedUpstreamProductionSourceFiles": 26,
+    "modifiedUpstreamFiles": 44,
+    "changedUpstreamProductionSourceLines": 1988,
+    "upstreamProductionSourceDiffHunks": 214,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -135,6 +135,16 @@
         "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs",
         "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs"
       ]
+    },
+    {
+      "hook": "desktop/src/main.tsx",
+      "implementations": [
+        "desktop/src/extensions/identity-rotation/rendererContinuity.ts"
+      ],
+      "contract": "Provider-neutral, pre-render migration of exact public identity presentation markers after a natively committed rotation; no secrets, transactions, drafts, or message state cross the identity boundary.",
+      "focusedTests": [
+        "desktop/src/extensions/identity-rotation/rendererContinuity.test.mjs"
+      ]
     }
   ],
   "deltas": [
@@ -233,6 +243,7 @@
         "desktop/src-tauri/src/deep_link.rs",
         "desktop/src-tauri/src/egress_guard_tests.rs",
         "desktop/src-tauri/src/lib.rs",
+        "desktop/src/main.tsx",
         "desktop/src/app/App.tsx",
         "desktop/src/app/AppShell.tsx",
         "desktop/src-tauri/src/extensions/mod.rs",
@@ -248,6 +259,8 @@
         "desktop/src-tauri/src/extensions/identity_rotation/continuity.rs",
         "desktop/src/extensions/identity-rotation/IdentityRotationExtension.tsx",
         "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs",
+        "desktop/src/extensions/identity-rotation/rendererContinuity.ts",
+        "desktop/src/extensions/identity-rotation/rendererContinuity.test.mjs",
         "desktop/src/features/onboarding/machineOnboarding.test.mjs",
         "desktop/src/features/onboarding/machineOnboarding.ts",
         "desktop/src/features/onboarding/ui/MachineOnboardingFlow.tsx",

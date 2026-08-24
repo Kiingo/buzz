@@ -83,6 +83,57 @@ pub(crate) struct IdentityRotationPreview {
     recovery_backup_required: bool,
 }
 
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct IdentityRotationRendererContinuity {
+    contract_version: u8,
+    rotation_id: String,
+    old_owner_public_key: String,
+    new_owner_public_key: String,
+}
+
+fn renderer_continuity_projection(
+    journal: IdentityRotationJournal,
+    current_owner_public_key: &str,
+) -> Result<Option<IdentityRotationRendererContinuity>, String> {
+    let Some(new_owner_public_key) = journal.new_owner_public_key.clone() else {
+        return Err("identity_rotation_journal_corrupt".into());
+    };
+    let valid_key =
+        |value: &str| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !valid_key(&journal.old_owner_public_key)
+        || !valid_key(&new_owner_public_key)
+        || journal.old_owner_public_key == new_owner_public_key
+    {
+        return Err("identity_rotation_journal_corrupt".into());
+    }
+    if current_owner_public_key != new_owner_public_key {
+        return Ok(None);
+    }
+    Ok(Some(IdentityRotationRendererContinuity {
+        contract_version: journal.contract_version,
+        rotation_id: journal.rotation_id,
+        old_owner_public_key: journal.old_owner_public_key,
+        new_owner_public_key,
+    }))
+}
+
+#[tauri::command]
+pub(crate) async fn identity_rotation_renderer_continuity(
+    app: tauri::AppHandle,
+) -> Result<Option<IdentityRotationRendererContinuity>, String> {
+    let Some(journal) = journal::latest_committed_owner_rotation(&app)? else {
+        return Ok(None);
+    };
+    let current_owner_public_key = app
+        .state::<AppState>()
+        .signing_keys()
+        .map_err(|_| "identity_rotation_renderer_identity_unavailable".to_string())?
+        .public_key()
+        .to_hex();
+    renderer_continuity_projection(journal, &current_owner_public_key)
+}
+
 #[tauri::command]
 pub(crate) async fn inspect_identity_rotation_handoff(
     id: String,
@@ -821,4 +872,75 @@ pub(crate) async fn abort_identity_rotation(
         None,
     );
     Ok(journal)
+}
+
+#[cfg(test)]
+mod renderer_continuity_tests {
+    use super::*;
+
+    fn committed_journal() -> IdentityRotationJournal {
+        serde_json::from_value(serde_json::json!({
+            "contract_version": 1,
+            "rotation_id": "20000000-0000-4000-8000-000000000001",
+            "coordinator_origin": "https://api.example.com",
+            "community_id": "chat.example.com",
+            "relay_url": "wss://chat.example.com",
+            "mode": "all",
+            "selected_agent_public_key": null,
+            "state": "recoverable",
+            "state_version": 10,
+            "challenge_expires_at": "2026-08-21T00:00:00Z",
+            "old_owner_public_key": "a".repeat(64),
+            "new_owner_public_key": "b".repeat(64),
+            "provider_id": "test",
+            "resolve_path": "/resolve",
+            "prepare_path": "/prepare",
+            "advance_path": "/advance/{rotation_id}",
+            "proof_kind": 27236,
+            "proof_content": "buzz-identity-rotation-v1",
+            "recovery_backup_verified": true,
+            "agents": [],
+            "continuity": ContinuityJournal::default(),
+            "committed_locally": true,
+            "old_authority_purged": false,
+            "error_code": null,
+            "created_at": "2026-08-21T00:00:00Z",
+            "updated_at": "2026-08-21T00:00:00Z"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn renderer_projection_requires_the_exact_committed_replacement() {
+        let journal = committed_journal();
+        assert!(
+            renderer_continuity_projection(journal.clone(), &"c".repeat(64))
+                .unwrap()
+                .is_none()
+        );
+        let projection = renderer_continuity_projection(journal, &"b".repeat(64))
+            .unwrap()
+            .unwrap();
+        assert_eq!(projection.old_owner_public_key, "a".repeat(64));
+        assert_eq!(projection.new_owner_public_key, "b".repeat(64));
+    }
+
+    #[test]
+    fn renderer_projection_is_public_key_only_and_rejects_corruption() {
+        let projection = renderer_continuity_projection(committed_journal(), &"b".repeat(64))
+            .unwrap()
+            .unwrap();
+        let serialized = serde_json::to_value(projection).unwrap();
+        assert_eq!(serialized.as_object().unwrap().len(), 4);
+        assert!(serialized.get("providerId").is_none());
+        assert!(serialized.get("agents").is_none());
+        assert!(serialized.get("recoveryBackupVerified").is_none());
+
+        let mut corrupt = committed_journal();
+        corrupt.new_owner_public_key = Some("invalid".into());
+        assert_eq!(
+            renderer_continuity_projection(corrupt, "invalid").unwrap_err(),
+            "identity_rotation_journal_corrupt"
+        );
+    }
 }
