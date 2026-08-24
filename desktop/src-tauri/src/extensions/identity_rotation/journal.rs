@@ -175,6 +175,42 @@ pub(crate) fn latest_incomplete(
     Ok(journals.pop())
 }
 
+pub(crate) fn latest_committed_owner_rotation(
+    app: &tauri::AppHandle,
+) -> Result<Option<IdentityRotationJournal>, String> {
+    let mut latest: Option<IdentityRotationJournal> = None;
+    for entry in std::fs::read_dir(journal_root(app)?)
+        .map_err(|error| format!("identity_rotation_journal_unavailable: {error}"))?
+    {
+        let entry =
+            entry.map_err(|error| format!("identity_rotation_journal_unavailable: {error}"))?;
+        if entry.path().extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let bytes = std::fs::read(entry.path())
+            .map_err(|error| format!("identity_rotation_journal_unavailable: {error}"))?;
+        let journal: IdentityRotationJournal = serde_json::from_slice(&bytes)
+            .map_err(|_| "identity_rotation_journal_corrupt".to_string())?;
+        if journal.contract_version != CONTRACT_VERSION {
+            return Err("identity_rotation_journal_corrupt".into());
+        }
+        let rotates_owner = journal
+            .new_owner_public_key
+            .as_ref()
+            .is_some_and(|new_key| new_key != &journal.old_owner_public_key);
+        if !journal.committed_locally || !rotates_owner {
+            continue;
+        }
+        if latest
+            .as_ref()
+            .is_none_or(|current| journal.updated_at > current.updated_at)
+        {
+            latest = Some(journal);
+        }
+    }
+    Ok(latest)
+}
+
 fn validate_public_journal(journal: &IdentityRotationJournal) -> Result<(), String> {
     let serialized = serde_json::to_string(journal)
         .map_err(|_| "identity_rotation_journal_serialize_failed".to_string())?;

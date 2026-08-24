@@ -13,6 +13,6 @@ pub(crate) use handoff::{
     IdentityRotationExtensionState,
 };
 pub(crate) use workflow::{
-    abort_identity_rotation, identity_rotation_status, inspect_identity_rotation_handoff,
-    run_identity_rotation,
+    abort_identity_rotation, identity_rotation_renderer_continuity, identity_rotation_status,
+    inspect_identity_rotation_handoff, run_identity_rotation,
 };

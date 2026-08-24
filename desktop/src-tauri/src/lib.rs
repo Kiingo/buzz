@@ -64,7 +64,8 @@ use deep_link::{
     PendingNavigationDeepLinks,
 };
 use extensions::{
-    abort_identity_rotation, acknowledge_pending_identity_rotation, identity_rotation_status,
+    abort_identity_rotation, acknowledge_pending_identity_rotation,
+    identity_rotation_renderer_continuity, identity_rotation_status,
     inspect_identity_rotation_handoff, run_identity_rotation, take_pending_identity_rotation,
     IdentityRotationExtensionState,
 };
@@ -543,6 +544,7 @@ pub fn run() {
             acknowledge_pending_entity_deep_link,
             take_pending_identity_rotation,
             acknowledge_pending_identity_rotation,
+            identity_rotation_renderer_continuity,
             identity_rotation_status,
             inspect_identity_rotation_handoff,
             run_identity_rotation,
