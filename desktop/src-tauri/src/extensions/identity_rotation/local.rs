@@ -208,6 +208,34 @@ pub(super) fn commit_local(
     agents: &[StagedAgent],
     status: &CoordinatorStatus,
 ) -> Result<(), String> {
+    // Validate the entire coordinator lineage before changing the human key.
+    // A partial provider response must never leave the owner committed while
+    // an agent deployment cannot be durably associated with its replacement.
+    for agent in agents {
+        let replacement_public_key = agent.new.public_key().to_hex();
+        let journal_item = journal
+            .agents
+            .iter()
+            .find(|item| item.old_public_key == agent.old_public_key)
+            .ok_or_else(|| "identity_rotation_journal_corrupt".to_string())?;
+        let status_item = status
+            .items
+            .iter()
+            .find(|item| item.old_public_key == agent.old_public_key)
+            .ok_or_else(|| "identity_rotation_coordinator_response_invalid".to_string())?;
+        if status_item.new_public_key.as_deref() != Some(replacement_public_key.as_str())
+            || status_item.hosted != journal_item.hosted
+            || status_item.old_provider_agent_id.as_deref()
+                != journal_item.old_provider_agent_id.as_deref()
+            || (agent.hosted
+                && status_item
+                    .new_provider_agent_id
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty()))
+        {
+            return Err("identity_rotation_coordinator_response_invalid".into());
+        }
+    }
     let state = app.state::<AppState>();
     if !matches!(journal.mode, RotationMode::Agent) {
         let _mutation = state.identity_mutation.lock().map_err(|e| e.to_string())?;
@@ -247,6 +275,12 @@ pub(super) fn commit_local(
             .find(|item| item.old_public_key == agent.old_public_key)
         {
             record.backend_agent_id = item.new_provider_agent_id.clone();
+            let journal_item = journal
+                .agents
+                .iter_mut()
+                .find(|journal_item| journal_item.old_public_key == agent.old_public_key)
+                .ok_or_else(|| "identity_rotation_journal_corrupt".to_string())?;
+            journal_item.new_provider_agent_id = item.new_provider_agent_id.clone();
         }
         record.updated_at = chrono::Utc::now().to_rfc3339();
     }

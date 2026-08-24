@@ -24,6 +24,7 @@ use super::{
         store_resume_token,
     },
     handoff::{IdentityRotationExtensionState, IdentityRotationHandoff},
+    inventory::{reconcile_postcommit_provider_lineage, selected_records},
     journal::{
         self, ContinuityJournal, IdentityRotationJournal, RotationAgentJournal, RotationMode,
     },
@@ -158,93 +159,6 @@ pub(crate) async fn inspect_identity_rotation_handoff(
             .count(),
         agent_names: selected.iter().map(|record| record.name.clone()).collect(),
         recovery_backup_required: !matches!(plan.mode, RotationMode::Agent),
-    })
-}
-
-fn selected_records(
-    plan: &DesktopPlan,
-    records: &[ManagedAgentRecord],
-    journal: Option<&IdentityRotationJournal>,
-) -> Result<Vec<ManagedAgentRecord>, String> {
-    let candidates: Vec<_> = records
-        .iter()
-        .filter(|record| record_is_in_plan_scope(plan, record))
-        .cloned()
-        .collect();
-    let selected = match (&plan.mode, journal) {
-        (RotationMode::Human, _) => Vec::new(),
-        (_, Some(journal)) => journal
-            .agents
-            .iter()
-            .map(|item| {
-                records
-                    .iter()
-                    .find(|record| {
-                        record.pubkey == item.old_public_key
-                            || (!item.new_public_key.is_empty()
-                                && record.pubkey == item.new_public_key)
-                    })
-                    .cloned()
-                    .ok_or_else(|| "identity_rotation_local_inventory_changed".to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-        (RotationMode::All, None) => candidates,
-        (RotationMode::Agent, None) => candidates
-            .into_iter()
-            .filter(|record| {
-                Some(record.pubkey.as_str()) == plan.selected_agent_public_key.as_deref()
-            })
-            .collect(),
-    };
-    if matches!(plan.mode, RotationMode::Agent) && selected.len() != 1 {
-        return Err("identity_rotation_selected_agent_unavailable".into());
-    }
-    for hosted in &plan.inventory.hosted_agents {
-        let lineage = journal.and_then(|value| {
-            value
-                .agents
-                .iter()
-                .find(|item| item.old_public_key == hosted.public_key)
-        });
-        let found = selected.iter().find(|record| {
-            if !matches!(&record.backend, BackendKind::Provider { .. }) {
-                return false;
-            }
-            let public_key_matches = record.pubkey == hosted.public_key
-                || lineage.is_some_and(|item| record.pubkey == item.new_public_key);
-            let provider_id_matches = record.backend_agent_id.as_deref()
-                == Some(&hosted.provider_agent_id)
-                || lineage.is_some_and(|item| {
-                    record.backend_agent_id.as_deref() == item.new_provider_agent_id.as_deref()
-                });
-            public_key_matches && provider_id_matches
-        });
-        if found.is_none() {
-            return Err("identity_rotation_hosted_inventory_conflict".into());
-        }
-    }
-    Ok(selected)
-}
-
-fn record_is_in_plan_scope(plan: &DesktopPlan, record: &ManagedAgentRecord) -> bool {
-    match &record.backend {
-        BackendKind::Local => {
-            record.relay_url.trim_end_matches('/') == plan.relay_url.trim_end_matches('/')
-        }
-        BackendKind::Provider { .. } => {
-            hosted_identity_is_in_plan(plan, &record.pubkey, record.backend_agent_id.as_deref())
-        }
-    }
-}
-
-fn hosted_identity_is_in_plan(
-    plan: &DesktopPlan,
-    public_key: &str,
-    provider_agent_id: Option<&str>,
-) -> bool {
-    plan.inventory.hosted_agents.iter().any(|hosted| {
-        public_key == hosted.public_key
-            && provider_agent_id == Some(hosted.provider_agent_id.as_str())
     })
 }
 
@@ -435,6 +349,9 @@ async fn execute_rotation(
             prepared.status
         }
     };
+    if reconcile_postcommit_provider_lineage(&mut journal, &records, &status)? {
+        journal::save(app, &mut journal)?;
+    }
     if status.state == "recoverable" {
         emit_progress(
             app,
@@ -607,7 +524,15 @@ async fn execute_rotation(
             false,
             None,
         );
-        signed_owner_relay_canary(&state, &journal.relay_url, &new_owner).await?;
+        signed_owner_relay_canary(&state, &journal.relay_url, &new_owner)
+            .await
+            .map_err(|error| {
+                if super::coordinator::is_public_rotation_error_code(&error) {
+                    error
+                } else {
+                    "identity_rotation_owner_canary_failed".to_string()
+                }
+            })?;
         emit_progress(
             app,
             &journal.rotation_id,
@@ -616,7 +541,15 @@ async fn execute_rotation(
             false,
             None,
         );
-        hosted_canary(&state, &journal, &new_owner, &status).await?;
+        hosted_canary(&state, &journal, &new_owner, &status)
+            .await
+            .map_err(|error| {
+                if super::coordinator::is_public_rotation_error_code(&error) {
+                    error
+                } else {
+                    "identity_rotation_hosted_canary_failed".to_string()
+                }
+            })?;
         for item in &mut journal.agents {
             if item.hosted {
                 item.canary_verified = true;
@@ -795,8 +728,11 @@ pub(crate) async fn run_identity_rotation(
     match execute_rotation(&app, handoff, passphrase).await {
         Ok(journal) => Ok(journal),
         Err(code) => {
-            let public_code = public_rotation_error_code(&code);
+            let mut public_code = public_rotation_error_code(&code);
             if let Ok(Some(mut journal)) = journal::load(&app, &rotation_id) {
+                if public_code == "identity_rotation_internal" && journal.committed_locally {
+                    public_code = "identity_rotation_postcommit_internal".into();
+                }
                 // The local journal remains authoritative when the network is
                 // unavailable. When reachable, mirror the pause to the
                 // coordinator so another launch resumes the exact checkpoint.
@@ -885,49 +821,4 @@ pub(crate) async fn abort_identity_rotation(
         None,
     );
     Ok(journal)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn plan() -> DesktopPlan {
-        DesktopPlan {
-            contract_version: 1,
-            rotation_id: "00000000-0000-4000-8000-000000000001".into(),
-            mode: RotationMode::All,
-            community_id: "chat.example.com".into(),
-            relay_url: "wss://chat.example.com".into(),
-            old_owner_public_key: "owner".into(),
-            selected_agent_public_key: None,
-            challenge_expires_at: "2099-01-01T00:00:00Z".into(),
-            inventory: super::super::coordinator::Inventory {
-                hosted_agents: vec![super::super::coordinator::HostedInventory {
-                    public_key: "hosted-key".into(),
-                    provider_agent_id: "provider-agent-id".into(),
-                }],
-            },
-        }
-    }
-
-    #[test]
-    fn relayless_hosted_identity_is_scoped_by_exact_inventory_pair() {
-        let plan = plan();
-        assert!(hosted_identity_is_in_plan(
-            &plan,
-            "hosted-key",
-            Some("provider-agent-id")
-        ));
-        assert!(!hosted_identity_is_in_plan(
-            &plan,
-            "hosted-key",
-            Some("different-provider-agent-id")
-        ));
-        assert!(!hosted_identity_is_in_plan(
-            &plan,
-            "different-hosted-key",
-            Some("provider-agent-id")
-        ));
-        assert!(!hosted_identity_is_in_plan(&plan, "hosted-key", None));
-    }
 }

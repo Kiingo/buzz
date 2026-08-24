@@ -256,11 +256,66 @@ test("resume handoffs preserve the exact scope and invoke the existing handoff i
   fireEvent.click(
     screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
   );
+  fireEvent.click(screen.getByRole("button", { name: /resume rotation/i }));
+  await waitFor(() => assert.equal(request?.handoffId, "handoff-resume"));
+  assert.equal(request.recoveryPassphrase, null);
+});
+
+test("post-commit inventory conflicts explain the durable recovery boundary", async () => {
+  const resumed = { ...handoff, id: "handoff-resume", resume: true };
+  handlers.set("take_pending_identity_rotation", () => resumed);
+  handlers.set("inspect_identity_rotation_handoff", () =>
+    Promise.reject("identity_rotation_postcommit_hosted_inventory_conflict"),
+  );
+  handlers.set("plugin:event|listen", ({ event, handler }) => {
+    eventHandlers.set(event, callbacks.get(handler));
+    return handler;
+  });
+  handlers.set("plugin:event|unlisten", () => null);
+
+  renderExtension();
+  await screen.findByText(/replacement identity is already active/i);
+  assert.match(
+    document.body.textContent,
+    /prior authority has not been purged/i,
+  );
+  assert.match(document.body.textContent, /do not start another rotation/i);
+  assert.match(
+    document.body.textContent,
+    /support code: identity_rotation_postcommit_hosted_inventory_conflict/i,
+  );
+});
+
+test("post-commit internal failures never claim that the old key is still the active local key", async () => {
+  setup({
+    mode: "agent",
+    managedAgentCount: 1,
+    hostedAgentCount: 1,
+    agentNames: ["High Agency"],
+    recoveryBackupRequired: false,
+  });
+  handlers.set("run_identity_rotation", () =>
+    Promise.reject("identity_rotation_postcommit_internal"),
+  );
+
+  renderExtension();
+  await screen.findByLabelText("Verified rotation scope");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
+  );
   fireEvent.click(
     screen.getByRole("button", { name: /verify backup and rotate/i }),
   );
-  await waitFor(() => assert.equal(request?.handoffId, "handoff-resume"));
-  assert.equal(request.recoveryPassphrase, null);
+
+  await screen.findByText(/after committing the replacement identity locally/i);
+  assert.match(
+    document.body.textContent,
+    /prior authority has not been purged/i,
+  );
+  assert.equal(
+    document.body.textContent.includes("old keys remain active"),
+    false,
+  );
 });
 
 test("command failures render actionable guidance instead of a raw internal fallback", async () => {
