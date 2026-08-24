@@ -366,6 +366,26 @@ pub(super) fn restart_original_local_runtimes(
     Ok(())
 }
 
+fn build_hosted_canary_message(
+    channel: uuid::Uuid,
+    token: &str,
+    agent: &str,
+    relay_url: &str,
+) -> Result<nostr::EventBuilder, String> {
+    crate::events::build_message(
+        channel,
+        &format!("Reply with this exact token only: {token}"),
+        None,
+        &[agent],
+        &[],
+        &[],
+        &[],
+        &[],
+        None,
+        relay_url,
+    )
+}
+
 pub(super) async fn hosted_canary(
     state: &AppState,
     journal: &IdentityRotationJournal,
@@ -399,18 +419,7 @@ pub(super) async fn hosted_canary(
         let token = format!("rotation-canary-{}", uuid::Uuid::new_v4());
         let since = chrono::Utc::now().timestamp().max(0) as u64;
         submit_event_at_with_keys(
-            crate::events::build_message(
-                channel,
-                &format!("Reply with this exact token only: {token}"),
-                None,
-                &[],
-                &[],
-                &[],
-                &[],
-                &[],
-                None,
-                &journal.relay_url,
-            )?,
+            build_hosted_canary_message(channel, &token, agent, &journal.relay_url)?,
             state,
             &base,
             owner,
@@ -449,4 +458,31 @@ pub(super) fn purge_old_agent_keys(agents: &[StagedAgent]) -> Result<(), String>
         try_delete_agent_key(&agent.old_public_key)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hosted_canary_explicitly_mentions_its_target_agent() {
+        let channel = uuid::Uuid::new_v4();
+        let agent = "11".repeat(32);
+        let token = "rotation-canary-test";
+        let event =
+            build_hosted_canary_message(channel, token, &agent, "wss://community.example.test")
+                .expect("canary message should build")
+                .sign_with_keys(&Keys::generate())
+                .expect("canary message should sign");
+
+        assert_eq!(
+            event.content,
+            format!("Reply with this exact token only: {token}")
+        );
+        assert!(event.tags.iter().any(|tag| {
+            let values = tag.as_slice();
+            values.first().map(String::as_str) == Some("p")
+                && values.get(1).map(String::as_str) == Some(agent.as_str())
+        }));
+    }
 }
