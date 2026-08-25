@@ -118,6 +118,7 @@
         "desktop/src-tauri/src/extensions/identity_rotation/local.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/journal.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/crypto.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/channel_role_policy.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/continuity.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/archive_lineage.rs"
       ],
@@ -257,6 +258,7 @@
         "desktop/src-tauri/src/extensions/identity_rotation/journal.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/crypto.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/provider.rs",
+        "desktop/src-tauri/src/extensions/identity_rotation/channel_role_policy.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/continuity.rs",
         "desktop/src-tauri/src/extensions/identity_rotation/archive_lineage.rs",
         "desktop/src/extensions/identity-rotation/IdentityRotationExtension.tsx",

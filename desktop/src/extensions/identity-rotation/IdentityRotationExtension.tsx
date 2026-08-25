@@ -84,6 +84,10 @@ const ROTATION_ERROR_MESSAGES: Record<string, string> = {
     "A replacement identity already has a different relay role. Your old keys remain active; Kiingo must reconcile the conflicting role before you resume.",
   identity_rotation_channel_membership_role_conflict:
     "A replacement identity already has a different channel role. Your old keys remain active; reconcile that role before resuming.",
+  identity_rotation_channel_owner_handoff_failed:
+    "Buzz could not transfer a channel's final owner role to the replacement identity. The prior authority has not been purged. Reconcile that channel owner, then resume this same rotation.",
+  identity_rotation_old_channel_revocation_failed:
+    "Buzz could not remove a prior identity from one of its channels after verifying the replacement role. The prior authority has not been purged. Contact Kiingo support before resuming this same rotation.",
   identity_rotation_relay_membership_admin_required:
     "This relay membership change requires the Kiingo membership controller. Your old keys remain active; update Buzz and resume after the controller is available.",
   identity_rotation_relay_owner_transfer_required:

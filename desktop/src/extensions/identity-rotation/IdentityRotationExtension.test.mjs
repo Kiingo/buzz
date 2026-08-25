@@ -350,6 +350,38 @@ test("post-commit archive authority failures identify the source-authority bound
   );
 });
 
+test("post-commit channel owner handoff failures explain the blocked authority transfer", async () => {
+  setup({
+    mode: "all",
+    managedAgentCount: 2,
+    hostedAgentCount: 1,
+    agentNames: ["High Agency", "Fizz"],
+    recoveryBackupRequired: false,
+  });
+  handlers.set("run_identity_rotation", () =>
+    Promise.reject("identity_rotation_channel_owner_handoff_failed"),
+  );
+
+  renderExtension();
+  await screen.findByLabelText("Verified rotation scope");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /verify backup and rotate/i }),
+  );
+
+  await screen.findByText(/could not transfer a channel's final owner role/i);
+  assert.match(
+    document.body.textContent,
+    /prior authority has not been purged/i,
+  );
+  assert.match(
+    document.body.textContent,
+    /support code: identity_rotation_channel_owner_handoff_failed/i,
+  );
+});
+
 test("command failures render actionable guidance instead of a raw internal fallback", async () => {
   setup({
     mode: "agent",
