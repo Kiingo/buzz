@@ -318,6 +318,38 @@ test("post-commit internal failures never claim that the old key is still the ac
   );
 });
 
+test("post-commit archive authority failures identify the source-authority boundary", async () => {
+  setup({
+    mode: "all",
+    managedAgentCount: 2,
+    hostedAgentCount: 1,
+    agentNames: ["High Agency", "Fizz"],
+    recoveryBackupRequired: false,
+  });
+  handlers.set("run_identity_rotation", () =>
+    Promise.reject("identity_rotation_archive_source_authority_unavailable"),
+  );
+
+  renderExtension();
+  await screen.findByLabelText("Verified rotation scope");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /verify backup and rotate/i }),
+  );
+
+  await screen.findByText(/prior identity is not yet available/i);
+  assert.match(
+    document.body.textContent,
+    /prior authority has not been purged/i,
+  );
+  assert.match(
+    document.body.textContent,
+    /support code: identity_rotation_archive_source_authority_unavailable/i,
+  );
+});
+
 test("command failures render actionable guidance instead of a raw internal fallback", async () => {
   setup({
     mode: "agent",

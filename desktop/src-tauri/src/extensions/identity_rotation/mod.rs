@@ -1,3 +1,4 @@
+mod archive_lineage;
 mod continuity;
 mod coordinator;
 mod crypto;

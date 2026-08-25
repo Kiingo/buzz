@@ -12,7 +12,8 @@ use crate::{
 use super::{
     continuity::{
         archive_old_identities, clone_profiles, finalize_evidence, migrate_agent_memory,
-        migrate_memberships, revoke_old_authorities, signed_owner_relay_canary, RotationIdentity,
+        migrate_memberships, revoke_old_channel_authorities, signed_owner_relay_canary,
+        verify_old_relay_authorities_revoked, RotationIdentity,
     },
     coordinator::{
         advance, continuity_value, coordinator_status, prepare_coordinator,
@@ -661,6 +662,10 @@ async fn execute_rotation(
             item.archive_verified = item.archive_event_id.is_some();
         }
         finalize_evidence(&mut journal.continuity)?;
+        // Archive lineage is a durable, idempotent checkpoint. Persist it
+        // before any authority removal so a crash never discards verified
+        // relay evidence or repeats destructive work blindly.
+        journal::save(app, &mut journal)?;
         emit_progress(
             app,
             &journal.rotation_id,
@@ -675,7 +680,7 @@ async fn execute_rotation(
             old_auth_tag: None,
             new_auth_tag: None,
         };
-        revoke_old_authorities(&state, &journal.relay_url, &owner_pair, &pairs).await?;
+        revoke_old_channel_authorities(&state, &journal.relay_url, &owner_pair, &pairs).await?;
         status = advance(AdvanceRequest {
             state: &state,
             provider: &provider,
@@ -692,6 +697,39 @@ async fn execute_rotation(
     }
 
     if status.state == "old_revoked" {
+        let mut pairs = Vec::new();
+        if !matches!(journal.mode, RotationMode::Agent) {
+            pairs.push(RotationIdentity {
+                old: &old_owner,
+                new: &new_owner,
+                old_auth_tag: None,
+                new_auth_tag: None,
+            });
+        }
+        for agent in &staged {
+            pairs.push(RotationIdentity {
+                old: &agent.old,
+                new: &agent.new,
+                old_auth_tag: Some(&agent.old_auth_tag),
+                new_auth_tag: Some(&agent.new_auth_tag),
+            });
+        }
+        let owner_pair = RotationIdentity {
+            old: &old_owner,
+            new: &new_owner,
+            old_auth_tag: None,
+            new_auth_tag: None,
+        };
+        emit_progress(
+            app,
+            &journal.rotation_id,
+            "old_revoked",
+            "Verifying every prior relay identity is explicitly denied...",
+            false,
+            None,
+        );
+        verify_old_relay_authorities_revoked(&state, &journal.relay_url, &owner_pair, &pairs)
+            .await?;
         emit_progress(
             app,
             &journal.rotation_id,

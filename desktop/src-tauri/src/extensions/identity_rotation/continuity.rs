@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind, Tag};
+use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind};
 use reqwest::Method;
 use serde::Serialize;
 
@@ -14,7 +14,9 @@ use crate::{
     },
 };
 
-use super::{crypto::sha256_hex, journal::ContinuityJournal};
+use super::{
+    archive_lineage::verify_archive_lineage, crypto::sha256_hex, journal::ContinuityJournal,
+};
 
 fn guarded_event_body(event: &Event) -> Result<Vec<u8>, String> {
     let body = event.as_json().into_bytes();
@@ -571,38 +573,57 @@ pub(crate) async fn archive_old_identities(
             identity.old,
             identity.old_auth_tag,
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            if error.starts_with("relay unreachable:") {
+                "identity_rotation_relay_unreachable".to_string()
+            } else if error.starts_with("relay returned 401")
+                || error.starts_with("relay returned 403")
+            {
+                "identity_rotation_archive_source_authority_unavailable".to_string()
+            } else {
+                "identity_rotation_archive_publish_failed".to_string()
+            }
+        })?;
         let verified = query_relay_at_with_keys(
             state,
             &base,
-            &[serde_json::json!({"kinds": [13535], "#p": [old], "limit": 1})],
+            &[
+                serde_json::json!({"kinds": [13535], "#p": [old], "limit": 1}),
+                serde_json::json!({"kinds": [8002], "#p": [old], "limit": 100}),
+            ],
             identity.new,
             identity.new_auth_tag,
         )
-        .await?;
-        let verified_event = verified.iter().find(|event| {
-            event.id.to_hex() == published.event_id
-                && event.tags.iter().any(|tag| {
-                    let values = tag.as_slice();
-                    values.first().map(String::as_str) == Some("replaced-by")
-                        && values.get(1).map(String::as_str) == Some(new.as_str())
-                })
-        });
-        let verified_event = verified_event
-            .ok_or_else(|| "identity_rotation_archive_verification_failed".to_string())?;
-        verified_event
-            .verify()
-            .map_err(|_| "identity_rotation_archive_verification_failed".to_string())?;
+        .await
+        .map_err(|_| "identity_rotation_archive_verification_failed".to_string())?;
+        verify_archive_lineage(&verified, &old, &new, &published.event_id)?;
         verified_event_ids.insert(old, published.event_id);
     }
     Ok(verified_event_ids)
 }
 
-/// Remove every prior identity from its canonical channel and relay roles
-/// after replacement canaries succeed. Each authoritative snapshot is read
-/// back with the new owner, and one denied write proves the old key no longer
-/// has usable channel authority.
-pub(crate) async fn revoke_old_authorities(
+fn is_authority_denial(error: &str) -> bool {
+    error.starts_with("relay returned 401") || error.starts_with("relay returned 403")
+}
+
+fn classify_denial_probe(error: &str) -> Result<(), String> {
+    if is_authority_denial(error) {
+        Ok(())
+    } else if error.starts_with("relay unreachable:") {
+        Err("identity_rotation_relay_unreachable".into())
+    } else {
+        Err("identity_rotation_revocation_verification_unavailable".into())
+    }
+}
+
+/// Remove every prior identity from its canonical channels while the
+/// coordinator deliberately keeps the prior relay authority available for
+/// self-signed archive and leave operations. Each authoritative snapshot is
+/// read back with the committed owner. Snapshot absence is the authority proof:
+/// an open channel may still allow ordinary non-member messages, so a message
+/// rejection would not be a valid universal membership test.
+pub(crate) async fn revoke_old_channel_authorities(
     state: &AppState,
     relay_url: &str,
     owner: &RotationIdentity<'_>,
@@ -643,63 +664,51 @@ pub(crate) async fn revoke_old_authorities(
             if channel_roles(&verified, &old).contains_key(channel_id) {
                 return Err("identity_rotation_old_channel_authority_present".into());
             }
-            let probe = events::build_message(
-                channel,
-                "identity-rotation-revocation-probe",
-                None,
-                &[],
-                &[],
-                &[],
-                &[],
-                &[],
-                None,
-                relay_url,
-            )?;
-            if submit_event_at_with_keys_and_auth(
-                probe,
-                state,
-                &base,
-                identity.old,
-                identity.old_auth_tag,
-            )
-            .await
-            .is_ok()
-            {
-                return Err("identity_rotation_old_channel_write_allowed".into());
-            }
         }
-        let relay_before = relay_membership_snapshot(state, &base, owner.new).await?;
-        if let Some(role) = relay_role(&relay_before, &old) {
-            if role == "owner" {
-                return Err("identity_rotation_relay_owner_transfer_required".into());
-            }
-            let leave = EventBuilder::new(Kind::Custom(28_936), "").tags([Tag::parse(["-"])
-                .map_err(|_| "identity_rotation_relay_leave_build_failed".to_string())?]);
-            submit_event_at_with_keys_and_auth(
-                leave,
+        revoked += 1;
+    }
+    Ok(revoked)
+}
+
+/// After the coordinator enters `old_revoked`, its privileged membership
+/// controller removes the predecessor identities without a desktop race. Poll
+/// the canonical roster, then require an explicit authorization denial from
+/// every old identity. Connectivity and protocol failures are never accepted
+/// as revocation evidence.
+pub(crate) async fn verify_old_relay_authorities_revoked(
+    state: &AppState,
+    relay_url: &str,
+    owner: &RotationIdentity<'_>,
+    identities: &[RotationIdentity<'_>],
+) -> Result<u32, String> {
+    let base = relay_http_base_url(relay_url);
+    let mut revoked = 0u32;
+    for identity in identities {
+        let old = identity.old.public_key().to_hex();
+        let mut absent = false;
+        for _ in 0..30 {
+            let relay = query_relay_at_with_keys(
                 state,
                 &base,
-                identity.old,
-                identity.old_auth_tag,
+                &[serde_json::json!({"kinds": [13534], "limit": 1})],
+                owner.new,
+                owner.new_auth_tag,
             )
             .await?;
+            if relay
+                .first()
+                .and_then(|event| relay_role(event, &old))
+                .is_none()
+            {
+                absent = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
-        let relay = query_relay_at_with_keys(
-            state,
-            &base,
-            &[serde_json::json!({"kinds": [13534], "limit": 1})],
-            owner.new,
-            owner.new_auth_tag,
-        )
-        .await?;
-        if relay
-            .first()
-            .and_then(|event| relay_role(event, &old))
-            .is_some()
-        {
-            return Err("identity_rotation_old_relay_authority_present".into());
+        if !absent {
+            return Err("identity_rotation_membership_controller_timeout".into());
         }
-        if query_relay_at_with_keys(
+        match query_relay_at_with_keys(
             state,
             &base,
             &[serde_json::json!({"kinds": [13534], "limit": 1})],
@@ -707,9 +716,9 @@ pub(crate) async fn revoke_old_authorities(
             identity.old_auth_tag,
         )
         .await
-        .is_ok()
         {
-            return Err("identity_rotation_old_relay_auth_allowed".into());
+            Ok(_) => return Err("identity_rotation_old_relay_auth_allowed".into()),
+            Err(error) => classify_denial_probe(&error)?,
         }
         revoked += 1;
     }
@@ -900,5 +909,18 @@ mod tests {
             values.first().map(String::as_str) == Some("replaced-by")
                 && values.get(1) == Some(&replacement.public_key().to_hex())
         }));
+    }
+
+    #[test]
+    fn denial_probe_requires_an_explicit_authorization_failure() {
+        assert!(classify_denial_probe("relay returned 403 Forbidden").is_ok());
+        assert_eq!(
+            classify_denial_probe("relay unreachable: request timed out"),
+            Err("identity_rotation_relay_unreachable".into())
+        );
+        assert_eq!(
+            classify_denial_probe("malformed relay response"),
+            Err("identity_rotation_revocation_verification_unavailable".into())
+        );
     }
 }
