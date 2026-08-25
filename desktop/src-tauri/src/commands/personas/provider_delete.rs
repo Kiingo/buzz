@@ -389,11 +389,7 @@ mod tests {
         let mut provider_inspections = 0;
         let result = require_confirmed_delete_preflight("persona-1", &targets, |provider_id| {
             provider_inspections += 1;
-            if provider_id == "confirmed" {
-                true
-            } else {
-                false
-            }
+            provider_id == "confirmed"
         });
         assert!(result.is_err());
         assert_eq!(provider_inspections, 2);
