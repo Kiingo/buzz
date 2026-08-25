@@ -165,6 +165,70 @@ fn validate_confirmed_delete_response(
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    fn write_test_provider(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::write(path, format!("#!/bin/sh\nset -eu\n{body}\n")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confirmed_delete_invokes_the_same_staged_provider_with_an_exact_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider = directory.path().join("provider");
+        let paths = directory.path().join("paths");
+        let requests = directory.path().join("requests");
+        let body = format!(
+            r#"read request
+printf '%s\n' "$0" >> '{}'
+printf '%s\n' "$request" >> '{}'
+case "$request" in
+  *\"op\":\"info\"*) printf '%s\n' '{{"ok":true,"name":"test","version":"2.0.0","protocol_version":2,"description":"test provider","config_schema":{{}},"capabilities":{{"lifecycle_operations":["delete"]}}}}' ;;
+  *\"op\":\"delete\"*) printf '%s\n' '{{"ok":true,"deleted":true,"agent_id":"remote-1"}}' ;;
+esac"#,
+            paths.display(),
+            requests.display()
+        );
+        write_test_provider(&provider, &body);
+
+        let prepared = prepare_provider_delete(&provider).expect("prepared provider");
+        std::fs::write(&provider, "source pathname replaced after staging").unwrap();
+        prepared
+            .confirm_delete(
+                "11111111-1111-4111-8111-111111111111",
+                "remote-1",
+                serde_json::json!({"signed": "owner-proof"}),
+            )
+            .expect("terminal confirmation");
+
+        let invoked_paths = std::fs::read_to_string(paths)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(invoked_paths.len(), 2);
+        assert_eq!(invoked_paths[0], invoked_paths[1]);
+        assert_ne!(Path::new(&invoked_paths[0]), provider);
+
+        let requests = std::fs::read_to_string(requests)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[1],
+            serde_json::json!({
+                "op": "delete",
+                "request_id": "11111111-1111-4111-8111-111111111111",
+                "agent_id": "remote-1",
+                "owner_proof": {"signed": "owner-proof"}
+            })
+        );
+    }
+
     #[test]
     fn owner_proof_is_exact_fresh_and_signed() {
         let keys = Keys::generate();

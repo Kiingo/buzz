@@ -85,6 +85,21 @@ fn manual_workflow_error(persona_id: &str, targets: &[ProviderCascadeTarget]) ->
     )
 }
 
+fn require_confirmed_delete_preflight(
+    persona_id: &str,
+    targets: &[ProviderCascadeTarget],
+    mut supports_confirmed_delete: impl FnMut(&str) -> bool,
+) -> Result<(), String> {
+    if targets
+        .iter()
+        .all(|target| supports_confirmed_delete(&target.provider_id))
+    {
+        Ok(())
+    } else {
+        Err(manual_workflow_error(persona_id, targets))
+    }
+}
+
 fn run_remote_deletes<T>(
     targets: &[T],
     mut invoke: impl FnMut(&T) -> Result<(), String>,
@@ -189,13 +204,11 @@ pub(super) async fn delete_persona(id: String, app: AppHandle) -> Result<(), Str
                 providers.insert(target.provider_id.clone(), prepared);
             }
         }
-        if targets.iter().any(|target| {
-            providers.get(&target.provider_id).is_none_or(|provider| {
-                provider.protocol_version() != 2 || !provider.supports_confirmed_delete()
+        require_confirmed_delete_preflight(&id, &targets, |provider_id| {
+            providers.get(provider_id).is_some_and(|provider| {
+                provider.protocol_version() == 2 && provider.supports_confirmed_delete()
             })
-        }) {
-            return Err(manual_workflow_error(&id, &targets));
-        }
+        })?;
 
         let mut confirmed_owner: Option<String> = None;
         let mut confirmed_workspace_relay: Option<String> = None;
@@ -373,6 +386,17 @@ mod tests {
             manual_workflow_error("persona-1", &targets),
             "persona persona-1 has provider-deployed agent instances (v1, v2); delete those agent instances first"
         );
+        let mut provider_inspections = 0;
+        let result = require_confirmed_delete_preflight("persona-1", &targets, |provider_id| {
+            provider_inspections += 1;
+            if provider_id == "confirmed" {
+                true
+            } else {
+                false
+            }
+        });
+        assert!(result.is_err());
+        assert_eq!(provider_inspections, 2);
     }
 
     #[test]
@@ -389,6 +413,36 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(invoked, vec!["first", "second"]);
+
+        invoked.clear();
+        run_remote_deletes(&targets, |target| {
+            invoked.push(*target);
+            Ok(())
+        })
+        .expect("retry after partial remote success");
+        assert_eq!(invoked, targets);
+    }
+
+    #[test]
+    fn successful_remote_sequence_allows_the_existing_cascade_commit() {
+        let mut agents = vec![record("remote", Some("confirmed")), record("local", None)];
+        let cascade: HashSet<String> = agents.iter().map(|agent| agent.pubkey.clone()).collect();
+        let targets = provider_cascade_targets(&agents, &cascade);
+        let mut remote_confirmations = Vec::new();
+        run_remote_deletes(&targets, |target| {
+            remote_confirmations.push(target.fingerprint.pubkey.clone());
+            Ok(())
+        })
+        .expect("all remote confirmations");
+        let mut persisted = false;
+        commit_cascade_agents(&mut agents, &cascade, |_| {
+            persisted = true;
+            Ok(())
+        })
+        .expect("local cascade commit");
+        assert_eq!(remote_confirmations, ["remote"]);
+        assert!(persisted);
+        assert!(agents.is_empty());
     }
 
     #[test]

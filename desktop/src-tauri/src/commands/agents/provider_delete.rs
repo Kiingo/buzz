@@ -57,6 +57,32 @@ fn legacy_delete_guard(force_remote_delete: bool) -> Result<(), String> {
     }
 }
 
+fn confirmed_delete_required(
+    protocol_version: u64,
+    supports_confirmed_delete: bool,
+    force_remote_delete: bool,
+) -> Result<bool, String> {
+    match protocol_version {
+        1 => {
+            legacy_delete_guard(force_remote_delete)?;
+            Ok(false)
+        }
+        2 if supports_confirmed_delete => Ok(true),
+        2 => Err(
+            "does not advertise confirmed delete; delete the remote agent first".to_string(),
+        ),
+        version => Err(format!("unsupported provider protocol version {version}")),
+    }
+}
+
+fn remote_delete_then_local_commit<T, U>(
+    confirm_remote: impl FnOnce() -> Result<T, String>,
+    commit_local: impl FnOnce(T) -> Result<U, String>,
+) -> Result<U, String> {
+    let confirmation = confirm_remote()?;
+    commit_local(confirmation)
+}
+
 pub(super) async fn delete_managed_agent(
     pubkey: String,
     force_remote_delete: Option<bool>,
@@ -93,51 +119,64 @@ pub(super) async fn delete_managed_agent(
         };
         let fingerprint = AgentDeleteFingerprint::from(&snapshot);
 
-        let mut confirmed_owner: Option<String> = None;
-        let mut confirmed_relay: Option<String> = None;
-        if let (
-            BackendKind::Provider { id: provider_id, .. },
-            Some(provider_agent_id),
-        ) = (&snapshot.backend, snapshot.backend_agent_id.as_deref())
-        {
-            let binary = resolve_provider_binary(provider_id)?;
-            let prepared = prepare_provider_delete(&binary)?;
-            if prepared.protocol_version() == 1 {
-                legacy_delete_guard(force_remote_delete.unwrap_or(false))?;
-            } else if !prepared.supports_confirmed_delete() {
-                return Err(format!(
-                    "provider {provider_id} does not advertise confirmed delete; delete the remote agent first"
-                ));
-            } else {
-                // Provider inspection and deletion use the same staged bytes.
-                // The proof contains no URL, revision, or provider lifecycle state.
-                let owner_keys = state.signing_keys()?;
-                let owner_public_key = owner_keys.public_key().to_hex();
-                let effective_relay = effective_agent_relay_url(
-                    &snapshot.relay_url,
-                    &relay_ws_url_with_override(&state),
-                );
-                let community_id = community_id_from_relay(&effective_relay)?;
-                let request_id = uuid::Uuid::new_v4().to_string();
-                let owner_proof = build_provider_delete_owner_proof(
-                    &owner_keys,
-                    provider_id,
-                    &request_id,
-                    provider_agent_id,
-                    &community_id,
-                )?;
-                prepared
-                    .confirm_delete(&request_id, provider_agent_id, owner_proof)
+        remote_delete_then_local_commit(
+            || {
+                let mut confirmed_owner: Option<String> = None;
+                let mut confirmed_relay: Option<String> = None;
+                if let (
+                    BackendKind::Provider {
+                        id: provider_id, ..
+                    },
+                    Some(provider_agent_id),
+                ) = (&snapshot.backend, snapshot.backend_agent_id.as_deref())
+                {
+                    let binary = resolve_provider_binary(provider_id)?;
+                    let prepared = prepare_provider_delete(&binary)?;
+                    let requires_confirmation = confirmed_delete_required(
+                        prepared.protocol_version(),
+                        prepared.supports_confirmed_delete(),
+                        force_remote_delete.unwrap_or(false),
+                    )
                     .map_err(|error| {
-                        format!(
-                            "provider could not confirm deletion of {}: {error}; local state was preserved",
-                            snapshot.name
-                        )
+                        if prepared.protocol_version() == 2 {
+                            format!("provider {provider_id} {error}")
+                        } else {
+                            error
+                        }
                     })?;
-                confirmed_owner = Some(owner_public_key);
-                confirmed_relay = Some(effective_relay);
-            }
-        }
+                    if requires_confirmation {
+                        // Provider inspection and deletion use the same staged bytes.
+                        // The proof contains no URL, revision, or provider lifecycle state.
+                        let owner_keys = state.signing_keys()?;
+                        let owner_public_key = owner_keys.public_key().to_hex();
+                        let effective_relay = effective_agent_relay_url(
+                            &snapshot.relay_url,
+                            &relay_ws_url_with_override(&state),
+                        );
+                        let community_id = community_id_from_relay(&effective_relay)?;
+                        let request_id = uuid::Uuid::new_v4().to_string();
+                        let owner_proof = build_provider_delete_owner_proof(
+                            &owner_keys,
+                            provider_id,
+                            &request_id,
+                            provider_agent_id,
+                            &community_id,
+                        )?;
+                        prepared
+                            .confirm_delete(&request_id, provider_agent_id, owner_proof)
+                            .map_err(|error| {
+                                format!(
+                                    "provider could not confirm deletion of {}: {error}; local state was preserved",
+                                    snapshot.name
+                                )
+                            })?;
+                        confirmed_owner = Some(owner_public_key);
+                        confirmed_relay = Some(effective_relay);
+                    }
+                }
+                Ok((confirmed_owner, confirmed_relay))
+            },
+            |(confirmed_owner, confirmed_relay)| {
 
         // Re-read mutable scope before the local commit. A retry safely
         // rediscovers a terminal provider endpoint after either conflict.
@@ -207,8 +246,10 @@ pub(super) async fn delete_managed_agent(
             tombstone_managed_agent_pending(&app, &state, &pubkey);
             archive_managed_agent_pending(&app, &state, &pubkey, persona_id.as_deref());
         }
-        try_regenerate_nest(&app);
-        Ok(())
+                try_regenerate_nest(&app);
+                Ok(())
+            },
+        )
     })
     .await
     .map_err(|error| format!("spawn_blocking failed: {error}"))?
@@ -252,8 +293,43 @@ mod tests {
     }
 
     #[test]
-    fn only_confirmed_protocol_v1_preserves_the_legacy_force_bypass() {
-        assert!(legacy_delete_guard(false).is_err());
-        assert!(legacy_delete_guard(true).is_ok());
+    fn only_protocol_v1_preserves_the_legacy_force_bypass() {
+        assert!(confirmed_delete_required(1, false, false).is_err());
+        assert_eq!(confirmed_delete_required(1, false, true), Ok(false));
+        assert_eq!(confirmed_delete_required(2, true, false), Ok(true));
+        assert_eq!(confirmed_delete_required(2, true, true), Ok(true));
+        assert!(confirmed_delete_required(2, false, true).is_err());
+    }
+
+    #[test]
+    fn direct_delete_confirms_remote_before_a_successful_local_commit() {
+        let steps = std::cell::RefCell::new(Vec::new());
+        remote_delete_then_local_commit(
+            || {
+                steps.borrow_mut().push("remote");
+                Ok("terminal confirmation")
+            },
+            |confirmation| {
+                assert_eq!(confirmation, "terminal confirmation");
+                steps.borrow_mut().push("local");
+                Ok(())
+            },
+        )
+        .expect("confirmed local commit");
+        assert_eq!(*steps.borrow(), ["remote", "local"]);
+    }
+
+    #[test]
+    fn direct_delete_remote_failure_preserves_local_state_even_with_force() {
+        let mut local_commit_attempted = false;
+        let result = remote_delete_then_local_commit(
+            || Err::<(), _>("remote failure".to_string()),
+            |_| {
+                local_commit_attempted = true;
+                Ok(())
+            },
+        );
+        assert_eq!(result, Err("remote failure".to_string()));
+        assert!(!local_commit_attempted);
     }
 }
