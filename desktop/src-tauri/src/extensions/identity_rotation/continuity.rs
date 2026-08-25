@@ -270,7 +270,7 @@ fn relay_membership_transition(
 async fn ensure_channel_replacement_role(
     state: &AppState,
     base: &str,
-    owner: &RotationIdentity<'_>,
+    authority: &Keys,
     identity: &RotationIdentity<'_>,
     channel_id: &str,
     source_role: &str,
@@ -281,7 +281,7 @@ async fn ensure_channel_replacement_role(
         state,
         base,
         &[serde_json::json!({"kinds": [39002], "#d": [channel_id], "limit": 1})],
-        owner.old,
+        authority,
         None,
     )
     .await?;
@@ -301,14 +301,14 @@ async fn ensure_channel_replacement_role(
                 events::build_add_member(channel, &replacement_public_key, Some(&role))?,
                 state,
                 base,
-                owner.old,
+                authority,
             )
             .await?;
             let verified = query_relay_at_with_keys(
                 state,
                 base,
                 &[serde_json::json!({"kinds": [39002], "#d": [channel_id], "limit": 1})],
-                owner.old,
+                authority,
                 None,
             )
             .await?;
@@ -404,7 +404,7 @@ pub(crate) async fn migrate_memberships(
             ensure_channel_replacement_role(
                 state,
                 &base,
-                owner,
+                owner.old,
                 identity,
                 &channel_id,
                 &channel_role,
@@ -679,7 +679,11 @@ pub(crate) async fn revoke_old_channel_authorities(
             ensure_channel_replacement_role(
                 state,
                 &base,
-                owner,
+                // The replacement owner was promoted and verified by the
+                // immediately preceding continuity pass. Use it for final
+                // reconciliation so removing the predecessor owner first
+                // cannot strand later agent-role checks in private channels.
+                owner.new,
                 identity,
                 channel_id,
                 channel_role,
