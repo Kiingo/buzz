@@ -658,6 +658,7 @@ pub(crate) async fn revoke_old_channel_authorities(
 ) -> Result<u32, String> {
     let base = relay_http_base_url(relay_url);
     let mut revoked = 0u32;
+    let mut predecessor_owner_active = true;
     for identity in identities {
         let old = identity.old.public_key().to_hex();
         let snapshots = query_relay_at_with_keys(
@@ -679,11 +680,15 @@ pub(crate) async fn revoke_old_channel_authorities(
             ensure_channel_replacement_role(
                 state,
                 &base,
-                // The replacement owner was promoted and verified by the
-                // immediately preceding continuity pass. Use it for final
-                // reconciliation so removing the predecessor owner first
-                // cannot strand later agent-role checks in private channels.
-                owner.new,
+                // Keep using the predecessor while it is authoritative so it
+                // can repair even a concurrent role drift on its replacement.
+                // Once that predecessor has left all of its channels, switch
+                // to the already-promoted replacement owner for later agents.
+                if predecessor_owner_active {
+                    owner.old
+                } else {
+                    owner.new
+                },
                 identity,
                 channel_id,
                 channel_role,
@@ -719,6 +724,9 @@ pub(crate) async fn revoke_old_channel_authorities(
             if channel_roles(&verified, &old).contains_key(channel_id) {
                 return Err("identity_rotation_old_channel_authority_present".into());
             }
+        }
+        if identity.old.public_key() == owner.old.public_key() {
+            predecessor_owner_active = false;
         }
         revoked += 1;
     }
