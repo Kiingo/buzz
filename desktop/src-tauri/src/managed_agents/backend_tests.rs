@@ -279,7 +279,7 @@ fn provider_deploy_refuses_mismatch_before_sending_agent_secret() {
     let body = format!(
         r#"read request
 case "$request" in
-  *\"op\":\"info\"*) printf '%s\n' '{{"ok":true,"name":"test","version":"2.0.0","protocol_version":2,"description":"test provider","config_schema":{{}}}}' ;;
+  *\"op\":\"info\"*) printf '%s\n' '{{"ok":true,"name":"test","version":"3.0.0","protocol_version":3,"description":"test provider","config_schema":{{}}}}' ;;
   *\"op\":\"deploy\"*) touch '{}'; printf '%s\n' '{{"ok":true,"agent_id":"bad"}}' ;;
 esac"#,
         marker.display()
@@ -292,7 +292,7 @@ esac"#,
         &serde_json::json!({}),
     )
     .unwrap_err();
-    assert!(error.contains("protocol version 2"), "{error}");
+    assert!(error.contains("protocol version 3"), "{error}");
     assert!(!marker.exists());
     assert!(!error.contains("nsec1must-not-cross"));
 }
@@ -326,7 +326,13 @@ fn provider_info_requires_the_complete_flat_wire_shape() {
         "description": "Kubernetes provider",
         "config_schema": {}
     });
-    assert!(validate_provider_info(&complete).is_ok());
+    assert_eq!(
+        validate_provider_info(&complete).unwrap(),
+        ProviderProtocolInfo {
+            version: 1,
+            supports_confirmed_delete: false
+        }
+    );
 
     let mut missing = complete.clone();
     missing.as_object_mut().unwrap().remove("config_schema");
@@ -342,6 +348,65 @@ fn provider_info_requires_the_complete_flat_wire_shape() {
     assert!(validate_provider_info(&nested)
         .unwrap_err()
         .contains("unknown field provider"));
+}
+
+#[test]
+fn provider_info_accepts_only_the_narrow_protocol_v2_delete_capability() {
+    let v2 = serde_json::json!({
+        "ok": true,
+        "name": "example",
+        "version": "2.0.0",
+        "protocol_version": 2,
+        "description": "Example provider",
+        "config_schema": {},
+        "capabilities": {"lifecycle_operations": ["delete"]}
+    });
+    assert_eq!(
+        validate_provider_info(&v2).unwrap(),
+        ProviderProtocolInfo {
+            version: 2,
+            supports_confirmed_delete: true
+        }
+    );
+
+    let mut no_delete = v2.clone();
+    no_delete["capabilities"]["lifecycle_operations"] = serde_json::json!([]);
+    assert_eq!(
+        validate_provider_info(&no_delete).unwrap(),
+        ProviderProtocolInfo {
+            version: 2,
+            supports_confirmed_delete: false
+        }
+    );
+
+    for invalid in [
+        serde_json::json!({
+            "ok": true, "name": "example", "version": "2.0.0",
+            "protocol_version": 2, "description": "Example provider",
+            "config_schema": {},
+            "capabilities": {"lifecycle_operations": ["status"]}
+        }),
+        serde_json::json!({
+            "ok": true, "name": "example", "version": "2.0.0",
+            "protocol_version": 2, "description": "Example provider",
+            "config_schema": {},
+            "capabilities": {"lifecycle_operations": ["delete", "delete"]}
+        }),
+        serde_json::json!({
+            "ok": true, "name": "example", "version": "2.0.0",
+            "protocol_version": 2, "description": "Example provider",
+            "config_schema": {},
+            "capabilities": {"lifecycle_operations": ["delete"], "status": true}
+        }),
+        serde_json::json!({
+            "ok": true, "name": "example", "version": "1.0.0",
+            "protocol_version": 1, "description": "Example provider",
+            "config_schema": {},
+            "capabilities": {"lifecycle_operations": ["delete"]}
+        }),
+    ] {
+        assert!(validate_provider_info(&invalid).is_err());
+    }
 }
 
 #[test]

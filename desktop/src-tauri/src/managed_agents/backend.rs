@@ -11,20 +11,32 @@ const STDERR_CAP: usize = 65536;
 /// Provider responses should be small JSON objects. Cap stdout to prevent a
 /// buggy or malicious provider from OOM-ing the desktop process.
 const STDOUT_CAP: usize = 1_048_576; // 1 MB
-const PROVIDER_PROTOCOL_VERSION: u64 = 1;
+const PROVIDER_PROTOCOL_V1: u64 = 1;
+const PROVIDER_PROTOCOL_V2: u64 = 2;
 
-fn validate_provider_info(info: &serde_json::Value) -> Result<(), String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ProviderProtocolInfo {
+    pub version: u64,
+    pub supports_confirmed_delete: bool,
+}
+
+pub(super) fn validate_provider_info(
+    info: &serde_json::Value,
+) -> Result<ProviderProtocolInfo, String> {
     let object = info
         .as_object()
         .ok_or_else(|| "provider info response must be a JSON object".to_string())?;
     let actual_version = object
         .get("protocol_version")
         .and_then(serde_json::Value::as_u64);
-    if actual_version != Some(PROVIDER_PROTOCOL_VERSION) {
+    if !matches!(
+        actual_version,
+        Some(PROVIDER_PROTOCOL_V1) | Some(PROVIDER_PROTOCOL_V2)
+    ) {
         return Err(match actual_version {
-            Some(version) => format!(
-                "unsupported provider protocol version {version}; desktop requires {PROVIDER_PROTOCOL_VERSION}"
-            ),
+            Some(version) => {
+                format!("unsupported provider protocol version {version}; desktop supports 1 or 2")
+            }
             None => "provider info response missing integer protocol_version".to_string(),
         });
     }
@@ -48,7 +60,7 @@ fn validate_provider_info(info: &serde_json::Value) -> Result<(), String> {
         return Err("provider info response missing object config_schema".to_string());
     }
 
-    const FIELDS: &[&str] = &[
+    const V1_FIELDS: &[&str] = &[
         "ok",
         "name",
         "version",
@@ -56,15 +68,60 @@ fn validate_provider_info(info: &serde_json::Value) -> Result<(), String> {
         "description",
         "config_schema",
     ];
+    const V2_FIELDS: &[&str] = &[
+        "ok",
+        "name",
+        "version",
+        "protocol_version",
+        "description",
+        "config_schema",
+        "capabilities",
+    ];
+    let version = actual_version.unwrap_or(PROVIDER_PROTOCOL_V1);
+    let fields = if version == PROVIDER_PROTOCOL_V1 {
+        V1_FIELDS
+    } else {
+        V2_FIELDS
+    };
     if let Some(field) = object
         .keys()
-        .find(|field| !FIELDS.contains(&field.as_str()))
+        .find(|field| !fields.contains(&field.as_str()))
     {
         return Err(format!(
             "provider info response contains unknown field {field}"
         ));
     }
-    Ok(())
+    let supports_confirmed_delete = if version == PROVIDER_PROTOCOL_V2 {
+        let capabilities = object
+            .get("capabilities")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| "provider info response missing object capabilities".to_string())?;
+        if capabilities.len() != 1 || !capabilities.contains_key("lifecycle_operations") {
+            return Err(
+                "provider info capabilities must contain only lifecycle_operations".to_string(),
+            );
+        }
+        let operations = capabilities
+            .get("lifecycle_operations")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "provider lifecycle_operations must be an array".to_string())?;
+        if operations.len() > 1
+            || operations
+                .iter()
+                .any(|operation| operation.as_str() != Some("delete"))
+        {
+            return Err("provider advertises an unsupported lifecycle operation".to_string());
+        }
+        operations
+            .iter()
+            .any(|operation| operation.as_str() == Some("delete"))
+    } else {
+        false
+    };
+    Ok(ProviderProtocolInfo {
+        version,
+        supports_confirmed_delete,
+    })
 }
 
 /// Invoke a provider binary: write JSON to stdin, read JSON from stdout.
@@ -461,7 +518,7 @@ pub(crate) fn redact_env_values_in(
 /// Copy a resolved provider into a private staging directory while hashing
 /// exactly the bytes copied. The staged file becomes non-writable before either
 /// invocation, closing the path replacement and in-place rewrite races.
-fn stage_provider(
+pub(super) fn stage_provider(
     binary: &Path,
 ) -> Result<(tempfile::TempDir, PathBuf, String, std::fs::File), String> {
     let directory = tempfile::Builder::new()

@@ -26,6 +26,7 @@ pub(crate) mod persona_events;
 mod personas;
 #[cfg(windows)]
 mod process_lifecycle;
+pub(crate) mod provider_delete;
 pub(crate) mod readiness;
 pub(crate) mod reconcile;
 mod relay_mesh;
