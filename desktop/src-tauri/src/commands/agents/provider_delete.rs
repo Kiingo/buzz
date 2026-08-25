@@ -68,9 +68,7 @@ fn confirmed_delete_required(
             Ok(false)
         }
         2 if supports_confirmed_delete => Ok(true),
-        2 => Err(
-            "does not advertise confirmed delete; delete the remote agent first".to_string(),
-        ),
+        2 => Err("does not advertise confirmed delete; delete the remote agent first".to_string()),
         version => Err(format!("unsupported provider protocol version {version}")),
     }
 }
