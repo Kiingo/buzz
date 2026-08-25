@@ -291,9 +291,12 @@ async fn ensure_channel_replacement_role(
         channel_roles(&before, &replacement_public_key)
             .get(channel_id)
             .map(String::as_str),
-    )? {
+    ) {
         ChannelMembershipTransition::Ready => {}
-        ChannelMembershipTransition::AddReplacement(role) => {
+        ChannelMembershipTransition::ReconcileReplacement(role) => {
+            // Kind 9000 is an idempotent membership upsert. The predecessor
+            // owner remains authoritative until cutover, so it can safely
+            // promote or demote a staged replacement to the exact source role.
             submit_event_at_with_keys(
                 events::build_add_member(channel, &replacement_public_key, Some(&role))?,
                 state,
