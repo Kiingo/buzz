@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind, Tag};
+use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind};
 use reqwest::Method;
 use serde::Serialize;
 
@@ -571,38 +571,107 @@ pub(crate) async fn archive_old_identities(
             identity.old,
             identity.old_auth_tag,
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            if error.starts_with("relay unreachable:") {
+                "identity_rotation_relay_unreachable".to_string()
+            } else if error.starts_with("relay returned 401")
+                || error.starts_with("relay returned 403")
+            {
+                "identity_rotation_archive_source_authority_unavailable".to_string()
+            } else {
+                "identity_rotation_archive_publish_failed".to_string()
+            }
+        })?;
         let verified = query_relay_at_with_keys(
             state,
             &base,
-            &[serde_json::json!({"kinds": [13535], "#p": [old], "limit": 1})],
+            &[
+                serde_json::json!({"kinds": [13535], "#p": [old], "limit": 1}),
+                serde_json::json!({"kinds": [8002], "#p": [old], "limit": 100}),
+            ],
             identity.new,
             identity.new_auth_tag,
         )
-        .await?;
-        let verified_event = verified.iter().find(|event| {
-            event.id.to_hex() == published.event_id
-                && event.tags.iter().any(|tag| {
-                    let values = tag.as_slice();
-                    values.first().map(String::as_str) == Some("replaced-by")
-                        && values.get(1).map(String::as_str) == Some(new.as_str())
-                })
-        });
-        let verified_event = verified_event
-            .ok_or_else(|| "identity_rotation_archive_verification_failed".to_string())?;
-        verified_event
-            .verify()
-            .map_err(|_| "identity_rotation_archive_verification_failed".to_string())?;
+        .await
+        .map_err(|_| "identity_rotation_archive_verification_failed".to_string())?;
+        verify_archive_lineage(&verified, &old, &new, &published.event_id)?;
         verified_event_ids.insert(old, published.event_id);
     }
     Ok(verified_event_ids)
 }
 
-/// Remove every prior identity from its canonical channel and relay roles
-/// after replacement canaries succeed. Each authoritative snapshot is read
-/// back with the new owner, and one denied write proves the old key no longer
-/// has usable channel authority.
-pub(crate) async fn revoke_old_authorities(
+fn has_tag(event: &Event, name: &str, value: &str) -> bool {
+    event.tags.iter().any(|tag| {
+        let values = tag.as_slice();
+        values.first().map(String::as_str) == Some(name)
+            && values.get(1).map(String::as_str) == Some(value)
+    })
+}
+
+/// Verify both authoritative NIP-IA surfaces. Kind 13535 proves the old
+/// identity is currently archived; kind 8002 carries the replacement pointer
+/// (the snapshot intentionally contains only bare `p` tags).
+fn verify_archive_lineage(
+    events: &[Event],
+    old_public_key: &str,
+    new_public_key: &str,
+    request_event_id: &str,
+) -> Result<(), String> {
+    let snapshot = events
+        .iter()
+        .find(|event| event.kind.as_u16() == 13_535 && has_tag(event, "p", old_public_key))
+        .ok_or_else(|| "identity_rotation_archive_verification_failed".to_string())?;
+    snapshot
+        .verify()
+        .map_err(|_| "identity_rotation_archive_verification_failed".to_string())?;
+
+    let exact_delta = events.iter().find(|event| {
+        event.kind.as_u16() == 8_002
+            && event.pubkey == snapshot.pubkey
+            && has_tag(event, "p", old_public_key)
+            && has_tag(event, "replaced-by", new_public_key)
+            && has_tag(event, "e", request_event_id)
+    });
+    // A crash after the relay accepted the archive but before the desktop
+    // saved its checkpoint makes the retry a canonical no-op, so no new delta
+    // is emitted. An earlier relay-signed delta with the exact same lineage is
+    // sufficient in that idempotent recovery case.
+    let lineage_delta = exact_delta.or_else(|| {
+        events.iter().find(|event| {
+            event.kind.as_u16() == 8_002
+                && event.pubkey == snapshot.pubkey
+                && has_tag(event, "p", old_public_key)
+                && has_tag(event, "replaced-by", new_public_key)
+        })
+    });
+    lineage_delta
+        .ok_or_else(|| "identity_rotation_archive_lineage_missing".to_string())?
+        .verify()
+        .map_err(|_| "identity_rotation_archive_lineage_invalid".to_string())
+}
+
+fn is_authority_denial(error: &str) -> bool {
+    error.starts_with("relay returned 401") || error.starts_with("relay returned 403")
+}
+
+fn classify_denial_probe(error: &str) -> Result<(), String> {
+    if is_authority_denial(error) {
+        Ok(())
+    } else if error.starts_with("relay unreachable:") {
+        Err("identity_rotation_relay_unreachable".into())
+    } else {
+        Err("identity_rotation_revocation_verification_unavailable".into())
+    }
+}
+
+/// Remove every prior identity from its canonical channels while the
+/// coordinator deliberately keeps the prior relay authority available for
+/// self-signed archive and leave operations. Each authoritative snapshot is
+/// read back with the committed owner. Snapshot absence is the authority proof:
+/// an open channel may still allow ordinary non-member messages, so a message
+/// rejection would not be a valid universal membership test.
+pub(crate) async fn revoke_old_channel_authorities(
     state: &AppState,
     relay_url: &str,
     owner: &RotationIdentity<'_>,
@@ -643,63 +712,51 @@ pub(crate) async fn revoke_old_authorities(
             if channel_roles(&verified, &old).contains_key(channel_id) {
                 return Err("identity_rotation_old_channel_authority_present".into());
             }
-            let probe = events::build_message(
-                channel,
-                "identity-rotation-revocation-probe",
-                None,
-                &[],
-                &[],
-                &[],
-                &[],
-                &[],
-                None,
-                relay_url,
-            )?;
-            if submit_event_at_with_keys_and_auth(
-                probe,
-                state,
-                &base,
-                identity.old,
-                identity.old_auth_tag,
-            )
-            .await
-            .is_ok()
-            {
-                return Err("identity_rotation_old_channel_write_allowed".into());
-            }
         }
-        let relay_before = relay_membership_snapshot(state, &base, owner.new).await?;
-        if let Some(role) = relay_role(&relay_before, &old) {
-            if role == "owner" {
-                return Err("identity_rotation_relay_owner_transfer_required".into());
-            }
-            let leave = EventBuilder::new(Kind::Custom(28_936), "").tags([Tag::parse(["-"])
-                .map_err(|_| "identity_rotation_relay_leave_build_failed".to_string())?]);
-            submit_event_at_with_keys_and_auth(
-                leave,
+        revoked += 1;
+    }
+    Ok(revoked)
+}
+
+/// After the coordinator enters `old_revoked`, its privileged membership
+/// controller removes the predecessor identities without a desktop race. Poll
+/// the canonical roster, then require an explicit authorization denial from
+/// every old identity. Connectivity and protocol failures are never accepted
+/// as revocation evidence.
+pub(crate) async fn verify_old_relay_authorities_revoked(
+    state: &AppState,
+    relay_url: &str,
+    owner: &RotationIdentity<'_>,
+    identities: &[RotationIdentity<'_>],
+) -> Result<u32, String> {
+    let base = relay_http_base_url(relay_url);
+    let mut revoked = 0u32;
+    for identity in identities {
+        let old = identity.old.public_key().to_hex();
+        let mut absent = false;
+        for _ in 0..30 {
+            let relay = query_relay_at_with_keys(
                 state,
                 &base,
-                identity.old,
-                identity.old_auth_tag,
+                &[serde_json::json!({"kinds": [13534], "limit": 1})],
+                owner.new,
+                owner.new_auth_tag,
             )
             .await?;
+            if relay
+                .first()
+                .and_then(|event| relay_role(event, &old))
+                .is_none()
+            {
+                absent = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
-        let relay = query_relay_at_with_keys(
-            state,
-            &base,
-            &[serde_json::json!({"kinds": [13534], "limit": 1})],
-            owner.new,
-            owner.new_auth_tag,
-        )
-        .await?;
-        if relay
-            .first()
-            .and_then(|event| relay_role(event, &old))
-            .is_some()
-        {
-            return Err("identity_rotation_old_relay_authority_present".into());
+        if !absent {
+            return Err("identity_rotation_membership_controller_timeout".into());
         }
-        if query_relay_at_with_keys(
+        match query_relay_at_with_keys(
             state,
             &base,
             &[serde_json::json!({"kinds": [13534], "limit": 1})],
@@ -707,9 +764,9 @@ pub(crate) async fn revoke_old_authorities(
             identity.old_auth_tag,
         )
         .await
-        .is_ok()
         {
-            return Err("identity_rotation_old_relay_auth_allowed".into());
+            Ok(_) => return Err("identity_rotation_old_relay_auth_allowed".into()),
+            Err(error) => classify_denial_probe(&error)?,
         }
         revoked += 1;
     }
@@ -745,7 +802,7 @@ pub(crate) fn finalize_evidence(journal: &mut ContinuityJournal) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr::{EventBuilder, Kind};
+    use nostr::{EventBuilder, Kind, Tag};
 
     #[test]
     fn rotation_event_egress_rejects_embedded_key_backup_material() {
@@ -900,5 +957,75 @@ mod tests {
             values.first().map(String::as_str) == Some("replaced-by")
                 && values.get(1) == Some(&replacement.public_key().to_hex())
         }));
+    }
+
+    #[test]
+    fn archive_lineage_verifies_bare_snapshot_and_replacement_delta() {
+        let relay = Keys::generate();
+        let old = Keys::generate().public_key().to_hex();
+        let replacement = Keys::generate().public_key().to_hex();
+        let request_id = "a".repeat(64);
+        let snapshot = EventBuilder::new(Kind::Custom(13_535), "")
+            .tags([
+                Tag::parse(["-"]).unwrap(),
+                Tag::parse(["p", old.as_str()]).unwrap(),
+            ])
+            .sign_with_keys(&relay)
+            .unwrap();
+        let delta = EventBuilder::new(Kind::Custom(8_002), "")
+            .tags([
+                Tag::parse(["-"]).unwrap(),
+                Tag::parse(["p", old.as_str()]).unwrap(),
+                Tag::parse(["e", request_id.as_str()]).unwrap(),
+                Tag::parse(["replaced-by", replacement.as_str()]).unwrap(),
+            ])
+            .sign_with_keys(&relay)
+            .unwrap();
+
+        verify_archive_lineage(&[snapshot.clone(), delta], &old, &replacement, &request_id)
+            .unwrap();
+        assert_eq!(
+            verify_archive_lineage(&[snapshot], &old, &replacement, &request_id),
+            Err("identity_rotation_archive_lineage_missing".into())
+        );
+    }
+
+    #[test]
+    fn archive_lineage_rejects_a_delta_not_signed_by_the_snapshot_relay() {
+        let relay = Keys::generate();
+        let attacker = Keys::generate();
+        let old = Keys::generate().public_key().to_hex();
+        let replacement = Keys::generate().public_key().to_hex();
+        let request_id = "b".repeat(64);
+        let snapshot = EventBuilder::new(Kind::Custom(13_535), "")
+            .tags([Tag::parse(["p", old.as_str()]).unwrap()])
+            .sign_with_keys(&relay)
+            .unwrap();
+        let forged_delta = EventBuilder::new(Kind::Custom(8_002), "")
+            .tags([
+                Tag::parse(["p", old.as_str()]).unwrap(),
+                Tag::parse(["e", request_id.as_str()]).unwrap(),
+                Tag::parse(["replaced-by", replacement.as_str()]).unwrap(),
+            ])
+            .sign_with_keys(&attacker)
+            .unwrap();
+
+        assert_eq!(
+            verify_archive_lineage(&[snapshot, forged_delta], &old, &replacement, &request_id,),
+            Err("identity_rotation_archive_lineage_missing".into())
+        );
+    }
+
+    #[test]
+    fn denial_probe_requires_an_explicit_authorization_failure() {
+        assert!(classify_denial_probe("relay returned 403 Forbidden").is_ok());
+        assert_eq!(
+            classify_denial_probe("relay unreachable: request timed out"),
+            Err("identity_rotation_relay_unreachable".into())
+        );
+        assert_eq!(
+            classify_denial_probe("malformed relay response"),
+            Err("identity_rotation_revocation_verification_unavailable".into())
+        );
     }
 }

@@ -88,6 +88,20 @@ const ROTATION_ERROR_MESSAGES: Record<string, string> = {
     "This relay membership change requires the Kiingo membership controller. Your old keys remain active; update Buzz and resume after the controller is available.",
   identity_rotation_relay_owner_transfer_required:
     "The relay owner identity needs an operator-assisted ownership transfer. Your old keys remain active; contact Kiingo support before resuming.",
+  identity_rotation_relay_unreachable:
+    "Buzz could not reach the relay while verifying the cutover. The prior authority has not been purged. Check connectivity, then resume this same rotation.",
+  identity_rotation_archive_source_authority_unavailable:
+    "The prior identity is not yet available to sign its archival record. The prior authority has not been purged. Wait for relay membership reconciliation, then resume this same rotation.",
+  identity_rotation_archive_publish_failed:
+    "Buzz could not publish a retired-identity archive record. The prior authority has not been purged. Install the latest Buzz update, then resume this same rotation.",
+  identity_rotation_archive_verification_failed:
+    "Buzz published a retired-identity archive request but could not verify the relay's canonical archive snapshot. The prior authority has not been purged. Resume this same rotation after relay connectivity is stable.",
+  identity_rotation_archive_lineage_missing:
+    "The relay archive snapshot does not contain the expected replacement pointer. The prior authority has not been purged. Contact Kiingo support before resuming this same rotation.",
+  identity_rotation_archive_lineage_invalid:
+    "The relay returned an invalid signed archive lineage. The prior authority has not been purged. Contact Kiingo support before resuming this same rotation.",
+  identity_rotation_revocation_verification_unavailable:
+    "Buzz could not obtain explicit proof that every prior identity is denied. It did not treat the failed check as revocation evidence. Check relay health, then resume this same rotation.",
   identity_rotation_hosted_inventory_conflict:
     "Buzz found a mismatch between the signed hosted-agent inventory and this device. No identities were changed; ask Kiingo support to reconcile the inventory before resuming this same rotation.",
   identity_rotation_postcommit_hosted_inventory_conflict:
