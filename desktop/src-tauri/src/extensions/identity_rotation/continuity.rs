@@ -15,7 +15,10 @@ use crate::{
 };
 
 use super::{
-    archive_lineage::verify_archive_lineage, crypto::sha256_hex, journal::ContinuityJournal,
+    archive_lineage::verify_archive_lineage,
+    channel_role_policy::{channel_membership_transition, ChannelMembershipTransition},
+    crypto::sha256_hex,
+    journal::ContinuityJournal,
 };
 
 fn guarded_event_body(event: &Event) -> Result<Vec<u8>, String> {
@@ -264,6 +267,56 @@ fn relay_membership_transition(
     }
 }
 
+async fn ensure_channel_replacement_role(
+    state: &AppState,
+    base: &str,
+    owner: &RotationIdentity<'_>,
+    identity: &RotationIdentity<'_>,
+    channel_id: &str,
+    source_role: &str,
+) -> Result<(), String> {
+    let channel = uuid::Uuid::parse_str(channel_id)
+        .map_err(|_| "identity_rotation_channel_snapshot_invalid".to_string())?;
+    let before = query_relay_at_with_keys(
+        state,
+        base,
+        &[serde_json::json!({"kinds": [39002], "#d": [channel_id], "limit": 1})],
+        owner.old,
+        None,
+    )
+    .await?;
+    let replacement_public_key = identity.new.public_key().to_hex();
+    match channel_membership_transition(
+        source_role,
+        channel_roles(&before, &replacement_public_key)
+            .get(channel_id)
+            .map(String::as_str),
+    )? {
+        ChannelMembershipTransition::Ready => {}
+        ChannelMembershipTransition::AddReplacement(role) => {
+            submit_event_at_with_keys(
+                events::build_add_member(channel, &replacement_public_key, Some(&role))?,
+                state,
+                base,
+                owner.old,
+            )
+            .await?;
+            let verified = query_relay_at_with_keys(
+                state,
+                base,
+                &[serde_json::json!({"kinds": [39002], "#d": [channel_id], "limit": 1})],
+                owner.old,
+                None,
+            )
+            .await?;
+            if channel_roles(&verified, &replacement_public_key).get(channel_id) != Some(&role) {
+                return Err("identity_rotation_channel_membership_verification_failed".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Prove that the committed owner key can authenticate to the pinned relay
 /// and read back its authoritative membership snapshot. The HTTP request is
 /// NIP-98 signed by the supplied key, and the returned snapshot is also
@@ -345,44 +398,15 @@ pub(crate) async fn migrate_memberships(
         )
         .await?;
         for (channel_id, channel_role) in channel_roles(&snapshots, &old_public_key) {
-            let channel = uuid::Uuid::parse_str(&channel_id)
-                .map_err(|_| "identity_rotation_channel_snapshot_invalid".to_string())?;
-            let before = query_relay_at_with_keys(
+            ensure_channel_replacement_role(
                 state,
                 &base,
-                &[serde_json::json!({"kinds": [39002], "#d": [channel_id], "limit": 1})],
-                owner.old,
-                None,
+                owner,
+                identity,
+                &channel_id,
+                &channel_role,
             )
             .await?;
-            match channel_roles(&before, &new_public_key).get(&channel_id) {
-                Some(replacement_role) if replacement_role == &channel_role => {}
-                Some(_) => return Err("identity_rotation_channel_membership_role_conflict".into()),
-                None => {
-                    submit_event_at_with_keys(
-                        events::build_add_member(channel, &new_public_key, Some(&channel_role))?,
-                        state,
-                        &base,
-                        owner.old,
-                    )
-                    .await?;
-                    let verified = query_relay_at_with_keys(
-                        state,
-                        &base,
-                        &[serde_json::json!({"kinds": [39002], "#d": [channel_id], "limit": 1})],
-                        owner.old,
-                        None,
-                    )
-                    .await?;
-                    if channel_roles(&verified, &new_public_key).get(&channel_id)
-                        != Some(&channel_role)
-                    {
-                        return Err(
-                            "identity_rotation_channel_membership_verification_failed".into()
-                        );
-                    }
-                }
-            }
             channel_count += 1;
         }
     }
@@ -642,7 +666,22 @@ pub(crate) async fn revoke_old_channel_authorities(
         )
         .await?;
         let old_channels = channel_roles(&snapshots, &old);
-        for channel_id in old_channels.keys() {
+        for (channel_id, channel_role) in &old_channels {
+            // Channels can be created after the earlier continuity checkpoint
+            // (for example by a canary or a concurrent user action). Reconcile
+            // the exact replacement role immediately before the predecessor
+            // leaves so a late channel cannot strand the old identity as its
+            // last owner. The read-back makes retries idempotent, while the
+            // second check below still proves the predecessor is absent.
+            ensure_channel_replacement_role(
+                state,
+                &base,
+                owner,
+                identity,
+                channel_id,
+                channel_role,
+            )
+            .await?;
             let channel = uuid::Uuid::parse_str(channel_id)
                 .map_err(|_| "identity_rotation_channel_snapshot_invalid".to_string())?;
             submit_event_at_with_keys_and_auth(
@@ -652,7 +691,16 @@ pub(crate) async fn revoke_old_channel_authorities(
                 identity.old,
                 identity.old_auth_tag,
             )
-            .await?;
+            .await
+            .map_err(|error| {
+                if error.contains("last owner") {
+                    "identity_rotation_channel_owner_handoff_failed".to_string()
+                } else if error.starts_with("relay unreachable:") {
+                    "identity_rotation_relay_unreachable".to_string()
+                } else {
+                    "identity_rotation_old_channel_revocation_failed".to_string()
+                }
+            })?;
             let verified = query_relay_at_with_keys(
                 state,
                 &base,

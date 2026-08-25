@@ -631,6 +631,12 @@ async fn execute_rotation(
             false,
             None,
         );
+        let owner_pair = RotationIdentity {
+            old: &old_owner,
+            new: &new_owner,
+            old_auth_tag: None,
+            new_auth_tag: None,
+        };
         let mut pairs = Vec::new();
         if !matches!(journal.mode, RotationMode::Agent) {
             pairs.push(RotationIdentity {
@@ -648,6 +654,18 @@ async fn execute_rotation(
                 new_auth_tag: Some(&agent.new_auth_tag),
             });
         }
+        emit_progress(
+            app,
+            &journal.rotation_id,
+            "old_revoked",
+            "Reconciling relay and channel changes made after the continuity checkpoint...",
+            false,
+            None,
+        );
+        let (relay_count, channel_count) =
+            migrate_memberships(&state, &journal.relay_url, &owner_pair, &pairs).await?;
+        journal.continuity.relay_memberships_verified = relay_count;
+        journal.continuity.channel_memberships_verified = channel_count;
         let archive_event_ids = archive_old_identities(&state, &journal.relay_url, &pairs).await?;
         journal.continuity.archive_pointers_verified = archive_event_ids.len() as u32;
         if !matches!(journal.mode, RotationMode::Agent) {
@@ -674,12 +692,6 @@ async fn execute_rotation(
             false,
             None,
         );
-        let owner_pair = RotationIdentity {
-            old: &old_owner,
-            new: &new_owner,
-            old_auth_tag: None,
-            new_auth_tag: None,
-        };
         revoke_old_channel_authorities(&state, &journal.relay_url, &owner_pair, &pairs).await?;
         status = advance(AdvanceRequest {
             state: &state,

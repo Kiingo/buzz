@@ -1,4 +1,5 @@
 mod archive_lineage;
+mod channel_role_policy;
 mod continuity;
 mod coordinator;
 mod crypto;
