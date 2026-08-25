@@ -90,10 +90,13 @@ fn require_confirmed_delete_preflight(
     targets: &[ProviderCascadeTarget],
     mut supports_confirmed_delete: impl FnMut(&str) -> bool,
 ) -> Result<(), String> {
-    if targets
-        .iter()
-        .all(|target| supports_confirmed_delete(&target.provider_id))
-    {
+    let mut every_target_is_supported = true;
+    for target in targets {
+        if !supports_confirmed_delete(&target.provider_id) {
+            every_target_is_supported = false;
+        }
+    }
+    if every_target_is_supported {
         Ok(())
     } else {
         Err(manual_workflow_error(persona_id, targets))
