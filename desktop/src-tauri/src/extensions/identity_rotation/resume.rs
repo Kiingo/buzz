@@ -7,6 +7,7 @@ use super::{
     provider::RotationProvider,
 };
 
+/// Server-side inventory resolution is only valid before the local identity commit.
 fn requires_plan_resolution(existing: Option<&IdentityRotationJournal>) -> bool {
     !existing.is_some_and(|journal| journal.committed_locally)
 }
