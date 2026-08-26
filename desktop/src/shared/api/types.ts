@@ -296,8 +296,9 @@ export type ManagedAgentRuntimeStatus = {
   logPath: string | null;
 };
 
-import type { ManagedAgentBackend } from "./managedAgentBackend";
-export type { ManagedAgentBackend } from "./managedAgentBackend";
+export type ManagedAgentBackend =
+  | { type: "local" }
+  | { type: "provider"; id: string; config: Record<string, unknown> };
 
 import type { RestartDiffEntry } from "./restartDiff";
 export type { JsonValue, RestartChange, RestartDiffEntry } from "./restartDiff";

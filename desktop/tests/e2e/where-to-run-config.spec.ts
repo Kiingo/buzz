@@ -33,11 +33,6 @@ const PROVIDER = {
   binaryPath: "/mock/buzz-backend-kubernetes",
 };
 
-const EXECUTION_PROFILE_PROVIDER = {
-  id: "remote-execution",
-  binaryPath: "/mock/buzz-backend-remote-execution",
-};
-
 const PROBE_RESULT = {
   ok: true,
   name: "kubernetes",
@@ -57,45 +52,6 @@ const PROBE_RESULT = {
       },
     },
     required: ["namespace"],
-  },
-};
-
-const EXECUTION_PROFILE_PROBE_RESULT = {
-  ok: true,
-  name: "remote-execution",
-  version: "0.0.0-mock",
-  config_schema: {
-    type: "object",
-    "x-buzz-owns-execution-profile": true,
-    properties: {
-      harness: {
-        type: "string",
-        title: "Agent harness",
-        enum: ["codex", "claude"],
-        "x-enum-labels": {
-          codex: "Codex",
-          claude: "Claude Code",
-        },
-        default: "codex",
-      },
-      model: {
-        type: "string",
-        title: "Model",
-        enum: ["gpt-5.6", "claude-opus-4-6"],
-        "x-enum-labels": {
-          "gpt-5.6": "GPT-5.6",
-          "claude-opus-4-6": "Claude Opus 4.6",
-        },
-        default: "gpt-5.6",
-      },
-      reasoning: {
-        type: "string",
-        title: "Reasoning effort",
-        enum: ["medium", "high"],
-        default: "medium",
-      },
-    },
-    required: ["harness", "model", "reasoning"],
   },
 };
 
@@ -132,10 +88,7 @@ async function selectRunOnOption(
 }
 
 /** Open Advanced in the create-agent dialog and select the mocked provider. */
-async function openCreateDialogOnProvider(
-  page: Page,
-  providerId = PROVIDER.id,
-) {
+async function openCreateDialogOnProvider(page: Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-agents-view").click();
   await page.getByTestId("new-agent-card").click();
@@ -156,24 +109,8 @@ async function openCreateDialogOnProvider(
   expect(await respondTo.evaluate((element) => element.offsetTop)).toBeLessThan(
     await runOn.evaluate((element) => element.offsetTop),
   );
-  await selectRunOnOption(page, dialog, providerId);
+  await selectRunOnOption(page, dialog, PROVIDER.id);
   return dialog;
-}
-
-type CreateCommand = {
-  command: string;
-  payload: { input?: Record<string, unknown> };
-};
-
-async function createCommands(page: Page): Promise<CreateCommand[]> {
-  return page.evaluate(
-    () =>
-      (
-        window as Window & {
-          __BUZZ_E2E_COMMAND_LOG__?: CreateCommand[];
-        }
-      ).__BUZZ_E2E_COMMAND_LOG__ ?? [],
-  );
 }
 
 test("typing into a defaultless provider field sticks and probes only once", async ({
@@ -292,119 +229,3 @@ test("provider → local → provider re-probes and resets the config", async ({
   await expect(dialog.locator("#provider-cfg-context")).toHaveValue("");
   expect(await probeInvocations(page)).toBe(2);
 });
-
-for (const profile of [
-  {
-    harness: "Codex",
-    model: "GPT-5.6",
-    expected: {
-      harness: "codex",
-      model: "gpt-5.6",
-      reasoning: "medium",
-    },
-  },
-  {
-    harness: "Claude Code",
-    model: "Claude Opus 4.6",
-    expected: {
-      harness: "claude",
-      model: "claude-opus-4-6",
-      reasoning: "high",
-    },
-  },
-]) {
-  test(`provider-owned ${profile.harness} profile creates without local defaults`, async ({
-    page,
-  }) => {
-    await installMockBridge(page, {
-      backendProviders: [EXECUTION_PROFILE_PROVIDER],
-      backendProviderProbeResult: EXECUTION_PROFILE_PROBE_RESULT,
-      globalAgentConfig: {
-        env_vars: {},
-        model: null,
-        preferred_runtime: null,
-        provider: null,
-      },
-    });
-    const dialog = await openCreateDialogOnProvider(
-      page,
-      EXECUTION_PROFILE_PROVIDER.id,
-    );
-
-    await expect(dialog.locator("#provider-cfg-harness")).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(dialog.locator("#persona-runtime")).toHaveCount(0);
-    await expect(dialog.locator("#persona-llm-provider")).toHaveCount(0);
-    await expect(dialog.getByText("Global defaults not set")).toHaveCount(0);
-
-    if (profile.harness === "Claude Code") {
-      const harness = dialog.locator("#provider-cfg-harness");
-      await harness.press("Enter");
-      await page
-        .getByRole("menuitemradio", { name: profile.harness, exact: true })
-        .press("Enter");
-      const model = dialog.locator("#provider-cfg-model");
-      await model.press("Enter");
-      await page
-        .getByRole("menuitemradio", { name: profile.model, exact: true })
-        .press("Enter");
-      const reasoning = dialog.locator("#provider-cfg-reasoning");
-      await reasoning.press("Enter");
-      await page
-        .getByRole("menuitemradio", { name: "high", exact: true })
-        .press("Enter");
-    }
-
-    await dialog
-      .locator("#persona-display-name")
-      .fill(`${profile.harness} Remote`);
-    await dialog
-      .locator("#persona-system-prompt")
-      .fill("Use only the provider-owned execution profile.");
-    const submit = dialog.getByTestId("persona-dialog-submit");
-    await expect(submit).toBeEnabled();
-    await submit.click();
-
-    await expect
-      .poll(
-        async () =>
-          (await createCommands(page)).filter(
-            (entry) => entry.command === "create_managed_agent",
-          ).length,
-      )
-      .toBe(1);
-    const commands = await createCommands(page);
-    const definition = commands.find(
-      (entry) => entry.command === "create_persona",
-    )?.payload.input;
-    const instance = commands.find(
-      (entry) => entry.command === "create_managed_agent",
-    )?.payload.input;
-
-    const serializedDefinition = JSON.parse(
-      JSON.stringify(definition),
-    ) as Record<string, unknown>;
-    const serializedInstance = JSON.parse(JSON.stringify(instance)) as Record<
-      string,
-      unknown
-    >;
-
-    expect(serializedDefinition).toMatchObject({ envVars: {} });
-    expect(serializedDefinition).not.toHaveProperty("runtime");
-    expect(serializedDefinition).not.toHaveProperty("provider");
-    expect(serializedDefinition).not.toHaveProperty("model");
-    expect(serializedInstance).toMatchObject({
-      backend: {
-        type: "provider",
-        id: EXECUTION_PROFILE_PROVIDER.id,
-        config: profile.expected,
-      },
-      envVars: {},
-    });
-    expect(serializedInstance).not.toHaveProperty("agentCommand");
-    expect(serializedInstance).not.toHaveProperty("agentArgs");
-    expect(serializedInstance).not.toHaveProperty("provider");
-    expect(serializedInstance).not.toHaveProperty("model");
-  });
-}

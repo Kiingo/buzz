@@ -60,7 +60,8 @@ against the production Kiingo backend.
   and backend intent need the ownership fact; do not duplicate raw schema-key
   access across components.
 - [x] Carry the verified ownership fact through the create boundary in a typed,
-  generic form sufficient for persistence and later provider deploys.
+  generic transient form, then re-probe it at every later provider deploy
+  instead of adding a downstream field to Buzz's persisted core agent type.
 - [x] Keep provider schema required-field validation authoritative even when the
   provider owns the execution profile.
 - [x] Ensure switching back to local or to a non-owning provider immediately
@@ -116,8 +117,10 @@ against the production Kiingo backend.
 - [x] Clear only the invalid local execution-profile projection; do not rotate
   keys, recreate the agent, delete relay data, change the prompt, or alter
   membership/access/backend config.
-- [x] Ensure later definition snapshot/reconciliation cannot reintroduce the
-  invalid desktop-local provider into a provider-owned instance.
+- [x] Ensure any later definition snapshot/reconciliation cannot carry the
+  invalid desktop-local projection across a provider deploy: the signed
+  capability is re-probed and the idempotent repair re-runs under the deploy
+  lock before every provider invocation.
 - [x] Surface repair/deploy failures honestly and leave the prior authority/data
   intact rather than partially rewriting the record.
 - [ ] Prove Ada and every other affected provider-owned agent can be started by
@@ -141,8 +144,8 @@ against the production Kiingo backend.
   instances, safe fields, and no-op cases.
 - [x] Add focused desktop E2E coverage for provider-owned create with no global
   defaults/local provider, including Codex and Claude schema selections.
-- [ ] Add focused E2E coverage for channel attachment and mention startup of a
-  repaired provider-owned agent.
+- [x] Add focused E2E coverage for channel attachment and mention startup of a
+  provider-owned agent through the ordinary `start_managed_agent` boundary.
 - [x] Keep tests focused; add no canary service, permanent smoke-test job, or
   unrelated CI/CD step.
 
@@ -151,7 +154,7 @@ against the production Kiingo backend.
 - [x] Record memory, CPU/load, disk, and largest processes before heavy work.
 - [x] Run lightweight format/static/unit checks first with bounded output and
   only one heavy process at a time.
-- [ ] Run only the builds/E2E suites required to validate this UI/backend and
+- [x] Run only the builds/E2E suites required to validate this UI/backend and
   produce the requested Windows installer; do not run broad TypeScript/Jest
   commands gratuitously.
 - [x] Re-check host health before each required heavy build and stop after one
@@ -160,17 +163,32 @@ against the production Kiingo backend.
 
 ### Verification evidence before PR
 
-- `cargo fmt --all -- --check`: green.
+- Fork-boundary refactor removed execution ownership from the core persisted
+  `BackendKind`; the final divergence is 56 modified upstream files (versus 75
+  in the rejected first cut), 36 production files, 2,981 changed production
+  lines, 317 hunks, and zero Kiingo business-logic lines in upstream production
+  source. `node scripts/check-kiingo-fork-boundary.mjs`: green.
+
+- `cargo fmt --check --manifest-path desktop/src-tauri/Cargo.toml`: green.
 - `cargo check --tests`: green; only pre-existing unused-code/import warnings.
 - Focused Node tests for create mapping/readiness/ownership transitions:
   115 passed, 0 failed.
+- Full desktop Node suite: 5,401 passed; one unchanged `origin/main`
+  Windows/JSDOM focus-resume timing test failed because its 10 ms assertion
+  window did not span the next animation frame. The feature-focused tests and
+  required repository CI remain the acceptance gates for this unrelated
+  baseline test.
 - `pnpm check:file-sizes`: green; `AgentDefinitionDialog.tsx` remains exactly
   at its upstream line count after extracting provider-mode form/payload logic.
-- Biome on all 17 changed/new TypeScript, TSX, and MJS files: green.
+- Biome on all 15 changed/new TypeScript, TSX, and MJS files: green.
 - `pnpm build:e2e`: green (`tsc` plus the required E2E Vite bundle).
-- `playwright test tests/e2e/where-to-run-config.spec.ts --project=smoke`:
-  6 passed, including provider-owned Codex and Claude Code creation with no
-  local defaults and serialized-payload assertions.
+- `playwright test tests/e2e/provider-owned/where-to-run-config.spec.ts
+  --project=smoke`: 3 passed, including provider-owned Codex and Claude Code
+  creation with no local defaults, serialized-payload assertions, and channel
+  attachment.
+- `playwright test tests/e2e/provider-owned/channels.spec.ts --project=smoke`:
+  1 passed, proving a channel mention dispatches provider-backed Ada through
+  the ordinary managed-agent start boundary.
 - `git diff --check`: green.
 - A local Rust test-binary link attempt was not repeated after the documented
   host toolchain mismatch (`MSVC 14.33` versus the prebuilt sherpa ONNX C++

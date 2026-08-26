@@ -5,13 +5,23 @@ use crate::managed_agents::{
     resolve_provider_binary, validate_provider_config, BackendKind, CreateManagedAgentRequest,
 };
 
-/// Validate one provider-backed create request and stamp the capability derived
-/// from the platform-verified provider. Local creates are a no-op.
+pub(super) struct PreparedProviderBackend {
+    pub binary_path: Option<String>,
+    pub owns_execution_profile: bool,
+}
+
+/// Validate one provider-backed create request and derive its signed capability.
+/// Local creates are a no-op.
 pub(super) async fn prepare_provider_backend(
-    backend: &mut BackendKind,
-) -> Result<Option<String>, String> {
+    backend: &BackendKind,
+) -> Result<PreparedProviderBackend, String> {
     let (id, config) = match backend {
-        BackendKind::Local => return Ok(None),
+        BackendKind::Local => {
+            return Ok(PreparedProviderBackend {
+                binary_path: None,
+                owns_execution_profile: false,
+            })
+        }
         BackendKind::Provider { id, config, .. } => (id.clone(), config.clone()),
     };
     validate_provider_config(&config)?;
@@ -20,8 +30,10 @@ pub(super) async fn prepare_provider_backend(
     let info = tokio::task::spawn_blocking(move || probe_provider_info(&probe_path))
         .await
         .map_err(|error| format!("spawn_blocking failed: {error}"))??;
-    backend.set_owns_execution_profile(provider_owns_execution_profile(&info));
-    Ok(Some(path.display().to_string()))
+    Ok(PreparedProviderBackend {
+        binary_path: Some(path.display().to_string()),
+        owns_execution_profile: provider_owns_execution_profile(&info),
+    })
 }
 
 /// Refuse a desktop-only shared-compute selection before a non-owning remote
@@ -30,10 +42,9 @@ pub(super) async fn prepare_provider_backend(
 pub(super) fn validate_remote_execution_profile(
     app: &AppHandle,
     input: &CreateManagedAgentRequest,
+    provider_owns_execution_profile: bool,
 ) -> Result<(), String> {
-    if !matches!(input.backend, BackendKind::Provider { .. })
-        || input.backend.owns_execution_profile()
-    {
+    if !matches!(input.backend, BackendKind::Provider { .. }) || provider_owns_execution_profile {
         return Ok(());
     }
 
@@ -50,5 +61,5 @@ pub(super) fn validate_remote_execution_profile(
         .or_else(|| input.provider.clone())
         .or(global_provider);
 
-    super::deploy::ensure_remote_provider_supported(provider.as_deref(), false)
+    super::deploy::ensure_remote_provider_supported(provider.as_deref())
 }

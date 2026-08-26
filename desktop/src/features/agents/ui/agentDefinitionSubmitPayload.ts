@@ -1,6 +1,4 @@
-import type { CreatePersonaInput } from "@/shared/api/types";
 import { runtimeSupportsLlmProviderSelection } from "./agentConfigOptions";
-import { parsePersonaNamePoolText } from "./personaDialogState";
 
 /**
  * Pure helper extracted from the `handleSubmit` path of `AgentDefinitionDialog`
@@ -22,7 +20,6 @@ export function buildRuntimeModelProviderPayload({
   initialModel,
   initialProvider,
   initialModelProviderEditableWithoutRuntime,
-  providerOwnsExecutionProfile = false,
 }: {
   runtime: string;
   model: string;
@@ -33,15 +30,11 @@ export function buildRuntimeModelProviderPayload({
   initialModel: string | null | undefined;
   initialProvider: string | null | undefined;
   initialModelProviderEditableWithoutRuntime: boolean;
-  providerOwnsExecutionProfile?: boolean;
 }): {
   runtime: string | undefined;
   model: string | undefined;
   provider: string | undefined;
 } {
-  if (providerOwnsExecutionProfile) {
-    return { runtime: undefined, model: undefined, provider: undefined };
-  }
   const trimmedRuntime = runtime.trim();
   const previousRuntime = initialPreviousRuntime;
   const isAutoSeededRuntimeForBuiltinEdit =
@@ -78,44 +71,5 @@ export function buildRuntimeModelProviderPayload({
       : shouldPreserveHiddenModelProvider
         ? (initialProvider ?? undefined)
         : undefined,
-  };
-}
-
-/** Build the definition payload without leaking provider-owned desktop state. */
-export function buildAgentDefinitionSubmitPayload({
-  avatarUrl,
-  behavior,
-  displayName,
-  envVars,
-  execution,
-  namePoolText,
-  preserveEmptyNamePool,
-  providerOwnsExecutionProfile,
-  systemPrompt,
-}: {
-  avatarUrl: string;
-  behavior: CreatePersonaInput["behavior"];
-  displayName: string;
-  envVars: Record<string, string>;
-  execution: Parameters<typeof buildRuntimeModelProviderPayload>[0];
-  namePoolText: string;
-  preserveEmptyNamePool: boolean;
-  providerOwnsExecutionProfile: boolean;
-  systemPrompt: string;
-}): CreatePersonaInput {
-  const { runtime, model, provider } =
-    buildRuntimeModelProviderPayload(execution);
-  const namePool = parsePersonaNamePoolText(namePoolText);
-  return {
-    displayName: displayName.trim(),
-    avatarUrl: avatarUrl.trim() || undefined,
-    systemPrompt,
-    runtime,
-    model,
-    provider,
-    namePool:
-      namePool.length > 0 ? namePool : preserveEmptyNamePool ? [] : undefined,
-    envVars: providerOwnsExecutionProfile ? {} : envVars,
-    behavior,
   };
 }

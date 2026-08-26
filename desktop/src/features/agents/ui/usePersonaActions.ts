@@ -45,6 +45,7 @@ import type {
   AcpRuntime,
   AgentPersona,
   Channel,
+  CreateManagedAgentInput,
   CreatePersonaInput,
   ManagedAgent,
   UpdatePersonaInput,
@@ -63,6 +64,7 @@ import {
   buildInstanceInputForDefinition,
   type BackendIntent,
 } from "../lib/instanceInputForDefinition";
+import { buildProviderOwnedInstanceInput } from "../lib/providerOwnedInstanceInput";
 
 type PersonaFeedbackSurface = "catalog" | "library";
 
@@ -209,18 +211,17 @@ export function usePersonaActions() {
         const runtime = availableRuntimes.find(
           (candidate) => candidate.id === input.runtime,
         );
-        if (!runtime && !backendIntent) {
-          setPersonaErrorMessage(
-            "Choose an available provider for this agent.",
-          );
-          return false;
-        }
-
         // Stale-intent guard: a definition-only create never carries one.
         const startIntent =
           resolveCreateIntent(intent) === "definition_start"
             ? (backendIntent ?? null)
             : null;
+        if (!runtime && !startIntent) {
+          setPersonaErrorMessage(
+            "Choose an available provider for this agent.",
+          );
+          return false;
+        }
 
         const avatarUrl = await resolveManagedAgentAvatarUrl(
           input.avatarUrl,
@@ -237,12 +238,20 @@ export function usePersonaActions() {
           setPersonaDialogState(null);
           return true;
         }
-        const agentInput = await buildInstanceInputForDefinition(
-          persona,
-          runtime ?? null,
-          undefined,
-          startIntent ?? undefined,
-        );
+        let agentInput: CreateManagedAgentInput;
+        if (startIntent) {
+          agentInput = await buildProviderOwnedInstanceInput(
+            persona,
+            startIntent,
+          );
+        } else {
+          if (!runtime) {
+            throw new Error(
+              "A desktop runtime is required when the provider does not own execution.",
+            );
+          }
+          agentInput = await buildInstanceInputForDefinition(persona, runtime);
+        }
 
         try {
           const created = await createAgentMutation.mutateAsync(agentInput);

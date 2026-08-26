@@ -1,8 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, process::Child};
 
-mod provider;
-pub use provider::*;
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BackendKind {
+    #[default]
+    Local,
+    Provider {
+        id: String,
+        config: serde_json::Value,
+    },
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDefinition {

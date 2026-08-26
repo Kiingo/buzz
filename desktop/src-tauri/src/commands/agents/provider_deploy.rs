@@ -11,7 +11,7 @@ use crate::{
     util::now_iso,
 };
 
-use super::build_deploy_payload;
+use super::deploy::build_deploy_payload_with_ownership;
 
 /// Deploy an agent to a provider backend. Resolves the binary, calls deploy via
 /// spawn_blocking, and persists the result (backend_agent_id or last_error).
@@ -105,15 +105,8 @@ pub(crate) async fn deploy_to_provider(
             .iter_mut()
             .find(|record| record.pubkey == pubkey)
             .ok_or_else(|| format!("agent {pubkey} not found"))?;
-        let config = match &mut record.backend {
-            BackendKind::Provider {
-                id,
-                config,
-                owns_execution_profile: saved_ownership,
-            } if id == &provider_id => {
-                *saved_ownership = owns_execution_profile;
-                config.clone()
-            }
+        let config = match &record.backend {
+            BackendKind::Provider { id, config } if id == &provider_id => config.clone(),
             BackendKind::Provider { .. } => {
                 return Err("provider changed while deployment was being prepared".to_string())
             }
@@ -121,10 +114,11 @@ pub(crate) async fn deploy_to_provider(
                 return Err(format!("agent {pubkey} is no longer provider-backed"))
             }
         };
-        crate::managed_agents::repair_provider_owned_record(record);
+        crate::managed_agents::repair_provider_owned_record(record, owns_execution_profile);
         record.provider_binary_path = Some(bin_path.display().to_string());
         record.updated_at = now_iso();
-        let agent_json = build_deploy_payload(app, state, record)?;
+        let agent_json =
+            build_deploy_payload_with_ownership(app, state, record, owns_execution_profile)?;
         save_managed_agents(app, &records)?;
         (config, agent_json)
     };

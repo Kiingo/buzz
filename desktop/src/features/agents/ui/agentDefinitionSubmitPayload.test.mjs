@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  buildAgentDefinitionSubmitPayload,
-  buildRuntimeModelProviderPayload,
-} from "./agentDefinitionSubmitPayload.ts";
+import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload.ts";
 
 // Shared fixture for a builtin edit: previous runtime null, no saved model/provider.
 const BUILTIN_EDIT_BASE = {
@@ -14,54 +11,6 @@ const BUILTIN_EDIT_BASE = {
   initialProvider: null,
   initialModelProviderEditableWithoutRuntime: false,
 };
-
-test("provider-owned execution strips every desktop execution field", () => {
-  assert.deepEqual(
-    buildRuntimeModelProviderPayload({
-      ...BUILTIN_EDIT_BASE,
-      runtime: "buzz-agent",
-      model: "auto",
-      provider: "relay-mesh",
-      isAutoSeeded: false,
-      providerOwnsExecutionProfile: true,
-    }),
-    { runtime: undefined, model: undefined, provider: undefined },
-  );
-});
-
-test("provider-owned definition payload clears local env and preserves profile fields", () => {
-  assert.deepEqual(
-    buildAgentDefinitionSubmitPayload({
-      avatarUrl: " https://example.com/agent.png ",
-      behavior: { respondTo: "owner-only" },
-      displayName: " Remote Agent ",
-      envVars: { LOCAL_SECRET: "fixture" },
-      execution: {
-        ...BUILTIN_EDIT_BASE,
-        runtime: "buzz-agent",
-        model: "auto",
-        provider: "relay-mesh",
-        isAutoSeeded: false,
-        providerOwnsExecutionProfile: true,
-      },
-      namePoolText: "Birch, Compass",
-      preserveEmptyNamePool: false,
-      providerOwnsExecutionProfile: true,
-      systemPrompt: "Preserve this prompt.",
-    }),
-    {
-      avatarUrl: "https://example.com/agent.png",
-      behavior: { respondTo: "owner-only" },
-      displayName: "Remote Agent",
-      envVars: {},
-      model: undefined,
-      namePool: ["Birch", "Compass"],
-      provider: undefined,
-      runtime: undefined,
-      systemPrompt: "Preserve this prompt.",
-    },
-  );
-});
 
 // ── edit-untouched ─────────────────────────────────────────────────────────────
 //

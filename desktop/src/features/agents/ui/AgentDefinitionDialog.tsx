@@ -78,9 +78,8 @@ import {
   initialAgentAiConfigurationMode,
 } from "./agentAiConfigurationPolicy";
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
-import { buildAgentDefinitionSubmitPayload } from "./agentDefinitionSubmitPayload";
+import { buildAgentDefinitionSubmitPayload } from "./providerOwnedDefinitionSubmitPayload";
 import { agentExecutionProfileFormState } from "./agentExecutionProfileFormState";
-import { useProviderOwnsExecutionProfile } from "./AgentRunLocationContext";
 import { useAgentDefinitionExecutionReadiness } from "./useAgentDefinitionExecutionReadiness";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
 import { AgentDefinitionDialogShell } from "./AgentDefinitionDialogShell";
@@ -113,6 +112,8 @@ type AgentDefinitionDialogProps = {
   createRunSection?: React.ReactNode;
   /** Extra create-mode submit gate (e.g. incomplete provider config). */
   createSubmitBlocked?: boolean;
+  /** A signed remote-provider schema owns harness/model/provider selection. */
+  providerOwnsExecutionProfile?: boolean;
 };
 
 export type AgentDefinitionSubmitOptions = {
@@ -136,8 +137,8 @@ export function AgentDefinitionDialog({
   publishCatalogUpdatesOnSave = false,
   createRunSection,
   createSubmitBlocked = false,
+  providerOwnsExecutionProfile = false,
 }: AgentDefinitionDialogProps) {
-  const providerOwnsExecutionProfile = useProviderOwnsExecutionProfile();
   const runtimesLoading = runtimeCatalogStatus === "loading";
   const [displayName, setDisplayName] = React.useState("");
   const [aiDefaultsOpen, setAiDefaultsOpen] = React.useState(false);
@@ -358,7 +359,6 @@ export function AgentDefinitionDialog({
         initialModel: initialValues.model,
         initialProvider: initialValues.provider,
         initialModelProviderEditableWithoutRuntime,
-        providerOwnsExecutionProfile,
       },
     });
 

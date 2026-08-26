@@ -12,7 +12,6 @@ fn provider_record(deployed: bool) -> ManagedAgentRecord {
     record.backend = crate::managed_agents::BackendKind::Provider {
         id: "provider".into(),
         config: serde_json::json!({}),
-        owns_execution_profile: false,
     };
     record.backend_agent_id = deployed.then(|| "deployment".to_string());
     record

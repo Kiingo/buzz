@@ -82,7 +82,6 @@ mod tests {
                 BackendKind::Provider {
                     id: "provider".into(),
                     config: serde_json::json!({"region": "test"}),
-                    owns_execution_profile: false,
                 },
                 Some("existing"),
             ),
@@ -90,7 +89,6 @@ mod tests {
                 BackendKind::Provider {
                     id: "not-deployed".into(),
                     config: serde_json::json!({}),
-                    owns_execution_profile: false,
                 },
                 None,
             ),
@@ -109,7 +107,6 @@ mod tests {
             BackendKind::Provider {
                 id: "pending-provider".into(),
                 config: serde_json::json!({}),
-                owns_execution_profile: false,
             },
             Some("existing-pending"),
         );
@@ -119,7 +116,6 @@ mod tests {
             BackendKind::Provider {
                 id: "ordinary-provider".into(),
                 config: serde_json::json!({}),
-                owns_execution_profile: false,
             },
             Some("existing-ordinary"),
         );
@@ -136,7 +132,6 @@ mod tests {
             BackendKind::Provider {
                 id: "provider".into(),
                 config: serde_json::json!({}),
-                owns_execution_profile: false,
             },
             None,
         );

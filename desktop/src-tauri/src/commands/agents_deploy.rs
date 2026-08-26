@@ -18,7 +18,6 @@ use crate::{
 /// resolved descriptor and effective config so that the serialised payload and
 /// the `launch` block are always internally consistent.
 pub(super) struct DeployProjections {
-    pub provider_owns_execution_profile: bool,
     pub effective_model: Option<String>,
     pub effective_provider: Option<String>,
     pub effective_prompt: Option<String>,
@@ -160,7 +159,11 @@ pub(super) fn build_launch_block(
     })
 }
 
-pub(super) fn ensure_remote_provider_supported(
+pub(super) fn ensure_remote_provider_supported(provider: Option<&str>) -> Result<(), String> {
+    ensure_remote_provider_supported_with_ownership(provider, false)
+}
+
+pub(super) fn ensure_remote_provider_supported_with_ownership(
     provider: Option<&str>,
     provider_owns_execution_profile: bool,
 ) -> Result<(), String> {
@@ -176,11 +179,15 @@ pub(super) fn ensure_remote_provider_supported(
     Ok(())
 }
 
-/// Build the standard agent JSON payload for provider deploy calls.
-pub(crate) fn build_deploy_payload(
+/// Build a provider payload while honoring a signed provider capability that
+/// makes execution-profile fields provider-owned. The capability is passed
+/// transiently from the deploy-time provider probe; it is never persisted in
+/// Buzz's core managed-agent record.
+pub(crate) fn build_deploy_payload_with_ownership(
     app: &AppHandle,
     state: &AppState,
     record: &ManagedAgentRecord,
+    provider_owns_execution_profile: bool,
 ) -> Result<serde_json::Value, String> {
     if let Some(err) = crate::managed_agents::spawn_key_refusal(record) {
         return Err(err);
@@ -189,13 +196,12 @@ pub(crate) fn build_deploy_payload(
     let global = crate::managed_agents::load_global_agent_config(app).unwrap_or_default();
     let personas = load_personas(app).unwrap_or_default();
     let teams = crate::managed_agents::load_teams(app).unwrap_or_default();
-    let provider_owns_execution_profile = record.backend.owns_execution_profile();
     let effective = crate::managed_agents::effective_config::resolve_effective_config(
         record, &personas, &global,
     )
     .require_resolved()?;
 
-    ensure_remote_provider_supported(
+    ensure_remote_provider_supported_with_ownership(
         effective.provider.value.as_deref(),
         provider_owns_execution_profile,
     )?;
@@ -234,14 +240,13 @@ pub(crate) fn build_deploy_payload(
     let effective_parallelism =
         crate::managed_agents::effective_parallelism(&descriptor.command, record.parallelism);
 
-    Ok(deploy_payload_json(
+    Ok(deploy_payload_json_with_ownership(
         record,
         crate::relay::effective_agent_relay_url(
             &record.relay_url,
             &relay_ws_url_with_override(state),
         ),
         DeployProjections {
-            provider_owns_execution_profile,
             effective_model: (!provider_owns_execution_profile)
                 .then_some(effective.model.value)
                 .flatten(),
@@ -254,6 +259,7 @@ pub(crate) fn build_deploy_payload(
         },
         merged_user_env,
         launch,
+        provider_owns_execution_profile,
     ))
 }
 
@@ -262,6 +268,7 @@ pub(crate) fn build_deploy_payload(
 /// `projections.effective_parallelism` is pre-computed from the same resolved
 /// descriptor as `launch.policy_env["BUZZ_ACP_AGENTS"]`. Access is projected from
 /// the same compiled policy that gates local starts.
+#[cfg(test)]
 pub(super) fn deploy_payload_json(
     record: &ManagedAgentRecord,
     relay_url: String,
@@ -269,14 +276,25 @@ pub(super) fn deploy_payload_json(
     merged_env: BTreeMap<String, String>,
     launch: serde_json::Value,
 ) -> serde_json::Value {
+    deploy_payload_json_with_ownership(record, relay_url, projections, merged_env, launch, false)
+}
+
+fn deploy_payload_json_with_ownership(
+    record: &ManagedAgentRecord,
+    relay_url: String,
+    projections: DeployProjections,
+    merged_env: BTreeMap<String, String>,
+    launch: serde_json::Value,
+    provider_owns_execution_profile: bool,
+) -> serde_json::Value {
     let (respond_to, respond_to_allowlist) =
         crate::managed_agents::projected_access_with_policy(record, projections.owner_only_access);
-    let (agent_command, agent_args) = if projections.provider_owns_execution_profile {
+    let (agent_command, agent_args) = if provider_owns_execution_profile {
         ("", &[][..])
     } else {
         (record.agent_command.as_str(), record.agent_args.as_slice())
     };
-    let (model, provider, env_vars) = if projections.provider_owns_execution_profile {
+    let (model, provider, env_vars) = if provider_owns_execution_profile {
         (None, None, BTreeMap::new())
     } else {
         (
@@ -342,11 +360,10 @@ mod tests {
         let mut record = record();
         record.agent_command = "buzz-agent".into();
         record.agent_args = vec!["--local".into()];
-        let payload = deploy_payload_json(
+        let payload = deploy_payload_json_with_ownership(
             &record,
             "wss://relay.example".into(),
             DeployProjections {
-                provider_owns_execution_profile: true,
                 effective_model: Some("auto".into()),
                 effective_provider: Some("relay-mesh".into()),
                 effective_prompt: Some("preserved prompt".into()),
@@ -358,11 +375,14 @@ mod tests {
                 "command": "", "args": [], "env": {}, "policy_env": {},
                 "owner_pubkey": "owner-hex"
             }),
+            true,
         );
         assert_eq!(payload["agent_command"], "");
         assert_eq!(payload["agent_args"], serde_json::json!([]));
         assert!(payload["model"].is_null());
         assert!(payload["provider"].is_null());
+        ensure_remote_provider_supported_with_ownership(Some("relay-mesh"), true)
+            .expect("provider-owned execution does not use the desktop mesh endpoint");
         assert_eq!(payload["env_vars"], serde_json::json!({}));
         assert_eq!(payload["system_prompt"], "preserved prompt");
         assert_eq!(payload["launch"]["owner_pubkey"], "owner-hex");
@@ -701,7 +721,6 @@ mod tests {
             &record,
             "wss://relay.example".to_string(),
             DeployProjections {
-                provider_owns_execution_profile: false,
                 effective_model: None,
                 effective_provider: None,
                 effective_prompt: None,
@@ -747,7 +766,6 @@ mod tests {
             &record,
             "wss://relay.example".to_string(),
             DeployProjections {
-                provider_owns_execution_profile: false,
                 effective_model: None,
                 effective_provider: None,
                 effective_prompt: None,
@@ -794,7 +812,6 @@ mod tests {
             &record,
             "wss://relay.example".to_string(),
             DeployProjections {
-                provider_owns_execution_profile: false,
                 effective_model: None,
                 effective_provider: None,
                 effective_prompt: None,

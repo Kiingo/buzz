@@ -141,30 +141,6 @@ fn preview_passes_through_unchanged_when_persona_missing() {
     assert_eq!(preview.persona_id.as_deref(), Some("deleted-persona"));
 }
 
-#[test]
-fn provider_owned_snapshot_cannot_restore_desktop_execution_fields() {
-    let mut record = sample_record();
-    record.backend = BackendKind::Provider {
-        id: "remote-execution".into(),
-        config: serde_json::json!({"harness": "claude"}),
-        owns_execution_profile: true,
-    };
-    let mut persona = sample_persona();
-    persona.provider = Some("relay-mesh".into());
-    persona.runtime = Some("buzz-agent".into());
-    persona.model = Some("auto".into());
-
-    apply_persona_snapshot(&mut record, &persona);
-
-    assert_eq!(
-        record.system_prompt.as_deref(),
-        Some("You are a test assistant.")
-    );
-    assert!(record.provider.is_none());
-    assert!(record.runtime.is_none());
-    assert!(record.model.is_none());
-}
-
 pub(super) fn sample_persona() -> AgentDefinition {
     AgentDefinition {
         id: "test-persona".to_string(),

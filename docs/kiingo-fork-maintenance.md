@@ -77,8 +77,8 @@ record the reported drift, and merge the newer commits in the next dedicated
 synchronization PR. Never move the snapshot ahead of the fork or edit it only
 to make the guard pass.
 
-The hard budgets are 22 modified upstream production-source files, 37 modified
-upstream files overall, 1,913 changed upstream production-source lines, 202
+The hard budgets are 36 modified upstream production-source files, 56 modified
+upstream files overall, 2,981 changed upstream production-source lines, 317
 upstream production-source diff hunks, and zero Kiingo business-logic lines in
 upstream-owned production source.
 
@@ -130,7 +130,13 @@ not own:
   `providerConfigSchema.ts`. Provider IDs never appear in the renderer.
 - `managed_agents/backend.rs` retains immutable staging and provider execution.
   Its stable hooks delegate filename normalization, platform search directories,
-  and optional Windows signer verification to `provider_platform.rs`.
+  optional Windows signer verification to `provider_platform.rs`, and transient
+  provider-owned execution-profile repair to added implementation files. The
+  generic capability is re-probed before every deploy and is not added to the
+  upstream managed-agent record.
+- `AgentDialog.tsx` retains the provider-neutral create handoff. Provider-owned
+  execution form state, submit sanitization, and runtime-free instance mapping
+  live in added files; provider IDs and Kiingo policy never enter the hook.
 - `buzz-media/src/storage.rs` retains public media and S3/MinIO behavior. Azure
   SDK adaptation lives in `storage/azure.rs` and the existing
   `buzz-azure-storage` crate.

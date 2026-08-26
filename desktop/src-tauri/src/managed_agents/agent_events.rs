@@ -191,7 +191,6 @@ mod tests {
             backend: super::super::BackendKind::Provider {
                 id: "buzz-backend-x".to_string(),
                 config: serde_json::json!({ "api_key": "sk-provider-secret" }),
-                owns_execution_profile: false,
             },
             backend_agent_id: Some("remote-id".to_string()),
             provider_policy_pending: false,

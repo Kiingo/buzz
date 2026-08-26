@@ -4,8 +4,11 @@ use super::ManagedAgentRecord;
 /// Identity, prompt, membership, access policy, and provider configuration are
 /// deliberately untouched. The operation is idempotent so legacy records can
 /// be repaired during every provider deploy without a migration flag.
-pub fn repair_provider_owned_record(record: &mut ManagedAgentRecord) -> bool {
-    if !record.backend.owns_execution_profile() {
+pub fn repair_provider_owned_record(
+    record: &mut ManagedAgentRecord,
+    provider_owns_execution_profile: bool,
+) -> bool {
+    if !provider_owns_execution_profile {
         return false;
     }
 
@@ -55,7 +58,7 @@ mod tests {
             "mcp_command": "local-mcp", "turn_timeout_seconds": 0,
             "system_prompt": "preserve prompt", "model": "auto", "provider": "relay-mesh",
             "runtime": "buzz-agent", "env_vars": {"LOCAL_SECRET": "fixture"},
-            "backend": {"type": "provider", "id": "remote-execution", "config": {"harness": "claude"}, "ownsExecutionProfile": true},
+            "backend": {"type": "provider", "id": "remote-execution", "config": {"harness": "claude"}},
             "backend_agent_id": "hosted-id", "respond_to": "owner-only",
             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
             "last_started_at": null, "last_stopped_at": null, "last_exit_code": null,
@@ -67,8 +70,8 @@ mod tests {
     #[test]
     fn repair_is_idempotent_and_preserves_identity_prompt_and_hosted_state() {
         let mut record = record();
-        assert!(repair_provider_owned_record(&mut record));
-        assert!(!repair_provider_owned_record(&mut record));
+        assert!(repair_provider_owned_record(&mut record, true));
+        assert!(!repair_provider_owned_record(&mut record, true));
         assert_eq!(record.pubkey, "agent-key");
         assert_eq!(record.private_key_nsec, "nsec1fixture");
         assert_eq!(record.system_prompt.as_deref(), Some("preserve prompt"));
@@ -83,9 +86,8 @@ mod tests {
     #[test]
     fn non_owning_provider_is_unchanged() {
         let mut record = record();
-        record.backend.set_owns_execution_profile(false);
         let original = record.clone();
-        assert!(!repair_provider_owned_record(&mut record));
+        assert!(!repair_provider_owned_record(&mut record, false));
         assert_eq!(record, original);
     }
 
@@ -95,7 +97,7 @@ mod tests {
         record.persona_id = None;
         let identity = record.private_key_nsec.clone();
 
-        assert!(repair_provider_owned_record(&mut record));
+        assert!(repair_provider_owned_record(&mut record, true));
         assert_eq!(record.private_key_nsec, identity);
         assert!(record.persona_id.is_none());
         assert!(record.provider.is_none());

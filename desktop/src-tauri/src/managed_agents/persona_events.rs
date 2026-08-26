@@ -526,7 +526,6 @@ pub fn apply_persona_snapshot(record: &mut ManagedAgentRecord, persona: &AgentDe
         .env_vars
         .retain(|k, v| persona.env_vars.get(k) != Some(v));
     record.persona_source_version = Some(snapshot.source_version);
-    super::repair_provider_owned_record(record);
 }
 
 /// Preview what `record` would look like immediately after the start/restore

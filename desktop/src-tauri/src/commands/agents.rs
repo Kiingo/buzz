@@ -416,7 +416,7 @@ pub async fn create_managed_agent(
     }
 
     // ── Phase 1: generate keys (sync lock) ────────────────────────────────────
-    let (agent_keys, private_key_nsec, pubkey, resolved_relay_url, mut input) = {
+    let (agent_keys, private_key_nsec, pubkey, resolved_relay_url, input) = {
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
@@ -463,11 +463,16 @@ pub async fn create_managed_agent(
     };
 
     // ── Pre-Phase 2: validate provider config BEFORE any side effects ────────
-    let validated_provider_binary_path =
-        provider_create::prepare_provider_backend(&mut input.backend).await?;
-    provider_create::validate_remote_execution_profile(&app, &input)?;
+    let prepared_provider = provider_create::prepare_provider_backend(&input.backend).await?;
+    let provider_owns_execution_profile = prepared_provider.owns_execution_profile;
+    let validated_provider_binary_path = prepared_provider.binary_path;
+    provider_create::validate_remote_execution_profile(
+        &app,
+        &input,
+        provider_owns_execution_profile,
+    )?;
 
-    let relay_mesh = if input.backend.owns_execution_profile() {
+    let relay_mesh = if provider_owns_execution_profile {
         None
     } else {
         normalize_relay_mesh(input.relay_mesh.as_ref(), &input.backend)?
@@ -519,8 +524,6 @@ pub async fn create_managed_agent(
 
         // Load personas once for harness/pack/avatar resolution below.
         let personas = load_personas(&app).unwrap_or_default();
-        let provider_owns_execution_profile = input.backend.owns_execution_profile();
-
         // Harness resolution: the persona's runtime is authoritative. A
         // persona-backed create stores an `agent_command_override` ONLY when the
         // user deliberately picked a divergent runtime (`harness_override`) —
@@ -1094,7 +1097,6 @@ pub(super) mod provider_access;
 mod provider_create;
 mod provider_delete;
 mod provider_deploy;
-pub(super) use deploy::build_deploy_payload;
 #[cfg(test)]
 use deploy::{deploy_payload_json, DeployProjections};
 #[cfg(test)]

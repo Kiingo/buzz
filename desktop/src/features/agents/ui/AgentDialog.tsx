@@ -24,9 +24,9 @@ import { WhereToRunSection } from "./WhereToRunSection";
 import {
   canSubmitWhereToRun,
   emptyWhereToRunDraft,
-  providerOwnsExecutionProfile,
   resolveBackendIntent,
 } from "./whereToRunIntent";
+import { providerOwnsExecutionProfile } from "./providerOwnedExecutionProfile";
 
 type AgentDialogCreateProps = {
   mode: "definition";
@@ -146,11 +146,9 @@ function AgentCreateDialogRouter({
   return (
     // The create flow is the one surface that knows where the agent will run,
     // because it owns the "Run on" draft.
-    <AgentRunLocationProvider
-      providerOwnsExecutionProfile={providerOwnsExecutionProfile(runDraft)}
-      runLocation={runLocationForRunOn(runDraft.runOn)}
-    >
+    <AgentRunLocationProvider runLocation={runLocationForRunOn(runDraft.runOn)}>
       <AgentDefinitionDialog
+        providerOwnsExecutionProfile={providerOwnsExecutionProfile(runDraft)}
         createRunSection={
           <WhereToRunSection
             draft={runDraft}
