@@ -25,6 +25,7 @@ const MAX_COORDINATOR_RESPONSE: usize = 2 * 1024 * 1024;
 pub(super) struct HostedInventory {
     pub(super) public_key: String,
     pub(super) provider_agent_id: String,
+    pub(super) provider_config_sha256: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -175,6 +176,13 @@ pub(super) async fn resolve_plan(
         || relay.password().is_some()
         || relay.query().is_some()
         || relay.fragment().is_some()
+        || plan.inventory.hosted_agents.iter().any(|hosted| {
+            hosted.provider_config_sha256.len() != 64
+                || !hosted
+                    .provider_config_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
         || (!allow_expired && expires < chrono::Utc::now())
     {
         return Err("identity_rotation_plan_invalid".into());
@@ -229,6 +237,10 @@ pub(super) async fn prepare_coordinator(
                 .provider_config
                 .as_ref()
                 .ok_or_else(|| "identity_rotation_hosted_provider_config_missing".to_string())?;
+            let provider_config_sha256 =
+                agent.provider_config_sha256.as_deref().ok_or_else(|| {
+                    "identity_rotation_hosted_provider_config_hash_missing".to_string()
+                })?;
             Some(
                 prepare_identity_envelope(PrepareIdentityEnvelopeRequest {
                     provider,
@@ -239,6 +251,7 @@ pub(super) async fn prepare_coordinator(
                     private_key_nsec: &nsec,
                     auth_tag: &agent.new_auth_tag,
                     provider_config: config,
+                    provider_config_sha256,
                 })?
                 .identity_envelope,
             )

@@ -95,6 +95,15 @@ pub(super) struct StagedAgent {
     pub(super) new_auth_tag: Zeroizing<String>,
     pub(super) hosted: bool,
     pub(super) provider_config: Option<Value>,
+    pub(super) provider_config_sha256: Option<String>,
+}
+
+fn provider_config_sha256(plan: &DesktopPlan, old_public_key: &str) -> Option<String> {
+    plan.inventory
+        .hosted_agents
+        .iter()
+        .find(|hosted| hosted.public_key == old_public_key)
+        .map(|hosted| hosted.provider_config_sha256.clone())
 }
 
 pub(super) fn stage_or_load_keys(
@@ -137,6 +146,7 @@ pub(super) fn stage_or_load_keys(
                         BackendKind::Provider { config, .. } => Some(config.clone()),
                         BackendKind::Local => None,
                     },
+                    provider_config_sha256: provider_config_sha256(plan, &agent.old_public_key),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -193,6 +203,7 @@ pub(super) fn stage_or_load_keys(
                 BackendKind::Provider { config, .. } => Some(config.clone()),
                 BackendKind::Local => None,
             },
+            provider_config_sha256: provider_config_sha256(plan, &record.pubkey),
         });
     }
     journal.state = "keys_staged".into();

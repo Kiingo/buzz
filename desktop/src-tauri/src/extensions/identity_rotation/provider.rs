@@ -111,6 +111,7 @@ struct SensitivePrepareRequest<'a> {
     op: &'static str,
     coordinator_origin: &'a str,
     provider_config: &'a Value,
+    provider_config_sha256: &'a str,
     rotation: RotationContext<'a>,
     agent: SensitiveAgent<'a>,
 }
@@ -132,6 +133,7 @@ pub(crate) struct PrepareIdentityEnvelopeRequest<'a> {
     pub(crate) private_key_nsec: &'a Zeroizing<String>,
     pub(crate) auth_tag: &'a Zeroizing<String>,
     pub(crate) provider_config: &'a Value,
+    pub(crate) provider_config_sha256: &'a str,
 }
 
 pub(crate) fn prepare_identity_envelope(
@@ -141,6 +143,7 @@ pub(crate) fn prepare_identity_envelope(
         op: "prepare_identity_rotation",
         coordinator_origin: &input.provider.coordinator_origin,
         provider_config: input.provider_config,
+        provider_config_sha256: input.provider_config_sha256,
         rotation: RotationContext {
             rotation_id: input.rotation_id,
             community_id: input.community_id,
@@ -175,6 +178,7 @@ pub(crate) fn prepare_identity_envelope(
         .map_err(|_| "identity_rotation_provider_response_invalid".to_string())?;
     if prepared.rotation_id != input.rotation_id
         || prepared.agent_public_key != input.new_public_key
+        || prepared.provider_config_sha256 != input.provider_config_sha256
         || prepared.provider_config_sha256.len() != 64
         || !prepared
             .provider_config_sha256

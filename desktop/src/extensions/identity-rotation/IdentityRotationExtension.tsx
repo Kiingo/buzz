@@ -108,6 +108,8 @@ const ROTATION_ERROR_MESSAGES: Record<string, string> = {
     "Buzz could not obtain explicit proof that every prior identity is denied. It did not treat the failed check as revocation evidence. Check relay health, then resume this same rotation.",
   identity_rotation_hosted_inventory_conflict:
     "Buzz found a mismatch between the signed hosted-agent inventory and this device. No identities were changed; ask Kiingo support to reconcile the inventory before resuming this same rotation.",
+  buzz_identity_rotation_envelope_invalid:
+    "A hosted replacement envelope did not match the agent configuration verified by Kiingo. No replacement identity was staged and your old keys remain active. Install the latest Buzz and Kiingo Compute provider updates, then resume this same rotation.",
   identity_rotation_postcommit_hosted_inventory_conflict:
     "Your replacement identity is already active on this device, but Buzz could not verify its hosted deployment lineage. The prior authority has not been purged. Do not start another rotation; update Buzz and resume this same rotation.",
   identity_rotation_owner_canary_failed:

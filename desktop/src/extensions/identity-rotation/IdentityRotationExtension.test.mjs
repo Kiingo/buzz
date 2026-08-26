@@ -286,6 +286,39 @@ test("post-commit inventory conflicts explain the durable recovery boundary", as
   );
 });
 
+test("hosted envelope mismatches explain the pre-staging recovery boundary", async () => {
+  setup({
+    mode: "all",
+    managedAgentCount: 2,
+    hostedAgentCount: 1,
+    agentNames: ["High Agency", "Fizz"],
+    recoveryBackupRequired: false,
+  });
+  handlers.set("run_identity_rotation", () =>
+    Promise.reject("buzz_identity_rotation_envelope_invalid"),
+  );
+
+  renderExtension();
+  await screen.findByLabelText("Verified rotation scope");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /verify backup and rotate/i }),
+  );
+
+  await screen.findByText(/did not match the agent configuration/i);
+  assert.match(
+    document.body.textContent,
+    /no replacement identity was staged/i,
+  );
+  assert.match(document.body.textContent, /old keys remain active/i);
+  assert.match(
+    document.body.textContent,
+    /support code: buzz_identity_rotation_envelope_invalid/i,
+  );
+});
+
 test("post-commit internal failures never claim that the old key is still the active local key", async () => {
   setup({
     mode: "agent",

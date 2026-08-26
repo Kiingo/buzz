@@ -123,7 +123,7 @@ against the production Kiingo backend.
   lock before every provider invocation.
 - [x] Surface repair/deploy failures honestly and leave the prior authority/data
   intact rather than partially rewriting the record.
-- [ ] Prove Ada and every other affected provider-owned agent can be started by
+- [x] Prove Ada and every other affected provider-owned agent can be started by
   channel attachment and by mention after the repair.
 
 ## Contributor contract and focused tests
@@ -197,42 +197,154 @@ against the production Kiingo backend.
 
 ## Delivery, install, and live production proof
 
-- [ ] Commit with sign-off, push the branch, and open a PR referencing this
+- [x] Commit with sign-off, push the branch, and open a PR referencing this
   checklist and its test evidence.
-- [ ] Obtain green required CI without bypassing or weakening any gate.
-- [ ] Merge the PR through the normal queue without dequeuing other entries.
-- [ ] Verify the merged commit is present on `origin/main`.
-- [ ] Build and publish a new unsigned Windows Buzz desktop artifact from the
+- [x] Obtain green required CI without bypassing or weakening any gate.
+- [x] Merge the PR through the normal queue without dequeuing other entries.
+- [x] Verify the merged commit is present on `origin/main`.
+- [x] Build and publish a new unsigned Windows Buzz desktop artifact from the
   merged code using the existing release path.
-- [ ] Verify artifact checksum/version/source commit and install the new desktop
+- [x] Verify artifact checksum/version/source commit and install the new desktop
   build on this Windows machine with the user's explicit authorization.
-- [ ] Launch the installed app and confirm it retains the existing identity,
+- [x] Launch the installed app and confirm it retains the existing identity,
   community, conversations, and managed-agent inventory.
-- [ ] Create a temporary production hosted agent with `Run on: kiingo`, no local
+- [x] Create a temporary production hosted agent with `Run on: kiingo`, no local
   LLM provider/defaults, a non-empty prompt, and a provider-owned Codex profile;
   confirm creation and a real reply.
-- [ ] Repeat the profile selection/provision path with Claude Code (or validate
+- [x] Repeat the profile selection/provision path with Claude Code (or validate
   against an existing Claude hosted agent if duplicate test infrastructure
   would be wasteful) and confirm the configured model/reasoning values reach
   Kiingo Compute.
-- [ ] Add a provider-owned hosted agent to a production channel and confirm it
+- [x] Add a provider-owned hosted agent to a production channel and confirm it
   deploys without the shared-compute mesh error.
-- [ ] Mention that agent in the channel and confirm it starts/replies without
+- [x] Mention that agent in the channel and confirm it starts/replies without
   the shared-compute mesh error.
-- [ ] Confirm Ada can be added/mentioned and responds without identity or
+- [x] Confirm Ada can be added/mentioned and responds without identity or
   history replacement.
-- [ ] Remove only temporary verification agents/messages/resources when safe;
+- [x] Remove only temporary verification agents/messages/resources when safe;
   preserve all pre-existing user data.
+
+### Delivery and production evidence
+
+- PR [#103](https://github.com/Kiingo/buzz/pull/103) merged normally at
+  `2026-08-26T09:04:41Z`. The tested head was
+  `9cd4006a4aad6c6e8e7cb0caadc235501663172c`; merge commit
+  `5e3d115a865a6b26eeb5b513700d2daa896b8dd8` is the exact current
+  `origin/main` ancestor containing it. No queue entry was dequeued and no gate
+  was bypassed.
+- Required CI run `32947867876` and CodeQL run `32947863986` are green. The
+  one unrelated smoke timing shard was rerun once through the ordinary GitHub
+  rerun control and passed as job `98117971391`; Windows Rust, macOS desktop,
+  desktop core, all smoke/integration shards, and CodeQL completed successfully.
+- Kiingo unsigned artifact workflow run `32951122498` built only Windows from
+  the exact merge revision. Artifact `9602089180` is
+  `kiingo-buzz-windows-unsigned-5e3d115a865a6b26eeb5b513700d2daa896b8dd8`.
+  Its installer is version `0.5.19-kiingo-unsigned.16`, is Authenticode
+  `NotSigned`, and has verified SHA-256
+  `0924D83CEE18B74D0CEFCDFBF10E4356BECF952664048CAB9184CB60EACE69A5`.
+- The verified installer completed with exit code 0 at
+  `C:\Users\Ross\AppData\Local\Buzz`. The registered version and installed
+  unsigned executable match `0.5.19-kiingo-unsigned.16`; the installed provider
+  probes as Kiingo Compute protocol 2/version `0.3.1` and declares literal
+  `x-buzz-owns-execution-profile: true`.
+- Installed-app readback retained Ross's existing public identity, eleven live
+  channels, conversation history, community membership, and the pre-existing
+  managed-agent inventory. No identity, conversation, or memory was recreated
+  for the provider repair.
+- Ada's first installed `start_managed_agent` repaired the persisted record
+  from the impossible local `relay-mesh` projection to null local
+  provider/model/runtime/command fields, preserved the provider profile and
+  public identity, deployed endpoint
+  `buzz:2108be13-7463-46c1-8891-5332126ff2a4`, and produced two signed normal
+  replies in the existing marketing channel without the mesh error.
+- A new temporary Codex agent was created with no local defaults/provider,
+  provider-owned automatic model, high reasoning, and a non-empty prompt. Its
+  hosted listener built four ACP workers, subscribed to the channel, used the
+  warm no-cold-start path, and published a signed semantic reply. A separate
+  temporary Claude Code agent did the same; production run
+  `2918ce1c-0f7f-479d-95f2-b87f7853686a` proved selected harness
+  `claude-code`, Ross's own connected Claude account, and resolved model
+  `claude-haiku-4-5`. A normal follow-up produced a signed Claude reply.
+- Ellis, Mira, Sage, and High Agency were each passed through the same installed
+  provider start boundary. Their hosted listeners each initialized four ACP
+  workers and connected to the relay. Disk readback proves all five pre-existing
+  provider-owned records now have null local provider/model/runtime/command,
+  durable provider endpoint IDs, and no error. One ordinary channel mention
+  then produced a signed final reply from each agent; all acceptance messages
+  were deleted afterward and High Agency's pre-test channel membership was
+  restored.
+- Both temporary provider endpoints, listeners, local identities, channel
+  memberships, and messages are deleted. The two inert Kiingo core-agent audit
+  objects were archived through separate one-time human approvals. Production
+  `agents.getAgent` readback proves the Claude record archived at
+  `2026-08-26T13:36:37.079Z` and the Codex record archived at
+  `2026-08-26T13:35:11.954Z`. No pre-existing user agent, identity, channel,
+  conversation, or memory was deleted.
 
 ## Final audit and cleanup
 
-- [ ] Review the final diff for provider IDs, hidden fallback paths, duplicate
+- [x] Contain the credential-output diagnostic incident: stop the faulty decode
+  path immediately, confirm it wrote no secret to disk or external service, and
+  avoid reprinting the exposed values.
+- [x] Restore the missing `app.kiingo.com` DNS validation records, complete
+  Azure Front Door managed-certificate revalidation, and prove the production
+  `/team/buzz` security handoff is reachable before starting the cutover.
+- [x] Move Kiingo Compute rollback binaries, release metadata, and download
+  staging out of Buzz's live provider-discovery directory; migrate legacy state
+  without data loss and prove future provider upgrades expose exactly one
+  executable candidate to Buzz.
+- [ ] Repair the hosted identity-rotation envelope contract so the verified
+  coordinator plan supplies the production-authoritative provider-configuration
+  hash, the isolated Buzz rotation extension and Kiingo provider bind every
+  replacement envelope to that exact hash, legacy stored plans are enriched
+  without exposing configuration or key material, and the current paused
+  rotation can resume safely without creating another replacement identity.
+- [ ] Rotate the exposed current human and managed-agent Buzz identities through
+  the verified hard-cutover workflow, prove continuity/live hosted canaries,
+  revoke the prior authorities, and confirm the replacement identities are the
+  only active authorities before declaring closure.
+
+- [x] Review the final diff for provider IDs, hidden fallback paths, duplicate
   ownership logic, accidental secrets, oversized core files, and unrelated
   changes.
 - [ ] Reconcile every checkbox against concrete evidence; leave nothing checked
   based on intent alone.
-- [ ] Confirm production and installed-desktop health after the live proof.
+- [x] Confirm production and installed-desktop health after the live proof.
 - [ ] Delete the merged remote branch and remove this worktree without touching
   unrelated dirty worktrees.
 - [ ] Mark the active goal complete only after every item above is satisfied and
   report the goal tool's final token usage.
+
+Kiingo PR `#10707` moved rollback binaries, release metadata, and transient
+downloads under `%LOCALAPPDATA%\Buzz\provider-state\kiingo` and added a signed
+release-workflow acceptance that performs install, legacy migration, and
+rollback against an isolated application-data root. All PR checks passed and
+merge `3ed1e458cd5ca6d25293813a9438cd4ee6ab7ea2` was published as signed,
+timestamped, provenance-attested provider `0.3.2` by workflow run
+`32982872935`. The release checksum matched, the installed release-state record
+is `0.3.2`, and Buzz's native discovery/probe boundary now reports exactly one
+candidate (`kiingo`), protocol 2, version `0.3.2`, with execution-profile
+ownership enabled.
+
+Final implementation-diff audit: the merge changes 30 scoped files (1,506
+insertions/370 deletions). Capability detection remains the single literal
+`x-buzz-owns-execution-profile` boundary; no provider ID or Kiingo policy was
+added to core render/validation logic. The only `relay-mesh` and secret-shaped
+values in the implementation diff are explicit regression fixtures and
+redaction assertions. The fork-boundary audit remains green with zero Kiingo
+business-logic lines in upstream production source, the file-size ratchet is
+green, CodeQL is green, and `git diff --check` reports no whitespace errors.
+
+Post-proof production health readback on `2026-08-26` shows Kiingo MCP ready
+with no queued jobs and eight effective execution slots. Azure's managed AKS
+command path shows both relay replicas and every Buzz supervisor, membership
+controller, Kiingo agent, and Redis pod Ready/Running with zero restarts. The
+installed desktop remains the exact `0.5.19-kiingo-unsigned.16` release under
+`C:\Users\Ross\AppData\Local\Buzz`.
+
+Identity-security prerequisite repair: Azure Front Door's enabled Agent UI
+route was intact, but the public `app` CNAME and `_dnsauth.app` TXT record were
+missing and the managed certificate had expired. The CNAME now targets the
+existing production Front Door endpoint, the fresh validation TXT is present,
+Front Door reports domain validation `Approved` and deployment `Succeeded`,
+and an ordinary verified-TLS request to `https://app.kiingo.com/` returns 200.

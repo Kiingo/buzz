@@ -248,6 +248,7 @@ mod tests {
                 hosted_agents: vec![HostedInventory {
                     public_key: "hosted-key".into(),
                     provider_agent_id: "provider-agent-id".into(),
+                    provider_config_sha256: "a".repeat(64),
                 }],
             },
         }
