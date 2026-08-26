@@ -155,6 +155,7 @@ mod tests {
                 BackendKind::Provider {
                     id: "p".into(),
                     config: serde_json::json!({}),
+                    owns_execution_profile: false,
                 },
             ),
         ] {

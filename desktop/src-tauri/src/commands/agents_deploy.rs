@@ -18,6 +18,7 @@ use crate::{
 /// resolved descriptor and effective config so that the serialised payload and
 /// the `launch` block are always internally consistent.
 pub(super) struct DeployProjections {
+    pub provider_owns_execution_profile: bool,
     pub effective_model: Option<String>,
     pub effective_provider: Option<String>,
     pub effective_prompt: Option<String>,
@@ -159,7 +160,13 @@ pub(super) fn build_launch_block(
     })
 }
 
-pub(super) fn ensure_remote_provider_supported(provider: Option<&str>) -> Result<(), String> {
+pub(super) fn ensure_remote_provider_supported(
+    provider: Option<&str>,
+    provider_owns_execution_profile: bool,
+) -> Result<(), String> {
+    if provider_owns_execution_profile {
+        return Ok(());
+    }
     if provider.map(str::trim) == Some(crate::managed_agents::RELAY_MESH_PROVIDER_ID) {
         return Err(
             "shared-compute agents cannot be deployed remotely because the mesh endpoint is local to the desktop"
@@ -182,28 +189,45 @@ pub(crate) fn build_deploy_payload(
     let global = crate::managed_agents::load_global_agent_config(app).unwrap_or_default();
     let personas = load_personas(app).unwrap_or_default();
     let teams = crate::managed_agents::load_teams(app).unwrap_or_default();
-    let persona_env =
-        crate::managed_agents::live_persona_env(&personas, record.persona_id.as_deref());
-    let global_persona_env = crate::managed_agents::merged_user_env(&global.env_vars, &persona_env);
-    let merged_user_env =
-        crate::managed_agents::merged_user_env(&global_persona_env, &record.env_vars);
+    let provider_owns_execution_profile = record.backend.owns_execution_profile();
     let effective = crate::managed_agents::effective_config::resolve_effective_config(
         record, &personas, &global,
     )
     .require_resolved()?;
 
-    ensure_remote_provider_supported(effective.provider.value.as_deref())?;
+    ensure_remote_provider_supported(
+        effective.provider.value.as_deref(),
+        provider_owns_execution_profile,
+    )?;
 
-    let descriptor =
+    let descriptor = if provider_owns_execution_profile {
+        crate::managed_agents::readiness::EffectiveHarnessDescriptor {
+            command: String::new(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+        }
+    } else {
         crate::managed_agents::resolve_effective_harness_descriptor(record, &personas, &global)
-            .map_err(|error| crate::managed_agents::user_facing_harness_error(&error))?;
+            .map_err(|error| crate::managed_agents::user_facing_harness_error(&error))?
+    };
+    let merged_user_env = if provider_owns_execution_profile {
+        BTreeMap::new()
+    } else {
+        let persona_env =
+            crate::managed_agents::live_persona_env(&personas, record.persona_id.as_deref());
+        let global_persona_env =
+            crate::managed_agents::merged_user_env(&global.env_vars, &persona_env);
+        crate::managed_agents::merged_user_env(&global_persona_env, &record.env_vars)
+    };
     let owner_pubkey = super::workspace_owner_hex(state)?;
     let launch = build_launch_block(
         record,
         &descriptor,
         &teams,
         effective.system_prompt.value.as_deref(),
-        effective.model.value.as_deref(),
+        (!provider_owns_execution_profile)
+            .then_some(effective.model.value.as_deref())
+            .flatten(),
         &owner_pubkey,
     );
 
@@ -217,8 +241,13 @@ pub(crate) fn build_deploy_payload(
             &relay_ws_url_with_override(state),
         ),
         DeployProjections {
-            effective_model: effective.model.value,
-            effective_provider: effective.provider.value,
+            provider_owns_execution_profile,
+            effective_model: (!provider_owns_execution_profile)
+                .then_some(effective.model.value)
+                .flatten(),
+            effective_provider: (!provider_owns_execution_profile)
+                .then_some(effective.provider.value)
+                .flatten(),
             effective_prompt: effective.system_prompt.value,
             effective_parallelism,
             owner_only_access: crate::managed_agents::owner_only_access_build(),
@@ -242,16 +271,30 @@ pub(super) fn deploy_payload_json(
 ) -> serde_json::Value {
     let (respond_to, respond_to_allowlist) =
         crate::managed_agents::projected_access_with_policy(record, projections.owner_only_access);
+    let (agent_command, agent_args) = if projections.provider_owns_execution_profile {
+        ("", &[][..])
+    } else {
+        (record.agent_command.as_str(), record.agent_args.as_slice())
+    };
+    let (model, provider, env_vars) = if projections.provider_owns_execution_profile {
+        (None, None, BTreeMap::new())
+    } else {
+        (
+            projections.effective_model,
+            projections.effective_provider,
+            merged_env,
+        )
+    };
     serde_json::json!({
         "name": &record.name,
         "relay_url": relay_url,
         "private_key_nsec": &record.private_key_nsec,
         "auth_tag": &record.auth_tag,
-        "agent_command": &record.agent_command,
-        "agent_args": &record.agent_args,
+        "agent_command": agent_command,
+        "agent_args": agent_args,
         "system_prompt": projections.effective_prompt,
-        "model": projections.effective_model,
-        "provider": projections.effective_provider,
+        "model": model,
+        "provider": provider,
         "turn_timeout_seconds": record.turn_timeout_seconds,
         "idle_timeout_seconds": record.idle_timeout_seconds,
         "max_turn_duration_seconds": record.max_turn_duration_seconds,
@@ -260,7 +303,7 @@ pub(super) fn deploy_payload_json(
         "parallelism": projections.effective_parallelism,
         "respond_to": respond_to,
         "respond_to_allowlist": respond_to_allowlist,
-        "env_vars": merged_env,
+        "env_vars": env_vars,
         "launch": launch,
     })
 }
@@ -292,6 +335,37 @@ mod tests {
             "updated_at": "2026-01-01T00:00:00Z"
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn provider_owned_payload_omits_desktop_execution_projection() {
+        let mut record = record();
+        record.agent_command = "buzz-agent".into();
+        record.agent_args = vec!["--local".into()];
+        let payload = deploy_payload_json(
+            &record,
+            "wss://relay.example".into(),
+            DeployProjections {
+                provider_owns_execution_profile: true,
+                effective_model: Some("auto".into()),
+                effective_provider: Some("relay-mesh".into()),
+                effective_prompt: Some("preserved prompt".into()),
+                effective_parallelism: 4,
+                owner_only_access: true,
+            },
+            BTreeMap::from([("LOCAL_SECRET".into(), "fixture".into())]),
+            serde_json::json!({
+                "command": "", "args": [], "env": {}, "policy_env": {},
+                "owner_pubkey": "owner-hex"
+            }),
+        );
+        assert_eq!(payload["agent_command"], "");
+        assert_eq!(payload["agent_args"], serde_json::json!([]));
+        assert!(payload["model"].is_null());
+        assert!(payload["provider"].is_null());
+        assert_eq!(payload["env_vars"], serde_json::json!({}));
+        assert_eq!(payload["system_prompt"], "preserved prompt");
+        assert_eq!(payload["launch"]["owner_pubkey"], "owner-hex");
     }
 
     #[test]
@@ -627,6 +701,7 @@ mod tests {
             &record,
             "wss://relay.example".to_string(),
             DeployProjections {
+                provider_owns_execution_profile: false,
                 effective_model: None,
                 effective_provider: None,
                 effective_prompt: None,
@@ -672,6 +747,7 @@ mod tests {
             &record,
             "wss://relay.example".to_string(),
             DeployProjections {
+                provider_owns_execution_profile: false,
                 effective_model: None,
                 effective_provider: None,
                 effective_prompt: None,
@@ -718,6 +794,7 @@ mod tests {
             &record,
             "wss://relay.example".to_string(),
             DeployProjections {
+                provider_owns_execution_profile: false,
                 effective_model: None,
                 effective_provider: None,
                 effective_prompt: None,

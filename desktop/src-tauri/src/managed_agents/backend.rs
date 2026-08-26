@@ -124,6 +124,30 @@ pub(super) fn validate_provider_info(
     })
 }
 
+/// Whether this provider owns the complete remote execution profile. This is
+/// deliberately a literal schema extension: absent, false, or malformed values
+/// preserve the portable local-harness contract.
+pub fn provider_owns_execution_profile(info: &serde_json::Value) -> bool {
+    info.get("config_schema")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|schema| schema.get("x-buzz-owns-execution-profile"))
+        == Some(&serde_json::Value::Bool(true))
+}
+
+fn validate_execution_profile_ownership(
+    info: &serde_json::Value,
+    expected: bool,
+) -> Result<(), String> {
+    if provider_owns_execution_profile(info) == expected {
+        Ok(())
+    } else {
+        Err(
+            "provider execution-profile ownership changed during deployment; retry after refreshing the provider"
+                .to_string(),
+        )
+    }
+}
+
 /// Invoke a provider binary: write JSON to stdin, read JSON from stdout.
 ///
 /// Reader threads stream lines/chunks over channels so the caller can receive
@@ -590,12 +614,26 @@ pub(super) fn stage_provider(
     ))
 }
 
+/// Probe one platform-verified immutable provider copy and validate its
+/// protocol response before returning provider-authored metadata to callers.
+pub fn probe_provider_info(binary: &Path) -> Result<serde_json::Value, String> {
+    let (_directory, staged, _digest, _execution_guard) = stage_provider(binary)?;
+    let request = serde_json::json!({
+        "op": "info",
+        "request_id": uuid::Uuid::new_v4().to_string(),
+    });
+    let info = invoke_provider(&staged, &request, Duration::from_secs(10))?;
+    validate_provider_info(&info)?;
+    Ok(info)
+}
+
 /// Deploy through one immutable staged copy: negotiate protocol v1 before the
 /// secret-bearing request, then invoke deploy on those exact same bytes.
 pub fn provider_deploy(
     binary: &Path,
     agent: &serde_json::Value,
     provider_config: &serde_json::Value,
+    expected_owns_execution_profile: bool,
 ) -> Result<String, String> {
     let (_directory, staged, _digest, _execution_guard) = stage_provider(binary)?;
     let info_request = serde_json::json!({
@@ -604,6 +642,7 @@ pub fn provider_deploy(
     });
     let info = invoke_provider(&staged, &info_request, Duration::from_secs(10))?;
     validate_provider_info(&info)?;
+    validate_execution_profile_ownership(&info, expected_owns_execution_profile)?;
 
     let request = serde_json::json!({
         "op": "deploy",

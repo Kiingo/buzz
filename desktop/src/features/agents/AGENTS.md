@@ -246,6 +246,24 @@ with a TypeScript lookup table or an id comparison in a component.
    mid-conversation effort control without a plan ruling. The archived live-effort
    machinery lives on `archive/claude-config-gaps-live-effort` for reference only.
 
+16. **A remote provider may explicitly own its execution profile.** The only
+    frontend source is literal
+    `config_schema["x-buzz-owns-execution-profile"] === true` on a successful
+    provider probe, projected once by `providerOwnsExecutionProfile`. When set,
+    create keeps the provider's own schema controls and required-field gate but
+    hides and omits desktop harness, LLM provider, model, credential, tuning,
+    and defaults fields. Publish that fact through the existing dialog context,
+    not another prop on the oversized definition dialog. Rust independently
+    re-probes the platform-verified provider before create and every deploy,
+    persists the capability on `BackendKind`, and refuses ownership drift
+    between probe and deploy. Provider-owned deploys preserve identity, prompt,
+    relay scope, access, and lifecycle policy while omitting the portable local
+    execution projection. The idempotent legacy repair may clear only those
+    local execution fields; it must not special-case a provider ID, replace an
+    identity, or alter history, membership, prompt, access, or backend config.
+    Missing, false, malformed, or failed capability probes keep the existing
+    local/non-owning remote contract, including relay-mesh remote refusal.
+
 12. **Owner-only builds constrain managed runtimes, not relay-agent mentions.**
     The compiled owner-only capability applies when Desktop starts or deploys a
     managed agent. Independently operated relay agents with NIP-OA ownership

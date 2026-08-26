@@ -4,11 +4,7 @@ use tauri::AppHandle;
 
 use crate::{
     app_state::AppState,
-    managed_agents::{
-        find_managed_agent_mut, load_managed_agents, save_managed_agents, BackendKind,
-        ManagedAgentRecord,
-    },
-    util::now_iso,
+    managed_agents::{load_managed_agents, BackendKind, ManagedAgentRecord},
 };
 
 pub(super) fn needs_reconciliation_with_policy(
@@ -20,35 +16,14 @@ pub(super) fn needs_reconciliation_with_policy(
         && record.backend_agent_id.is_some()
 }
 
-#[derive(Debug)]
-struct ProviderAccessTarget {
-    pubkey: String,
-    provider_id: String,
-    config: serde_json::Value,
-    cached_binary_path: Option<String>,
-    agent_json: Result<serde_json::Value, String>,
-}
-
-fn collect_targets_with(
+fn collect_target_pubkeys(
     records: Vec<ManagedAgentRecord>,
     owner_only_access: bool,
-    mut build_payload: impl FnMut(&ManagedAgentRecord) -> Result<serde_json::Value, String>,
-) -> Vec<ProviderAccessTarget> {
+) -> Vec<String> {
     records
         .into_iter()
         .filter(|record| needs_reconciliation_with_policy(record, owner_only_access))
-        .map(|record| match record.backend.clone() {
-            BackendKind::Provider { id, config } => ProviderAccessTarget {
-                agent_json: build_payload(&record),
-                pubkey: record.pubkey,
-                provider_id: id,
-                config,
-                cached_binary_path: record.provider_binary_path,
-            },
-            BackendKind::Local => {
-                unreachable!("provider access reconciliation selected a local agent")
-            }
-        })
+        .map(|record| record.pubkey)
         .collect()
 }
 
@@ -68,41 +43,11 @@ pub(crate) async fn reconcile_on_workspace_apply(
             .managed_agents_store_lock
             .lock()
             .map_err(|error| error.to_string())?;
-        collect_targets_with(load_managed_agents(app)?, owner_only_access, |record| {
-            super::build_deploy_payload(app, state, record)
-        })
+        collect_target_pubkeys(load_managed_agents(app)?, owner_only_access)
     };
 
-    for target in targets {
-        let ProviderAccessTarget {
-            pubkey,
-            provider_id,
-            config,
-            cached_binary_path,
-            agent_json,
-        } = target;
-        let agent_json = match agent_json {
-            Ok(agent_json) => agent_json,
-            Err(error) => {
-                persist_failure(app, state, &pubkey, &error)?;
-                return Err(format!(
-                    "provider access reconciliation failed for agent {pubkey}: {error}"
-                ));
-            }
-        };
-        if let Err(error) = super::deploy_to_provider(
-            app,
-            state,
-            &pubkey,
-            &provider_id,
-            &config,
-            agent_json,
-            cached_binary_path.as_deref(),
-            None,
-            None,
-        )
-        .await
-        {
+    for pubkey in targets {
+        if let Err(error) = super::deploy_to_provider(app, state, &pubkey, None, None).await {
             return Err(format!(
                 "provider access reconciliation failed for agent {pubkey}: {error}"
             ));
@@ -110,23 +55,6 @@ pub(crate) async fn reconcile_on_workspace_apply(
     }
 
     Ok(())
-}
-
-pub(crate) fn persist_failure(
-    app: &AppHandle,
-    state: &AppState,
-    pubkey: &str,
-    error: &str,
-) -> Result<(), String> {
-    let _store_guard = state
-        .managed_agents_store_lock
-        .lock()
-        .map_err(|lock_error| lock_error.to_string())?;
-    let mut records = load_managed_agents(app)?;
-    let record = find_managed_agent_mut(&mut records, pubkey)?;
-    record.last_error = Some(error.to_string());
-    record.updated_at = now_iso();
-    save_managed_agents(app, &records)
 }
 
 #[cfg(test)]
@@ -154,6 +82,7 @@ mod tests {
                 BackendKind::Provider {
                     id: "provider".into(),
                     config: serde_json::json!({"region": "test"}),
+                    owns_execution_profile: false,
                 },
                 Some("existing"),
             ),
@@ -161,24 +90,17 @@ mod tests {
                 BackendKind::Provider {
                     id: "not-deployed".into(),
                     config: serde_json::json!({}),
+                    owns_execution_profile: false,
                 },
                 None,
             ),
             record(BackendKind::Local, Some("stale")),
         ];
 
-        let targets = collect_targets_with(records, true, |_| {
-            Ok(serde_json::json!({"respond_to": "owner-only"}))
-        });
+        let targets = collect_target_pubkeys(records, true);
 
         assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].pubkey, "agent");
-        assert_eq!(targets[0].provider_id, "provider");
-        assert_eq!(targets[0].config["region"], "test");
-        assert_eq!(
-            targets[0].agent_json.as_ref().unwrap()["respond_to"],
-            "owner-only"
-        );
+        assert_eq!(targets[0], "agent");
     }
 
     #[test]
@@ -187,6 +109,7 @@ mod tests {
             BackendKind::Provider {
                 id: "pending-provider".into(),
                 config: serde_json::json!({}),
+                owns_execution_profile: false,
             },
             Some("existing-pending"),
         );
@@ -196,21 +119,15 @@ mod tests {
             BackendKind::Provider {
                 id: "ordinary-provider".into(),
                 config: serde_json::json!({}),
+                owns_execution_profile: false,
             },
             Some("existing-ordinary"),
         );
 
-        let targets = collect_targets_with(vec![ordinary, pending], false, |record| {
-            Ok(serde_json::json!({"pubkey": record.pubkey}))
-        });
+        let targets = collect_target_pubkeys(vec![ordinary, pending], false);
 
         assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].pubkey, "pending-agent");
-        assert_eq!(targets[0].provider_id, "pending-provider");
-        assert_eq!(
-            targets[0].agent_json.as_ref().unwrap()["pubkey"],
-            "pending-agent"
-        );
+        assert_eq!(targets[0], "pending-agent");
     }
 
     #[test]
@@ -219,6 +136,7 @@ mod tests {
             BackendKind::Provider {
                 id: "provider".into(),
                 config: serde_json::json!({}),
+                owns_execution_profile: false,
             },
             None,
         );
@@ -226,9 +144,6 @@ mod tests {
         let mut local = record(BackendKind::Local, Some("stale-provider-id"));
         local.provider_policy_pending = true;
 
-        assert!(collect_targets_with(vec![undeployed, local], false, |_| {
-            Ok(serde_json::Value::Null)
-        })
-        .is_empty());
+        assert!(collect_target_pubkeys(vec![undeployed, local], false).is_empty());
     }
 }

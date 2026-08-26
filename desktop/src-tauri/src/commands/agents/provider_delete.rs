@@ -283,6 +283,7 @@ mod tests {
         changed.backend = BackendKind::Provider {
             id: "example".to_string(),
             config: serde_json::json!({"region": "east"}),
+            owns_execution_profile: false,
         };
         assert!(assert_delete_fingerprint(&changed, &fingerprint).is_err());
         changed = original;

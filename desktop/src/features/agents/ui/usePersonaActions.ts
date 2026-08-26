@@ -209,7 +209,7 @@ export function usePersonaActions() {
         const runtime = availableRuntimes.find(
           (candidate) => candidate.id === input.runtime,
         );
-        if (!runtime) {
+        if (!runtime && !backendIntent) {
           setPersonaErrorMessage(
             "Choose an available provider for this agent.",
           );
@@ -225,7 +225,7 @@ export function usePersonaActions() {
         const avatarUrl = await resolveManagedAgentAvatarUrl(
           input.avatarUrl,
           undefined,
-          runtime.avatarUrl,
+          runtime?.avatarUrl,
         );
         const persona = await createPersonaMutation.mutateAsync({
           ...input,
@@ -239,7 +239,7 @@ export function usePersonaActions() {
         }
         const agentInput = await buildInstanceInputForDefinition(
           persona,
-          runtime,
+          runtime ?? null,
           undefined,
           startIntent ?? undefined,
         );

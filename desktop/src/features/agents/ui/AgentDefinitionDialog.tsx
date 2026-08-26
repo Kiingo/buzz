@@ -20,7 +20,6 @@ import { PersonaProviderApiKeyField } from "./PersonaProviderApiKeyField";
 import {
   canSubmitPersonaDialog,
   formatPersonaNamePoolText,
-  parsePersonaNamePoolText,
 } from "./personaDialogState";
 import { hasText } from "./personaDialogEnvVars";
 import {
@@ -79,7 +78,9 @@ import {
   initialAgentAiConfigurationMode,
 } from "./agentAiConfigurationPolicy";
 import { useProviderApiKeyFieldState } from "./providerApiKeyFieldState";
-import { buildRuntimeModelProviderPayload } from "./agentDefinitionSubmitPayload";
+import { buildAgentDefinitionSubmitPayload } from "./agentDefinitionSubmitPayload";
+import { agentExecutionProfileFormState } from "./agentExecutionProfileFormState";
+import { useProviderOwnsExecutionProfile } from "./AgentRunLocationContext";
 import { useAgentDefinitionExecutionReadiness } from "./useAgentDefinitionExecutionReadiness";
 import { AgentDefinitionDialogFooter } from "./AgentDefinitionDialogFooter";
 import { AgentDefinitionDialogShell } from "./AgentDefinitionDialogShell";
@@ -136,6 +137,7 @@ export function AgentDefinitionDialog({
   createRunSection,
   createSubmitBlocked = false,
 }: AgentDefinitionDialogProps) {
+  const providerOwnsExecutionProfile = useProviderOwnsExecutionProfile();
   const runtimesLoading = runtimeCatalogStatus === "loading";
   const [displayName, setDisplayName] = React.useState("");
   const [aiDefaultsOpen, setAiDefaultsOpen] = React.useState(false);
@@ -332,43 +334,33 @@ export function AgentDefinitionDialog({
     // execution-config validation failure.
     if (!initialValues || !executionReadinessSatisfied || !canSubmit) return;
 
-    const {
-      runtime: runtimeForSubmit,
-      model: modelForSubmit,
-      provider: providerForSubmit,
-    } = buildRuntimeModelProviderPayload({
-      runtime,
-      model: aiConfigurationMode === "defaults" ? "" : model,
-      provider: aiConfigurationMode === "defaults" ? "" : provider,
-      isEditMode: "id" in initialValues,
-      isAutoSeeded: isRuntimeAutoSeededRef.current,
-      initialPreviousRuntime: initialValues.runtime?.trim() ?? "",
-      initialModel: initialValues.model,
-      initialProvider: initialValues.provider,
-      initialModelProviderEditableWithoutRuntime,
-    });
-    const namePool = parsePersonaNamePoolText(namePoolText);
-    const namePoolInput =
-      namePool.length > 0
-        ? namePool
-        : "namePool" in initialValues
-          ? []
-          : undefined;
-    const baseInput = {
-      displayName: displayName.trim(),
-      avatarUrl: avatarUrl.trim() || undefined,
-      systemPrompt: systemPrompt,
-      runtime: runtimeForSubmit,
-      model: modelForSubmit,
-      provider: providerForSubmit,
-      namePool: namePoolInput,
+    const isEditMode = "id" in initialValues;
+    const baseInput = buildAgentDefinitionSubmitPayload({
+      avatarUrl,
+      displayName,
       envVars,
+      namePoolText,
+      preserveEmptyNamePool: isEditMode,
+      providerOwnsExecutionProfile,
+      systemPrompt,
       behavior: behaviorForSubmit(
         behaviorDraft,
         behaviorSeedRef.current,
-        "id" in initialValues,
+        isEditMode,
       ),
-    };
+      execution: {
+        runtime,
+        model: aiConfigurationMode === "defaults" ? "" : model,
+        provider: aiConfigurationMode === "defaults" ? "" : provider,
+        isEditMode,
+        isAutoSeeded: isRuntimeAutoSeededRef.current,
+        initialPreviousRuntime: initialValues.runtime?.trim() ?? "",
+        initialModel: initialValues.model,
+        initialProvider: initialValues.provider,
+        initialModelProviderEditableWithoutRuntime,
+        providerOwnsExecutionProfile,
+      },
+    });
 
     if ("id" in initialValues) {
       await onSubmit(
@@ -394,9 +386,21 @@ export function AgentDefinitionDialog({
   const selectedRuntime = runtimes.find((p) => p.id === runtime);
   const blankRuntimeModelProviderEditable =
     initialModelProviderEditableWithoutRuntime && runtime.trim().length === 0;
-  const runtimeCanChooseLlmProvider =
-    runtimeSupportsLlmProviderSelection(runtime) ||
-    blankRuntimeModelProviderEditable;
+  const selectedRuntimeIsAvailable =
+    runtime.trim().length === 0 ||
+    selectedRuntime?.availability === "available";
+  const {
+    createRuntimeReady,
+    modelFieldVisible,
+    runtimeCanChooseLlmProvider,
+    showDesktopExecutionProfile,
+  } = agentExecutionProfileFormState({
+    blankRuntimeModelProviderEditable,
+    isCreateMode,
+    providerOwnsExecutionProfile,
+    runtime,
+    selectedRuntimeIsAvailable,
+  });
   const llmProviderFieldVisible =
     (runtime.trim().length > 0 && runtimeCanChooseLlmProvider) ||
     blankRuntimeModelProviderEditable;
@@ -434,6 +438,7 @@ export function AgentDefinitionDialog({
       globalModel: inheritedModelDefault.value,
       globalProvider: inheritedProviderDefault.value,
       initialValues,
+      isProviderMode: providerOwnsExecutionProfile,
       isRuntimeAutoSeeded: isRuntimeAutoSeededRef.current,
       model,
       provider: trimmedProvider,
@@ -469,18 +474,12 @@ export function AgentDefinitionDialog({
   } = apiKeyFieldState;
   const providerIsRequired =
     aiConfigurationMode === "custom" && runtimeCanChooseLlmProvider;
-  const modelFieldVisible =
-    runtime.trim().length > 0 || blankRuntimeModelProviderEditable;
   const isExplicitModelRequired = aiConfigurationMode === "custom";
-  const selectedRuntimeIsAvailable =
-    runtime.trim().length === 0 ||
-    selectedRuntime?.availability === "available";
   // Gate model/provider validity through missingNormalizedFields — single
   // source of truth with the readiness gate so display and Save can't drift.
   const canSubmit =
     canSubmitPersonaDialog({ displayName, isPending }) &&
-    (!isCreateMode || runtime.trim().length > 0) &&
-    (!isCreateMode || selectedRuntimeIsAvailable) &&
+    createRuntimeReady &&
     (!isCreateMode || !createSubmitBlocked) &&
     // Crash-loop guard, create AND edit: an empty allowlist would crash
     // every instance minted from this definition at startup.
@@ -804,7 +803,7 @@ export function AgentDefinitionDialog({
           className="space-y-5"
           data-testid={`agent-${aiConfigurationMode}-configuration-section`}
         >
-          {aiConfigurationMode === "custom" ? (
+          {showDesktopExecutionProfile && aiConfigurationMode === "custom" ? (
             <AgentHarnessField
               disabled={isPending || runtimesLoading}
               onValueChange={handleRuntimeDropdownChange}
@@ -899,7 +898,7 @@ export function AgentDefinitionDialog({
             ) : null}
           </AnimatePresence>
 
-          {aiConfigurationMode === "defaults" ? (
+          {showDesktopExecutionProfile && aiConfigurationMode === "defaults" ? (
             <AgentCreateAiDefaultsSummary
               canChooseProvider={runtimeCanChooseLlmProvider}
               harness={runtimeSummaryLabel}
@@ -971,6 +970,7 @@ export function AgentDefinitionDialog({
                   hiddenEnvKeys={
                     topLevelSecretEnvVar ? [topLevelSecretEnvVar] : []
                   }
+                  hideExecutionFields={providerOwnsExecutionProfile}
                   inheritedEnvVars={inheritedEnvVarsForAdvanced}
                   model={model}
                   modelTuningRuntimeId={runtime}

@@ -23,21 +23,32 @@ import type { AgentRunLocation } from "../lib/agentAccessWarning";
 const AgentRunLocationContext = React.createContext<AgentRunLocation | null>(
   null,
 );
+const ProviderOwnsExecutionProfileContext = React.createContext(false);
 
 export function AgentRunLocationProvider({
   children,
+  providerOwnsExecutionProfile = false,
   runLocation,
 }: {
   children: React.ReactNode;
+  providerOwnsExecutionProfile?: boolean;
   runLocation: AgentRunLocation | null;
 }) {
   return (
-    <AgentRunLocationContext.Provider value={runLocation}>
-      {children}
-    </AgentRunLocationContext.Provider>
+    <ProviderOwnsExecutionProfileContext.Provider
+      value={providerOwnsExecutionProfile}
+    >
+      <AgentRunLocationContext.Provider value={runLocation}>
+        {children}
+      </AgentRunLocationContext.Provider>
+    </ProviderOwnsExecutionProfileContext.Provider>
   );
 }
 
 export function useAgentRunLocation(): AgentRunLocation | null {
   return React.useContext(AgentRunLocationContext);
+}
+
+export function useProviderOwnsExecutionProfile(): boolean {
+  return React.useContext(ProviderOwnsExecutionProfileContext);
 }

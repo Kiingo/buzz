@@ -50,6 +50,7 @@ export function PersonaAdvancedFields({
   requiredEnvKeys = [],
   fileSatisfiedEnvKeys = [],
   hiddenEnvKeys = [],
+  hideExecutionFields = false,
   catalogStatus = "ready" as RuntimeCatalogStatus,
   selectedRuntime,
 }: {
@@ -74,6 +75,8 @@ export function PersonaAdvancedFields({
   requiredEnvKeys?: readonly string[];
   fileSatisfiedEnvKeys?: readonly string[];
   hiddenEnvKeys?: readonly string[];
+  /** Hide local env/model tuning when a remote provider owns execution. */
+  hideExecutionFields?: boolean;
   /**
    * Lifecycle status of the runtime catalog query. Controls the numeric-tuning
    * gate and hidden-key behaviour:
@@ -236,19 +239,21 @@ export function PersonaAdvancedFields({
         </div>
       </div>
 
-      <EnvVarsEditor
-        disabled={disabled}
-        fileSatisfiedKeys={fileSatisfiedEnvKeys}
-        hiddenKeys={effectiveHiddenKeys}
-        keyAnnotations={CARD_MINT_KEY_ANNOTATIONS}
-        onChange={onEnvVarsChange}
-        requiredKeys={requiredEnvKeys}
-        value={envVars}
-      />
+      {!hideExecutionFields ? (
+        <EnvVarsEditor
+          disabled={disabled}
+          fileSatisfiedKeys={fileSatisfiedEnvKeys}
+          hiddenKeys={effectiveHiddenKeys}
+          keyAnnotations={CARD_MINT_KEY_ANNOTATIONS}
+          onChange={onEnvVarsChange}
+          requiredKeys={requiredEnvKeys}
+          value={envVars}
+        />
+      ) : null}
 
       {/* Descriptor-driven numeric tuning knobs — shown when catalog has settled
           and the runtime exposes numeric env-var fields. */}
-      {numericDescriptors.length > 0 ? (
+      {!hideExecutionFields && numericDescriptors.length > 0 ? (
         <NumericTuningFields
           descriptors={numericDescriptors}
           envVars={envVars}
@@ -266,7 +271,7 @@ export function PersonaAdvancedFields({
       ) : null}
 
       {/* Effort-tuning knob — only shown for buzz-agent. */}
-      {isBuzzAgentRuntime(modelTuningRuntimeId) ? (
+      {!hideExecutionFields && isBuzzAgentRuntime(modelTuningRuntimeId) ? (
         <BuzzAgentModelTuningFields
           envVars={envVars}
           inheritedEnvVars={inheritedEnvVars}

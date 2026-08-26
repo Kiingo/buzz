@@ -176,6 +176,7 @@ fn remote_deployed_cascade_target_blocks_delete() {
     deployed.backend = BackendKind::Provider {
         id: "blox".to_string(),
         config: serde_json::Value::Null,
+        owns_execution_profile: false,
     };
     deployed.backend_agent_id = Some("backend-1".to_string());
 
@@ -184,6 +185,7 @@ fn remote_deployed_cascade_target_blocks_delete() {
     undeployed.backend = BackendKind::Provider {
         id: "blox".to_string(),
         config: serde_json::Value::Null,
+        owns_execution_profile: false,
     };
 
     let agents = vec![

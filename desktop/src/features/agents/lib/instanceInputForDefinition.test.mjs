@@ -230,6 +230,27 @@ test("provider intent forces startOnAppLaunch off and omits local commands", asy
   assert.equal(input.systemPrompt, "prompt");
 });
 
+test("provider-owned creation needs no installed local runtime", async () => {
+  const input = await buildInstanceInputForDefinition(
+    persona({ runtime: undefined, model: undefined, provider: undefined }),
+    null,
+    undefined,
+    {
+      type: "provider",
+      id: "remote-execution",
+      config: { harness: "codex", model: "gpt-5.6", reasoning: "high" },
+    },
+  );
+  assert.equal(input.agentCommand, undefined);
+  assert.equal(input.model, undefined);
+  assert.equal(input.provider, undefined);
+  assert.deepEqual(input.backend, {
+    type: "provider",
+    id: "remote-execution",
+    config: { harness: "codex", model: "gpt-5.6", reasoning: "high" },
+  });
+});
+
 test("row 1: refuses when the configured runtime is not available", () => {
   assert.throws(
     () =>

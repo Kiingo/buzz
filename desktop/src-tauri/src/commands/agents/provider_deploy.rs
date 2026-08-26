@@ -31,15 +31,10 @@ use super::build_deploy_payload;
 /// deployment fails closed instead of deploying a stale start into the new
 /// tenant under the new tenant's owner identity. `None` preserves the
 /// unscoped behavior for callers without a tenant boundary.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn deploy_to_provider(
     app: &AppHandle,
     state: &AppState,
     pubkey: &str,
-    _provider_id: &str,
-    _config: &serde_json::Value,
-    _agent_json: serde_json::Value,
-    _cached_binary_path: Option<&str>,
     expected_relay_url: Option<&str>,
     expected_signer_pubkey: Option<&str>,
 ) -> Result<(), String> {
@@ -58,7 +53,7 @@ pub(crate) async fn deploy_to_provider(
     // The payload may have waited behind another deployment. Rebuild it from
     // the current record so the final provider invocation always carries the
     // newest saved policy rather than the stale snapshot captured by its caller.
-    let (provider_id, config, cached_binary_path, agent_json) = {
+    let (provider_id, cached_binary_path) = {
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
@@ -68,21 +63,15 @@ pub(crate) async fn deploy_to_provider(
             .iter()
             .find(|record| record.pubkey == pubkey)
             .ok_or_else(|| format!("agent {pubkey} not found"))?;
-        let (provider_id, config) = match &record.backend {
-            BackendKind::Provider { id, config } => (id.clone(), config.clone()),
+        let provider_id = match &record.backend {
+            BackendKind::Provider { id, .. } => id.clone(),
             BackendKind::Local => return Err(format!("agent {pubkey} is not provider-backed")),
         };
-        (
-            provider_id,
-            config,
-            record.provider_binary_path.clone(),
-            build_deploy_payload(app, state, record)?,
-        )
+        (provider_id, record.provider_binary_path.clone())
     };
     // The rebuild above re-read the live workspace relay and owner identity.
     // Assert the caller's captured scope against THIS payload — the exact
     // value invoked below — not the pre-lock snapshot its caller validated.
-    assert_payload_scope(&agent_json, expected_relay_url, expected_signer_pubkey)?;
     // Resolve via discovered candidates only. Cached path must match BOTH
     // "is a discovered candidate" AND "belongs to this provider_id". A tampered
     // record cannot redirect deploys to a different provider's binary.
@@ -98,12 +87,61 @@ pub(crate) async fn deploy_to_provider(
         })
         .map_or_else(|| resolve_provider_binary(&provider_id), Ok)?;
 
+    let probe_path = bin_path.clone();
+    let info = tokio::task::spawn_blocking(move || {
+        crate::managed_agents::probe_provider_info(&probe_path)
+    })
+    .await
+    .map_err(|error| format!("spawn_blocking failed: {error}"))??;
+    let owns_execution_profile = crate::managed_agents::provider_owns_execution_profile(&info);
+
+    let (config, agent_json) = {
+        let _store_guard = state
+            .managed_agents_store_lock
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let mut records = load_managed_agents(app)?;
+        let record = records
+            .iter_mut()
+            .find(|record| record.pubkey == pubkey)
+            .ok_or_else(|| format!("agent {pubkey} not found"))?;
+        let config = match &mut record.backend {
+            BackendKind::Provider {
+                id,
+                config,
+                owns_execution_profile: saved_ownership,
+            } if id == &provider_id => {
+                *saved_ownership = owns_execution_profile;
+                config.clone()
+            }
+            BackendKind::Provider { .. } => {
+                return Err("provider changed while deployment was being prepared".to_string())
+            }
+            BackendKind::Local => {
+                return Err(format!("agent {pubkey} is no longer provider-backed"))
+            }
+        };
+        crate::managed_agents::repair_provider_owned_record(record);
+        record.provider_binary_path = Some(bin_path.display().to_string());
+        record.updated_at = now_iso();
+        let agent_json = build_deploy_payload(app, state, record)?;
+        save_managed_agents(app, &records)?;
+        (config, agent_json)
+    };
+    assert_payload_scope(&agent_json, expected_relay_url, expected_signer_pubkey)?;
+
     let deployed_agent_json = agent_json.clone();
     let config_clone = config.clone();
-    let deploy_result =
-        tokio::task::spawn_blocking(move || provider_deploy(&bin_path, &agent_json, &config_clone))
-            .await
-            .map_err(|e| format!("spawn_blocking failed: {e}"))?;
+    let deploy_result = tokio::task::spawn_blocking(move || {
+        provider_deploy(
+            &bin_path,
+            &agent_json,
+            &config_clone,
+            owns_execution_profile,
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?;
 
     // Persist result under lock.
     let _store_guard = state

@@ -109,7 +109,7 @@ export type BackendIntent = {
  */
 export async function buildInstanceInputForDefinition(
   persona: AgentPersona,
-  runtime: AcpRuntime,
+  runtime: AcpRuntime | null,
   upload?: UploadMediaBytes,
   backendIntent?: BackendIntent,
 ): Promise<CreateManagedAgentInput> {
@@ -137,6 +137,10 @@ export async function buildInstanceInputForDefinition(
         config: backendIntent.config,
       },
     };
+  }
+
+  if (!runtime) {
+    throw new Error("No available runtime found for this agent.");
   }
 
   return {

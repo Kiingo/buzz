@@ -6,6 +6,7 @@ import {
   canSubmitWhereToRun,
   emptyWhereToRunDraft,
   providerConfigComplete,
+  providerOwnsExecutionProfile,
   resolveBackendIntent,
 } from "./whereToRunIntent.ts";
 
@@ -42,6 +43,38 @@ test("provider selection blocks submit while required config is missing", () => 
 
 test("complete provider config allows submit", () => {
   assert.equal(canSubmitWhereToRun(providerDraft()), true);
+});
+
+test("only a literal provider schema capability owns the execution profile", () => {
+  const owning = providerDraft({
+    probedProvider: {
+      ...probed,
+      config_schema: {
+        ...probed.config_schema,
+        "x-buzz-owns-execution-profile": true,
+      },
+    },
+  });
+  assert.equal(providerOwnsExecutionProfile(owning), true);
+  for (const marker of [false, "true", 1, null, undefined]) {
+    assert.equal(
+      providerOwnsExecutionProfile({
+        ...owning,
+        probedProvider: {
+          ...owning.probedProvider,
+          config_schema: {
+            ...owning.probedProvider.config_schema,
+            "x-buzz-owns-execution-profile": marker,
+          },
+        },
+      }),
+      false,
+    );
+  }
+  assert.equal(
+    providerOwnsExecutionProfile({ ...owning, runOn: "local" }),
+    false,
+  );
 });
 
 test("local never gates submit", () => {

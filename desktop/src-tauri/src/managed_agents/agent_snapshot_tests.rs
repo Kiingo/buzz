@@ -45,6 +45,7 @@ fn minimal_record() -> ManagedAgentRecord {
             // MUST NOT appear — carries a provider secret
             id: "SENTINEL_BACKEND_ID".to_string(),
             config: serde_json::json!({"api_key": "SENTINEL_BACKEND_SECRET"}),
+            owns_execution_profile: false,
         },
         backend_agent_id: Some("SENTINEL_BACKEND_AGENT_ID".to_string()), // MUST NOT appear
         provider_policy_pending: false,

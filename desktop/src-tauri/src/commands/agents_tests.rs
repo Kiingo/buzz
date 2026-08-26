@@ -248,6 +248,7 @@ fn normalize_relay_mesh_rejects_non_local_backend() {
     let backend = BackendKind::Provider {
         id: "blox".to_string(),
         config: serde_json::json!({}),
+        owns_execution_profile: false,
     };
 
     assert_eq!(
@@ -277,10 +278,16 @@ fn deploy_refuses_resolved_relay_mesh_provider_with_padding() {
     let global = crate::managed_agents::GlobalAgentConfig::default();
 
     let (_, provider) = resolve_deploy_model_provider(&record, &personas, &global);
-    let error = ensure_remote_provider_supported(provider.as_deref())
+    let error = ensure_remote_provider_supported(provider.as_deref(), false)
         .expect_err("resolved shared-compute provider must not deploy remotely");
 
     assert!(error.contains("cannot be deployed remotely"), "{error}");
+}
+
+#[test]
+fn provider_owned_remote_deploy_ignores_stale_relay_mesh_projection() {
+    ensure_remote_provider_supported(Some("relay-mesh"), true)
+        .expect("the signed provider owns execution and does not use the desktop mesh endpoint");
 }
 
 #[test]
@@ -451,6 +458,7 @@ fn deploy_payload_for_policy(
         record,
         "wss://relay.example".to_string(),
         DeployProjections {
+            provider_owns_execution_profile: false,
             effective_model: Some("gpt-x".to_string()),
             effective_provider: Some("openai".to_string()),
             effective_prompt: None,
@@ -519,6 +527,7 @@ fn deploy_payload_matches_the_shared_full_launch_fixture() {
         &record,
         "wss://relay.example".into(),
         DeployProjections {
+            provider_owns_execution_profile: false,
             effective_model: Some("gpt-5".into()),
             effective_provider: Some("openai".into()),
             effective_prompt: None,
@@ -589,6 +598,7 @@ fn current_build_deploy_payload_forwards_compiled_policy() {
     record.backend = BackendKind::Provider {
         id: "provider".to_string(),
         config: serde_json::json!({}),
+        owns_execution_profile: false,
     };
     record.respond_to = RespondTo::Anyone;
     record.respond_to_allowlist = vec!["a".repeat(64)];
@@ -597,6 +607,7 @@ fn current_build_deploy_payload_forwards_compiled_policy() {
         &record,
         "wss://relay.example".to_string(),
         DeployProjections {
+            provider_owns_execution_profile: false,
             effective_model: None,
             effective_provider: None,
             effective_prompt: None,
@@ -637,6 +648,7 @@ fn provider_upgrade_reconciliation_targets_existing_deployments_only_in_marked_b
     record.backend = BackendKind::Provider {
         id: "provider".to_string(),
         config: serde_json::json!({}),
+        owns_execution_profile: false,
     };
     record.backend_agent_id = Some("existing-provider-agent".to_string());
     record.respond_to = crate::managed_agents::RespondTo::Anyone;
@@ -677,6 +689,7 @@ fn owner_only_access_deploy_payload_clamps_stale_access() {
     record.backend = BackendKind::Provider {
         id: "provider".to_string(),
         config: serde_json::json!({}),
+        owns_execution_profile: false,
     };
     record.respond_to = RespondTo::Anyone;
     record.respond_to_allowlist = vec!["a".repeat(64)];

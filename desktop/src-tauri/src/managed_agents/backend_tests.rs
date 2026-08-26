@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn execution_profile_ownership_requires_a_literal_true_schema_extension() {
+    let info = |marker: serde_json::Value| serde_json::json!({"config_schema": {"x-buzz-owns-execution-profile": marker}});
+    assert!(provider_owns_execution_profile(&info(serde_json::json!(
+        true
+    ))));
+    for marker in [
+        serde_json::json!(false),
+        serde_json::json!("true"),
+        serde_json::json!(1),
+        serde_json::Value::Null,
+    ] {
+        assert!(!provider_owns_execution_profile(&info(marker)));
+    }
+    assert!(!provider_owns_execution_profile(&serde_json::json!({})));
+}
+
+#[test]
+fn deployment_refuses_execution_profile_ownership_drift() {
+    let owning = serde_json::json!({
+        "config_schema": {"x-buzz-owns-execution-profile": true}
+    });
+    assert!(validate_execution_profile_ownership(&owning, true).is_ok());
+    assert!(validate_execution_profile_ownership(&owning, false)
+        .unwrap_err()
+        .contains("ownership changed"));
+}
+
+#[test]
 fn redact_secrets_replaces_nsec() {
     let s = "key=nsec1abc123def456 other";
     let r = redact_secrets(s);
@@ -158,8 +186,13 @@ esac"#,
     );
     write_test_provider(&provider, &body);
 
-    let id = provider_deploy(&provider, &serde_json::json!({}), &serde_json::json!({}))
-        .expect("staged deploy");
+    let id = provider_deploy(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        false,
+    )
+    .expect("staged deploy");
     assert_eq!(id, "remote-1");
     let paths: Vec<_> = std::fs::read_to_string(log)
         .unwrap()
@@ -213,8 +246,13 @@ esac"#,
     write_test_provider(&provider, &body);
     let inode_before = std::fs::metadata(&provider).unwrap().ino();
 
-    let id = provider_deploy(&provider, &serde_json::json!({}), &serde_json::json!({}))
-        .expect("deploy from immutable staged copy");
+    let id = provider_deploy(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        false,
+    )
+    .expect("deploy from immutable staged copy");
 
     assert_eq!(id, "original-staged-bytes");
     assert_eq!(
@@ -254,8 +292,13 @@ esac"#,
     write_test_provider(&provider, &body);
     let inode_before = std::fs::metadata(&provider).unwrap().ino();
 
-    let id = provider_deploy(&provider, &serde_json::json!({}), &serde_json::json!({}))
-        .expect("deploy from immutable staged copy");
+    let id = provider_deploy(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        false,
+    )
+    .expect("deploy from immutable staged copy");
 
     assert_eq!(id, "original-staged-bytes");
     assert_ne!(
@@ -290,6 +333,7 @@ esac"#,
         &provider,
         &serde_json::json!({"private_key_nsec": "nsec1must-not-cross"}),
         &serde_json::json!({}),
+        false,
     )
     .unwrap_err();
     assert!(error.contains("protocol version 3"), "{error}");
@@ -308,8 +352,13 @@ fn provider_deploy_requires_an_explicit_integer_protocol_version() {
 printf '%s\n' '{"ok":true,"version":"1.0.0"}'"#,
     );
 
-    let error =
-        provider_deploy(&provider, &serde_json::json!({}), &serde_json::json!({})).unwrap_err();
+    let error = provider_deploy(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        false,
+    )
+    .unwrap_err();
     assert!(
         error.contains("missing integer protocol_version"),
         "{error}"

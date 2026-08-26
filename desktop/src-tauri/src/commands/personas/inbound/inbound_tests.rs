@@ -186,6 +186,7 @@ fn local_agent() -> ManagedAgentRecord {
         backend: crate::managed_agents::BackendKind::Provider {
             id: "buzz-backend".to_string(),
             config: serde_json::json!({ "api_key": "localproviderkey" }),
+            owns_execution_profile: false,
         },
         backend_agent_id: Some("local-remote-id".to_string()),
         provider_policy_pending: false,
