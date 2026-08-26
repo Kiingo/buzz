@@ -8,6 +8,7 @@ mod inventory;
 mod journal;
 mod local;
 mod provider;
+mod resume;
 mod workflow;
 
 pub(crate) use handoff::{
