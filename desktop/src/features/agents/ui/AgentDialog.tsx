@@ -26,6 +26,7 @@ import {
   emptyWhereToRunDraft,
   resolveBackendIntent,
 } from "./whereToRunIntent";
+import { providerOwnsExecutionProfile } from "./providerOwnedExecutionProfile";
 
 type AgentDialogCreateProps = {
   mode: "definition";
@@ -147,6 +148,7 @@ function AgentCreateDialogRouter({
     // because it owns the "Run on" draft.
     <AgentRunLocationProvider runLocation={runLocationForRunOn(runDraft.runOn)}>
       <AgentDefinitionDialog
+        providerOwnsExecutionProfile={providerOwnsExecutionProfile(runDraft)}
         createRunSection={
           <WhereToRunSection
             draft={runDraft}

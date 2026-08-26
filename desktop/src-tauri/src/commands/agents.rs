@@ -8,12 +8,11 @@ use crate::{
     managed_agents::{
         build_managed_agent_summary, current_instance_id, ensure_persona_is_active,
         find_managed_agent_mut, load_managed_agents, load_personas, load_teams,
-        managed_agent_avatar_url, normalize_agent_args, resolve_provider_binary,
-        save_managed_agents, start_managed_agent_process, stop_managed_agent_workspace_pair,
-        sync_managed_agent_processes, try_regenerate_nest, validate_provider_config, BackendKind,
-        CreateManagedAgentRequest, CreateManagedAgentResponse, ManagedAgentRecord,
-        ManagedAgentSummary, RelayMeshConfig, DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM,
-        DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
+        managed_agent_avatar_url, normalize_agent_args, save_managed_agents,
+        start_managed_agent_process, stop_managed_agent_workspace_pair,
+        sync_managed_agent_processes, try_regenerate_nest, BackendKind, CreateManagedAgentRequest,
+        CreateManagedAgentResponse, ManagedAgentRecord, ManagedAgentSummary, RelayMeshConfig,
+        DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM, DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
     },
     relay::{relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
@@ -464,13 +463,20 @@ pub async fn create_managed_agent(
     };
 
     // ── Pre-Phase 2: validate provider config BEFORE any side effects ────────
-    if let BackendKind::Provider { ref config, ref id } = input.backend {
-        validate_provider_config(config)?;
-        // Validate via discovered candidates — not raw resolve_command.
-        resolve_provider_binary(id)?;
-    }
+    let prepared_provider = provider_create::prepare_provider_backend(&input.backend).await?;
+    let provider_owns_execution_profile = prepared_provider.owns_execution_profile;
+    let validated_provider_binary_path = prepared_provider.binary_path;
+    provider_create::validate_remote_execution_profile(
+        &app,
+        &input,
+        provider_owns_execution_profile,
+    )?;
 
-    let relay_mesh = normalize_relay_mesh(input.relay_mesh.as_ref(), &input.backend)?;
+    let relay_mesh = if provider_owns_execution_profile {
+        None
+    } else {
+        normalize_relay_mesh(input.relay_mesh.as_ref(), &input.backend)?
+    };
 
     // ── Phase 2: compute NIP-OA auth tag (sync) ──────────────────────────────
     // Agents authenticate via the auth tag in their kind:0 profile event.
@@ -514,18 +520,10 @@ pub async fn create_managed_agent(
             return Err(format!("agent {pubkey} already exists"));
         }
         // Provider config was already validated in Pre-Phase 2; cache the discovered binary path for deploy_to_provider.
-        let provider_binary_path = if let BackendKind::Provider { ref id, .. } = input.backend {
-            // Use resolve_provider_binary (discovered candidates only).
-            resolve_provider_binary(id)
-                .ok()
-                .map(|p| p.display().to_string())
-        } else {
-            None
-        };
+        let provider_binary_path = validated_provider_binary_path;
 
         // Load personas once for harness/pack/avatar resolution below.
         let personas = load_personas(&app).unwrap_or_default();
-
         // Harness resolution: the persona's runtime is authoritative. A
         // persona-backed create stores an `agent_command_override` ONLY when the
         // user deliberately picked a divergent runtime (`harness_override`) —
@@ -534,29 +532,41 @@ pub async fn create_managed_agent(
         // pin, and must inherit so it doesn't freeze on the fallback harness once
         // the persona's runtime is installed. A persona-less create always
         // preserves the picked command as a real pin.
-        let agent_command_override = crate::managed_agents::create_time_agent_command_override(
-            requested_persona_id.as_deref(),
-            &personas,
-            input.agent_command.as_deref(),
-            input.harness_override,
-        );
+        let agent_command_override = if provider_owns_execution_profile {
+            None
+        } else {
+            crate::managed_agents::create_time_agent_command_override(
+                requested_persona_id.as_deref(),
+                &personas,
+                input.agent_command.as_deref(),
+                input.harness_override,
+            )
+        };
         // The create-time snapshot used for arg/mcp/avatar derivations and
         // legacy reconcile. Authoritative spawn resolution re-derives this via
         // `effective_agent_command` at use-time.
-        let agent_command = crate::managed_agents::effective_agent_command(
-            requested_persona_id.as_deref(),
-            &personas,
-            agent_command_override.as_deref(),
-        );
-        let agent_args = normalize_agent_args(
-            &agent_command,
-            input
-                .agent_args
-                .iter()
-                .map(|arg| arg.trim().to_string())
-                .filter(|arg| !arg.is_empty())
-                .collect::<Vec<_>>(),
-        );
+        let agent_command = if provider_owns_execution_profile {
+            String::new()
+        } else {
+            crate::managed_agents::effective_agent_command(
+                requested_persona_id.as_deref(),
+                &personas,
+                agent_command_override.as_deref(),
+            )
+        };
+        let agent_args = if provider_owns_execution_profile {
+            Vec::new()
+        } else {
+            normalize_agent_args(
+                &agent_command,
+                input
+                    .agent_args
+                    .iter()
+                    .map(|arg| arg.trim().to_string())
+                    .filter(|arg| !arg.is_empty())
+                    .collect::<Vec<_>>(),
+            )
+        };
 
         // Derive MCP command exclusively from the runtime catalog — the
         // per-record field is never read at spawn time so user-supplied input
@@ -619,10 +629,17 @@ pub async fn create_managed_agent(
         let snapshot_model = persona_snapshot.as_ref().and_then(|s| s.model.clone());
         let snapshot_provider = persona_snapshot.as_ref().and_then(|s| s.provider.clone());
         let snapshot_source_version = persona_snapshot.as_ref().map(|s| s.source_version.clone());
-        let effective_provider = snapshot_provider
-            .or_else(|| input.provider.as_deref().and_then(trim_to_optional_string));
-        let mut effective_model =
-            snapshot_model.or_else(|| input.model.as_deref().and_then(trim_to_optional_string));
+        let effective_provider = (!provider_owns_execution_profile)
+            .then(|| {
+                snapshot_provider
+                    .or_else(|| input.provider.as_deref().and_then(trim_to_optional_string))
+            })
+            .flatten();
+        let mut effective_model = (!provider_owns_execution_profile)
+            .then(|| {
+                snapshot_model.or_else(|| input.model.as_deref().and_then(trim_to_optional_string))
+            })
+            .flatten();
         if effective_provider.as_deref() == Some(crate::managed_agents::RELAY_MESH_PROVIDER_ID)
             && effective_model.is_none()
         {
@@ -693,7 +710,11 @@ pub async fn create_managed_agent(
             provider_binary_path,
             persona_team_dir: None,
             persona_name_in_team: None,
-            env_vars: input.env_vars.clone(),
+            env_vars: if provider_owns_execution_profile {
+                Default::default()
+            } else {
+                input.env_vars.clone()
+            },
             created_at: now_iso(),
             updated_at: now_iso(),
             last_started_at: None,
@@ -716,7 +737,9 @@ pub async fn create_managed_agent(
             definition_respond_to: None,
             definition_respond_to_allowlist: Vec::new(),
             definition_parallelism: None,
-            relay_mesh: if effective_provider.as_deref()
+            relay_mesh: if provider_owns_execution_profile {
+                None
+            } else if effective_provider.as_deref()
                 == Some(crate::managed_agents::RELAY_MESH_PROVIDER_ID)
             {
                 effective_model
@@ -800,24 +823,8 @@ pub async fn create_managed_agent(
         super::agent_models::flush_managed_agent_policy(&app, &state, profile_sync_error).await;
 
     let spawn_error = if input.spawn_after_create && input.backend != BackendKind::Local {
-        if let BackendKind::Provider { ref id, ref config } = input.backend {
-            let agent_json = {
-                let _g = state
-                    .managed_agents_store_lock
-                    .lock()
-                    .map_err(|e| e.to_string())?;
-                let records = load_managed_agents(&app)?;
-                let rec = records
-                    .iter()
-                    .find(|r| r.pubkey == pubkey)
-                    .ok_or_else(|| "agent disappeared".to_string())?;
-                build_deploy_payload(&app, &state, rec)?
-            };
-            match deploy_to_provider(
-                &app, &state, &pubkey, id, config, agent_json, None, None, None,
-            )
-            .await
-            {
+        if matches!(input.backend, BackendKind::Provider { .. }) {
+            match deploy_to_provider(&app, &state, &pubkey, None, None).await {
                 Ok(()) => spawn_error,
                 Err(e) => Some(e),
             }
@@ -895,11 +902,7 @@ pub async fn start_managed_agent(
     )?;
     enum StartTarget {
         Local,
-        Provider {
-            backend: BackendKind,
-            cached_binary_path: Option<String>,
-            agent_json: serde_json::Value,
-        },
+        Provider,
     }
 
     // Collect backend info under lock; async preflight/spawn happens below.
@@ -942,11 +945,7 @@ pub async fn start_managed_agent(
         let target = if record.backend == BackendKind::Local {
             StartTarget::Local
         } else {
-            StartTarget::Provider {
-                backend: record.backend.clone(),
-                cached_binary_path: record.provider_binary_path.clone(),
-                agent_json: build_deploy_payload(&app, &state, record)?,
-            }
+            StartTarget::Provider
         };
 
         (target, reconcile)
@@ -964,11 +963,7 @@ pub async fn start_managed_agent(
             )
             .await
         }
-        StartTarget::Provider {
-            backend: BackendKind::Provider { id, config },
-            cached_binary_path,
-            agent_json,
-        } => {
+        StartTarget::Provider => {
             // The caller's captured scope is asserted INSIDE deploy_to_provider
             // against the payload rebuilt after the deploy lock — the exact
             // payload invoked — so a switch racing the lock wait cannot deploy
@@ -977,10 +972,6 @@ pub async fn start_managed_agent(
                 &app,
                 &state,
                 &pubkey,
-                &id,
-                &config,
-                agent_json,
-                cached_binary_path.as_deref(),
                 expected_relay_url.as_deref(),
                 expected_signer_pubkey.as_deref(),
             )
@@ -1002,9 +993,6 @@ pub async fn start_managed_agent(
                 .ok_or_else(|| format!("agent {pubkey} not found"))?;
             summarize_from_disk(&app, record, &runtimes)
         }
-        StartTarget::Provider { backend, .. } => Err(format!(
-            "agent {pubkey} has unsupported backend kind: {backend:?}"
-        )),
     };
 
     // ── Profile reconciliation (fire-and-forget) ────────────────────────────
@@ -1106,9 +1094,9 @@ pub async fn delete_managed_agent(
 #[path = "agents_deploy.rs"]
 mod deploy;
 pub(super) mod provider_access;
+mod provider_create;
 mod provider_delete;
 mod provider_deploy;
-pub(super) use deploy::build_deploy_payload;
 #[cfg(test)]
 use deploy::{deploy_payload_json, DeployProjections};
 #[cfg(test)]

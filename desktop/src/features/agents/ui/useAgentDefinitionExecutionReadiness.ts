@@ -22,7 +22,7 @@ export function useAgentDefinitionExecutionReadiness({
   isRuntimeAutoSeeded,
   runtimeCanChooseLlmProvider,
   ...localModeInput
-}: Omit<LocalModeGateInput, "isProviderMode"> & {
+}: LocalModeGateInput & {
   aiConfigurationMode: AgentAiConfigurationMode;
   initialValues: CreatePersonaInput | UpdatePersonaInput | null;
   isRuntimeAutoSeeded: boolean;
@@ -34,6 +34,7 @@ export function useAgentDefinitionExecutionReadiness({
     globalEnvVars,
     globalModel,
     globalProvider,
+    isProviderMode,
     model,
     provider,
     runtimeFileConfig,
@@ -47,7 +48,7 @@ export function useAgentDefinitionExecutionReadiness({
         globalEnvVars,
         globalModel,
         globalProvider,
-        isProviderMode: false,
+        isProviderMode,
         model,
         provider,
         runtimeFileConfig,
@@ -59,17 +60,20 @@ export function useAgentDefinitionExecutionReadiness({
       globalEnvVars,
       globalModel,
       globalProvider,
+      isProviderMode,
       model,
       provider,
       runtimeFileConfig,
       runtimeId,
     ],
   );
-  const customAiPairSatisfied = agentAiConfigurationModeSatisfied(
-    aiConfigurationMode,
-    { provider, model },
-    runtimeCanChooseLlmProvider,
-  );
+  const customAiPairSatisfied =
+    isProviderMode ||
+    agentAiConfigurationModeSatisfied(
+      aiConfigurationMode,
+      { provider, model },
+      runtimeCanChooseLlmProvider,
+    );
   const isEditMode = Boolean(initialValues && "id" in initialValues);
   const preservesExecutionConfiguration = Boolean(
     initialValues &&
