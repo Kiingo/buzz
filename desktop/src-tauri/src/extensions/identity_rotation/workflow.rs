@@ -334,7 +334,7 @@ async fn execute_rotation(
                 .as_ref()
                 .ok_or_else(|| "identity_rotation_plan_invalid".to_string())?;
             store_handoff_challenge(&plan.rotation_id, challenge.as_str())?;
-            let mut created = initial_journal(&plan, &provider, &selected);
+            let mut created = initial_journal(plan, &provider, &selected);
             journal::save(app, &mut created)?;
             created
         }
