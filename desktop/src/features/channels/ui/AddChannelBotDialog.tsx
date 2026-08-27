@@ -10,6 +10,13 @@ import {
 import { getActivePersonas } from "@/features/agents/lib/catalog";
 import { resolvePersonaRuntime } from "@/features/agents/lib/resolvePersonaRuntime";
 import { getUsableTeams } from "@/features/agents/lib/teamPersonas";
+import { providerOwnsExecutionProfile } from "@/features/agents/ui/providerOwnedExecutionProfile";
+import { WhereToRunSection } from "@/features/agents/ui/WhereToRunSection";
+import {
+  canSubmitWhereToRun,
+  emptyWhereToRunDraft,
+  resolveBackendIntent,
+} from "@/features/agents/ui/whereToRunIntent";
 import { AddChannelBotPersonasSection } from "@/features/channels/ui/AddChannelBotPersonasSection";
 import { AddChannelBotTeamsSection } from "@/features/channels/ui/AddChannelBotTeamsSection";
 import { useInChannelPersonaIds } from "@/features/channels/ui/useInChannelPersonaIds";
@@ -86,6 +93,7 @@ export function AddChannelBotDialog({
   const [submissionError, setSubmissionError] = React.useState<string | null>(
     null,
   );
+  const [whereToRun, setWhereToRun] = React.useState(emptyWhereToRunDraft);
 
   const selectedPersonas = React.useMemo(
     () => personas.filter((persona) => selectedPersonaIds.includes(persona.id)),
@@ -106,6 +114,7 @@ export function AddChannelBotDialog({
     setSelectedPersonaIds([]);
     setSubmissionNotice(null);
     setSubmissionError(null);
+    setWhereToRun(emptyWhereToRunDraft);
     createBotsMutation.reset();
   }
 
@@ -135,9 +144,33 @@ export function AddChannelBotDialog({
   }
 
   async function handleSubmit() {
-    if (providers.length === 0 || selectedPersonas.length === 0) return;
+    const backendIntent = resolveBackendIntent(whereToRun);
+    const providerOwned = providerOwnsExecutionProfile(whereToRun);
+    if (
+      selectedPersonas.length === 0 ||
+      (backendIntent
+        ? !canSubmitWhereToRun(whereToRun) || !providerOwned
+        : providers.length === 0)
+    ) {
+      return;
+    }
 
     const inputs = selectedPersonas.map((persona) => {
+      if (backendIntent) {
+        return {
+          name: persona.displayName,
+          personaId: persona.id,
+          harnessOverride: false,
+          systemPrompt: persona.systemPrompt,
+          avatarUrl: persona.avatarUrl ?? undefined,
+          role: "bot" as const,
+          backend: {
+            type: "provider" as const,
+            id: backendIntent.id,
+            config: backendIntent.config,
+          },
+        };
+      }
       const resolved = resolvePersonaRuntime(
         persona.runtime,
         providers,
@@ -189,10 +222,14 @@ export function AddChannelBotDialog({
     }
   }
 
+  const backendIntent = resolveBackendIntent(whereToRun);
+  const providerOwned = providerOwnsExecutionProfile(whereToRun);
+  const placementReady = backendIntent
+    ? canSubmitWhereToRun(whereToRun) && providerOwned
+    : providers.length > 0 && !providersLoading;
   const canSubmit =
-    providers.length > 0 &&
+    placementReady &&
     selectedPersonas.length > 0 &&
-    !providersLoading &&
     !createBotsMutation.isPending;
   const addButtonLabel = createBotsMutation.isPending
     ? selectedPersonas.length > 1
@@ -261,16 +298,32 @@ export function AddChannelBotDialog({
           />
         ) : null}
 
-        {providers.length === 0 && !providersLoading ? (
+        <WhereToRunSection
+          draft={whereToRun}
+          isPending={createBotsMutation.isPending}
+          onDraftChange={setWhereToRun}
+        />
+
+        {!backendIntent && providers.length === 0 && !providersLoading ? (
           <div className="flex gap-3 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <p className="text-sm text-warning">
-              Install an agent runtime before adding an agent to this channel.
+              Install an agent runtime, or choose a remote provider above.
             </p>
           </div>
         ) : null}
 
-        {providersErrorMessage ? (
+        {backendIntent && whereToRun.probedProvider && !providerOwned ? (
+          <div className="flex gap-3 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <p className="text-sm text-warning">
+              This provider cannot own the agent&apos;s execution profile.
+              Choose another remote provider or run the agent on this computer.
+            </p>
+          </div>
+        ) : null}
+
+        {!backendIntent && providersErrorMessage ? (
           <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {providersErrorMessage}
           </p>

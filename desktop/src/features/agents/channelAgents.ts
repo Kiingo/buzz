@@ -6,7 +6,7 @@ import {
 } from "@/features/agents/agentReuse";
 export { findReusableAgent } from "@/features/agents/agentReuse";
 import { normalizePubkey } from "@/shared/lib/pubkey";
-import { resolveManagedAgentAvatarUrl } from "@/features/agents/ui/managedAgentAvatar";
+import { buildChannelManagedAgentCreateInput } from "@/features/agents/lib/channelManagedAgentInput";
 import {
   addChannelMembers,
   createManagedAgent,
@@ -53,7 +53,8 @@ export type EnsureChannelAgentPresetResult =
   };
 
 export type CreateChannelManagedAgentInput = {
-  runtime: ChannelAgentRuntime;
+  /** Required for local placement; intentionally absent for provider placement. */
+  runtime?: ChannelAgentRuntime;
   name: string;
   systemPrompt?: string;
   avatarUrl?: string;
@@ -260,6 +261,10 @@ export async function provisionChannelManagedAgent(
   },
 ): Promise<ProvisionChannelManagedAgentResult> {
   const trimmedName = input.name.trim();
+  const placementId =
+    input.backend?.type === "provider"
+      ? input.backend.id
+      : (input.runtime?.id ?? "local");
 
   if (trimmedName.length === 0) {
     throw new Error("Agent name is required.");
@@ -299,7 +304,7 @@ export async function provisionChannelManagedAgent(
       return {
         agent: updatedAgent,
         created: false,
-        runtimeId: input.runtime.id,
+        runtimeId: placementId,
       };
     }
   }
@@ -309,6 +314,7 @@ export async function provisionChannelManagedAgent(
   if (
     !input.personaId &&
     !input.systemPrompt?.trim() &&
+    input.runtime &&
     !input.forceNewInstance &&
     context?.managedAgents &&
     context.channelMemberPubkeys
@@ -337,40 +343,14 @@ export async function provisionChannelManagedAgent(
       return {
         agent: updatedAgent,
         created: false,
-        runtimeId: input.runtime.id,
+        runtimeId: placementId,
       };
     }
   }
 
-  // Resolve the avatar for the channel-managed agent. Base64 data URIs (e.g.
-  // from a persona PNG card import) are uploaded to a hosted URL the relay can
-  // serve; percent-encoded emoji SVG data URLs pass through unchanged so the
-  // selected emoji survives deployment. Shared with agent creation so both
-  // paths handle emoji avatars identically.
-  const resolvedAvatarUrl = await resolveManagedAgentAvatarUrl(input.avatarUrl);
-
-  const isProviderMode = input.backend?.type === "provider";
-
-  const created = await createManagedAgent({
-    name: trimmedName,
-    acpCommand: "buzz-acp",
-    agentCommand: input.runtime.command,
-    harnessOverride: input.harnessOverride ?? false,
-    // Do NOT seed agentArgs from runtime.defaultArgs (see instanceInputForDefinition.ts
-    // for the rationale — empty args let spawn resolve definition args live).
-    agentArgs: [],
-    mcpCommand: input.runtime.mcpCommand ?? "",
-    personaId: input.personaId ?? undefined,
-    teamId: input.teamId ?? undefined,
-    systemPrompt: input.systemPrompt?.trim() || undefined,
-    avatarUrl: resolvedAvatarUrl,
-    model: input.model?.trim() || undefined,
-    spawnAfterCreate: isProviderMode,
-    startOnAppLaunch: isProviderMode ? false : undefined,
-    backend: input.backend,
-    respondTo: input.respondTo,
-    respondToAllowlist: input.respondToAllowlist,
-  });
+  const created = await createManagedAgent(
+    await buildChannelManagedAgentCreateInput(input),
+  );
 
   // Tauri returns Ok() even on deploy failure — spawnError carries the message.
   if (created.spawnError) {
@@ -380,7 +360,7 @@ export async function provisionChannelManagedAgent(
   return {
     agent: created.agent,
     created: true,
-    runtimeId: input.runtime.id,
+    runtimeId: placementId,
   };
 }
 

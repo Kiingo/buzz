@@ -5,9 +5,17 @@ import {
 } from "../ui/managedAgentAvatar";
 import type { BackendIntent } from "./instanceInputForDefinition";
 
+type ProviderOwnedAgentDefinition = Pick<
+  AgentPersona,
+  "displayName" | "systemPrompt"
+> & {
+  id?: string;
+  avatarUrl?: string | null;
+};
+
 /** Map a definition to a remote instance without requiring a desktop runtime. */
 export async function buildProviderOwnedInstanceInput(
-  persona: AgentPersona,
+  persona: ProviderOwnedAgentDefinition,
   backendIntent: BackendIntent,
   upload?: UploadMediaBytes,
 ): Promise<CreateManagedAgentInput> {
