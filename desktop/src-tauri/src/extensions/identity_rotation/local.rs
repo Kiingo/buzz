@@ -98,8 +98,9 @@ pub(super) struct StagedAgent {
     pub(super) provider_config_sha256: Option<String>,
 }
 
-fn provider_config_sha256(plan: &DesktopPlan, old_public_key: &str) -> Option<String> {
-    plan.inventory
+fn provider_config_sha256(plan: Option<&DesktopPlan>, old_public_key: &str) -> Option<String> {
+    plan?
+        .inventory
         .hosted_agents
         .iter()
         .find(|hosted| hosted.public_key == old_public_key)
@@ -108,7 +109,7 @@ fn provider_config_sha256(plan: &DesktopPlan, old_public_key: &str) -> Option<St
 
 pub(super) fn stage_or_load_keys(
     app: &tauri::AppHandle,
-    plan: &DesktopPlan,
+    plan: Option<&DesktopPlan>,
     journal: &mut IdentityRotationJournal,
     selected: &[ManagedAgentRecord],
 ) -> Result<(Keys, Keys, Vec<StagedAgent>), String> {
@@ -153,6 +154,7 @@ pub(super) fn stage_or_load_keys(
         return Ok((old_owner, new_owner, agents));
     }
 
+    let plan = plan.ok_or_else(|| "identity_rotation_journal_corrupt".to_string())?;
     let state = app.state::<AppState>();
     let old_owner = state.signing_keys()?;
     if old_owner.public_key().to_hex() != plan.old_owner_public_key {
@@ -203,7 +205,7 @@ pub(super) fn stage_or_load_keys(
                 BackendKind::Provider { config, .. } => Some(config.clone()),
                 BackendKind::Local => None,
             },
-            provider_config_sha256: provider_config_sha256(plan, &record.pubkey),
+            provider_config_sha256: provider_config_sha256(Some(plan), &record.pubkey),
         });
     }
     journal.state = "keys_staged".into();

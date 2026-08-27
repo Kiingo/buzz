@@ -35,6 +35,9 @@ use super::{
         stage_or_load_keys,
     },
     provider::{discover_rotation_provider, RotationProvider},
+    resume::{
+        expected_relay, resolve_execution_plan, selected_execution_records, validate_provider_scope,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -280,7 +283,6 @@ fn mark_error(app: &tauri::AppHandle, journal: &mut IdentityRotationJournal, err
     journal.state = "recoverable".into();
     let _ = journal::save(app, journal);
 }
-
 async fn execute_rotation(
     app: &tauri::AppHandle,
     handoff: IdentityRotationHandoff,
@@ -303,16 +305,17 @@ async fn execute_rotation(
         None => load_handoff_challenge(&handoff.rotation_id)?,
     };
     let provider = discover_rotation_provider(&coordinator_origin)?;
-    let plan = resolve_plan(
+    let plan = resolve_execution_plan(
         &state,
         &provider,
         &handoff.rotation_id,
         challenge.as_str(),
-        existing.is_some(),
+        existing.as_ref(),
     )
     .await?;
+    let expected_relay = expected_relay(plan.as_ref(), existing.as_ref())?;
     if crate::relay::relay_ws_url_with_override(&state).trim_end_matches('/')
-        != plan.relay_url.trim_end_matches('/')
+        != expected_relay.trim_end_matches('/')
     {
         return Err("identity_rotation_workspace_changed".into());
     }
@@ -323,23 +326,21 @@ async fn execute_rotation(
             .map_err(|e| e.to_string())?;
         load_managed_agents(app)?
     };
-    let selected = selected_records(&plan, &records, existing.as_ref())?;
+    let selected = selected_execution_records(plan.as_ref(), existing.as_ref(), &records)?;
     let mut journal = match existing {
         Some(existing) => existing,
         None => {
+            let plan = plan
+                .as_ref()
+                .ok_or_else(|| "identity_rotation_plan_invalid".to_string())?;
             store_handoff_challenge(&plan.rotation_id, challenge.as_str())?;
-            let mut created = initial_journal(&plan, &provider, &selected);
+            let mut created = initial_journal(plan, &provider, &selected);
             journal::save(app, &mut created)?;
             created
         }
     };
-    if journal.coordinator_origin != provider.coordinator_origin
-        || journal.old_owner_public_key != plan.old_owner_public_key
-    {
-        return Err("identity_rotation_resume_scope_mismatch".into());
-    }
-
-    if !journal.recovery_backup_verified && !matches!(plan.mode, RotationMode::Agent) {
+    validate_provider_scope(&journal, &provider, plan.as_ref())?;
+    if !journal.recovery_backup_verified && !matches!(journal.mode, RotationMode::Agent) {
         emit_progress(
             app,
             &journal.rotation_id,
@@ -359,7 +360,6 @@ async fn execute_rotation(
         journal.state_version += 1;
         journal::save(app, &mut journal)?;
     }
-
     emit_progress(
         app,
         &journal.rotation_id,
@@ -368,8 +368,11 @@ async fn execute_rotation(
         false,
         None,
     );
-    let (old_owner, new_owner, staged) = stage_or_load_keys(app, &plan, &mut journal, &selected)?;
-
+    let (old_owner, new_owner, staged) =
+        stage_or_load_keys(app, plan.as_ref(), &mut journal, &selected)?;
+    if journal.committed_locally {
+        load_resume_token(&journal.rotation_id)?;
+    }
     let mut status = match load_resume_token(&journal.rotation_id) {
         Ok(_) => {
             let status_context = CoordinatorStatus {

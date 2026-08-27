@@ -76,6 +76,86 @@ pub(super) fn selected_records(
     Ok(selected)
 }
 
+pub(super) fn selected_committed_records(
+    journal: &IdentityRotationJournal,
+    records: &[ManagedAgentRecord],
+) -> Result<Vec<ManagedAgentRecord>, String> {
+    if !journal.committed_locally {
+        return Err("identity_rotation_resume_state_invalid".into());
+    }
+    let selected = journal
+        .agents
+        .iter()
+        .map(|item| {
+            if item.new_public_key.is_empty() {
+                return Err("identity_rotation_journal_corrupt".to_string());
+            }
+            let matches = records
+                .iter()
+                .filter(|record| record.pubkey == item.new_public_key)
+                .collect::<Vec<_>>();
+            if matches.len() != 1 || !committed_record_matches(journal, item, matches[0]) {
+                return Err(if item.hosted {
+                    "identity_rotation_postcommit_hosted_inventory_conflict"
+                } else {
+                    "identity_rotation_local_inventory_changed"
+                }
+                .to_string());
+            }
+            Ok(matches[0].clone())
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if matches!(journal.mode, RotationMode::Agent) && selected.len() != 1 {
+        return Err("identity_rotation_selected_agent_unavailable".into());
+    }
+    Ok(selected)
+}
+
+fn committed_record_matches(
+    journal: &IdentityRotationJournal,
+    item: &RotationAgentJournal,
+    record: &ManagedAgentRecord,
+) -> bool {
+    committed_lineage_matches(
+        &journal.relay_url,
+        item,
+        &record.pubkey,
+        &record.backend,
+        record.backend_agent_id.as_deref(),
+        &record.relay_url,
+    )
+}
+
+fn committed_lineage_matches(
+    journal_relay_url: &str,
+    item: &RotationAgentJournal,
+    record_public_key: &str,
+    record_backend: &BackendKind,
+    record_backend_agent_id: Option<&str>,
+    record_relay_url: &str,
+) -> bool {
+    if record_public_key != item.new_public_key {
+        return false;
+    }
+    match (record_backend, item.hosted) {
+        (BackendKind::Local, false) => {
+            record_relay_url.trim_end_matches('/') == journal_relay_url.trim_end_matches('/')
+                && record_backend_agent_id.is_none()
+        }
+        (BackendKind::Provider { id, .. }, true) => {
+            item.provider_id.as_deref() == Some(id.as_str())
+                && match item.new_provider_agent_id.as_deref() {
+                    Some(expected) => record_backend_agent_id == Some(expected),
+                    // A legacy committed journal may be missing this field.
+                    // The authenticated coordinator status must reconcile it
+                    // before canaries or authority revocation can proceed.
+                    None => record_backend_agent_id.is_some_and(|value| !value.trim().is_empty()),
+                }
+        }
+        _ => false,
+    }
+}
+
 fn hosted_record_matches_inventory(
     hosted: &HostedInventory,
     lineage: Option<&RotationAgentJournal>,
@@ -226,6 +306,7 @@ mod tests {
 
     fn committed_status_item() -> RotationItemStatus {
         RotationItemStatus {
+            item_kind: "agent".into(),
             old_public_key: "hosted-key".into(),
             new_public_key: Some("replacement-key".into()),
             hosted: true,
@@ -316,6 +397,71 @@ mod tests {
             "replacement-key",
             Some("different-provider-agent-id"),
             true,
+        ));
+    }
+
+    #[test]
+    fn committed_resume_uses_only_the_journaled_replacement_record() {
+        let provider = BackendKind::Provider {
+            id: "kiingo".into(),
+            config: serde_json::json!({}),
+        };
+        let lineage = hosted_lineage(Some("replacement-provider-agent-id"));
+        assert!(committed_lineage_matches(
+            "wss://chat.example.com",
+            &lineage,
+            "replacement-key",
+            &provider,
+            Some("replacement-provider-agent-id"),
+            "",
+        ));
+        assert!(!committed_lineage_matches(
+            "wss://chat.example.com",
+            &lineage,
+            "hosted-key",
+            &provider,
+            Some("provider-agent-id"),
+            "",
+        ));
+        assert!(!committed_lineage_matches(
+            "wss://chat.example.com",
+            &lineage,
+            "replacement-key",
+            &BackendKind::Provider {
+                id: "other".into(),
+                config: serde_json::json!({}),
+            },
+            Some("replacement-provider-agent-id"),
+            "",
+        ));
+        assert!(!committed_lineage_matches(
+            "wss://chat.example.com",
+            &lineage,
+            "replacement-key",
+            &provider,
+            Some("different-deployment"),
+            "",
+        ));
+
+        let mut local = hosted_lineage(None);
+        local.hosted = false;
+        local.provider_id = None;
+        local.old_provider_agent_id = None;
+        assert!(committed_lineage_matches(
+            "wss://chat.example.com",
+            &local,
+            "replacement-key",
+            &BackendKind::Local,
+            None,
+            "wss://chat.example.com/",
+        ));
+        assert!(!committed_lineage_matches(
+            "wss://chat.example.com",
+            &local,
+            "replacement-key",
+            &BackendKind::Local,
+            None,
+            "wss://other.example.com",
         ));
     }
 

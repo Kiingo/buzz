@@ -48,6 +48,7 @@ pub(super) struct DesktopPlan {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(super) struct RotationItemStatus {
+    pub(super) item_kind: String,
     pub(super) old_public_key: String,
     pub(super) new_public_key: Option<String>,
     pub(super) hosted: bool,
@@ -73,6 +74,82 @@ pub(super) struct CoordinatorStatus {
 pub(super) struct PrepareResponse {
     pub(super) resume_token: String,
     pub(super) status: CoordinatorStatus,
+}
+
+fn validate_status_scope(
+    journal: &IdentityRotationJournal,
+    status: &CoordinatorStatus,
+) -> Result<(), String> {
+    if status.contract_version != journal.contract_version
+        || status.rotation_id != journal.rotation_id
+        || status.mode != journal.mode
+        || status.old_owner_public_key != journal.old_owner_public_key
+        || (journal.new_owner_public_key.is_some()
+            && status.new_owner_public_key != journal.new_owner_public_key)
+    {
+        return Err("identity_rotation_coordinator_response_invalid".into());
+    }
+    Ok(())
+}
+
+fn validate_committed_status(
+    journal: &IdentityRotationJournal,
+    status: &CoordinatorStatus,
+) -> Result<(), String> {
+    let owner_item_count = usize::from(!matches!(journal.mode, RotationMode::Agent));
+    if !journal.committed_locally
+        || status.new_owner_public_key != journal.new_owner_public_key
+        || status.items.len() != journal.agents.len() + owner_item_count
+    {
+        return Err("identity_rotation_postcommit_hosted_inventory_conflict".into());
+    }
+    if !matches!(journal.mode, RotationMode::Agent) {
+        let owner_items = status
+            .items
+            .iter()
+            .filter(|item| item.item_kind == "human")
+            .collect::<Vec<_>>();
+        if owner_items.len() != 1
+            || owner_items[0].old_public_key != journal.old_owner_public_key
+            || owner_items[0].new_public_key != journal.new_owner_public_key
+            || owner_items[0].hosted
+            || owner_items[0].old_provider_agent_id.is_some()
+            || owner_items[0].new_provider_agent_id.is_some()
+        {
+            return Err("identity_rotation_postcommit_hosted_inventory_conflict".into());
+        }
+    }
+    for agent in &journal.agents {
+        let matching = status
+            .items
+            .iter()
+            .filter(|item| item.item_kind == "agent" && item.old_public_key == agent.old_public_key)
+            .collect::<Vec<_>>();
+        if matching.len() != 1 {
+            return Err("identity_rotation_postcommit_hosted_inventory_conflict".into());
+        }
+        let item = matching[0];
+        if item.new_public_key.as_deref() != Some(agent.new_public_key.as_str())
+            || item.hosted != agent.hosted
+            || item.old_provider_agent_id != agent.old_provider_agent_id
+            || (agent.hosted
+                && (item
+                    .new_provider_agent_id
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty())
+                    || agent
+                        .new_provider_agent_id
+                        .as_deref()
+                        .is_some_and(|expected| {
+                            item.new_provider_agent_id.as_deref() != Some(expected)
+                        })))
+            || (!agent.hosted
+                && (item.old_provider_agent_id.is_some() || item.new_provider_agent_id.is_some()))
+        {
+            return Err("identity_rotation_postcommit_hosted_inventory_conflict".into());
+        }
+    }
+    Ok(())
 }
 
 fn endpoint(origin: &str, path: &str, rotation_id: &str) -> Result<String, String> {
@@ -333,8 +410,13 @@ pub(super) async fn advance(input: AdvanceRequest<'_>) -> Result<CoordinatorStat
         }),
     )
     .await?;
-    serde_json::from_value(value)
-        .map_err(|_| "identity_rotation_coordinator_response_invalid".to_string())
+    let status: CoordinatorStatus = serde_json::from_value(value)
+        .map_err(|_| "identity_rotation_coordinator_response_invalid".to_string())?;
+    validate_status_scope(input.journal, &status)?;
+    if input.journal.committed_locally {
+        validate_committed_status(input.journal, &status)?;
+    }
+    Ok(status)
 }
 
 pub(super) async fn coordinator_status(
@@ -443,6 +525,84 @@ pub(super) fn continuity_value(
 mod tests {
     use super::*;
 
+    fn committed_journal() -> IdentityRotationJournal {
+        serde_json::from_value(serde_json::json!({
+            "contract_version": 1,
+            "rotation_id": "20000000-0000-4000-8000-000000000001",
+            "coordinator_origin": "https://api.example.com",
+            "community_id": "chat.example.com",
+            "relay_url": "wss://chat.example.com",
+            "mode": "all",
+            "selected_agent_public_key": null,
+            "state": "recoverable",
+            "state_version": 10,
+            "challenge_expires_at": "2026-08-21T00:00:00Z",
+            "old_owner_public_key": "a".repeat(64),
+            "new_owner_public_key": "b".repeat(64),
+            "provider_id": "test",
+            "resolve_path": "/resolve",
+            "prepare_path": "/prepare",
+            "advance_path": "/advance/{rotation_id}",
+            "proof_kind": 27236,
+            "proof_content": "buzz-identity-rotation-v1",
+            "recovery_backup_verified": true,
+            "agents": [{
+                "old_public_key": "c".repeat(64),
+                "new_public_key": "d".repeat(64),
+                "hosted": true,
+                "provider_id": "kiingo",
+                "old_provider_agent_id": "old-deployment",
+                "new_provider_agent_id": "new-deployment",
+                "profile_verified": true,
+                "profile_event_id": "profile-event",
+                "memory_heads_migrated": 0,
+                "memory_tombstones_preserved": 0,
+                "archive_verified": false,
+                "archive_event_id": null,
+                "canary_verified": false,
+                "local_runtime_was_running": false
+            }],
+            "continuity": ContinuityJournal::default(),
+            "committed_locally": true,
+            "old_authority_purged": false,
+            "error_code": null,
+            "created_at": "2026-08-21T00:00:00Z",
+            "updated_at": "2026-08-21T00:00:00Z"
+        }))
+        .unwrap()
+    }
+
+    fn committed_status(journal: &IdentityRotationJournal) -> CoordinatorStatus {
+        CoordinatorStatus {
+            contract_version: 1,
+            rotation_id: journal.rotation_id.clone(),
+            mode: journal.mode.clone(),
+            state: "recoverable".into(),
+            state_version: 10,
+            old_owner_public_key: journal.old_owner_public_key.clone(),
+            new_owner_public_key: journal.new_owner_public_key.clone(),
+            error_code: None,
+            items: vec![
+                RotationItemStatus {
+                    item_kind: "human".into(),
+                    old_public_key: journal.old_owner_public_key.clone(),
+                    new_public_key: journal.new_owner_public_key.clone(),
+                    hosted: false,
+                    old_provider_agent_id: None,
+                    new_provider_agent_id: None,
+                },
+                RotationItemStatus {
+                    item_kind: "agent".into(),
+                    old_public_key: "c".repeat(64),
+                    new_public_key: Some("d".repeat(64)),
+                    hosted: true,
+                    old_provider_agent_id: Some("old-deployment".into()),
+                    new_provider_agent_id: Some("new-deployment".into()),
+                },
+            ],
+        }
+    }
+
     #[test]
     fn coordinator_paths_cannot_escape_signed_origin() {
         assert_eq!(
@@ -479,6 +639,28 @@ mod tests {
                 "relay rejected event: actor not authorized: must be admin or owner"
             ),
             "identity_rotation_relay_membership_admin_required"
+        );
+    }
+
+    #[test]
+    fn committed_status_is_bound_to_the_journaled_scope_and_lineage() {
+        let journal = committed_journal();
+        let status = committed_status(&journal);
+        assert!(validate_status_scope(&journal, &status).is_ok());
+        assert!(validate_committed_status(&journal, &status).is_ok());
+
+        let mut wrong_rotation = status.clone();
+        wrong_rotation.rotation_id = "20000000-0000-4000-8000-000000000002".into();
+        assert_eq!(
+            validate_status_scope(&journal, &wrong_rotation).unwrap_err(),
+            "identity_rotation_coordinator_response_invalid"
+        );
+
+        let mut wrong_deployment = status;
+        wrong_deployment.items[1].new_provider_agent_id = Some("other-deployment".into());
+        assert_eq!(
+            validate_committed_status(&journal, &wrong_deployment).unwrap_err(),
+            "identity_rotation_postcommit_hosted_inventory_conflict"
         );
     }
 }
