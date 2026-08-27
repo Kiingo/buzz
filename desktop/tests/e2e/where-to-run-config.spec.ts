@@ -55,14 +55,6 @@ const PROBE_RESULT = {
   },
 };
 
-const PROVIDER_OWNED_PROBE_RESULT = {
-  ...PROBE_RESULT,
-  config_schema: {
-    ...PROBE_RESULT.config_schema,
-    "x-buzz-owns-execution-profile": true,
-  },
-};
-
 async function probeInvocations(page: Page): Promise<number> {
   return page.evaluate(
     () =>
@@ -236,72 +228,4 @@ test("provider → local → provider re-probes and resets the config", async ({
   // Fresh selection = fresh draft: the stale value must not leak back.
   await expect(dialog.locator("#provider-cfg-context")).toHaveValue("");
   expect(await probeInvocations(page)).toBe(2);
-});
-
-test("channel add-agent accepts provider-owned placement without a local runtime", async ({
-  page,
-}) => {
-  await installMockBridge(page, {
-    acpRuntimesCatalog: [],
-    backendProviders: [PROVIDER],
-    backendProviderProbeResult: PROVIDER_OWNED_PROBE_RESULT,
-    personas: [
-      {
-        id: "persona-remote-ada",
-        displayName: "Remote Ada",
-        systemPrompt: "Lead learning with high agency.",
-        model: "must-not-leak-to-provider-owned-placement",
-        isActive: true,
-      },
-    ],
-  });
-
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("channel-random").click();
-  await page.getByTestId("channel-intro-action-create-agent").click();
-  const dialog = page.getByTestId("add-channel-bot-dialog");
-  await expect(dialog).toBeVisible();
-
-  await dialog.getByRole("button", { name: /Remote Ada/ }).click();
-  const submit = dialog.getByRole("button", { name: "Add agent" });
-  await expect(submit).toBeDisabled();
-  await expect(
-    dialog.getByText(
-      "Install an agent runtime, or choose a remote provider above.",
-    ),
-  ).toBeVisible();
-
-  await selectRunOnOption(page, dialog, PROVIDER.id);
-  await expect(dialog.locator("#provider-cfg-namespace")).toHaveValue(
-    "buzz-agents-mock01",
-  );
-  await expect(submit).toBeEnabled();
-  await expect(dialog.getByText("Install an agent runtime")).toHaveCount(0);
-  await submit.click();
-  await expect(dialog).toHaveCount(0);
-
-  const createInput = await page.evaluate(() => {
-    const entry = (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).find(
-      (candidate) => candidate.command === "create_managed_agent",
-    );
-    return (entry?.payload as { input?: Record<string, unknown> } | undefined)
-      ?.input;
-  });
-  expect(createInput).toMatchObject({
-    name: "Remote Ada",
-    personaId: "persona-remote-ada",
-    systemPrompt: "Lead learning with high agency.",
-    spawnAfterCreate: true,
-    startOnAppLaunch: false,
-    backend: {
-      type: "provider",
-      id: PROVIDER.id,
-      config: {
-        namespace: "buzz-agents-mock01",
-      },
-    },
-  });
-  expect(createInput?.agentCommand).toBeUndefined();
-  expect(createInput?.model).toBeUndefined();
-  expect(createInput?.provider).toBeUndefined();
 });

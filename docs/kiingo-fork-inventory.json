@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "0e48ff26915aa32d5f05208847b9aba75f4f19cd",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 36,
-    "modifiedUpstreamFiles": 56,
-    "changedUpstreamProductionSourceLines": 2981,
-    "upstreamProductionSourceDiffHunks": 317,
+    "modifiedUpstreamProductionSourceFiles": 41,
+    "modifiedUpstreamFiles": 61,
+    "changedUpstreamProductionSourceLines": 3207,
+    "upstreamProductionSourceDiffHunks": 363,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -67,6 +67,17 @@
       ]
     },
     {
+      "hook": "desktop/src/features/agents/channelAgents.ts",
+      "implementations": [
+        "desktop/src/features/agents/lib/channelManagedAgentInput.ts"
+      ],
+      "contract": "Provider-neutral channel, team, template, and mention placement through the existing execution-ownership capability; remote placement never requires or persists a desktop runtime projection.",
+      "focusedTests": [
+        "desktop/src/features/agents/lib/channelManagedAgentInput.test.mjs",
+        "desktop/tests/e2e/provider-owned/where-to-run-config.spec.ts"
+      ]
+    },
+    {
       "hook": "desktop/src-tauri/src/managed_agents/backend.rs",
       "implementations": [
         "desktop/src-tauri/src/commands/agents/provider_create.rs",
@@ -91,21 +102,33 @@
     },
     {
       "hook": "desktop/src/features/messages/hooks.ts",
-      "implementations": ["desktop/src/extensions/messages/dmRecipientHydration.ts"],
+      "implementations": [
+        "desktop/src/extensions/messages/dmRecipientHydration.ts"
+      ],
       "contract": "Provider-neutral, fail-closed DM recipient hydration with no remote or tenant assumptions.",
-      "focusedTests": ["desktop/src/extensions/messages/dmRecipientHydration.test.mjs"]
+      "focusedTests": [
+        "desktop/src/extensions/messages/dmRecipientHydration.test.mjs"
+      ]
     },
     {
       "hook": "desktop/src/features/projects/ui/ProjectReadmePanel.tsx",
-      "implementations": ["desktop/src/features/projects/lib/projectReadmeMarkdown.ts"],
+      "implementations": [
+        "desktop/src/features/projects/lib/projectReadmeMarkdown.ts"
+      ],
       "contract": "Repository-provider-neutral README normalization.",
-      "focusedTests": ["desktop/src/features/projects/lib/projectReadmeMarkdown.test.mjs"]
+      "focusedTests": [
+        "desktop/src/features/projects/lib/projectReadmeMarkdown.test.mjs"
+      ]
     },
     {
       "hook": "desktop/src/features/huddle/lib/ttsLiveMessages.ts",
-      "implementations": ["desktop/src/features/huddle/lib/ttsLiveMessageSanitizer.ts"],
+      "implementations": [
+        "desktop/src/features/huddle/lib/ttsLiveMessageSanitizer.ts"
+      ],
       "contract": "Provider-neutral TTS message sanitization.",
-      "focusedTests": ["desktop/src/features/huddle/lib/ttsLiveMessages.security.test.mjs"]
+      "focusedTests": [
+        "desktop/src/features/huddle/lib/ttsLiveMessages.security.test.mjs"
+      ]
     },
     {
       "hook": "crates/buzz-acp/src/lib.rs",
@@ -115,13 +138,19 @@
     },
     {
       "hook": "crates/buzz-media/src/storage.rs",
-      "implementations": ["crates/buzz-media/src/storage/azure.rs", "crates/buzz-azure-storage/src/lib.rs"],
+      "implementations": [
+        "crates/buzz-media/src/storage/azure.rs",
+        "crates/buzz-azure-storage/src/lib.rs"
+      ],
       "contract": "Storage-backend-neutral media behavior with Azure adaptation outside the upstream switch.",
       "focusedTests": ["cargo test -p buzz-azure-storage --locked"]
     },
     {
       "hook": "crates/buzz-relay/src/api/git/store.rs",
-      "implementations": ["crates/buzz-relay/src/api/git/store/azure.rs", "crates/buzz-azure-storage/src/lib.rs"],
+      "implementations": [
+        "crates/buzz-relay/src/api/git/store/azure.rs",
+        "crates/buzz-azure-storage/src/lib.rs"
+      ],
       "contract": "Storage-backend-neutral Git object semantics with Azure result translation isolated.",
       "focusedTests": ["cargo test -p buzz-relay git_store --locked"]
     },
@@ -248,8 +277,12 @@
         "desktop/src-tauri/src/managed_agents/provider_execution_profile.rs",
         "desktop/src-tauri/src/managed_agents/provider_platform.rs",
         "desktop/src/features/agents/AGENTS.md",
+        "desktop/src/features/agents/channelAgents.ts",
+        "desktop/src/features/agents/lib/channelManagedAgentInput.test.mjs",
+        "desktop/src/features/agents/lib/channelManagedAgentInput.ts",
         "desktop/src/features/agents/lib/providerOwnedInstanceInput.test.mjs",
         "desktop/src/features/agents/lib/providerOwnedInstanceInput.ts",
+        "desktop/src/features/agents/ui/AddTeamToChannelDialog.tsx",
         "desktop/src/features/agents/ui/AgentDefinitionDialog.tsx",
         "desktop/src/features/agents/ui/AgentDialog.tsx",
         "desktop/src/features/agents/ui/PersonaAdvancedFields.tsx",
@@ -267,7 +300,10 @@
         "desktop/src/features/agents/ui/providerConfigSchema.ts",
         "desktop/src/features/agents/ui/useAgentDefinitionExecutionReadiness.ts",
         "desktop/src/features/agents/ui/usePersonaActions.ts",
+        "desktop/src/features/channel-templates/useApplyTemplate.ts",
+        "desktop/src/features/channels/ui/AddChannelBotDialog.tsx",
         "desktop/src/features/messages/hooks.ts",
+        "desktop/src/features/messages/ui/useMentionSendFlow.ts",
         "desktop/src/features/home/ui/HomeView.tsx",
         "desktop/src/features/huddle/lib/ttsLiveMessages.security.test.mjs",
         "desktop/src/features/huddle/lib/ttsLiveMessageSanitizer.ts",
