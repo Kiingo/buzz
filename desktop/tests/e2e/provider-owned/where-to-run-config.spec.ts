@@ -231,3 +231,71 @@ test("provider-owned create attaches to the requested channel", async ({
     page.getByText("shared-compute agents cannot be deployed remotely"),
   ).toHaveCount(0);
 });
+
+test("channel add-agent accepts provider-owned placement without a local runtime", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    acpRuntimesCatalog: [],
+    backendProviders: [PROVIDER],
+    backendProviderProbeResult: PROBE_RESULT,
+    personas: [
+      {
+        id: "persona-remote-ada",
+        displayName: "Remote Ada",
+        systemPrompt: "Lead learning with high agency.",
+        model: "must-not-leak-to-provider-owned-placement",
+        isActive: true,
+      },
+    ],
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByTestId("channel-random").click();
+  await page.getByTestId("channel-intro-action-create-agent").click();
+  const dialog = page.getByTestId("add-channel-bot-dialog");
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByRole("button", { name: /Remote Ada/ }).click();
+  const submit = dialog.getByRole("button", { name: "Add agent" });
+  await expect(submit).toBeDisabled();
+  await expect(
+    dialog.getByText(
+      "Install an agent runtime, or choose a remote provider above.",
+    ),
+  ).toBeVisible();
+
+  await dialog.locator("#agent-run-on").press("Enter");
+  await page
+    .getByRole("menuitemradio", { name: PROVIDER.id, exact: true })
+    .press("Enter");
+  await expect(dialog.locator("#provider-cfg-harness")).toContainText("Codex");
+  await expect(submit).toBeEnabled();
+  await expect(dialog.getByText("Install an agent runtime")).toHaveCount(0);
+  await submit.click();
+  await expect(dialog).toHaveCount(0);
+
+  const createInput = (await createCommands(page)).find(
+    (entry) => entry.command === "create_managed_agent",
+  )?.payload.input;
+  const serializedInput = JSON.parse(JSON.stringify(createInput));
+  expect(serializedInput).toMatchObject({
+    name: "Remote Ada",
+    personaId: "persona-remote-ada",
+    systemPrompt: "Lead learning with high agency.",
+    spawnAfterCreate: true,
+    startOnAppLaunch: false,
+    backend: {
+      type: "provider",
+      id: PROVIDER.id,
+      config: {
+        harness: "codex",
+        model: "gpt-5.6",
+        reasoning: "medium",
+      },
+    },
+  });
+  expect(serializedInput).not.toHaveProperty("agentCommand");
+  expect(serializedInput).not.toHaveProperty("model");
+  expect(serializedInput).not.toHaveProperty("provider");
+});

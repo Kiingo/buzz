@@ -263,6 +263,13 @@ with a TypeScript lookup table or an id comparison in a component.
     identity, or alter history, membership, prompt, access, or backend config.
     Missing, false, malformed, or failed capability probes keep the existing
     local/non-owning remote contract, including relay-mesh remote refusal.
+    Channel and team placement use this same provider-neutral contract: render
+    the shared `WhereToRunSection`, require the same successful ownership probe,
+    and call the shared provider-owned instance projection without inventing or
+    requiring a desktop ACP runtime. Templates may omit a runtime only for an
+    explicit provider backend; mention provisioning may reuse an already-hosted
+    persona without a local runtime, but may not silently choose a remote host
+    for a new instance. Keep all of these rules provider-ID-neutral.
 
 12. **Owner-only builds constrain managed runtimes, not relay-agent mentions.**
     The compiled owner-only capability applies when Desktop starts or deploys a

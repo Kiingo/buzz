@@ -265,16 +265,12 @@ export function useMentionSendFlow({
           runtimes,
           defaultRuntime,
         );
-        if (!runtime) {
-          errors.push(`${displayName}: No agent runtime available.`);
-          continue;
-        }
         try {
           const input: CreateChannelManagedAgentInput & {
             channelId: string;
           } = {
             channelId: capturedChannelId,
-            runtime,
+            runtime: runtime ?? undefined,
             name: persona.displayName,
             personaId: persona.id,
             systemPrompt: persona.systemPrompt,

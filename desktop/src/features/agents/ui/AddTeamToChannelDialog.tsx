@@ -16,6 +16,13 @@ import {
   getDefaultPersonaRuntime,
   resolvePersonaRuntime,
 } from "@/features/agents/lib/resolvePersonaRuntime";
+import { providerOwnsExecutionProfile } from "@/features/agents/ui/providerOwnedExecutionProfile";
+import { WhereToRunSection } from "@/features/agents/ui/WhereToRunSection";
+import {
+  canSubmitWhereToRun,
+  emptyWhereToRunDraft,
+  resolveBackendIntent,
+} from "@/features/agents/ui/whereToRunIntent";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import type {
@@ -56,6 +63,7 @@ export function AddTeamToChannelDialog({
   const providersQuery = useAvailableAcpRuntimes();
   const [channelId, setChannelId] = React.useState("");
   const [role, setRole] = React.useState<Exclude<ChannelRole, "owner">>("bot");
+  const [whereToRun, setWhereToRun] = React.useState(emptyWhereToRunDraft);
   const deployMutation = useCreateChannelManagedAgentsMutation(
     channelId || null,
   );
@@ -87,14 +95,20 @@ export function AddTeamToChannelDialog({
   // Surface warnings when a persona's preferred runtime is unavailable.
   // This dialog has no runtime selector, so the fallback is always
   // `defaultProvider` (the first available runtime).
+  const backendIntent = resolveBackendIntent(whereToRun);
+  const providerOwned = providerOwnsExecutionProfile(whereToRun);
   const runtimeWarnings = React.useMemo(
-    () => collectRuntimeWarnings(resolved, runtimes, defaultProvider),
-    [resolved, runtimes, defaultProvider],
+    () =>
+      backendIntent
+        ? []
+        : collectRuntimeWarnings(resolved, runtimes, defaultProvider),
+    [backendIntent, resolved, runtimes, defaultProvider],
   );
 
   function reset() {
     setChannelId("");
     setRole("bot");
+    setWhereToRun(emptyWhereToRunDraft);
     deployMutation.reset();
   }
 
@@ -118,7 +132,13 @@ export function AddTeamToChannelDialog({
     channels.find((channel) => channel.id === channelId) ?? null;
 
   async function handleDeploy() {
-    if (!team || !selectedChannel || !defaultProvider) {
+    if (
+      !team ||
+      !selectedChannel ||
+      (backendIntent
+        ? !canSubmitWhereToRun(whereToRun) || !providerOwned
+        : !defaultProvider)
+    ) {
       return;
     }
 
@@ -128,12 +148,33 @@ export function AddTeamToChannelDialog({
       // available runtime). Warnings are computed separately via the
       // `runtimeWarnings` memo and rendered as inline alerts above.
       const inputs = resolved.map((persona) => {
+        if (backendIntent) {
+          return {
+            name: persona.displayName,
+            systemPrompt: persona.systemPrompt,
+            avatarUrl: persona.avatarUrl ?? undefined,
+            personaId: persona.id,
+            teamId: team.id,
+            forceNewInstance: true,
+            role,
+            backend: {
+              type: "provider" as const,
+              id: backendIntent.id,
+              config: backendIntent.config,
+            },
+          };
+        }
         const { runtime: personaRuntime } = resolvePersonaRuntime(
           persona.runtime,
           runtimes,
           defaultProvider,
         );
         const runtimeToUse = personaRuntime ?? defaultProvider;
+        if (!runtimeToUse) {
+          throw new Error(
+            "Choose a remote provider or install a local agent runtime.",
+          );
+        }
         return {
           runtime: {
             id: runtimeToUse.id,
@@ -223,6 +264,12 @@ export function AddTeamToChannelDialog({
               </select>
             </div>
 
+            <WhereToRunSection
+              draft={whereToRun}
+              isPending={deployMutation.isPending}
+              onDraftChange={setWhereToRun}
+            />
+
             <div className="space-y-1.5">
               <label
                 className="text-sm font-medium"
@@ -255,11 +302,20 @@ export function AddTeamToChannelDialog({
               </p>
             ) : null}
 
-            {!defaultProvider && !providersQuery.isLoading ? (
+            {!backendIntent && !defaultProvider && !providersQuery.isLoading ? (
               <p className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                No ACP runtimes found. Make sure an agent runtime (e.g. Goose)
-                is installed.
+                Install an agent runtime, or choose a remote provider above.
               </p>
+            ) : null}
+
+            {backendIntent && whereToRun.probedProvider && !providerOwned ? (
+              <div className="flex gap-3 rounded-2xl border border-warning/30 bg-warning-bg px-4 py-3">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                <p className="text-sm text-warning">
+                  This provider cannot own the agents&apos; execution profiles.
+                  Choose another remote provider or run them on this computer.
+                </p>
+              </div>
             ) : null}
 
             {runtimeWarnings.length > 0
@@ -300,11 +356,13 @@ export function AddTeamToChannelDialog({
               disabled={
                 !team ||
                 !selectedChannel ||
-                !defaultProvider ||
+                (backendIntent
+                  ? !canSubmitWhereToRun(whereToRun) || !providerOwned
+                  : !defaultProvider) ||
                 resolved.length === 0 ||
                 missingPersonaCount > 0 ||
                 channelsQuery.isLoading ||
-                providersQuery.isLoading ||
+                (!backendIntent && providersQuery.isLoading) ||
                 deployMutation.isPending
               }
               onClick={() => void handleDeploy()}

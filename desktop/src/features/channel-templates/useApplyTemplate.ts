@@ -21,7 +21,7 @@ import type { ChannelTemplate } from "@/shared/api/types";
  */
 function toManagedBackend(
   backend: ChannelTemplate["agents"]["personas"][number]["backend"],
-): CreateChannelManagedAgentInput["backend"] {
+): NonNullable<CreateChannelManagedAgentInput["backend"]> {
   if (!backend || backend.type === "local") return { type: "local" };
   return { type: "provider", id: backend.id, config: {} };
 }
@@ -70,12 +70,9 @@ export function useApplyTemplate() {
     const allPersonas = personasQuery.data ?? [];
     const allTeams = teamsQuery.data ?? [];
     const runtimes = acpRuntimesQuery.data ?? [];
-    if (runtimes.length === 0) return; // No runtimes — skip silently
-
     // Resolve default provider: user's last-used preference, or first available
     const defaultProvider =
       runtimes.find((p) => p.id === lastRuntimeId) ?? runtimes[0] ?? null;
-    if (!defaultProvider) return;
 
     const seenPersonaIds = new Set<string>();
     const inputs: CreateChannelManagedAgentInput[] = [];
@@ -86,20 +83,28 @@ export function useApplyTemplate() {
       if (!persona) continue;
       if (seenPersonaIds.has(persona.id)) continue;
       seenPersonaIds.add(persona.id);
+      const backend = toManagedBackend(entry.backend);
+      if (backend.type === "local" && !defaultProvider) continue;
       const resolved = resolvePersonaRuntime(
         entry.runtime ?? persona.runtime,
         runtimes,
         defaultProvider,
       );
       inputs.push({
-        runtime: resolved.runtime ?? defaultProvider,
+        runtime:
+          backend.type === "provider"
+            ? undefined
+            : (resolved.runtime ?? defaultProvider ?? undefined),
         name: persona.displayName,
         personaId: persona.id,
         systemPrompt: persona.systemPrompt,
         avatarUrl: persona.avatarUrl ?? undefined,
-        model: entry.model ?? persona.model ?? undefined,
+        model:
+          backend.type === "provider"
+            ? undefined
+            : (entry.model ?? persona.model ?? undefined),
         role: "bot",
-        backend: toManagedBackend(entry.backend),
+        backend,
       });
     }
 
@@ -111,20 +116,28 @@ export function useApplyTemplate() {
       for (const persona of resolvedPersonas) {
         if (seenPersonaIds.has(persona.id)) continue;
         seenPersonaIds.add(persona.id);
+        const backend = toManagedBackend(teamEntry.backend);
+        if (backend.type === "local" && !defaultProvider) continue;
         const resolved = resolvePersonaRuntime(
           teamEntry.runtime ?? persona.runtime,
           runtimes,
           defaultProvider,
         );
         inputs.push({
-          runtime: resolved.runtime ?? defaultProvider,
+          runtime:
+            backend.type === "provider"
+              ? undefined
+              : (resolved.runtime ?? defaultProvider ?? undefined),
           name: persona.displayName,
           personaId: persona.id,
           systemPrompt: persona.systemPrompt,
           avatarUrl: persona.avatarUrl ?? undefined,
-          model: teamEntry.model ?? persona.model ?? undefined,
+          model:
+            backend.type === "provider"
+              ? undefined
+              : (teamEntry.model ?? persona.model ?? undefined),
           role: "bot",
-          backend: toManagedBackend(teamEntry.backend),
+          backend,
         });
       }
     }
