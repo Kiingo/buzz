@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "0e48ff26915aa32d5f05208847b9aba75f4f19cd",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 41,
-    "modifiedUpstreamFiles": 61,
-    "changedUpstreamProductionSourceLines": 3207,
-    "upstreamProductionSourceDiffHunks": 363,
+    "modifiedUpstreamProductionSourceFiles": 42,
+    "modifiedUpstreamFiles": 62,
+    "changedUpstreamProductionSourceLines": 3283,
+    "upstreamProductionSourceDiffHunks": 370,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -226,6 +226,14 @@
         "crates/buzz-acp/src/relay.rs",
         "crates/buzz-sdk/src/builders.rs"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz CLI maintainers",
+      "purpose": "Canonical direct-message inventory from existing kind:39000 metadata with exact participant scoping.",
+      "upstreamStatus": "submitted as block/buzz PR #7030",
+      "removalCondition": "Remove when block/buzz lists direct messages from canonical kind:39000 metadata with equivalent participant scoping.",
+      "paths": ["crates/buzz-cli/src/commands/dms.rs"]
     },
     {
       "classification": "retain-generic",
