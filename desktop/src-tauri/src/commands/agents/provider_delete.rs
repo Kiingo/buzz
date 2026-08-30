@@ -231,7 +231,6 @@ pub(super) async fn delete_managed_agent(
                 }
             }
 
-            let persona_id = current.persona_id.clone();
             let current = records
                 .iter_mut()
                 .find(|record| record.pubkey == pubkey)
