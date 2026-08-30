@@ -60,9 +60,8 @@ pub struct SuccessfulSteerDelivery {
 pub struct TaskMeta {
     pub agent_index: usize,
     pub channel_id: Option<Uuid>,
-    /// Authors whose events are part of this prompt turn. Exact control
-    /// commands from an authorized community member may only cancel a turn
-    /// when that member owns at least one triggering event.
+    /// Authors whose events are part of this prompt turn. Only an authorized member who owns
+    /// a triggering event may cancel it with an exact control command.
     pub prompt_author_pubkeys: Vec<String>,
     /// Identifies terminal events when the task panics before returning a result.
     pub turn_id: String,
@@ -2513,23 +2512,22 @@ pub async fn run_prompt_task(
                 .map(|tag| tag.as_slice())
                 .collect();
             let structured_context = conversation_context.as_ref().map(|context| {
-                let (kind, messages, total, root_present, truncated) = match context {
+                let (kind, messages, total, truncated) = match context {
                     ConversationContext::Thread {
                         messages,
                         total,
-                        root_present,
                         truncated,
-                    } => ("thread", messages, total, Some(root_present), truncated),
+                        ..
+                    } => ("thread", messages, total, truncated),
                     ConversationContext::Dm {
                         messages,
                         total,
                         truncated,
-                    } => ("dm", messages, total, None, truncated),
+                    } => ("dm", messages, total, truncated),
                 };
                 serde_json::json!({
                     "kind": kind,
                     "total": total,
-                    "rootPresent": root_present,
                     "truncated": truncated,
                     "messages": messages
                         .iter()
