@@ -26,6 +26,8 @@ fn trim_optional(value: Option<String>) -> Option<String> {
 
 mod pending;
 pub(in crate::commands) use pending::retain_persona_pending;
+pub(in crate::commands) use pending::retain_persona_pending_at;
+pub(crate) use pending::tombstone_persona_at;
 pub(super) use pending::tombstone_persona_pending;
 mod create;
 pub use create::create_persona;
@@ -37,6 +39,8 @@ pub use update::update_persona;
 mod inbound;
 pub use inbound::reconcile_inbound_persona_event;
 mod provider_delete;
+#[cfg(test)]
+pub(crate) use inbound::retain_inbound_catalog_witness;
 
 #[tauri::command]
 pub async fn list_personas(app: AppHandle) -> Result<Vec<AgentDefinition>, String> {

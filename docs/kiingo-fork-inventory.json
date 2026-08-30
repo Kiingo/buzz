@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
-  "upstreamSnapshot": "0e48ff26915aa32d5f05208847b9aba75f4f19cd",
+  "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 42,
     "modifiedUpstreamFiles": 62,
@@ -244,7 +244,7 @@
       "paths": [
         "Cargo.lock",
         "Cargo.toml",
-        "crates/buzz-db/src/lib.rs",
+        "crates/buzz-db/src/runtime/tests.rs",
         "crates/buzz-azure-storage/Cargo.toml",
         "crates/buzz-azure-storage/README.md",
         "crates/buzz-azure-storage/src/lib.rs",
