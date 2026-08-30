@@ -60,8 +60,7 @@ pub struct SuccessfulSteerDelivery {
 pub struct TaskMeta {
     pub agent_index: usize,
     pub channel_id: Option<Uuid>,
-    /// Authors whose events are part of this prompt turn. Only an authorized member who owns
-    /// a triggering event may cancel it with an exact control command.
+    /// Trigger-event authors allowed to issue exact cancellation control commands.
     pub prompt_author_pubkeys: Vec<String>,
     /// Identifies terminal events when the task panics before returning a result.
     pub turn_id: String,

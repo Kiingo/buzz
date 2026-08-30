@@ -1338,7 +1338,7 @@ test("channel references replace the authored hash with the channel icon", () =>
 
   assert.match(html, /inline-chip-icon-channel/);
   assert.match(html, /wrapping-inline-chip/);
-  assert.match(html, /inline-chip-leading-fragment[^>]*>e</);
+  assert.match(html, /inline-chip-leading-fragment[^>]*>engin</);
   assert.match(renderedText(html), /engineering/);
   assert.doesNotMatch(html, />#engineering</);
 });
