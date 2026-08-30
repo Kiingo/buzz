@@ -29,9 +29,7 @@ pub(super) fn workspace_owner_hex(state: &AppState) -> Result<String, String> {
 mod pending;
 #[cfg(test)]
 use pending::build_agent_archive_request;
-pub(crate) use pending::{
-    archive_managed_agent_pending, retain_managed_agent_pending, tombstone_managed_agent_pending,
-};
+pub(crate) use pending::{retain_managed_agent_pending, tombstone_managed_agent_pending};
 
 /// Build a summary from fresh disk state (personas, teams, global config).
 /// For one-shot command paths only — the 5s list poll calls
@@ -734,6 +732,7 @@ pub async fn create_managed_agent(
             source_team: None,
             source_team_persona_slug: None,
             catalog_source: None,
+            team_catalog_source: None,
             definition_respond_to: None,
             definition_respond_to_allowlist: Vec::new(),
             definition_parallelism: None,

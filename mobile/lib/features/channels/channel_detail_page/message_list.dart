@@ -437,8 +437,13 @@ class _MessageList extends HookConsumerWidget {
             ) -
             composerBottomInset,
       );
+      final hidesJumpToLatest = shouldHideChannelJumpToLatest(
+        isAtLatest: latestIsAtBoundary(),
+        followsLatest: followsLatest.value,
+        userHasDetached: hasUserScrolled.value,
+      );
       final shouldShow =
-          !latestIsAtBoundary() &&
+          !hidesJumpToLatest &&
           (hasUnseenLatestEntry.value ||
               !latestIsVisible ||
               distanceFromLatest.value > visiblePageHeight);
@@ -838,7 +843,7 @@ class _MessageList extends HookConsumerWidget {
                                 : null,
                             channelId: channelId,
                             currentPubkey: currentPubkey,
-                            allMessages: null,
+                            allMessages: allMessages,
                             isMember: isMember,
                             isArchived: isArchived,
                           )

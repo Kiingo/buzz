@@ -2,12 +2,12 @@
   "schemaVersion": 3,
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
-  "upstreamSnapshot": "0e48ff26915aa32d5f05208847b9aba75f4f19cd",
+  "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 42,
-    "modifiedUpstreamFiles": 62,
-    "changedUpstreamProductionSourceLines": 3283,
-    "upstreamProductionSourceDiffHunks": 370,
+    "modifiedUpstreamProductionSourceFiles": 43,
+    "modifiedUpstreamFiles": 64,
+    "changedUpstreamProductionSourceLines": 3460,
+    "upstreamProductionSourceDiffHunks": 382,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -244,7 +244,7 @@
       "paths": [
         "Cargo.lock",
         "Cargo.toml",
-        "crates/buzz-db/src/lib.rs",
+        "crates/buzz-db/src/runtime/tests.rs",
         "crates/buzz-azure-storage/Cargo.toml",
         "crates/buzz-azure-storage/README.md",
         "crates/buzz-azure-storage/src/lib.rs",
@@ -268,6 +268,7 @@
       "removalCondition": "Remove each retained patch when block/buzz supports equivalent behavior.",
       "paths": [
         "desktop/src-tauri/Cargo.lock",
+        "desktop/src-tauri/src/commands/agent_models_tests.rs",
         "desktop/src-tauri/src/commands/agent_providers.rs",
         "desktop/src-tauri/src/commands/agents.rs",
         "desktop/src-tauri/src/commands/agents/provider_access.rs",
@@ -333,10 +334,13 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz release maintainers",
-      "purpose": "Fork-neutral relay and push-gateway image, cache, attestation, and verification namespaces.",
-      "upstreamStatus": "submitted as block/buzz PR #6413",
-      "removalCondition": "Remove when block/buzz derives both container namespaces from the repository owner or explicit repository variables.",
-      "paths": [".github/workflows/docker.yml"]
+      "purpose": "Fork-neutral relay and push-gateway image, cache, attestation, and verification namespaces plus privilege-separated packaging of untrusted security-review source.",
+      "upstreamStatus": "image namespace work submitted as block/buzz PR #6413; security-review privilege separation retained generically downstream pending upstream adoption",
+      "removalCondition": "Remove each patch when block/buzz ships equivalent namespace derivation and untrusted-review privilege separation.",
+      "paths": [
+        ".github/workflows/codex-security-review.yml",
+        ".github/workflows/docker.yml"
+      ]
     },
     {
       "classification": "retain-generic",

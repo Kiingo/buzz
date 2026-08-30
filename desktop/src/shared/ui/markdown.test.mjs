@@ -1126,7 +1126,7 @@ test("bare Buzz permalinks render cohesive icon-prefixed chips", () => {
   assert.equal((html.match(/data-channel-deep-link=""/g) ?? []).length, 1);
   assert.match(html, /inline-chip-icon-channel/);
   assert.match(html, /wrapping-inline-chip/);
-  assert.match(html, /inline-chip-leading-fragment[^>]*>e</);
+  assert.match(html, /inline-chip-leading-fragment[^>]*>engin</);
   assert.match(html, /inline-chip-icon-pr/);
   assert.match(html, /inline-chip-icon-issue/);
   assert.match(html, /inline-chip-icon-repo/);
@@ -1249,17 +1249,21 @@ test("authored Buzz permalink labels remain ordinary links", () => {
   });
   const html = renderToStaticMarkup(
     React.createElement(
-      MarkdownRuntimeContext.Provider,
-      {
-        value: {
-          channels: [{ id: channelId, name: "engineering" }],
-          onOpenChannel: () => {},
-          onOpenEntityLink: () => {},
-          onOpenMessageLink: () => {},
-          relayOrigin: null,
+      QueryClientProvider,
+      { client: new QueryClient() },
+      React.createElement(
+        MarkdownRuntimeContext.Provider,
+        {
+          value: {
+            channels: [{ id: channelId, name: "engineering" }],
+            onOpenChannel: () => {},
+            onOpenEntityLink: () => {},
+            onOpenMessageLink: () => {},
+            relayOrigin: null,
+          },
         },
-      },
-      markdown,
+        markdown,
+      ),
     ),
   );
 
@@ -1301,7 +1305,7 @@ test("bare Buzz permalinks shorten unavailable channel identifiers", () => {
   );
 
   assert.equal(
-    (html.match(/inline-chip-leading-fragment[^>]*>5<\/span>80ca78b/g) ?? [])
+    (html.match(/inline-chip-leading-fragment[^>]*>580ca<\/span>78b/g) ?? [])
       .length,
     2,
   );
