@@ -60,6 +60,75 @@ jobs:
             const review = require('./.github/scripts/codex-security-review.js');
             await review.prepare({ github, context, core });
 
+  prepare-review-source:
+    name: Package Untrusted Review Source
+    needs: prepare-review
+    if: needs.prepare-review.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      REVIEW_BASE_SHA: ${{ needs.prepare-review.outputs.base_sha }}
+      REVIEW_HEAD_SHA: ${{ needs.prepare-review.outputs.head_sha }}
+      REVIEW_REPOSITORY: review-target
+      REVIEW_SOURCE: review-source
+    steps:
+      - name: Checkout exact authorized pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.prepare-review.outputs.head_repo }}
+          ref: ${{ needs.prepare-review.outputs.head_sha }}
+          path: ${{ env.REVIEW_REPOSITORY }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Package inert review inputs
+        working-directory: ${{ env.REVIEW_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$REVIEW_HEAD_SHA" ]; then
+            echo "Checked-out PR head does not match the authorized commit." >&2
+            exit 1
+          fi
+
+          git -c protocol.version=2 fetch --no-tags \
+            "https://github.com/${{ github.repository }}.git" "$REVIEW_BASE_SHA"
+          if [ "$(git rev-parse HEAD)" != "$REVIEW_HEAD_SHA" ]; then
+            echo "PR head changed while preparing the review." >&2
+            exit 1
+          fi
+
+          mkdir -p "$GITHUB_WORKSPACE/$REVIEW_SOURCE"
+          git diff \
+            --find-renames \
+            --submodule=diff \
+            --unified=40 \
+            "$REVIEW_BASE_SHA...$REVIEW_HEAD_SHA" \
+            > "$GITHUB_WORKSPACE/$REVIEW_SOURCE/codex-review.diff"
+          if [ ! -s "$GITHUB_WORKSPACE/$REVIEW_SOURCE/codex-review.diff" ]; then
+            echo "The authorized PR range has no diff." >&2
+            exit 1
+          fi
+
+          git update-ref refs/codex-review/base "$REVIEW_BASE_SHA"
+          git update-ref refs/codex-review/head "$REVIEW_HEAD_SHA"
+          git bundle create \
+            "$GITHUB_WORKSPACE/$REVIEW_SOURCE/review.bundle" \
+            refs/codex-review/base refs/codex-review/head
+          (
+            cd "$GITHUB_WORKSPACE/$REVIEW_SOURCE"
+            sha256sum review.bundle codex-review.diff > SHA256SUMS
+          )
+
+      - name: Upload inert review inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codex-security-review-source-${{ needs.prepare-review.outputs.pr_number }}-${{ needs.prepare-review.outputs.head_sha }}
+          path: ${{ env.REVIEW_SOURCE }}
+          retention-days: 1
+          if-no-files-found: error
+
   prepare-base-reconciliation:
     name: Find Reviews From the Previous Base
     if: >-
@@ -210,7 +279,7 @@ jobs:
 
   security-review:
     name: Run Codex Security Review
-    needs: prepare-review
+    needs: [prepare-review, prepare-review-source]
     if: needs.prepare-review.outputs.authorized == 'true'
     runs-on: ubuntu-latest
     environment: codex-review
@@ -226,53 +295,34 @@ jobs:
       CODEX_REVIEW_API_KEY_PRESENT: ${{ secrets.CODEX_REVIEW_API_KEY != '' }}
       REVIEW_CONTEXT: review-context
       REVIEW_REPOSITORY: review-target
+      REVIEW_SOURCE: review-source
       REVIEW_DIFF_FILE: .git/codex-review.diff
     outputs:
       review_json: ${{ steps.run_codex.outputs.final-message }}
     steps:
-      - name: Checkout exact pull request head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download inert review inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          ref: refs/pull/${{ needs.prepare-review.outputs.pr_number }}/head
-          path: ${{ env.REVIEW_REPOSITORY }}
-          fetch-depth: 0
-          persist-credentials: false
+          name: codex-security-review-source-${{ needs.prepare-review.outputs.pr_number }}-${{ needs.prepare-review.outputs.head_sha }}
+          path: ${{ env.REVIEW_SOURCE }}
 
-      - name: Pin exact review range
+      - name: Materialize exact read-only review range
         env:
           REVIEW_BASE_SHA: ${{ needs.prepare-review.outputs.base_sha }}
           REVIEW_HEAD_SHA: ${{ needs.prepare-review.outputs.head_sha }}
-        working-directory: ${{ env.REVIEW_REPOSITORY }}
         run: |
-          if [ "$(git rev-parse HEAD)" != "$REVIEW_HEAD_SHA" ]; then
-            echo "Checked-out PR head does not match the authorized commit." >&2
+          set -euo pipefail
+          (cd "$REVIEW_SOURCE" && sha256sum --check SHA256SUMS)
+          git clone --no-checkout "$REVIEW_SOURCE/review.bundle" "$REVIEW_REPOSITORY"
+          git -C "$REVIEW_REPOSITORY" checkout --detach "$REVIEW_HEAD_SHA"
+          if [ "$(git -C "$REVIEW_REPOSITORY" rev-parse HEAD)" != "$REVIEW_HEAD_SHA" ]; then
+            echo "Materialized PR head does not match the authorized commit." >&2
             exit 1
           fi
-
-          git -c protocol.version=2 fetch --no-tags origin "$REVIEW_BASE_SHA"
-
-          if [ "$(git rev-parse HEAD)" != "$REVIEW_HEAD_SHA" ]; then
-            echo "PR head changed while preparing the review." >&2
-            exit 1
-          fi
-
-          git diff \
-            --find-renames \
-            --submodule=diff \
-            --unified=40 \
-            "$REVIEW_BASE_SHA...$REVIEW_HEAD_SHA" > "$REVIEW_DIFF_FILE"
-
-          if [ ! -s "$REVIEW_DIFF_FILE" ]; then
-            echo "The authorized PR range has no diff." >&2
-            exit 1
-          fi
-
-          if git config --local --get-regexp '^http\..*\.extraheader$'; then
-            echo "Repository credentials remain configured after checkout." >&2
-            exit 1
-          fi
-
-          mkdir -p "$GITHUB_WORKSPACE/$REVIEW_CONTEXT"
+          git -C "$REVIEW_REPOSITORY" cat-file -e "$REVIEW_BASE_SHA^{commit}"
+          cp "$REVIEW_SOURCE/codex-review.diff" \
+            "$REVIEW_REPOSITORY/$REVIEW_DIFF_FILE"
+          mkdir -p "$REVIEW_CONTEXT"
 
       - name: Require OpenAI API key
         run: |

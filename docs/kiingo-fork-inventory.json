@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 43,
-    "modifiedUpstreamFiles": 63,
+    "modifiedUpstreamFiles": 64,
     "changedUpstreamProductionSourceLines": 3460,
     "upstreamProductionSourceDiffHunks": 382,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -334,10 +334,13 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz release maintainers",
-      "purpose": "Fork-neutral relay and push-gateway image, cache, attestation, and verification namespaces.",
-      "upstreamStatus": "submitted as block/buzz PR #6413",
-      "removalCondition": "Remove when block/buzz derives both container namespaces from the repository owner or explicit repository variables.",
-      "paths": [".github/workflows/docker.yml"]
+      "purpose": "Fork-neutral relay and push-gateway image, cache, attestation, and verification namespaces plus privilege-separated packaging of untrusted security-review source.",
+      "upstreamStatus": "image namespace work submitted as block/buzz PR #6413; security-review privilege separation retained generically downstream pending upstream adoption",
+      "removalCondition": "Remove each patch when block/buzz ships equivalent namespace derivation and untrusted-review privilege separation.",
+      "paths": [
+        ".github/workflows/codex-security-review.yml",
+        ".github/workflows/docker.yml"
+      ]
     },
     {
       "classification": "retain-generic",
