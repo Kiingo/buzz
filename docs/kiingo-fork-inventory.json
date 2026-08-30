@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 43,
-    "modifiedUpstreamFiles": 62,
+    "modifiedUpstreamFiles": 63,
     "changedUpstreamProductionSourceLines": 3460,
     "upstreamProductionSourceDiffHunks": 382,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -268,6 +268,7 @@
       "removalCondition": "Remove each retained patch when block/buzz supports equivalent behavior.",
       "paths": [
         "desktop/src-tauri/Cargo.lock",
+        "desktop/src-tauri/src/commands/agent_models_tests.rs",
         "desktop/src-tauri/src/commands/agent_providers.rs",
         "desktop/src-tauri/src/commands/agents.rs",
         "desktop/src-tauri/src/commands/agents/provider_access.rs",

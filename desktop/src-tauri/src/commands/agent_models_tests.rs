@@ -967,9 +967,8 @@ fn draft_agent_model_discovery_env_layers_all_three_tiers_in_order() {
         // Single-tier keys pass through untouched.
         ("DEFINITION_ONLY", Some("from-definition")),
         ("USER_ONLY", Some("from-user")),
-        // Reserved keys never survive the definition tier. Doubly enforced —
-        // the explicit `is_reserved_env_key` filter here and `merged_user_env`'s
-        // own `retain` — so this pins the contract, not either mechanism.
+        // Reserved keys never survive the definition tier. Doubly enforced by
+        // `is_reserved_env_key` and `merged_user_env`'s own `retain`, pinning the contract.
         ("BUZZ_PRIVATE_KEY", None),
     ];
     for (key, want) in expected {
