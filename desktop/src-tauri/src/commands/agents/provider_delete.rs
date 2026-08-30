@@ -13,7 +13,7 @@ use crate::{
     relay::{effective_agent_relay_url, relay_ws_url_with_override},
 };
 
-use super::{archive_managed_agent_pending, tombstone_managed_agent_pending};
+use super::tombstone_managed_agent_pending;
 
 #[derive(Debug, Clone, PartialEq)]
 struct AgentDeleteFingerprint {
@@ -242,7 +242,6 @@ pub(super) async fn delete_managed_agent(
             save_managed_agents(&app, &records)?;
             crate::managed_agents::delete_agent_key(&pubkey);
             tombstone_managed_agent_pending(&app, &state, &pubkey);
-            archive_managed_agent_pending(&app, &state, &pubkey, persona_id.as_deref());
         }
                 try_regenerate_nest(&app);
                 Ok(())

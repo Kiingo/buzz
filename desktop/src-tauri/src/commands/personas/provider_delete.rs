@@ -338,12 +338,6 @@ pub(super) async fn delete_persona(id: String, app: AppHandle) -> Result<(), Str
                 state.clear_agent_session_caches(pubkey);
                 delete_agent_key(pubkey);
                 super::super::agents::tombstone_managed_agent_pending(&app, &state, pubkey);
-                super::super::agents::archive_managed_agent_pending(
-                    &app,
-                    &state,
-                    pubkey,
-                    Some(&id),
-                );
             }
             tombstone_persona_pending(&app, &state, &initial_d_tag);
         }
