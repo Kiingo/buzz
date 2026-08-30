@@ -8481,6 +8481,7 @@ mod error_outcome_emission_tests {
             crate::pool::TaskMeta {
                 agent_index: 0,
                 channel_id: Some(channel_id),
+                prompt_author_pubkeys: Vec::new(),
                 turn_id: "indeterminate-project".into(),
                 recoverable_batch: None,
                 control_tx: None,
