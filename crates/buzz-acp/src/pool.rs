@@ -2513,21 +2513,23 @@ pub async fn run_prompt_task(
                 .map(|tag| tag.as_slice())
                 .collect();
             let structured_context = conversation_context.as_ref().map(|context| {
-                let (kind, messages, total, truncated) = match context {
+                let (kind, messages, total, root_present, truncated) = match context {
                     ConversationContext::Thread {
                         messages,
                         total,
+                        root_present,
                         truncated,
-                    } => ("thread", messages, total, truncated),
+                    } => ("thread", messages, total, Some(root_present), truncated),
                     ConversationContext::Dm {
                         messages,
                         total,
                         truncated,
-                    } => ("dm", messages, total, truncated),
+                    } => ("dm", messages, total, None, truncated),
                 };
                 serde_json::json!({
                     "kind": kind,
                     "total": total,
+                    "rootPresent": root_present,
                     "truncated": truncated,
                     "messages": messages
                         .iter()
