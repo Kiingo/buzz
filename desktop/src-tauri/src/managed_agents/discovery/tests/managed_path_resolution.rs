@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use crate::managed_agents::discovery::{clear_resolve_cache, resolve_command};
 
 /// A login-shell command lookup must treat its argument as pure data — a

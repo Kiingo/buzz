@@ -2,11 +2,12 @@ use tauri::State;
 
 use crate::{app_state::AppState, models::ChannelPageCursor, relay::query_relay};
 
-const TIMELINE_KINDS: [u32; 11] = [
+const TIMELINE_KINDS: [u32; 12] = [
     9,
     40002,
     40008,
     40099,
+    buzz_core_pkg::kind::KIND_AGENT_STATUS,
     43001,
     43002,
     43003,
@@ -53,4 +54,33 @@ pub async fn get_channel_window(
         .iter()
         .filter_map(|event| serde_json::to_value(event).ok())
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_window_stays_top_level_scoped_and_excludes_internal_controls() {
+        let cursor = ChannelPageCursor {
+            created_at: 200,
+            event_id: "ab".repeat(32),
+        };
+        let filter = build_channel_window_filter("channel-1", 50, Some(&cursor));
+        let kinds = filter["kinds"].as_array().expect("window kinds");
+        assert!(kinds.contains(&serde_json::json!(buzz_core_pkg::kind::KIND_AGENT_STATUS)));
+        assert!(!kinds.contains(&serde_json::json!(
+            buzz_core_pkg::kind::KIND_AGENT_CANCELLATION
+        )));
+        assert!(!kinds.contains(&serde_json::json!(
+            buzz_core_pkg::kind::KIND_AGENT_INVOCATION
+        )));
+        assert_eq!(filter["#h"], serde_json::json!(["channel-1"]));
+        assert_eq!(filter["top_level"], true);
+        assert_eq!(filter["include_summaries"], true);
+        assert_eq!(filter["include_aux"], true);
+        assert_eq!(filter["until"], 200);
+        assert_eq!(filter["before_id"], cursor.event_id);
+        assert_eq!(filter["limit"], 50);
+    }
 }

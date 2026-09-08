@@ -44,6 +44,7 @@ fn test_runtime() -> &'static KnownAcpRuntime {
         adapter_install_instructions_url: "",
         cli_install_hint: "",
         adapter_install_hint: "",
+        #[cfg(unix)]
         skill_dir: None,
         supports_acp_model_switching: false,
         model_env_var: Some("GOOSE_MODEL"),
@@ -636,6 +637,7 @@ fn buzz_agent_runtime() -> &'static KnownAcpRuntime {
         adapter_install_instructions_url: "",
         cli_install_hint: "",
         adapter_install_hint: "",
+        #[cfg(unix)]
         skill_dir: None,
         supports_acp_model_switching: true,
         model_env_var: Some("BUZZ_AGENT_MODEL"),

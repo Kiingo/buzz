@@ -12,10 +12,12 @@ pub(crate) fn record() {
     COUNT.fetch_add(1, Ordering::SeqCst);
 }
 
+#[cfg(unix)]
 pub(crate) fn reset() {
     COUNT.store(0, Ordering::SeqCst);
 }
 
+#[cfg(unix)]
 pub(crate) fn count() -> usize {
     COUNT.load(Ordering::SeqCst)
 }

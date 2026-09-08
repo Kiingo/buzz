@@ -209,19 +209,23 @@ class _ThreadMessageList extends StatelessWidget {
                               dayTimestamp: reply.createdAt,
                               stickyDayTimestamp: stickyDayTimestamp,
                             ),
-                          _ThreadMessage(
-                            message: reply,
-                            channelNames: channelNames,
-                            channelId: channelId,
-                            currentPubkey: currentPubkey,
-                            showAuthor: showAuthor,
-                            isHighlighted: reply.id == highlightedMessageId,
-                            allMessages: allMessages,
-                            isMember: isMember,
-                            isArchived: isArchived,
-                            composerFocusNode: composerFocusNode,
-                            restoreComposerFocus: restoreComposerFocus,
-                          ),
+                          if (reply.systemEvent?.type ==
+                              SystemEventType.agentStatus)
+                            AgentStatusRow(message: reply)
+                          else
+                            _ThreadMessage(
+                              message: reply,
+                              channelNames: channelNames,
+                              channelId: channelId,
+                              currentPubkey: currentPubkey,
+                              showAuthor: showAuthor,
+                              isHighlighted: reply.id == highlightedMessageId,
+                              allMessages: allMessages,
+                              isMember: isMember,
+                              isArchived: isArchived,
+                              composerFocusNode: composerFocusNode,
+                              restoreComposerFocus: restoreComposerFocus,
+                            ),
                           if (nestedSummary != null)
                             _NestedThreadSummaryRow(
                               summary: nestedSummary,

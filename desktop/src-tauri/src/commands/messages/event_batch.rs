@@ -8,7 +8,7 @@ use crate::{app_state::AppState, relay::query_relay};
 // chunks so a large workflow list cannot silently lose late presentations.
 const EVENT_QUERY_CHUNK_SIZE: usize = 1_000;
 
-const GET_EVENT_KINDS: [u32; 15] = [
+const GET_EVENT_KINDS: [u32; 16] = [
     0,
     1,
     3,
@@ -20,6 +20,7 @@ const GET_EVENT_KINDS: [u32; 15] = [
     40003,
     40008,
     40099,
+    buzz_core_pkg::kind::KIND_AGENT_STATUS,
     40100,
     45001,
     45003,
@@ -97,6 +98,13 @@ pub async fn get_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_id_reads_include_status_but_not_internal_controls() {
+        assert!(GET_EVENT_KINDS.contains(&buzz_core_pkg::kind::KIND_AGENT_STATUS));
+        assert!(!GET_EVENT_KINDS.contains(&buzz_core_pkg::kind::KIND_AGENT_CANCELLATION));
+        assert!(!GET_EVENT_KINDS.contains(&buzz_core_pkg::kind::KIND_AGENT_INVOCATION));
+    }
 
     #[test]
     fn keeps_exact_relay_ceiling_in_one_chunk() {

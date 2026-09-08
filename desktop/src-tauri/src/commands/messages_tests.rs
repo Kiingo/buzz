@@ -160,6 +160,13 @@ fn thread_replies_filter_carries_non_p_gated_kinds_to_clear_the_gate() {
         .and_then(|v| v.as_array())
         .expect("thread filter must carry `kinds` so the p-gate passes");
     assert!(!kinds.is_empty(), "kinds must be non-empty");
+    assert!(kinds.contains(&serde_json::json!(buzz_core_pkg::kind::KIND_AGENT_STATUS)));
+    assert!(!kinds.contains(&serde_json::json!(
+        buzz_core_pkg::kind::KIND_AGENT_CANCELLATION
+    )));
+    assert!(!kinds.contains(&serde_json::json!(
+        buzz_core_pkg::kind::KIND_AGENT_INVOCATION
+    )));
     for kind in kinds {
         let k = kind.as_u64().expect("kind is a number") as u32;
         assert!(

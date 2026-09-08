@@ -347,8 +347,15 @@ fn apply_completed_before_control_signal(
 /// a value is needed after a move, or match by reference.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlSignal {
-    /// Stop the current turn and drop its triggering batch.
+    /// Interrupt a local process without asserting that a user stopped durable work.
     Cancel,
+    /// A verified human Stop action, carrying its authenticated audit identity.
+    UserCancel {
+        /// Human public key verified by the inbound/observer author gate.
+        actor_public_key: String,
+        /// Signed relay event that requested the stop.
+        request_event_id: String,
+    },
     /// Stop the current turn and requeue its triggering batch for a merged
     /// re-prompt framed as a **supersede**: the new request replaces the old.
     Interrupt,
@@ -1044,7 +1051,7 @@ const MODEL_SWITCH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Bounded grace window for the post-cancel drain after a control-signal
 /// cancellation (steer fallback, interrupt, or explicit stop). This is a
 /// cleanup deadline, not the turn's configured max-turn wall clock — see
-/// [`AcpClient::cancel_with_cleanup_grace`] and
+/// [`AcpClient::cancel_with_cleanup_grace_with_origin`] and
 /// [`classify_control_cancel_failure`].
 const CONTROL_CANCEL_GRACE: Duration = Duration::from_secs(5);
 
@@ -1955,7 +1962,15 @@ pub async fn run_prompt_task(
     // See `ReactionGuard` docs for ordering guarantees and known edge cases.
     let reaction_ids: Vec<String> = batch
         .as_ref()
-        .map(|b| b.events.iter().map(|be| be.event.id.to_hex()).collect())
+        .map(|b| {
+            b.events
+                .iter()
+                .filter(|be| {
+                    be.event.kind.as_u16() as u32 != buzz_core::kind::KIND_AGENT_INVOCATION
+                })
+                .map(|be| be.event.id.to_hex())
+                .collect()
+        })
         .unwrap_or_default();
     let _reaction_guard = ReactionGuard::new(ctx.rest_client.clone(), reaction_ids.clone());
 
@@ -2470,7 +2485,9 @@ pub async fn run_prompt_task(
         // reuse that exact typed result for prompt formatting.
         let channel_info = resolved_channel_info.clone();
 
-        let conversation_context = if ctx.context_message_limit > 0 {
+        let is_invocation = b.events.len() == 1
+            && b.events[0].event.kind.as_u16() as u32 == buzz_core::kind::KIND_AGENT_INVOCATION;
+        let conversation_context = if !is_invocation && ctx.context_message_limit > 0 {
             fetch_conversation_context(b, &channel_info, &ctx).await
         } else {
             None
@@ -2561,8 +2578,11 @@ pub async fn run_prompt_task(
             agent.acp.set_buzz_prompt_metadata(None);
         }
 
-        let profile_lookup =
-            fetch_prompt_profile_lookup(b, conversation_context.as_ref(), &ctx.rest_client).await;
+        let profile_lookup = if is_invocation {
+            None
+        } else {
+            fetch_prompt_profile_lookup(b, conversation_context.as_ref(), &ctx.rest_client).await
+        };
 
         let known_names: Vec<&str> = profile_lookup
             .iter()
@@ -2580,23 +2600,29 @@ pub async fn run_prompt_task(
             );
         }
 
-        crate::queue::format_prompt(
-            b,
-            &crate::queue::FormatPromptArgs {
-                agent_core: standing.agent_core,
-                huddle_instructions: standing.huddle_instructions,
-                channel_info: channel_info.as_ref(),
-                conversation_context: conversation_context.as_ref(),
-                conversation_context_had_delivered_events,
-                profile_lookup: profile_lookup.as_ref(),
-                has_system_prompt_support: agent.has_system_prompt_support(),
-                base_prompt: standing.base_prompt,
-                system_prompt: standing.system_prompt,
-                team_instructions: standing.team_instructions,
-                agent_canvas: standing.agent_canvas,
-                standing_context_sent,
-            },
-        )
+        if is_invocation {
+            // Capability lives only in structured runtime metadata, never in a
+            // model-facing chat transcript, profile lookup, or observer prompt.
+            vec!["Consume the authenticated invocation in runtime metadata.".to_string()]
+        } else {
+            crate::queue::format_prompt(
+                b,
+                &crate::queue::FormatPromptArgs {
+                    agent_core: standing.agent_core,
+                    huddle_instructions: standing.huddle_instructions,
+                    channel_info: channel_info.as_ref(),
+                    conversation_context: conversation_context.as_ref(),
+                    conversation_context_had_delivered_events,
+                    profile_lookup: profile_lookup.as_ref(),
+                    has_system_prompt_support: agent.has_system_prompt_support(),
+                    base_prompt: standing.base_prompt,
+                    system_prompt: standing.system_prompt,
+                    team_instructions: standing.team_instructions,
+                    agent_canvas: standing.agent_canvas,
+                    standing_context_sent,
+                },
+            )
+        }
     } else {
         // Should not happen — batch is None only for heartbeats which have prompt_text.
         // Return the agent to the pool to prevent a permanent slot leak.
@@ -2717,7 +2743,16 @@ pub async fn run_prompt_task(
                         // Prompt is genuinely in-flight — cancel it.
                         match agent
                             .acp
-                            .cancel_with_cleanup_grace(&session_id, CONTROL_CANCEL_GRACE)
+                            .cancel_with_cleanup_grace_with_origin(
+                                &session_id, CONTROL_CANCEL_GRACE,
+                                match &control_signal {
+                                    ControlSignal::UserCancel { actor_public_key, request_event_id } => Some(serde_json::json!({
+                                        "origin": "explicit_user", "actor_public_key": actor_public_key,
+                                        "request_event_id": request_event_id,
+                                    })),
+                                    _ => None,
+                                },
+                            )
                             .await
                         {
                             Ok(stop_reason) => {
@@ -4254,7 +4289,9 @@ fn requeue_cancelled_batch(
         ControlSignal::Steer => CancelReason::Steer,
         ControlSignal::Interrupt | ControlSignal::SwitchModel { .. } => CancelReason::Interrupt,
         // Cancel/Rotate discard the batch — no merged re-prompt.
-        ControlSignal::Cancel | ControlSignal::Rotate => return None,
+        ControlSignal::Cancel | ControlSignal::UserCancel { .. } | ControlSignal::Rotate => {
+            return None
+        }
     };
     requeue_batch_if_queue(ctx, batch).map(|mut b| {
         b.cancel_reason = Some(reason);
@@ -4262,7 +4299,7 @@ fn requeue_cancelled_batch(
     })
 }
 
-/// Result of classifying a failed [`AcpClient::cancel_with_cleanup_grace`]
+/// Result of classifying a failed [`AcpClient::cancel_with_cleanup_grace_with_origin`]
 /// call: the [`PromptOutcome`] to report and the triggering batch's fate,
 /// decided together so tests cross the exact error→outcome→batch-fate
 /// boundary the production `Err(error)` arm uses.
@@ -4282,7 +4319,7 @@ struct ControlCancelFailure {
 ///
 /// [`AcpError::CancelDrainTimeout`] is the expected, common case: the agent
 /// didn't stop within its bounded grace window. [`AcpError::HardTimeout`] is
-/// not expected here — [`AcpClient::cancel_with_cleanup_grace`] translates its
+/// not expected here — [`AcpClient::cancel_with_cleanup_grace_with_origin`] translates its
 /// own drain-deadline `HardTimeout` into `CancelDrainTimeout` before
 /// returning — but for defense in depth an unexpected `HardTimeout` at this
 /// bounded cancellation boundary must never regain real hard-cap/dead-letter
@@ -6594,7 +6631,8 @@ done"#
                 let _ = socket.read(&mut request).await;
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    response_body.len(), response_body
+                    response_body.len(),
+                    response_body
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
             }
@@ -6750,7 +6788,8 @@ done"#
                 let _ = socket.read(&mut request).await;
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    response_body.len(), response_body
+                    response_body.len(),
+                    response_body
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
             }
@@ -8790,7 +8829,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 let body = responses[index].to_string();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(), body
+                    body.len(),
+                    body
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
             }
@@ -8840,7 +8880,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 let body = "not-json";
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(), body
+                    body.len(),
+                    body
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
             }
@@ -8928,7 +8969,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 let body = "not-json";
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(), body
+                    body.len(),
+                    body
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
             }
@@ -9083,7 +9125,8 @@ done"#
                 let body = responses[index].to_string();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(), body
+                    body.len(),
+                    body
                 );
                 socket.write_all(response.as_bytes()).await.unwrap();
             }
@@ -9188,7 +9231,8 @@ done"#
                 let body = responses[index].to_string();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(), body
+                    body.len(),
+                    body
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
             }

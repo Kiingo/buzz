@@ -3,8 +3,23 @@ use tauri::State;
 use crate::{app_state::AppState, relay::query_relay};
 
 const MAX_REPAIR_PAGE_LIMIT: u32 = 500;
-const CHANNEL_REPAIR_KINDS: [u32; 15] = [
-    5, 7, 9, 9005, 40001, 40002, 40003, 40008, 40099, 45001, 45003, 48100, 48101, 48102, 48103,
+const CHANNEL_REPAIR_KINDS: [u32; 16] = [
+    5,
+    7,
+    9,
+    9005,
+    40001,
+    40002,
+    40003,
+    40008,
+    40099,
+    45001,
+    45003,
+    48100,
+    48101,
+    48102,
+    48103,
+    buzz_core_pkg::kind::KIND_AGENT_STATUS,
 ];
 
 fn build_channel_reconnect_repair_filter(
@@ -87,6 +102,14 @@ mod tests {
             serde_json::json!(["270f6caf-0feb-4055-93f3-cdbeb567ff28"])
         );
         assert_eq!(filter["kinds"], serde_json::json!(CHANNEL_REPAIR_KINDS));
+        let kinds = filter["kinds"].as_array().expect("repair kinds");
+        assert!(kinds.contains(&serde_json::json!(buzz_core_pkg::kind::KIND_AGENT_STATUS)));
+        assert!(!kinds.contains(&serde_json::json!(
+            buzz_core_pkg::kind::KIND_AGENT_CANCELLATION
+        )));
+        assert!(!kinds.contains(&serde_json::json!(
+            buzz_core_pkg::kind::KIND_AGENT_INVOCATION
+        )));
         assert_eq!(filter["since"], 100);
         assert_eq!(filter["limit"], 500);
         assert_eq!(filter["until"], 200);

@@ -836,6 +836,7 @@ dependencies = [
  "buzz-sdk",
  "chrono",
  "clap",
+ "ed25519-dalek",
  "evalexpr",
  "futures-util",
  "hex",
@@ -1034,6 +1035,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "ed25519-dalek",
  "hex",
  "hmac 0.13.0",
  "nostr 0.44.7",
@@ -1070,9 +1072,11 @@ dependencies = [
 name = "buzz-db"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "buzz-core",
  "buzz-datastore-tracing",
  "chrono",
+ "ed25519-dalek",
  "hex",
  "metrics",
  "metrics-util",

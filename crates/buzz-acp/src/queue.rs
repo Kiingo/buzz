@@ -336,7 +336,16 @@ impl EventQueue {
 
         // Drain up to MAX_BATCH_EVENTS; leave any remainder in the queue.
         let queue = self.queues.entry(channel_id).or_default();
-        let drain_count = MAX_BATCH_EVENTS.min(queue.len());
+        // Control wakes are admitted individually. Mixing them into a chat batch
+        // would lose all but the final structured trigger and leak capabilities.
+        let first_control = queue.iter().position(|event| {
+            event.event.kind.as_u16() as u32 == buzz_core::kind::KIND_AGENT_INVOCATION
+        });
+        let drain_count = match first_control {
+            Some(0) => 1,
+            Some(index) => MAX_BATCH_EVENTS.min(index),
+            None => MAX_BATCH_EVENTS.min(queue.len()),
+        };
         let mut events: Vec<BatchEvent> = queue
             .drain(..drain_count)
             .map(|qe| BatchEvent {
@@ -432,11 +441,14 @@ impl EventQueue {
         let channel_id = batch.channel_id;
         let attempt = {
             let count = self.retry_counts.entry(channel_id).or_insert(0);
-            *count += 1;
+            *count = count.saturating_add(1);
             *count
         };
 
-        if attempt > MAX_RETRIES {
+        let is_invocation = batch.events.iter().any(|event| {
+            event.event.kind.as_u16() as u32 == buzz_core::kind::KIND_AGENT_INVOCATION
+        });
+        if attempt > MAX_RETRIES && !is_invocation {
             tracing::error!(
                 channel_id = %channel_id,
                 attempt,

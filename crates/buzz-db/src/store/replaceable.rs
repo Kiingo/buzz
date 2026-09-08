@@ -111,6 +111,11 @@ async fn replace_parameterized_event_in_transaction_impl(
     precondition: ParameterizedReplacePrecondition<'_>,
 ) -> Result<ParameterizedReplaceResult> {
     let kind_i32 = buzz_core::kind::event_kind_i32(event);
+    if !buzz_core::kind::is_parameterized_replaceable(kind_i32 as u32) {
+        return Err(DbError::InvalidData(
+            "parameterized replacement requires a NIP-33 event".into(),
+        ));
+    }
     let pubkey_bytes = event.pubkey.to_bytes();
     let created_at_secs = event.created_at.as_secs() as i64;
     let created_at = DateTime::from_timestamp(created_at_secs, 0)
@@ -378,6 +383,12 @@ impl Db {
         channel_id: Option<Uuid>,
     ) -> Result<(StoredEvent, bool)> {
         let kind_i32 = buzz_core::kind::event_kind_i32(event);
+        if !buzz_core::kind::is_replaceable(kind_i32 as u32) && !(39000..=39002).contains(&kind_i32)
+        {
+            return Err(DbError::InvalidData(
+                "addressable replacement requires a replaceable event".into(),
+            ));
+        }
         let pubkey_bytes = event.pubkey.to_bytes();
         let created_at_secs = event.created_at.as_secs() as i64;
         let created_at = chrono::DateTime::from_timestamp(created_at_secs, 0)

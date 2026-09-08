@@ -35,7 +35,9 @@ import {
   KIND_STREAM_MESSAGE_EDIT,
   KIND_STREAM_MESSAGE_DIFF,
   KIND_SYSTEM_MESSAGE,
+  KIND_AGENT_STATUS,
 } from "@/shared/constants/kinds";
+import { parseAgentStatus } from "./agentStatus";
 import { resolveEventAuthorPubkey } from "@/shared/lib/authors";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { channelRoleMap } from "@/shared/lib/rosterDerivations";
@@ -50,6 +52,7 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 const HEX_RE = /^[0-9a-f]+$/i;
 
 export function isTimelineContentEvent(event: RelayEvent) {
+  if (event.kind === KIND_AGENT_STATUS) return parseAgentStatus(event) !== null;
   return (
     event.kind === KIND_STREAM_MESSAGE ||
     event.kind === KIND_STREAM_MESSAGE_V2 ||

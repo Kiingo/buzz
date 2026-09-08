@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 43,
-    "modifiedUpstreamFiles": 64,
-    "changedUpstreamProductionSourceLines": 3460,
-    "upstreamProductionSourceDiffHunks": 382,
+    "modifiedUpstreamProductionSourceFiles": 86,
+    "modifiedUpstreamFiles": 123,
+    "changedUpstreamProductionSourceLines": 4405,
+    "upstreamProductionSourceDiffHunks": 560,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -132,8 +132,11 @@
     },
     {
       "hook": "crates/buzz-acp/src/lib.rs",
-      "implementations": ["crates/buzz-acp/src/local_publication.rs"],
-      "contract": "Generic durable receipt, progress-edit, terminal delete/final, and legacy publication lifecycle.",
+      "implementations": [
+        "crates/buzz-acp/src/local_publication.rs",
+        "crates/buzz-acp/src/local_publication/cancellation.rs"
+      ],
+      "contract": "Provider-neutral durable publication and explicit-user cancellation recovery, deterministic signed event identity, and thread-scoped non-chat operational status. Non-chat invocation control cannot create or delete a chat message.",
       "focusedTests": ["cargo test -p buzz-acp local_publication --locked"]
     },
     {
@@ -206,6 +209,57 @@
       "focusedTests": [
         "desktop/src/extensions/identity-rotation/rendererContinuity.test.mjs"
       ]
+    },
+    {
+      "hook": "crates/buzz-core/src/lib.rs",
+      "implementations": [
+        "crates/buzz-core/src/agent_status.rs",
+        "crates/buzz-core/src/managed_publication.rs"
+      ],
+      "contract": "Provider-neutral bounded operational observations and domain-separated, community-bound runtime publication/cancellation authorizations; neither protocol decides semantic completion or successor selection.",
+      "focusedTests": [
+        "crates/buzz-core/src/managed_publication/tests.rs",
+        "crates/buzz-sdk/src/agent_status.rs"
+      ]
+    },
+    {
+      "hook": "crates/buzz-db/src/store/event.rs",
+      "implementations": ["crates/buzz-db/src/store/managed_publication.rs"],
+      "contract": "Exact issuer trust, scope, receipt and publication fences enforced in the event insertion transaction. Explicit Stop and contribution insertion serialize without rewriting historical contributions or weakening ordinary moderation deletion.",
+      "focusedTests": ["crates/buzz-db/src/store/managed_publication/tests.rs"]
+    },
+    {
+      "hook": "crates/buzz-admin/src/main.rs",
+      "implementations": ["crates/buzz-admin/src/runtime_issuers.rs"],
+      "contract": "Operator-only immutable verification-key provisioning within the explicitly configured relay community; events cannot provision their own authority.",
+      "focusedTests": ["crates/buzz-db/src/store/managed_publication/tests.rs"]
+    },
+    {
+      "hook": "crates/buzz-sdk/src/lib.rs",
+      "implementations": [
+        "crates/buzz-sdk/src/agent_invocation.rs",
+        "crates/buzz-sdk/src/agent_status.rs"
+      ],
+      "contract": "Signed recipient-only invocation wakes and thread-only operational observations use dedicated event kinds, never chat send/delete plumbing.",
+      "focusedTests": [
+        "crates/buzz-sdk/src/agent_invocation.rs",
+        "crates/buzz-sdk/src/agent_status.rs"
+      ]
+    },
+    {
+      "hook": "desktop/src/features/messages/ui/TimelineMessageRow.tsx",
+      "implementations": [
+        "desktop/src/features/messages/lib/agentStatus.ts",
+        "desktop/src/features/messages/ui/AgentStatusRow.tsx"
+      ],
+      "contract": "Strict signer-attributed, plain-text system status inside its own thread, excluded from root chat and conversational unread activity; ordinary chat and moderation rendering remain separate.",
+      "focusedTests": ["desktop/src/features/messages/lib/agentStatus.test.mjs"]
+    },
+    {
+      "hook": "mobile/lib/features/channels/timeline_message.dart",
+      "implementations": ["mobile/lib/features/channels/agent_status_row.dart"],
+      "contract": "The same operational event boundary rendered as thread-scoped system status without answer/edit/delete affordances or a semantic finish decision.",
+      "focusedTests": ["mobile/test/features/channels/agent_status_test.dart"]
     }
   ],
   "deltas": [
@@ -397,6 +451,99 @@
         "scripts/rehearse-upstream-sync.mjs",
         "scripts/rehearse-upstream-sync.test.mjs",
         ".github/workflows/upstream-sync-rehearsal.yml"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "purpose": "Keep Unix-only terminal and desktop helpers under their existing platform boundary while preserving cross-platform pure-helper tests; remove unused private non-Unix stubs and redundant Windows expressions; group existing Git Bash standard search paths without changing resolution order or public signatures. Required Windows desktop validation, without warning suppression or runtime policy changes.",
+      "upstreamStatus": "Discovered during the native discussion cutover's Windows validation; not submitted upstream.",
+      "removalCondition": "Remove when block/buzz provides equivalent warning-clean Windows platform boundaries and resolver expressions.",
+      "paths": [
+        "desktop/src-tauri/crates/buzz-terminal/src/lifecycle.rs",
+        "desktop/src-tauri/crates/buzz-terminal/src/shell.rs",
+        "desktop/src-tauri/src/archive/mod_tests.rs",
+        "desktop/src-tauri/src/commands/agent_auth.rs",
+        "desktop/src-tauri/src/commands/agent_config_tests.rs",
+        "desktop/src-tauri/src/commands/media.rs",
+        "desktop/src-tauri/src/commands/notifications.rs",
+        "desktop/src-tauri/src/managed_agents/config_bridge/reader_tests.rs",
+        "desktop/src-tauri/src/managed_agents/discovery.rs",
+        "desktop/src-tauri/src/managed_agents/discovery/auth_status_cache.rs",
+        "desktop/src-tauri/src/managed_agents/discovery/login_shell.rs",
+        "desktop/src-tauri/src/managed_agents/discovery/login_shell_spawn_probe.rs",
+        "desktop/src-tauri/src/managed_agents/discovery/runtime_metadata.rs",
+        "desktop/src-tauri/src/managed_agents/discovery/tests.rs",
+        "desktop/src-tauri/src/managed_agents/discovery/tests/codex_version.rs",
+        "desktop/src-tauri/src/managed_agents/discovery/tests/managed_path_resolution.rs",
+        "desktop/src-tauri/src/managed_agents/git_bash.rs",
+        "desktop/src-tauri/src/managed_agents/managed_node_paths.rs",
+        "desktop/src-tauri/src/managed_agents/nest.rs",
+        "desktop/src-tauri/src/managed_agents/persona_events.rs",
+        "desktop/src-tauri/src/managed_agents/readiness.rs",
+        "desktop/src-tauri/src/managed_agents/readiness/cli_probe.rs",
+        "desktop/src-tauri/src/managed_agents/runtime/instance_reaper.rs",
+        "desktop/src-tauri/src/managed_agents/runtime/orphan_sweep.rs",
+        "desktop/src-tauri/src/managed_agents/runtime/process.rs",
+        "desktop/src-tauri/src/managed_agents/runtime/sweep.rs",
+        "desktop/src-tauri/src/managed_agents/storage.rs",
+        "desktop/src-tauri/src/util.rs"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz conversation lifecycle maintainers",
+      "purpose": "Recipient-only non-chat invocation controls; immutable thread-scoped operational status on desktop/mobile; operator-provisioned runtime verification keys; and atomic, community-bound publication/explicit-user cancellation fences across every event-store entry point. Durable admission and agent finish/handoff policy stay in the external runtime.",
+      "upstreamStatus": "Current agent-owned discussion cutover additions; not submitted upstream. Earlier ACP runtime patches retain their separately recorded upstream status.",
+      "removalCondition": "Remove each retained patch only when block/buzz provides an equivalent non-chat control, operational status, and exact transactional cancellation/publication authority contract.",
+      "paths": [
+        "crates/buzz-acp/Cargo.toml",
+        "crates/buzz-acp/src/local_publication/cancellation.rs",
+        "crates/buzz-acp/src/local_publication/tests.rs",
+        "crates/buzz-admin/src/main.rs",
+        "crates/buzz-admin/src/runtime_issuers.rs",
+        "crates/buzz-cli/src/commands/agents.rs",
+        "crates/buzz-cli/src/lib.rs",
+        "crates/buzz-core/Cargo.toml",
+        "crates/buzz-core/src/agent_status.rs",
+        "crates/buzz-core/src/kind.rs",
+        "crates/buzz-core/src/lib.rs",
+        "crates/buzz-core/src/managed_publication.rs",
+        "crates/buzz-core/src/managed_publication/tests.rs",
+        "crates/buzz-db/Cargo.toml",
+        "crates/buzz-db/src/lib.rs",
+        "crates/buzz-db/src/store/deletion.rs",
+        "crates/buzz-db/src/store/event.rs",
+        "crates/buzz-db/src/store/managed_publication.rs",
+        "crates/buzz-db/src/store/managed_publication/tests.rs",
+        "crates/buzz-db/src/store/mod.rs",
+        "crates/buzz-db/src/store/replaceable.rs",
+        "crates/buzz-relay/src/handlers/event.rs",
+        "crates/buzz-relay/src/handlers/ingest.rs",
+        "crates/buzz-sdk/src/agent_invocation.rs",
+        "crates/buzz-sdk/src/agent_status.rs",
+        "crates/buzz-sdk/src/lib.rs",
+        "desktop/src-tauri/src/commands/channel_reconnect_repair.rs",
+        "desktop/src-tauri/src/commands/channel_window.rs",
+        "desktop/src-tauri/src/commands/messages.rs",
+        "desktop/src-tauri/src/commands/messages_tests.rs",
+        "desktop/src-tauri/src/commands/messages/event_batch.rs",
+        "desktop/src/features/messages/lib/agentStatus.test.mjs",
+        "desktop/src/features/messages/lib/agentStatus.ts",
+        "desktop/src/features/messages/lib/formatTimelineMessages.ts",
+        "desktop/src/features/messages/lib/timelineItems.ts",
+        "desktop/src/features/messages/ui/AgentStatusRow.tsx",
+        "desktop/src/features/messages/ui/TimelineMessageRow.tsx",
+        "desktop/src/shared/constants/kinds.ts",
+        "migrations/0041_managed_publication_fences.sql",
+        "mobile/lib/features/channels/agent_status_row.dart",
+        "mobile/lib/features/channels/thread_detail_page.dart",
+        "mobile/lib/features/channels/thread_detail_page/message_list.dart",
+        "mobile/lib/features/channels/timeline_message.dart",
+        "mobile/lib/shared/relay/nostr_models.dart",
+        "mobile/test/features/channels/agent_status_test.dart",
+        "schema/schema.sql",
+        "scripts/reconcile-schema-after-pgschema.sql"
       ]
     }
   ]

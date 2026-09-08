@@ -696,6 +696,22 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
     // ingest_event()'s per-kind scope allowlist instead, so a token with
     // only ChannelsWrite can still submit kind:9002 via WS.
     if is_ephemeral(kind_u32) {
+        if kind_u32 == buzz_core::kind::KIND_AGENT_INVOCATION {
+            let route = buzz_sdk::agent_invocation::invocation_route(&event);
+            if route.as_ref().map_or(true, |(channel, _)| {
+                channel_ids
+                    .as_ref()
+                    .is_some_and(|allowed| !allowed.contains(channel))
+            }) {
+                reject("scope");
+                conn.send(RelayMessage::ok(
+                    &event_id_hex,
+                    false,
+                    "restricted: invocation route not authorized",
+                ));
+                return;
+            }
+        }
         if !scopes.is_empty() && !scopes.contains(&buzz_auth::Scope::MessagesWrite) {
             reject("scope");
             conn.send(RelayMessage::ok(
@@ -811,6 +827,20 @@ async fn handle_ephemeral_event(
     }
 
     // Special handling for presence events (kind:20001).
+    if event_kind_u32(&event) == buzz_core::kind::KIND_AGENT_INVOCATION {
+        let (channel, recipient) = buzz_sdk::agent_invocation::invocation_route(&event)
+            .map_err(|_| "invalid: malformed invocation route".to_string())?;
+        // The ordinary ephemeral path checks the signed sender below. A wake is
+        // additionally bound to one current member, never a broadcast capability.
+        super::ingest::check_channel_membership(
+            &conn.tenant,
+            &state,
+            channel,
+            &recipient.to_bytes(),
+            None,
+        )
+        .await?;
+    }
     if event_kind_u32(&event) == KIND_PRESENCE_UPDATE {
         // Accept both bare strings ("online") and legacy JSON ({"status":"online"}).
         let raw = event.content.to_string();

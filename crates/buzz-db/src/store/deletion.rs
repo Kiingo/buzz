@@ -66,6 +66,10 @@ pub const EXPECTED_SCOPED_TABLES: &[&str] = &[
     "events",
     "git_repo_names",
     "join_policy_acceptances",
+    "managed_publication_receipts",
+    "managed_publication_scopes",
+    "managed_publications",
+    "managed_runtime_issuers",
     "moderation_actions",
     "moderation_reports",
     "parameterized_event_watermarks",
@@ -87,6 +91,10 @@ pub const EXPECTED_SCOPED_TABLES: &[&str] = &[
 
 /// Foreign-key-safe child-before-parent order for the PostgreSQL purge.
 pub const PURGE_SCOPED_TABLES: &[&str] = &[
+    "managed_publications",
+    "managed_publication_receipts",
+    "managed_publication_scopes",
+    "managed_runtime_issuers",
     "workflow_approvals",
     "scheduled_workflow_fires",
     "workflow_runs",

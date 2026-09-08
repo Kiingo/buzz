@@ -47,6 +47,7 @@ import 'send_message_provider.dart';
 import 'small_avatar.dart';
 import 'sticky_date_header.dart';
 import 'timeline_message.dart';
+import 'agent_status_row.dart';
 
 part 'thread_detail_page/nested_thread_summary_row.dart';
 part 'thread_detail_page/message_list.dart';

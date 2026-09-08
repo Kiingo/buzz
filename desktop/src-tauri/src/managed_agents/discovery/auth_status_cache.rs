@@ -39,7 +39,7 @@ pub(super) fn get(runtime_id: &str) -> AuthStatus {
         .unwrap_or(AuthStatus::Unknown)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn len() -> usize {
     cache().lock().map(|g| g.len()).unwrap_or(0)
 }

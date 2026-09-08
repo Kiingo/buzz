@@ -11,6 +11,25 @@ use crate::{AgentsCmd, RespondToArg};
 
 pub async fn dispatch(command: AgentsCmd, client: &BuzzClient) -> Result<(), CliError> {
     match command {
+        AgentsCmd::Invoke {
+            channel,
+            recipient,
+            token,
+        } => {
+            validate_hex64(&recipient)?;
+            let recipient = PublicKey::from_hex(&recipient)
+                .map_err(|_| CliError::Usage("invalid invocation recipient".into()))?;
+            let token = read_or_stdin(&token)?;
+            let builder = buzz_sdk::agent_invocation::build_agent_invocation(
+                channel,
+                recipient,
+                token.trim(),
+            )
+            .map_err(|e| CliError::Usage(e.to_string()))?;
+            let event = client.sign_event_unchecked(builder)?;
+            println!("{}", client.publish_ephemeral_event(event).await?);
+            Ok(())
+        }
         AgentsCmd::DraftCreate {
             channel,
             display_name,
