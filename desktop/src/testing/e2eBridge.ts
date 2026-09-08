@@ -36,6 +36,7 @@ import {
   KIND_EMOJI_SET,
 } from "@/shared/api/customEmoji";
 import {
+  CHANNEL_TIMELINE_CONTENT_KINDS,
   KIND_AGENT_OBSERVER_FRAME,
   KIND_CHANNEL_THREAD_SUMMARY,
   KIND_CHANNEL_WINDOW_BOUNDS,
@@ -49,7 +50,6 @@ import {
   KIND_GIT_STATUS_DRAFT,
   KIND_GIT_STATUS_MERGED,
   KIND_GIT_STATUS_OPEN,
-  KIND_HUDDLE_STARTED,
   KIND_MEMBER_ADDED_NOTIFICATION,
   KIND_MEMBER_REMOVED_NOTIFICATION,
   KIND_PERSONA,
@@ -5304,19 +5304,7 @@ async function handleGetThreadReplies(
   return { events: page, next_cursor: nextCursor };
 }
 
-const TIMELINE_KINDS = new Set([
-  9,
-  40002,
-  40008,
-  40099,
-  43001,
-  43002,
-  43003,
-  43004,
-  43005,
-  43006,
-  KIND_HUDDLE_STARTED,
-]);
+const TIMELINE_KINDS = new Set<number>(CHANNEL_TIMELINE_CONTENT_KINDS);
 
 const KIND_GIFT_WRAP = 1059;
 const P_GATED_KINDS = new Set([
@@ -5586,8 +5574,8 @@ async function handleGetChannelReconnectRepair(
   config: E2eConfig | undefined,
 ): Promise<RelayEvent[]> {
   const kinds = new Set([
-    5, 7, 9, 9005, 40001, 40002, 40003, 40008, 40099, 45001, 45003, 48100,
-    48101, 48102, 48103,
+    5, 7, 9, 9005, 40001, 40002, 40003, 40008, 40098, 40099, 45001, 45003,
+    48100, 48101, 48102, 48103,
   ]);
   const filter: Record<string, unknown> = {
     "#h": [args.channelId],

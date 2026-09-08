@@ -32,6 +32,7 @@ pub(crate) struct KnownAcpRuntime {
     /// `Some(dir)` → Buzz creates a symlink at `<nest>/<dir>/buzz-cli`
     /// pointing to the canonical `.agents/skills/buzz-cli`. `None` → this
     /// runtime reads the canonical path directly or has no skill support.
+    #[cfg(unix)]
     pub skill_dir: Option<&'static str>,
     /// Whether this runtime handles model switching via ACP protocol natively.
     /// Currently unused — env var injection runs unconditionally regardless of
@@ -81,6 +82,12 @@ impl KnownAcpRuntime {
         }
         self.cli_install_commands
     }
+}
+
+/// Skill discovery directories declared by known runtimes for Unix nest symlinks.
+#[cfg(unix)]
+pub(crate) fn known_skill_dirs() -> impl Iterator<Item = &'static str> {
+    super::KNOWN_ACP_RUNTIMES.iter().filter_map(|p| p.skill_dir)
 }
 
 #[cfg(test)]

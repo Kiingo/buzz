@@ -7,6 +7,7 @@ import '../../shared/custom_emoji/custom_emoji.dart';
 import 'channel_window.dart';
 
 enum SystemEventType {
+  agentStatus,
   memberJoined,
   memberLeft,
   memberRemoved,
@@ -27,6 +28,7 @@ class SystemEvent {
   final String? topic;
   final String? purpose;
   final String? ephemeralChannelId;
+  final String? statusText;
 
   const SystemEvent({
     required this.type,
@@ -35,6 +37,7 @@ class SystemEvent {
     this.topic,
     this.purpose,
     this.ephemeralChannelId,
+    this.statusText,
   });
 
   /// Parse a system event from the JSON content of a kind-40099 event.
@@ -99,12 +102,83 @@ class SystemEvent {
     );
   }
 
+  /// Operational evidence is signer-authored and can only live under one
+  /// thread root. It cannot masquerade as relay moderation or a chat answer.
+  static SystemEvent? fromAgentStatus(NostrEvent event) {
+    if (event.kind != EventKind.agentStatus || event.tags.length != 3) {
+      return null;
+    }
+    final channel = event.tags
+        .where((tag) => tag.isNotEmpty && tag[0] == 'h')
+        .toList();
+    final thread = event.tags
+        .where((tag) => tag.isNotEmpty && tag[0] == 'e')
+        .toList();
+    final fence = event.tags
+        .where((tag) => tag.isNotEmpty && tag[0] == 'd')
+        .toList();
+    final uuid = RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+      caseSensitive: false,
+    );
+    if (channel.length != 1 ||
+        channel[0].length != 2 ||
+        !uuid.hasMatch(channel[0][1]) ||
+        thread.length != 1 ||
+        thread[0].length != 4 ||
+        !RegExp(
+          r'^[0-9a-f]{64}$',
+          caseSensitive: false,
+        ).hasMatch(thread[0][1]) ||
+        thread[0][2] != '' ||
+        thread[0][3] != 'reply' ||
+        fence.length != 1 ||
+        fence[0].length != 2 ||
+        fence[0][1].trim().isEmpty ||
+        fence[0][1].length > 256) {
+      return null;
+    }
+    try {
+      final payload = jsonDecode(event.content);
+      if (payload is! Map ||
+          payload.length != 4 ||
+          payload.keys.any(
+            (key) => !['version', 'receipt_id', 'state', 'text'].contains(key),
+          ) ||
+          payload['version'] != 1 ||
+          payload['receipt_id'] is! String ||
+          !uuid.hasMatch(payload['receipt_id'] as String) ||
+          ![
+            'receipt',
+            'progress',
+            'capacity',
+            'error',
+            'cancelled',
+          ].contains(payload['state']) ||
+          payload['text'] is! String) {
+        return null;
+      }
+      final text = payload['text'] as String;
+      if (text.trim().isEmpty || utf8.encode(text).length > 64 * 1024) {
+        return null;
+      }
+      return SystemEvent(
+        type: SystemEventType.agentStatus,
+        actorPubkey: event.pubkey,
+        statusText: text,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Human-readable description. [resolveLabel] maps a pubkey to a display
   /// name — the caller provides it so this class stays free of provider deps.
   String describe(String Function(String? pubkey) resolveLabel) {
     final actor = resolveLabel(actorPubkey);
 
     return switch (type) {
+      SystemEventType.agentStatus => '$actor · System status: $statusText',
       SystemEventType.memberJoined => () {
         if (actorPubkey != null && actorPubkey == targetPubkey) {
           return '$actor joined the channel';
@@ -442,6 +516,27 @@ List<TimelineMessage> formatTimeline(
   final result = <TimelineMessage>[];
   for (final event in events) {
     if (deletedIds.contains(event.id)) continue;
+
+    if (event.kind == EventKind.agentStatus) {
+      final status = SystemEvent.fromAgentStatus(event);
+      if (status != null) {
+        final threadRef = event.threadReference;
+        result.add(
+          TimelineMessage(
+            id: event.id,
+            pubkey: event.pubkey,
+            createdAt: event.createdAt,
+            content: event.content,
+            tags: event.tags,
+            isSystem: true,
+            systemEvent: status,
+            parentId: threadRef.parentId,
+            rootId: threadRef.rootId,
+          ),
+        );
+      }
+      continue;
+    }
 
     if (event.kind == EventKind.systemMessage) {
       final systemEvent = SystemEvent.fromContent(event.content);

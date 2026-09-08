@@ -262,6 +262,18 @@ impl RespondToArg {
 
 #[derive(Subcommand)]
 pub enum AgentsCmd {
+    /// Deliver a recipient-only control wake; never creates or deletes chat.
+    Invoke {
+        /// Channel UUID shared by the signer and recipient.
+        #[arg(long)]
+        channel: uuid::Uuid,
+        /// Exact recipient public key.
+        #[arg(long)]
+        recipient: String,
+        /// Opaque runtime capability; '-' reads from stdin.
+        #[arg(long)]
+        token: String,
+    },
     /// Open a prefilled create-agent form in the owner's Buzz Desktop
     DraftCreate {
         /// Current channel UUID; the new agent is added here after save
@@ -2156,6 +2168,68 @@ mod tests {
     }
 
     #[test]
+    fn agents_invoke_preserves_exact_route_and_literal_or_stdin_capability() {
+        let channel = "123e4567-e89b-12d3-a456-426614174000";
+        let recipient = "b".repeat(64);
+        let capability = "a".repeat(43);
+        for value in [capability.as_str(), "-"] {
+            let cli = Cli::try_parse_from([
+                "buzz",
+                "agents",
+                "invoke",
+                "--channel",
+                channel,
+                "--recipient",
+                recipient.as_str(),
+                "--token",
+                value,
+            ])
+            .unwrap();
+            let Cmd::Agents(AgentsCmd::Invoke {
+                channel: parsed_channel,
+                recipient: parsed_recipient,
+                token,
+            }) = cli.command
+            else {
+                panic!("expected recipient-only invocation");
+            };
+            assert_eq!(parsed_channel.to_string(), channel);
+            assert_eq!(parsed_recipient, recipient);
+            assert_eq!(token, value);
+        }
+    }
+
+    #[test]
+    fn agents_invoke_requires_all_routing_fields_and_rejects_chat_flags() {
+        let recipient = "b".repeat(64);
+        let capability = "a".repeat(43);
+        let args = vec![
+            "buzz",
+            "agents",
+            "invoke",
+            "--channel",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "--recipient",
+            recipient.as_str(),
+            "--token",
+            capability.as_str(),
+        ];
+        for start in [3, 5, 7] {
+            let mut missing = args.clone();
+            missing.drain(start..start + 2);
+            assert!(Cli::try_parse_from(missing).is_err());
+        }
+        let mut invalid_channel = args.clone();
+        invalid_channel[4] = "not-a-channel";
+        assert!(Cli::try_parse_from(invalid_channel).is_err());
+        for flag in ["--reply-to", "--broadcast", "--content"] {
+            let mut chat = args.clone();
+            chat.push(flag);
+            assert!(Cli::try_parse_from(chat).is_err());
+        }
+    }
+
+    #[test]
     fn messages_thread_accepts_link_or_explicit_identifiers() {
         let channel = "123e4567-e89b-12d3-a456-426614174000";
         let event = "a".repeat(64);
@@ -2293,6 +2367,7 @@ mod tests {
                 "archived",
                 "draft-create",
                 "draft-update",
+                "invoke",
                 "unarchive"
             ]
         );
@@ -2432,7 +2507,7 @@ mod tests {
     #[test]
     fn subcommand_counts_are_stable() {
         let expected: Vec<(&str, usize)> = vec![
-            ("agents", 5),
+            ("agents", 6),
             ("canvas", 2),
             ("channels", 16),
             ("dms", 4),

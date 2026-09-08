@@ -1131,7 +1131,13 @@ fn handle_relay_observer_control_event(
     let command_type = payload.get("type").and_then(|value| value.as_str());
     match command_type {
         Some("cancel_turn") => {
-            handle_cancel_turn_control(&payload, pool, observer);
+            handle_cancel_turn_control(
+                &payload,
+                pool,
+                observer,
+                owner_pubkey_hex,
+                &event.id.to_hex(),
+            );
         }
         Some("switch_model") => {
             handle_switch_model_control(&payload, pool, observer);
@@ -1297,6 +1303,8 @@ fn handle_cancel_turn_control(
     payload: &serde_json::Value,
     pool: &mut AgentPool,
     observer: Option<&observer::ObserverHandle>,
+    actor_public_key: &str,
+    request_event_id: &str,
 ) {
     let Some(channel_id) = payload
         .get("channelId")
@@ -1307,7 +1315,14 @@ fn handle_cancel_turn_control(
         return;
     };
 
-    let fired = signal_in_flight_task(pool, channel_id, ControlSignal::Cancel);
+    let fired = signal_in_flight_task(
+        pool,
+        channel_id,
+        ControlSignal::UserCancel {
+            actor_public_key: actor_public_key.to_string(),
+            request_event_id: request_event_id.to_string(),
+        },
+    );
     let status = if fired { "sent" } else { "no_active_turn" };
     if let Some(observer) = observer {
         observer.emit(
@@ -2650,6 +2665,12 @@ async fn tokio_main() -> Result<()> {
                     match buzz_event {
                         Some(buzz_event) => {
                             let kind_u32 = buzz_event.event.kind.as_u16() as u32;
+                            let is_invocation = kind_u32 == buzz_core::kind::KIND_AGENT_INVOCATION;
+                            if is_invocation && buzz_sdk::agent_invocation::invocation_route(&buzz_event.event)
+                                .map_or(true, |(channel, recipient)| channel != buzz_event.channel_id || recipient.to_hex() != pubkey_hex)
+                            {
+                                continue;
+                            }
 
                             if kind_u32 == KIND_MEMBER_ADDED_NOTIFICATION
                                 || kind_u32 == KIND_MEMBER_REMOVED_NOTIFICATION
@@ -2820,7 +2841,10 @@ async fn tokio_main() -> Result<()> {
                                         let fired = signal_in_flight_task(
                                             &mut pool,
                                             buzz_event.channel_id,
-                                            ControlSignal::Cancel,
+                                            ControlSignal::UserCancel {
+                                                actor_public_key: buzz_event.event.pubkey.to_hex(),
+                                                request_event_id: buzz_event.event.id.to_hex(),
+                                            },
                                         );
                                         if !fired {
                                             tracing::warn!(
@@ -2925,7 +2949,10 @@ async fn tokio_main() -> Result<()> {
                                     &mut pool,
                                     buzz_event.channel_id,
                                     &author,
-                                    ControlSignal::Cancel,
+                                    ControlSignal::UserCancel {
+                                        actor_public_key: author.clone(),
+                                        request_event_id: buzz_event.event.id.to_hex(),
+                                    },
                                 );
                                 if !fired {
                                     tracing::warn!(
@@ -2972,7 +2999,7 @@ async fn tokio_main() -> Result<()> {
                             // Fire-and-forget: on rare fast-failure paths the
                             // guard's cleanup may race with this add, leaving a
                             // cosmetic stale 👀. Acceptable — see ReactionGuard docs.
-                            if accepted {
+                            if accepted && !is_invocation {
                                 let rc = ctx.rest_client.clone();
                                 let eid = event_id_hex.clone();
                                 tokio::spawn(async move {
@@ -2982,7 +3009,7 @@ async fn tokio_main() -> Result<()> {
                             // Event is already queued. If mode requires it AND
                             // the channel has an in-flight task, fire cancel —
                             // OR take the non-cancelling (ACP steer) fork for Steer signals.
-                            if accepted && queue.is_channel_in_flight(buzz_event.channel_id) {
+                            if accepted && !is_invocation && queue.is_channel_in_flight(buzz_event.channel_id) {
                                 // Author eligibility (owner ∪ allowlist ∪ siblings)
                                 // is already enforced by the inbound author gate
                                 // above, so the mid-turn signal fires for every
@@ -8327,7 +8354,9 @@ mod error_outcome_emission_tests {
         );
         assert_eq!(
             turn_error.payload["error"].as_str().unwrap(),
-            format!("Agent did not stop within {grace:?} after cancellation; the agent process is being replaced."),
+            format!(
+                "Agent did not stop within {grace:?} after cancellation; the agent process is being replaced."
+            ),
             "observer message must name the actual grace and must not claim preservation"
         );
         assert_eq!(
@@ -8431,7 +8460,9 @@ mod error_outcome_emission_tests {
         );
         assert_eq!(
             turn_error.payload["error"].as_str().unwrap(),
-            format!("Agent did not stop within {grace:?} after cancellation; the agent process is being replaced."),
+            format!(
+                "Agent did not stop within {grace:?} after cancellation; the agent process is being replaced."
+            ),
             "observer message must be fate-neutral even though the batch was dropped"
         );
         assert_eq!(

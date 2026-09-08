@@ -7,7 +7,6 @@ use super::pipeline::BucketWithResult;
 use super::*;
 use nostr::{EventBuilder, JsonUtil, Keys, Kind, Tag};
 use rusqlite::Connection;
-use uuid::Uuid;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -696,7 +695,7 @@ mod real_relay {
 
     /// Create an open channel on the relay.  Returns the channel UUID string.
     async fn create_relay_channel(keys: &Keys) -> String {
-        let channel_id = Uuid::new_v4().to_string();
+        let channel_id = uuid::Uuid::new_v4().to_string();
         let ev = EventBuilder::new(Kind::Custom(9007), "")
             .tags(vec![
                 Tag::parse(["h", &channel_id]).unwrap(),

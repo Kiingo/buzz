@@ -2,10 +2,8 @@
 //!
 //! # Overview
 //!
-//! Before spawning a managed agent (or before deciding whether to enter
-//! setup-mode nudge), the desktop must know whether the agent has every
-//! piece of configuration it will need to start successfully. This module
-//! provides:
+//! Before spawning an agent or entering setup-mode nudge, verify all required
+//! startup configuration. This module provides:
 //!
 //! * [`EffectiveAgentEnv`] — the resolved environment a spawn would actually
 //!   see: baked build defaults (floor) → runtime metadata env vars → merged
@@ -1039,6 +1037,7 @@ mod tests {
             adapter_install_instructions_url: "",
             cli_install_hint: "",
             adapter_install_hint: "",
+            #[cfg(unix)]
             skill_dir: None,
             supports_acp_model_switching: false,
             config_file_path: None,
@@ -1208,9 +1207,9 @@ mod tests {
 
     /// Build a minimal `KnownAcpRuntime` for testing the codex version gate.
     /// `adapter_commands` are the exact strings passed to `find_command` — use
-    /// `&["codex-acp"]` when the binary is on PATH, or `&[<absolute_path>]`
-    /// when resolving via absolute path.  `underlying_cli` is a portable
-    /// stand-in so the adapter is not misclassified as `CliMissing`.
+    /// `&["codex-acp"]` for PATH lookup, or `&[<absolute_path>]` for an exact file.
+    /// `underlying_cli` is a portable stand-in to avoid misclassification as `CliMissing`.
+    #[cfg(unix)]
     fn make_codex_runtime(
         adapter_commands: &'static [&'static str],
         underlying_cli: Option<&'static str>,
@@ -1231,6 +1230,7 @@ mod tests {
             adapter_install_instructions_url: "",
             cli_install_hint: "",
             adapter_install_hint: "",
+            #[cfg(unix)]
             skill_dir: None,
             supports_acp_model_switching: false,
             config_file_path: None,

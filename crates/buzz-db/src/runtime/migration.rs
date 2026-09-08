@@ -690,7 +690,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 40);
+        assert_eq!(migrations.len(), 41);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -714,6 +714,20 @@ mod tests {
             .sql
             .as_str()
             .contains("search_tsv  TSVECTOR GENERATED ALWAYS"));
+
+        assert_eq!(migrations[40].version, 41);
+        for table in [
+            "managed_runtime_issuers",
+            "managed_publication_scopes",
+            "managed_publication_receipts",
+            "managed_publications",
+        ] {
+            assert!(migrations[40]
+                .sql
+                .as_str()
+                .contains(&format!("CREATE TABLE {table} (")));
+            assert!(!migrations[0].sql.as_str().contains(table));
+        }
 
         // The git repo-name registry is an additive migration, never folded into
         // 0001 — folding it would change 0001's checksum and break brownfield
@@ -1707,7 +1721,25 @@ mod tests {
             .expect("read schema/schema.sql");
 
         let migration = surface(migration_0029);
+        let managed_publication = surface(
+            MIGRATOR
+                .iter()
+                .find(|migration| migration.version == 41)
+                .expect("embedded migration 0041")
+                .sql
+                .as_ref(),
+        );
         let schema = surface(&schema_sql);
+        assert_eq!(
+            managed_publication.fence_attachments,
+            BTreeSet::from([
+                "managed_runtime_issuers".to_owned(),
+                "managed_publication_scopes".to_owned(),
+                "managed_publication_receipts".to_owned(),
+                "managed_publications".to_owned(),
+            ]),
+            "0041 must fence every managed-publication table"
+        );
 
         assert_eq!(
             migration.tables.len(),
@@ -1718,7 +1750,7 @@ mod tests {
         assert!(!migration.fence_attachments.is_empty());
         assert!(!migration.registry_rows.is_empty());
 
-        for (table, definition) in &migration.tables {
+        for (table, definition) in migration.tables.iter().chain(&managed_publication.tables) {
             let in_schema = schema
                 .tables
                 .get(table)
@@ -1726,7 +1758,7 @@ mod tests {
             if table != "community_deletion_requests" {
                 assert_eq!(
                     in_schema, definition,
-                    "schema.sql definition of {table} drifted from migration 0029"
+                    "schema.sql definition of {table} drifted from its additive migration"
                 );
             }
         }
@@ -1767,6 +1799,7 @@ mod tests {
         let mut expected_fences = migration.fence_attachments.clone();
         expected_fences.remove("product_feedback");
         expected_fences.remove("rate_limit_violations");
+        expected_fences.extend(managed_publication.fence_attachments);
         assert_eq!(
             expected_fences, schema.fence_attachments,
             "write-fence attachment targets differ after recovery policy"

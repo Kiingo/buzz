@@ -10,6 +10,8 @@ import { cn } from "@/shared/lib/cn";
 import { MessageRow } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { SystemMessageRow } from "./SystemMessageRow";
+import { AgentStatusRow } from "./AgentStatusRow";
+import { KIND_AGENT_STATUS } from "@/shared/constants/kinds";
 
 type ToggleReaction = (
   message: TimelineMessage,
@@ -46,14 +48,18 @@ export function SystemRow({
 
   return (
     <div className="flex flex-col gap-1 pb-2.5">
-      <SystemMessageRow
-        groupedMessages={groupedMessages}
-        message={firstEntry.message}
-        currentPubkey={currentPubkey}
-        onToggleReaction={onToggleReaction}
-        profiles={profiles}
-        ownerProfiles={ownerProfiles}
-      />
+      {firstEntry.message.kind === KIND_AGENT_STATUS ? (
+        <AgentStatusRow message={firstEntry.message} />
+      ) : (
+        <SystemMessageRow
+          groupedMessages={groupedMessages}
+          message={firstEntry.message}
+          currentPubkey={currentPubkey}
+          onToggleReaction={onToggleReaction}
+          profiles={profiles}
+          ownerProfiles={ownerProfiles}
+        />
+      )}
       {footer}
     </div>
   );

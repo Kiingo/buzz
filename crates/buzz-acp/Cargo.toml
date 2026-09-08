@@ -77,5 +77,6 @@ evalexpr = { workspace = true }
 nix = { version = "0.31", default-features = false, features = ["signal"] }
 
 [dev-dependencies]
+ed25519-dalek = "=3.0.0-rc.0"
 tokio = { workspace = true, features = ["test-util"] }
 httparse = "1"

@@ -202,6 +202,31 @@ END $$;
 -- contract explicitly and fail the bootstrap if the live catalog disagrees.
 ALTER TABLE replica_heartbeat SET (vacuum_truncate = false);
 
+-- Runtime controls survive chat retention, but obey whole-community fencing.
+-- pgschema does not execute SELECT-based trigger attachment from schema.sql.
+SELECT attach_community_write_fence('managed_runtime_issuers');
+SELECT attach_community_write_fence('managed_publication_scopes');
+SELECT attach_community_write_fence('managed_publication_receipts');
+SELECT attach_community_write_fence('managed_publications');
+
+DO $$
+BEGIN
+    IF (
+        SELECT count(*) FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_proc p ON p.oid = t.tgfoid
+        WHERE n.nspname = current_schema()
+          AND c.relname IN ('managed_runtime_issuers', 'managed_publication_scopes',
+                            'managed_publication_receipts', 'managed_publications')
+          AND t.tgname = 'community_write_fence_' || c.relname
+          AND p.proname = 'enforce_community_write_fence'
+          AND t.tgenabled = 'O' AND NOT t.tgisinternal AND t.tgtype = 31
+    ) <> 4 THEN
+        RAISE EXCEPTION 'managed publication tables require community write fences';
+    END IF;
+END $$;
+
 INSERT INTO replica_heartbeat (id) VALUES (1)
 ON CONFLICT (id) DO NOTHING;
 

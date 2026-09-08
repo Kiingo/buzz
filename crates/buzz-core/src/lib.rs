@@ -5,6 +5,8 @@
 //! Provides [`StoredEvent`], filter matching, kind constants, and event
 //! verification. All other Buzz crates depend on this one.
 
+/// Signed, thread-scoped operational status, distinct from conversation output.
+pub mod agent_status;
 /// NIP-AM: Agent Turn Metric — payload type and encrypt/decrypt helpers.
 pub mod agent_turn_metric;
 /// Channel and membership enums shared across crates.
@@ -24,6 +26,8 @@ pub mod git_perms;
 pub mod invite;
 /// Buzz kind number registry — custom event type constants.
 pub mod kind;
+/// Exact runtime-signed permits and explicit-user publication fences.
+pub mod managed_publication;
 /// Network utilities — SSRF-safe IP classification.
 pub mod network;
 /// NIP-10 thread-marker parsing — shared `root`/`reply` marker resolver.

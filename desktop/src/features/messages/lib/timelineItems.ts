@@ -17,7 +17,10 @@ import {
   isWithinGroupingWindow,
   startsNewMessageGroup,
 } from "@/features/messages/lib/messageGrouping";
-import { KIND_SYSTEM_MESSAGE } from "@/shared/constants/kinds";
+import {
+  KIND_SYSTEM_MESSAGE,
+  KIND_AGENT_STATUS,
+} from "@/shared/constants/kinds";
 
 /**
  * One renderable row in the flattened timeline. Dividers carry no message and
@@ -225,7 +228,10 @@ export function buildTimelineItems(
       items.push({ kind: "unread-divider", key: `unread-${renderKey}` });
     }
 
-    const kind = message.kind === KIND_SYSTEM_MESSAGE ? "system" : "message";
+    const kind =
+      message.kind === KIND_SYSTEM_MESSAGE || message.kind === KIND_AGENT_STATUS
+        ? "system"
+        : "message";
     if (kind === "system") {
       previousGroupEntry = null;
       previousMessageItemIndex = null;

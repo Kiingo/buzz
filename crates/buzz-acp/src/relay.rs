@@ -1513,7 +1513,9 @@ async fn execute_connected_command(
                 true
             } else {
                 // Send failed — record intent so reconnect restores it.
-                warn!("subscribe REQ failed for channel {channel_id} — recording intent for reconnect");
+                warn!(
+                    "subscribe REQ failed for channel {channel_id} — recording intent for reconnect"
+                );
                 apply_command_to_state(
                     state,
                     RelayCommand::Subscribe {
@@ -2183,7 +2185,9 @@ async fn handle_ws_message(
                         match observer_control_tx.try_send(*event) {
                             Ok(()) => {}
                             Err(mpsc::error::TrySendError::Full(_)) => {
-                                warn!("observer control event dropped because control channel is full");
+                                warn!(
+                                    "observer control event dropped because control channel is full"
+                                );
                             }
                             Err(mpsc::error::TrySendError::Closed(_)) => return false,
                         }
@@ -2386,7 +2390,9 @@ async fn handle_ws_message(
                         if sent {
                             state.observer_control_sub_active = true;
                         } else {
-                            warn!("observer control resubscribe failed after CLOSED — triggering reconnect");
+                            warn!(
+                                "observer control resubscribe failed after CLOSED — triggering reconnect"
+                            );
                             return false;
                         }
                     } else if subscription_id == MEMBERSHIP_NOTIF_SUB_ID {
@@ -2424,7 +2430,9 @@ async fn handle_ws_message(
                                     // Fail closed: missing filter state means the subscription
                                     // intent is inconsistent. Trigger reconnect rather than
                                     // resubscribing with a permissive wildcard.
-                                    warn!("missing filter for channel {channel_id} after CLOSED — triggering reconnect (fail-closed)");
+                                    warn!(
+                                        "missing filter for channel {channel_id} after CLOSED — triggering reconnect (fail-closed)"
+                                    );
                                     return false;
                                 }
                             };
@@ -2446,7 +2454,9 @@ async fn handle_ws_message(
                             } else {
                                 // Resubscribe failed — likely half-dead socket.
                                 // Keep channel in active_subscriptions so reconnect restores it.
-                                warn!("channel {channel_id} resubscribe failed after CLOSED — triggering reconnect");
+                                warn!(
+                                    "channel {channel_id} resubscribe failed after CLOSED — triggering reconnect"
+                                );
                                 return false;
                             }
                         } // end: channel is still active
@@ -2460,7 +2470,9 @@ async fn handle_ws_message(
                     if let Err(e) =
                         send_auth_response(ws, &challenge, relay_url, keys, auth_tag).await
                     {
-                        warn!("failed to respond to mid-session AUTH challenge: {e} — triggering reconnect");
+                        warn!(
+                            "failed to respond to mid-session AUTH challenge: {e} — triggering reconnect"
+                        );
                         return false;
                     }
                 }
@@ -2471,7 +2483,9 @@ async fn handle_ws_message(
                 } => {
                     if !accepted && message.starts_with("auth") {
                         // AUTH OK with accepted=false means auth was rejected.
-                        warn!("mid-session AUTH rejected (event {event_id}): {message} — triggering reconnect");
+                        warn!(
+                            "mid-session AUTH rejected (event {event_id}): {message} — triggering reconnect"
+                        );
                         return false;
                     }
                     state.acknowledge_observer_frame(&event_id);
@@ -2638,7 +2652,9 @@ async fn resubscribe_after_reconnect(
                     // Fail closed: missing filter state means the subscription
                     // intent is inconsistent. Skip rather than resubscribe with
                     // a permissive wildcard that would widen the subscription.
-                    warn!("missing filter for channel {channel_id} — skipping resubscribe (fail-closed)");
+                    warn!(
+                        "missing filter for channel {channel_id} — skipping resubscribe (fail-closed)"
+                    );
                     state.resubscribe_retry.insert(channel_id);
                     continue;
                 }
@@ -2825,7 +2841,9 @@ async fn drain_rate_limited_pending(
             // will detect the dead socket and trigger a full reconnect.
             let penalty = tokio::time::Instant::now() + Duration::from_secs(5);
             state.rate_limited_pending.insert(channel_id, penalty);
-            warn!("drain_rate_limited_pending: REQ failed for channel {channel_id} — re-queued with +5s penalty");
+            warn!(
+                "drain_rate_limited_pending: REQ failed for channel {channel_id} — re-queued with +5s penalty"
+            );
         }
     }
     sent_count
@@ -2951,7 +2969,9 @@ async fn drain_commands(
                 // actual live send attempt.
                 let pace_after = state.check_rate_gate().is_none();
                 if !execute_connected_command(ws, state, agent_pubkey_hex, cmd).await {
-                    warn!("send failed during post-reconnect drain — recording remaining commands as intent");
+                    warn!(
+                        "send failed during post-reconnect drain — recording remaining commands as intent"
+                    );
                     send_failed = true;
                 }
                 if !send_failed
@@ -2963,7 +2983,9 @@ async fn drain_commands(
             }
             cmd => {
                 if !execute_connected_command(ws, state, agent_pubkey_hex, cmd).await {
-                    warn!("send failed during post-reconnect drain — recording remaining commands as intent");
+                    warn!(
+                        "send failed during post-reconnect drain — recording remaining commands as intent"
+                    );
                     send_failed = true;
                 }
             }
@@ -3065,7 +3087,9 @@ async fn try_autonomous_reconnect(
                         ResubscribeResult::Ok => return ReconnectOutcome::Ok,
                         ResubscribeResult::Shutdown => return ReconnectOutcome::Shutdown,
                         ResubscribeResult::RetryConnection => {
-                            warn!("resubscribe failed after autonomous reconnect — treating as failed attempt");
+                            warn!(
+                                "resubscribe failed after autonomous reconnect — treating as failed attempt"
+                            );
                             // Fall through to backoff sleep and retry.
                         }
                     }
@@ -3189,7 +3213,9 @@ async fn wait_for_reconnect(
                 )
                 .await;
                 if !handshake_ok {
-                    warn!("handshake buffer contained a drop signal after reconnect — will retry with backoff");
+                    warn!(
+                        "handshake buffer contained a drop signal after reconnect — will retry with backoff"
+                    );
                     // Fall through to the backoff sleep below instead of
                     // tight-looping. A relay that consistently fails the
                     // handshake would otherwise drive a reconnect storm.
@@ -3284,7 +3310,12 @@ async fn send_subscribe(
 
     // kinds — omit entirely for wildcard subscriptions.
     if let Some(ref kinds) = filter.kinds {
-        req_filter.insert("kinds".into(), json!(kinds));
+        let chat_kinds: Vec<_> = kinds
+            .iter()
+            .copied()
+            .filter(|kind| *kind != buzz_core::kind::KIND_AGENT_INVOCATION)
+            .collect();
+        req_filter.insert("kinds".into(), json!(chat_kinds));
     }
 
     // #h — always present (channel scope).
@@ -3306,7 +3337,33 @@ async fn send_subscribe(
     };
     req_filter.insert("since".into(), json!(since_ts));
 
-    let req = json!(["REQ", sub_id, Value::Object(req_filter)]);
+    let control_only = filter.kinds.as_ref().is_some_and(|kinds| {
+        !kinds.is_empty()
+            && kinds
+                .iter()
+                .all(|kind| *kind == buzz_core::kind::KIND_AGENT_INVOCATION)
+    });
+    let mut req = if control_only {
+        // Empty kinds can mean wildcard to the relay. A control-only listener
+        // must never accidentally acquire an unscoped ordinary subscription.
+        json!(["REQ", sub_id])
+    } else {
+        json!(["REQ", sub_id, Value::Object(req_filter)])
+    };
+    // Opt-in only: generic model adapters must never receive capabilities. Keep
+    // this filter separate so p-gating does not narrow ordinary channel traffic.
+    if filter
+        .kinds
+        .as_ref()
+        .is_some_and(|kinds| kinds.contains(&buzz_core::kind::KIND_AGENT_INVOCATION))
+    {
+        if let Some(filters) = req.as_array_mut() {
+            filters.push(json!({
+                "kinds": [buzz_core::kind::KIND_AGENT_INVOCATION],
+                "#h": [channel_id.to_string()], "#p": [agent_pubkey_hex], "since": since_ts
+            }));
+        }
+    }
 
     match serde_json::to_string(&req) {
         Ok(text) => {
@@ -3569,7 +3626,7 @@ fn canonical_relay_authority(canonical_url: &str) -> Result<String, RelayError> 
         None => {
             return Err(RelayError::Http(
                 "canonical relay URL must contain a host".into(),
-            ))
+            ));
         }
     };
     let default_port = match canonical.scheme() {
@@ -5825,9 +5882,7 @@ mod tests {
                 "Io(rustls InvalidCertificate(NotValidForName)): hostname mismatch is terminal",
                 ws(WsError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    rustls::Error::InvalidCertificate(
-                        rustls::CertificateError::NotValidForName,
-                    ),
+                    rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForName),
                 ))),
                 true,
             ),

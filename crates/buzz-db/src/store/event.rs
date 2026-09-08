@@ -6,7 +6,7 @@
 
 use chrono::{DateTime, Utc};
 use nostr::Event;
-use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder, Row, Transaction};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
 use buzz_core::kind::{
@@ -274,8 +274,7 @@ pub async fn insert_event(
     event: &Event,
     channel_id: Option<Uuid>,
 ) -> Result<(StoredEvent, bool)> {
-    let mut connection = pool.acquire().await?;
-    insert_event_on(&mut connection, community_id, event, channel_id).await
+    insert_event_with_thread_metadata(pool, community_id, event, channel_id, None).await
 }
 
 /// Insert a Nostr event in a caller-owned PostgreSQL transaction.
@@ -289,65 +288,7 @@ pub async fn insert_event_in_transaction(
     event: &Event,
     channel_id: Option<Uuid>,
 ) -> Result<(StoredEvent, bool)> {
-    insert_event_on(tx.as_mut(), community_id, event, channel_id).await
-}
-
-async fn insert_event_on(
-    connection: &mut PgConnection,
-    community_id: CommunityId,
-    event: &Event,
-    channel_id: Option<Uuid>,
-) -> Result<(StoredEvent, bool)> {
-    let kind_u16 = event.kind.as_u16();
-    let kind_u32 = u32::from(kind_u16);
-
-    if kind_u32 == KIND_AUTH {
-        return Err(DbError::AuthEventRejected);
-    }
-    if is_ephemeral(kind_u32) {
-        return Err(DbError::EphemeralEventRejected(kind_u16));
-    }
-
-    let id_bytes = event.id.as_bytes();
-    let pubkey_bytes = event.pubkey.to_bytes();
-    let sig_bytes = event.sig.serialize();
-    let tags_json = serde_json::to_value(&event.tags)?;
-    // Cast chain: nostr Kind (u16) → i32 (Postgres INT column). Safe: all Buzz kinds fit in i32.
-    let kind_i32 = event_kind_i32(event);
-    let created_at_secs = event.created_at.as_secs() as i64;
-    let created_at = DateTime::from_timestamp(created_at_secs, 0)
-        .ok_or(DbError::InvalidTimestamp(created_at_secs))?;
-    let received_at = Utc::now();
-    let d_tag = extract_d_tag(event);
-    let not_before = extract_not_before(event);
-    let result = sqlx::query(
-        r#"
-        INSERT INTO events (community_id, id, pubkey, created_at, kind, tags, content, sig, received_at, channel_id, d_tag, not_before)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        ON CONFLICT DO NOTHING
-        "#,
-    )
-    .bind(community_id.as_uuid())
-    .bind(id_bytes.as_slice())
-    .bind(pubkey_bytes.as_slice())
-    .bind(created_at)
-    .bind(kind_i32)
-    .bind(&tags_json)
-    .bind(&event.content)
-    .bind(sig_bytes.as_slice())
-    .bind(received_at)
-    .bind(channel_id)
-    .bind(d_tag.as_deref())
-    .bind(not_before)
-    .execute(connection)
-    .await?;
-
-    let was_inserted = result.rows_affected() > 0;
-
-    Ok((
-        StoredEvent::with_received_at(event.clone(), received_at, channel_id, true),
-        was_inserted,
-    ))
+    insert_event_with_thread_metadata_tx(tx, community_id, event, channel_id, None).await
 }
 
 /// Query events with optional filters. Results ordered by `created_at DESC`.
@@ -1172,6 +1113,17 @@ pub(crate) async fn insert_event_with_thread_metadata_tx(
     }
     if is_ephemeral(kind_u32) {
         return Err(DbError::EphemeralEventRejected(kind_u16));
+    }
+
+    if let Some(accepted_at) =
+        crate::managed_publication::apply_event_tx(tx, community_id, event, channel_id).await?
+    {
+        // Control delivery and exact publication replay are successful ACKs,
+        // not new visible events. Never resurrect retained/deleted chat rows.
+        return Ok((
+            StoredEvent::with_received_at(event.clone(), accepted_at, channel_id, true),
+            false,
+        ));
     }
 
     let id_bytes = event.id.as_bytes();

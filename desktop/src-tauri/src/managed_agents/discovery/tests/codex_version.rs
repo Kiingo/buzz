@@ -1,4 +1,13 @@
+#[cfg(unix)]
 use super::super::probe_codex_acp_version_with_path;
+
+#[cfg(unix)]
+#[test]
+fn probe_codex_acp_version_returns_none_for_missing_binary() {
+    let path = std::path::Path::new("/nonexistent/path/codex-acp-does-not-exist");
+    let version = super::super::probe_codex_acp_version(path);
+    assert_eq!(version, None, "missing binary must return None");
+}
 
 #[cfg(unix)]
 #[test]

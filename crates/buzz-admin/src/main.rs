@@ -21,6 +21,7 @@
 //! the guard against parallel adds (e.g. `xargs -P`).
 
 mod deletions;
+mod runtime_issuers;
 
 use std::sync::Arc;
 
@@ -74,6 +75,20 @@ enum Command {
     },
     /// List all relay members.
     ListMembers,
+    /// Provision an immutable, community-bound runtime verification key.
+    /// Existing key IDs cannot change; rotation uses a new ID and retains old
+    /// verification keys for already-issued durable authorization records.
+    EnsureRuntimeIssuer {
+        /// Authenticated platform community identifier.
+        #[arg(long)]
+        issuer: String,
+        /// Immutable signing-key identifier.
+        #[arg(long)]
+        key_id: String,
+        /// Ed25519 public verification key, 32-byte lowercase hex (not Nostr).
+        #[arg(long)]
+        public_key: String,
+    },
     /// Generate a new Nostr keypair (for bootstrapping).
     GenerateKey,
     /// Run pending database migrations.
@@ -157,6 +172,11 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::AddMember { pubkey, role } => cmd_add_member(pubkey, role).await,
         Command::RemoveMember { pubkey, role } => cmd_remove_member(pubkey, role).await,
         Command::ListMembers => cmd_list_members().await,
+        Command::EnsureRuntimeIssuer {
+            issuer,
+            key_id,
+            public_key,
+        } => runtime_issuers::ensure(issuer, key_id, public_key).await,
         Command::ProductFeedback {
             command: ProductFeedbackCommand::List { limit },
         } => cmd_list_product_feedback(limit).await,

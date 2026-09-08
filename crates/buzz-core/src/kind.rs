@@ -158,6 +158,7 @@ pub const RESULT_GATED_KINDS: &[u32] = &[KIND_DM_VISIBILITY, KIND_AGENT_TURN_MET
 /// storage-layer search defense does not apply to them.
 pub const P_GATED_KINDS: &[u32] = &[
     KIND_AGENT_OBSERVER_FRAME,
+    KIND_AGENT_INVOCATION,
     KIND_MEMBER_ADDED_NOTIFICATION,
     KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_GIFT_WRAP,
@@ -467,6 +468,10 @@ pub const KIND_PAIRING: u32 = 24134;
 pub const KIND_TYPING_INDICATOR: u32 = 20002;
 /// Ephemeral: owner-scoped encrypted agent observer telemetry and control frame.
 pub const KIND_AGENT_OBSERVER_FRAME: u32 = 24200;
+/// Ephemeral, channel-scoped, recipient-only wake for a durable agent invocation.
+/// Carries an opaque capability, never chat content. The caller retains the durable
+/// dispatch and retries delivery until the admitted recipient acknowledges it.
+pub const KIND_AGENT_INVOCATION: u32 = 24201;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral
 /// huddle channel with an `h` tag; never stored in the timeline.
 pub const KIND_HUDDLE_REACTION: u32 = 24810;
@@ -495,6 +500,10 @@ pub const KIND_STREAM_MESSAGE_DIFF: u32 = 40008;
 pub const KIND_CANVAS: u32 = 40100;
 /// System message for channel state changes (join, leave, rename, etc.).
 pub const KIND_SYSTEM_MESSAGE: u32 = 40099;
+/// Signer-authored operational status, scoped to one channel thread. Never chat or moderation.
+pub const KIND_AGENT_STATUS: u32 = 40098;
+/// Runtime-authorized explicit-user cancellation; durable non-chat control.
+pub const KIND_AGENT_CANCELLATION: u32 = 40097;
 
 // Relay-only sidecar kinds (never client-submitted)
 /// Channel metadata with computed fields (relay-signed sidecar).
@@ -699,6 +708,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_PAIRING,
     KIND_AGENT_OBSERVER_FRAME,
     KIND_HTTP_AUTH,
+    KIND_AGENT_INVOCATION,
     KIND_STREAM_MESSAGE,
     KIND_STREAM_MESSAGE_V2,
     KIND_STREAM_MESSAGE_EDIT,
@@ -709,6 +719,8 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_STREAM_MESSAGE_DIFF,
     KIND_CANVAS,
     KIND_SYSTEM_MESSAGE,
+    KIND_AGENT_STATUS,
+    KIND_AGENT_CANCELLATION,
     KIND_CHANNEL_SUMMARY,
     KIND_PRESENCE_SNAPSHOT,
     KIND_DM_VISIBILITY,

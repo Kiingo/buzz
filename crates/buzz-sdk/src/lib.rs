@@ -12,6 +12,8 @@
 //! The caller signs with their own keys: `builder.sign_with_keys(&keys)?`.
 //! No keys are held here. No network calls are made.
 
+pub mod agent_invocation;
+pub mod agent_status;
 pub mod broker;
 pub mod builders;
 pub mod mentions;

@@ -39,7 +39,7 @@ pub(crate) fn resolve_git_bash_path() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     {
         let env = GitBashEnv::from_process();
-        return resolve_git_bash(
+        resolve_git_bash(
             &env.path,
             env.shell_override,
             env.git_bash_override,
@@ -47,7 +47,7 @@ pub(crate) fn resolve_git_bash_path() -> Option<std::path::PathBuf> {
             env.program_files,
             env.program_files_x86,
             env.local_app_data,
-        );
+        )
     }
 
     #[cfg(not(windows))]
@@ -66,7 +66,7 @@ pub(crate) fn resolve_bash_path() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     {
         let env = GitBashEnv::from_process();
-        return resolve_git_bash(
+        resolve_git_bash(
             &env.path,
             None, // skip BUZZ_SHELL — install/login-shell callers require bash
             env.git_bash_override,
@@ -74,7 +74,7 @@ pub(crate) fn resolve_bash_path() -> Option<std::path::PathBuf> {
             env.program_files,
             env.program_files_x86,
             env.local_app_data,
-        );
+        )
     }
 
     #[cfg(not(windows))]
@@ -85,12 +85,12 @@ pub(crate) fn discover_git_bash() -> Option<GitBashPrerequisite> {
     #[cfg(windows)]
     {
         let path = resolve_git_bash_path();
-        return Some(GitBashPrerequisite {
+        Some(GitBashPrerequisite {
             available: path.is_some(),
             path: path.map(|path| path.display().to_string()),
             install_instructions_url: INSTALL_URL.to_string(),
             install_hint: INSTALL_HINT.to_string(),
-        });
+        })
     }
 
     #[cfg(not(windows))]
@@ -178,9 +178,7 @@ pub(crate) fn resolve_git_bash(
         shell_override,
         git_bash_override,
         system_root,
-        program_files,
-        program_files_x86,
-        local_app_data,
+        [program_files, program_files_x86, local_app_data],
         true,
     )
 }
@@ -193,9 +191,7 @@ fn resolve_git_bash_inner(
     shell_override: Option<PathBuf>,
     git_bash_override: Option<PathBuf>,
     system_root: Option<PathBuf>,
-    program_files: Option<PathBuf>,
-    program_files_x86: Option<PathBuf>,
-    local_app_data: Option<PathBuf>,
+    standard_paths: [Option<PathBuf>; 3],
     check_registry: bool,
 ) -> Option<PathBuf> {
     let result = shell_override
@@ -206,9 +202,7 @@ fn resolve_git_bash_inner(
             scan_path_for_command(Path::new("git.exe"), path_env, None)
                 .and_then(|git| bash_from_git(&git))
         })
-        .or_else(|| {
-            git_bash_from_standard_paths([program_files, program_files_x86, local_app_data])
-        });
+        .or_else(|| git_bash_from_standard_paths(standard_paths));
     if result.is_some() {
         return result;
     }
@@ -236,9 +230,7 @@ pub(crate) fn resolve_git_bash_no_registry(
         shell_override,
         git_bash_override,
         system_root,
-        program_files,
-        program_files_x86,
-        local_app_data,
+        [program_files, program_files_x86, local_app_data],
         false,
     )
 }

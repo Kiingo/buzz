@@ -2,12 +2,16 @@ use std::path::PathBuf;
 
 use super::overrides::{divergent_agent_command_override, update_time_agent_command_override};
 use super::{
-    apply_agent_command_update, classify_runtime, codex_adapter_availability,
-    codex_adapter_is_outdated, create_time_agent_command_override, default_agent_command,
-    effective_agent_command, find_nvm_default_bin, is_login_shell_path_uninit, is_safe_nvm_tag,
-    managed_agent_avatar_url, normalize_agent_args, parse_semver_tag, probe_codex_acp_version,
-    record_agent_command, refresh_login_shell_path, try_record_agent_command,
-    BUZZ_AGENT_AVATAR_URL, CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL, GOOSE_AVATAR_URL,
+    apply_agent_command_update, classify_runtime, create_time_agent_command_override,
+    default_agent_command, effective_agent_command, is_login_shell_path_uninit, is_safe_nvm_tag,
+    managed_agent_avatar_url, normalize_agent_args, parse_semver_tag, record_agent_command,
+    refresh_login_shell_path, try_record_agent_command, BUZZ_AGENT_AVATAR_URL,
+    CLAUDE_CODE_AVATAR_URL, CODEX_AVATAR_URL, GOOSE_AVATAR_URL,
+};
+#[cfg(unix)]
+use super::{
+    codex_adapter_availability, codex_adapter_is_outdated, find_nvm_default_bin,
+    probe_codex_acp_version,
 };
 use crate::managed_agents::AcpAvailabilityStatus;
 
@@ -702,14 +706,6 @@ fn probe_codex_acp_version_returns_none_for_nonzero_exit() {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn probe_codex_acp_version_returns_none_for_missing_binary() {
-    let path = std::path::Path::new("/nonexistent/path/codex-acp-does-not-exist");
-    let version = probe_codex_acp_version(path);
-    assert_eq!(version, None, "missing binary must return None");
-}
-
 // ── codex_adapter_availability / codex_adapter_is_outdated ───────────────────
 //
 // Outcome-level classification: verify helpers map probe results to the correct
@@ -1241,7 +1237,7 @@ fn test_cli_install_commands_for_os_selects_powershell_on_windows() {
 #[cfg(unix)]
 #[test]
 fn test_login_shell_candidates_non_empty_on_unix() {
-    let candidates = super::login_shell_candidates();
+    let candidates = super::login_shell::login_shell_candidates();
     assert!(
         !candidates.is_empty(),
         "Unix must have at least one login shell candidate"

@@ -77,16 +77,20 @@ record the reported drift, and merge the newer commits in the next dedicated
 synchronization PR. Never move the snapshot ahead of the fork or edit it only
 to make the guard pass.
 
-The hard budgets are 36 modified upstream production-source files, 56 modified
-upstream files overall, 2,981 changed upstream production-source lines, 317
-upstream production-source diff hunks, and zero Kiingo business-logic lines in
-upstream-owned production source.
+The hard budgets are the `budgets` object in
+[`docs/kiingo-fork-inventory.json`](kiingo-fork-inventory.json). Read that
+reviewed inventory for the current modified-file, production-source-file,
+changed-line and diff-hunk limits; do not infer permission to raise them from a
+larger implementation diff. The zero-Kiingo-business-logic boundary in
+upstream-owned production source remains mandatory. A required cutover that
+exceeds the footprint limits needs an explicit policy decision before those
+limits change; the failing guard remains a release blocker until resolved.
 
 The production-source metrics exclude dedicated `*.test.*`/`tests/` files and
 Rust diffs whose every hunk is below the file's final `#[cfg(test)]` boundary.
 The guard derives that classification from the current diff; it is not a path
 waiver. This keeps scanner-only fixture changes from consuming the production
-budgets while still counting their files in the overall 35-file limit. Changed
+budgets while still counting their files in the configured overall file limit. Changed
 lines are additions plus deletions from `git diff --numstat`; hunk count is the
 number of `@@` records in a zero-context final-tree diff. These two measurements
 make a large embedded customization fail even when it does not add another

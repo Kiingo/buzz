@@ -900,17 +900,14 @@ impl AcpClient {
         self.parse_prompt_response(session_id, &result?)
     }
 
-    /// Send a `session/cancel` **notification** (no `id` field, no response expected).
-    ///
-    /// After calling this, the agent will eventually respond to the in-flight
-    /// `session/prompt` with `stopReason: "cancelled"`. Use
-    /// [`cancel_with_cleanup`](Self::cancel_with_cleanup) if you need to drain
-    /// that response.
-    ///
-    /// Note: async because writing to stdin requires async I/O.
-    pub async fn session_cancel(&mut self, session_id: &str) -> Result<(), AcpError> {
+    async fn session_cancel_with_origin(
+        &mut self,
+        session_id: &str,
+        origin: Option<serde_json::Value>,
+    ) -> Result<(), AcpError> {
         let params = serde_json::json!({
             "sessionId": session_id,
+            "_meta": {"buzz": {"cancellation": origin}},
         });
         self.send_notification("session/cancel", params).await
     }
@@ -1040,11 +1037,11 @@ impl AcpClient {
             }
         };
 
-        self.cancel_with_cleanup_until(session_id, hard_deadline)
+        self.cancel_with_cleanup_until(session_id, hard_deadline, None)
             .await
     }
 
-    /// Cancel a user-interrupted turn with a bounded grace window.
+    /// Cancel a local turn with a bounded grace window and optional verified human provenance.
     ///
     /// Some ACP servers currently keep streaming after `session/cancel`. For an
     /// explicit Stop button, waiting until the original turn deadline can make
@@ -1057,15 +1054,18 @@ impl AcpClient {
     /// [`AcpError::CancelDrainTimeout`], never [`AcpError::HardTimeout`], so
     /// callers can distinguish "agent didn't stop in time" from a genuine
     /// configured hard-cap breach.
-    pub async fn cancel_with_cleanup_grace(
+    ///
+    /// An absent origin is process cleanup, never permission to stop durable work.
+    pub async fn cancel_with_cleanup_grace_with_origin(
         &mut self,
         session_id: &str,
         grace: std::time::Duration,
+        origin: Option<serde_json::Value>,
     ) -> Result<StopReason, AcpError> {
         let _ = self.current_hard_deadline.take();
         let hard_deadline = tokio::time::Instant::now() + grace;
         match self
-            .cancel_with_cleanup_until(session_id, hard_deadline)
+            .cancel_with_cleanup_until(session_id, hard_deadline, origin)
             .await
         {
             Err(AcpError::HardTimeout { .. }) => Err(AcpError::CancelDrainTimeout(grace)),
@@ -1077,6 +1077,7 @@ impl AcpClient {
         &mut self,
         session_id: &str,
         hard_deadline: tokio::time::Instant,
+        origin: Option<serde_json::Value>,
     ) -> Result<StopReason, AcpError> {
         // Validate precondition before any side effects — fail fast if there's
         // no in-flight prompt (prevents writing permission responses or cancel
@@ -1101,7 +1102,7 @@ impl AcpClient {
         }
 
         // Step 2: send session/cancel notification (no id)
-        self.session_cancel(session_id).await?;
+        self.session_cancel_with_origin(session_id, origin).await?;
         tracing::info!(target: "acp::cancel", "sent session/cancel for {session_id}");
         // Use a fixed 30s idle timeout during cleanup — the cancel notification
         // needs time to propagate and the agent may go silent while winding down.
@@ -3250,20 +3251,20 @@ mod tests {
         );
     }
 
-    /// `cancel_with_cleanup_grace`'s bounded drain deadline must map to
+    /// `cancel_with_cleanup_grace_with_origin`'s bounded drain deadline must map to
     /// [`AcpError::CancelDrainTimeout`], never [`AcpError::HardTimeout`] —
     /// the two share an underlying deadline mechanism but must not share
     /// classification, since callers dead-letter a real `HardTimeout` and
     /// must not dead-letter a drain that simply ran past its grace window.
     #[tokio::test]
-    async fn cancel_with_cleanup_grace_maps_expiry_to_cancel_drain_timeout() {
+    async fn cancel_with_origin_maps_expiry_to_cancel_drain_timeout() {
         // Agent ignores `session/cancel` on stdin and keeps producing noise
         // forever — never drains within the grace window.
         let mut client = spawn_script("while true; do echo 'noise'; sleep 0.01; done").await;
         client.last_prompt_id = Some(999);
         let grace = std::time::Duration::from_millis(200);
         let result = client
-            .cancel_with_cleanup_grace("test-session", grace)
+            .cancel_with_cleanup_grace_with_origin("test-session", grace, None)
             .await;
         assert!(
             matches!(result, Err(AcpError::CancelDrainTimeout(g)) if g == grace),

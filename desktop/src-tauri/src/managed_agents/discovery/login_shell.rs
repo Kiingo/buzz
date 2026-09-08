@@ -118,7 +118,7 @@ fn fetch_login_shell_path_inner() -> Option<String> {
     // Windows PATH instead.
     #[cfg(windows)]
     {
-        return None;
+        None
     }
 
     #[cfg(not(windows))]
