@@ -12,8 +12,10 @@ import {
 import {
   CHANNEL_AUX_EVENT_KINDS,
   CHANNEL_TIMELINE_CONTENT_KINDS,
+  KIND_AGENT_STATUS,
   KIND_HUDDLE_ENDED,
   KIND_HUDDLE_STARTED,
+  KIND_SYSTEM_MESSAGE,
 } from "@/shared/constants/kinds";
 
 const HEX64_A =
@@ -171,6 +173,67 @@ test("non-deletion event kinds do NOT hide the target message", () => {
   const events = [streamMessage(), reaction];
   const out = formatTimelineMessages(events, null, undefined, null);
   assert.equal(out.length, 1, "the kind:9 message should still be visible");
+});
+
+test("genuine user deletion notices remain visible in live and historical timelines", () => {
+  const notice = streamMessage({
+    id: HEX64_B,
+    kind: KIND_SYSTEM_MESSAGE,
+    content: JSON.stringify({
+      type: "message_deleted",
+      actor: PUBKEY_A,
+      target_event_id: HEX64_A,
+    }),
+  });
+  const live = [
+    streamMessage(),
+    deletionEvent(9005, HEX64_A, { id: "c".repeat(64) }),
+    notice,
+  ];
+  // On reload the removed target is absent, but its system notice survives.
+  for (const events of [live, [notice]]) {
+    const messages = formatTimelineMessages(events, null, undefined, null);
+    assert.deepEqual(
+      messages.map((message) => message.id),
+      [notice.id],
+    );
+    assert.equal(countTopLevelTimelineRows(events), 1);
+  }
+  assert.equal(isTimelineContentEvent(notice), true);
+});
+
+test("moderation notices and unrelated system activity remain visible", () => {
+  const payloads = [
+    { type: "message_deleted", public_reason: "Removed for spam." },
+    { type: "message_deleted", reason_code: "spam" },
+    { type: "message_deleted", action_id: "moderation-action" },
+    { type: "member_joined", actor: PUBKEY_A, target: PUBKEY_B },
+    { type: "topic_changed", topic: "New topic" },
+  ];
+  for (const payload of payloads) {
+    const event = streamMessage({
+      kind: KIND_SYSTEM_MESSAGE,
+      content: JSON.stringify(payload),
+    });
+    assert.equal(isTimelineContentEvent(event), true);
+    assert.equal(countTopLevelTimelineRows([event]), 1);
+    assert.equal(
+      formatTimelineMessages([event], null, undefined, null).length,
+      1,
+    );
+  }
+});
+
+test("deletion-notice filtering does not interpret ordinary chat as system events", () => {
+  const event = streamMessage({
+    content: JSON.stringify({ type: "message_deleted" }),
+  });
+  assert.equal(isTimelineContentEvent(event), true);
+  assert.equal(countTopLevelTimelineRows([event]), 1);
+  assert.equal(
+    formatTimelineMessages([event], null, undefined, null).length,
+    1,
+  );
 });
 
 test("user-signed actor tag does not affect timeline identity or profile loading", () => {
@@ -659,11 +722,26 @@ test("huddle ended stays lifecycle-only, not a timeline row", () => {
 // Guardrail: the history fetch requests exactly CHANNEL_TIMELINE_CONTENT_KINDS,
 // so that set must stay in lockstep with isTimelineContentEvent. Drift would
 // silently drop a content kind from history (fetched but never rendered) or
-// fetch an aux kind as content. Assert parity in both directions.
+// fetch an aux kind as content. Status rows additionally require a valid
+// thread-scoped protocol payload; a bare kind must not bypass that validation.
 test("CHANNEL_TIMELINE_CONTENT_KINDS matches isTimelineContentEvent", () => {
+  const status = streamMessage({
+    kind: KIND_AGENT_STATUS,
+    content: JSON.stringify({
+      version: 1,
+      receipt_id: CHANNEL_ID,
+      state: "progress",
+      text: "Reconnecting",
+    }),
+    tags: [
+      ["h", CHANNEL_ID],
+      ["e", HEX64_B, "", "reply"],
+      ["d", "status-parity"],
+    ],
+  });
   for (const kind of CHANNEL_TIMELINE_CONTENT_KINDS) {
     assert.ok(
-      isTimelineContentEvent({ kind }),
+      isTimelineContentEvent(kind === KIND_AGENT_STATUS ? status : { kind }),
       `content kind ${kind} must be a timeline content event`,
     );
   }
@@ -673,6 +751,9 @@ test("CHANNEL_TIMELINE_CONTENT_KINDS matches isTimelineContentEvent", () => {
       `aux kind ${kind} must not be a timeline content event`,
     );
   }
+  assert.equal(isTimelineContentEvent({ kind: KIND_AGENT_STATUS }), false);
+  assert.equal(isTimelineContentEvent({ ...status, tags: [] }), false);
+  assert.equal(countTopLevelTimelineRows([status]), 0);
 });
 
 test("original message link-preview none marker suppresses all generated previews", () => {
