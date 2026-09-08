@@ -724,8 +724,9 @@ mod tests {
         ] {
             assert!(migrations[40]
                 .sql
+                .as_str()
                 .contains(&format!("CREATE TABLE {table} (")));
-            assert!(!migrations[0].sql.contains(table));
+            assert!(!migrations[0].sql.as_str().contains(table));
         }
 
         // The git repo-name registry is an additive migration, never folded into
