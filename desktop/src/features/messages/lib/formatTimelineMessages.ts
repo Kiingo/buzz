@@ -37,7 +37,7 @@ import {
   KIND_SYSTEM_MESSAGE,
   KIND_AGENT_STATUS,
 } from "@/shared/constants/kinds";
-import { parseAgentStatus } from "./agentStatus";
+import { coalesceAgentStatuses, parseAgentStatus } from "./agentStatus";
 import { resolveEventAuthorPubkey } from "@/shared/lib/authors";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { channelRoleMap } from "@/shared/lib/rosterDerivations";
@@ -300,8 +300,11 @@ export function formatTimelineMessages(
     }
   }
 
-  const visibleEvents = events.filter(
-    (event) => isTimelineContentEvent(event) && !deletedEventIds.has(event.id),
+  const visibleEvents = coalesceAgentStatuses(
+    events.filter(
+      (event) =>
+        isTimelineContentEvent(event) && !deletedEventIds.has(event.id),
+    ),
   );
   const eventsById = new Map(visibleEvents.map((event) => [event.id, event]));
   const reactionPresence = new Map<

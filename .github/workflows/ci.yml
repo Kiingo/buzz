@@ -699,12 +699,12 @@ jobs:
           VALUES ('00000000-0000-4000-8000-00000000c0de', 'localhost:3000')
           ON CONFLICT (lower(host)) DO NOTHING
           ;"
-      - name: Replaceable persistence PostgreSQL tests
+      - name: Event persistence PostgreSQL tests
         # Transaction, concurrency, and mention-index coverage for the
         # replaceable-event store seam. These tests require real Postgres and
         # are ignored by the infrastructure-free unit-test job.
         run: |
-          filter='package(buzz-db) and test(/tests::(parameterized_|concurrent_parameterized_)/)'
+          filter='package(buzz-db) and (test(/tests::(parameterized_|concurrent_parameterized_)/) or test(/agent_status_tests::/))'
           cargo nextest run \
             --archive-file target/ci/backend-integration-tests.tar.zst \
             -E "${filter}" \

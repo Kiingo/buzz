@@ -4,6 +4,9 @@
 //! nested threads. The `thread_metadata` table is populated when events are
 //! ingested and updated as replies arrive or are deleted.
 
+#[cfg(test)]
+mod agent_status_tests;
+
 use buzz_core::StoredEvent;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
@@ -160,6 +163,21 @@ pub async fn insert_thread_metadata(
     // Only bump reply counts if the row was actually inserted (not a duplicate).
     // ON CONFLICT DO NOTHING on a duplicate key returns rows_affected = 0.
     if result.rows_affected() > 0 {
+        // Status keeps its thread address for reads, but never contributes to
+        // chat counters. This standalone insertion path must match event.rs.
+        let is_status: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM events WHERE community_id = $1 AND id = $2 AND created_at = $3 AND kind = $4)",
+        )
+        .bind(community_id.as_uuid())
+        .bind(event_id)
+        .bind(event_created_at)
+        .bind(buzz_core::kind::KIND_AGENT_STATUS as i32)
+        .fetch_one(&mut *tx)
+        .await?;
+        if is_status {
+            tx.commit().await?;
+            return Ok(());
+        }
         if let Some(pid) = parent_event_id {
             // Ensure the parent has a thread_metadata row so the UPDATE below
             // has something to hit. Root (depth=0) messages don't get a row on
@@ -555,6 +573,7 @@ pub async fn get_thread_summary(
             WHERE tm.community_id = $1
               AND tm.root_event_id = $2
               AND e.deleted_at IS NULL
+              AND e.kind <> 40098
             GROUP BY e.pubkey
         ) sub
         ORDER BY last_seen DESC
@@ -768,6 +787,7 @@ pub(crate) async fn get_channel_window_on(
                 WHERE tm.community_id = $1
                   AND tm.root_event_id = ANY($2)
                   AND e.deleted_at IS NULL
+                  AND e.kind <> 40098
                 GROUP BY tm.root_event_id, e.pubkey
             ) sub
             WHERE rn <= 10

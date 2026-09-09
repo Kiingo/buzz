@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { KIND_AGENT_STATUS } from "@/shared/constants/kinds";
 
 import {
   MESSAGE_GROUPING_WINDOW_SECONDS,
@@ -34,6 +35,13 @@ test("hasSameMessageAuthor: missing pubkeys never match", () => {
   assert.equal(hasSameMessageAuthor(null, { pubkey: "abc" }), false);
   assert.equal(hasSameMessageAuthor({ pubkey: "abc" }, undefined), false);
   assert.equal(hasSameMessageAuthor({ pubkey: "" }, { pubkey: "" }), false);
+});
+
+test("operational status never hides a contribution's author", () => {
+  const status = { pubkey: "abc", kind: KIND_AGENT_STATUS };
+  const reply = { pubkey: "abc", kind: 9 };
+  assert.equal(hasSameMessageAuthor(status, reply), false);
+  assert.equal(hasSameMessageAuthor(reply, status), false);
 });
 
 test("isWithinGroupingWindow: at or under the boundary is in window", () => {

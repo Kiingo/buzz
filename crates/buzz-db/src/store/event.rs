@@ -10,8 +10,8 @@ use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
 use buzz_core::kind::{
-    event_kind_i32, is_ephemeral, is_parameterized_replaceable, KIND_AUTH, KIND_EVENT_REMINDER,
-    KIND_HUDDLE_STARTED, SHARED_GATED_KINDS,
+    event_kind_i32, is_ephemeral, is_parameterized_replaceable, KIND_AGENT_STATUS, KIND_AUTH,
+    KIND_EVENT_REMINDER, KIND_HUDDLE_STARTED, SHARED_GATED_KINDS,
 };
 use buzz_core::{CommunityId, StoredEvent};
 use buzz_datastore_tracing::datastore_span;
@@ -845,16 +845,21 @@ pub async fn soft_delete_event_and_update_thread(
     let mut tx = pool.begin().await?;
 
     let result = sqlx::query(
-        "UPDATE events SET deleted_at = NOW() WHERE community_id = $1 AND id = $2 AND deleted_at IS NULL",
+        "UPDATE events SET deleted_at = NOW() WHERE community_id = $1 AND id = $2 AND deleted_at IS NULL RETURNING kind",
     )
     .bind(community_id.as_uuid())
     .bind(event_id)
-    .execute(&mut *tx)
+    .fetch_all(&mut *tx)
     .await?;
 
-    let deleted = result.rows_affected() > 0;
+    let deleted = !result.is_empty();
+    let kinds = result
+        .iter()
+        .map(|row| row.try_get::<i32, _>("kind"))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let counted_reply = kinds.iter().any(|kind| *kind != KIND_AGENT_STATUS as i32);
 
-    if deleted {
+    if counted_reply {
         if let Some(pid) = parent_event_id {
             sqlx::query(
                 "UPDATE thread_metadata \
@@ -1191,7 +1196,7 @@ pub(crate) async fn insert_event_with_thread_metadata_tx(
             .await?;
 
             // Only bump reply counts if the metadata row was actually inserted.
-            if tm_result.rows_affected() > 0 {
+            if tm_result.rows_affected() > 0 && kind_u32 != KIND_AGENT_STATUS {
                 if let Some(pid) = meta.parent_event_id {
                     // Ensure the parent has a thread_metadata row so the UPDATE
                     // below has something to hit. Root (depth=0) messages don't
