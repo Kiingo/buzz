@@ -2,7 +2,10 @@ import type { TimelineMessage } from "@/features/messages/types";
 import type { ChannelWindowThreadSummary } from "@/features/messages/lib/channelWindowStore";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { isBroadcastReply } from "@/features/messages/lib/threading";
-import { KIND_HUDDLE_STARTED } from "@/shared/constants/kinds";
+import {
+  KIND_AGENT_STATUS,
+  KIND_HUDDLE_STARTED,
+} from "@/shared/constants/kinds";
 
 type ThreadPanelData = {
   threadHead: TimelineMessage | null;
@@ -147,6 +150,9 @@ export function buildDescendantStatsByMessageId(
 
   for (let index = orderedMessages.length - 1; index >= 0; index -= 1) {
     const message = orderedMessages[index].message;
+    // Operational events remain readable in their thread, but are not replies
+    // or participants and must not alter conversational activity summaries.
+    if (message.kind === KIND_AGENT_STATUS) continue;
     const participantKey = message.pubkey ?? message.id;
     const participant: TimelineThreadSummaryParticipant = {
       id: participantKey,
@@ -256,6 +262,7 @@ export function buildThreadSummaryFromVisibleEntries(
   };
 
   for (const entry of entries) {
+    if (entry.message.kind === KIND_AGENT_STATUS) continue;
     replyCount += 1;
     lastReplyAt = Math.max(lastReplyAt ?? 0, entry.message.createdAt);
     addParticipantCandidate(

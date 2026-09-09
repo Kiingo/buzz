@@ -1,4 +1,35 @@
 import { KIND_AGENT_STATUS } from "@/shared/constants/kinds";
+import type { RelayEvent } from "@/shared/api/types";
+
+/** Keep one current operational row per signed actor/receipt/thread. The
+ * original events remain in storage for audit; arrival order is not authority. */
+export function coalesceAgentStatuses(events: RelayEvent[]): RelayEvent[] {
+  const latest = new Map<string, RelayEvent>();
+  const keys = new Map<string, string>();
+  for (const event of events) {
+    const status = parseAgentStatus(event);
+    if (!status) continue;
+    const key = JSON.stringify([
+      event.pubkey.toLowerCase(),
+      event.tags.find((tag) => tag[0] === "h")?.[1],
+      status.rootId,
+      status.receiptId,
+    ]);
+    keys.set(event.id, key);
+    const previous = latest.get(key);
+    if (
+      !previous ||
+      event.created_at > previous.created_at ||
+      (event.created_at === previous.created_at && event.id > previous.id)
+    ) {
+      latest.set(key, event);
+    }
+  }
+  return events.filter((event) => {
+    const key = keys.get(event.id);
+    return key === undefined || latest.get(key)?.id === event.id;
+  });
+}
 
 const STATES = new Set([
   "receipt",

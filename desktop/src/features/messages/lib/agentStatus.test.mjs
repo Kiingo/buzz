@@ -3,12 +3,17 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentStatusRow } from "../ui/AgentStatusRow.tsx";
+import { MessageThreadRow } from "../ui/MessageThreadRow.tsx";
 import { parseAgentStatus } from "./agentStatus.ts";
 import {
   isTimelineContentEvent,
   formatTimelineMessages,
 } from "./formatTimelineMessages.ts";
-import { buildMainTimelineEntries } from "./threadPanel.ts";
+import {
+  buildMainTimelineEntries,
+  buildThreadPanelData,
+  buildThreadSummaryFromVisibleEntries,
+} from "./threadPanel.ts";
 import { buildTimelineItems } from "./timelineItems.ts";
 import {
   CHANNEL_EVENT_KINDS,
@@ -93,5 +98,101 @@ test("the real status row is plain signer-attributed text, with no chat actions"
       }),
     ),
     "",
+  );
+});
+
+test("the canonical thread row routes operational events to the system renderer", () => {
+  const [message] = formatTimelineMessages([event()], null, undefined, null);
+  const row = MessageThreadRow({ message });
+  assert.equal(row.type, AgentStatusRow);
+  const markup = renderToStaticMarkup(row);
+  assert.match(markup, /System status/);
+  assert.match(markup, /Cancelled by the user\./);
+  assert.doesNotMatch(markup, /receipt_id|<button|message-actions/);
+  assert.equal(
+    renderToStaticMarkup(
+      MessageThreadRow({ message: { ...message, parentId: null } }),
+    ),
+    "",
+  );
+});
+
+test("status updates coalesce per signed actor, receipt, and thread in event-time order", () => {
+  const older = event();
+  const latest = event({ id: "d".repeat(64), created_at: 20 });
+  const otherActor = event({ id: "e".repeat(64), pubkey: "f".repeat(64) });
+  const otherReceipt = event({
+    id: "1".repeat(64),
+    content: JSON.stringify({
+      ...JSON.parse(older.content),
+      receipt_id: channel,
+    }),
+  });
+  const otherThread = event({
+    id: "2".repeat(64),
+    tags: [
+      ["h", channel],
+      ["e", "3".repeat(64), "", "reply"],
+      ["d", "other"],
+    ],
+  });
+  const formatted = formatTimelineMessages(
+    [latest, older, otherActor, otherReceipt, otherThread],
+    null,
+    undefined,
+    null,
+  );
+  assert.deepEqual(
+    new Set(formatted.map(({ id }) => id)),
+    new Set([latest.id, otherActor.id, otherReceipt.id, otherThread.id]),
+  );
+});
+
+test("operational rows stay visible in the thread without inflating reply counts or participants", () => {
+  const rootEvent = event({
+    id: root,
+    kind: 9,
+    tags: [["h", channel]],
+    content: "Discuss this.",
+  });
+  const reply = event({
+    id: "d".repeat(64),
+    pubkey: "e".repeat(64),
+    kind: 9,
+    created_at: 11,
+    content: "A contribution.",
+  });
+  const status = event({ created_at: 12 });
+  const messages = formatTimelineMessages(
+    [rootEvent, reply, status],
+    null,
+    undefined,
+    null,
+  );
+  const panel = buildThreadPanelData(messages, root, null, new Set());
+  assert.equal(panel.visibleReplies.length, 2);
+  assert.equal(panel.totalReplyCount, 1);
+  for (const summary of [
+    buildMainTimelineEntries(messages)[0].summary,
+    buildThreadSummaryFromVisibleEntries(root, panel.visibleReplies),
+  ]) {
+    assert.equal(summary.replyCount, 1);
+    assert.equal(summary.lastReplyAt, 11);
+    assert.deepEqual(
+      summary.participants.map(({ id }) => id),
+      [reply.pubkey],
+    );
+  }
+  const statusOnly = formatTimelineMessages(
+    [rootEvent, status],
+    null,
+    undefined,
+    null,
+  );
+  assert.equal(buildMainTimelineEntries(statusOnly)[0].summary, null);
+  assert.equal(
+    buildThreadPanelData(statusOnly, root, null, new Set()).visibleReplies
+      .length,
+    1,
   );
 });

@@ -1,7 +1,9 @@
 import { getSentFromThreadRootId } from "@/features/messages/lib/sentFromThread";
+import { KIND_AGENT_STATUS } from "@/shared/constants/kinds";
 
 type MessageAuthorCandidate = {
   pubkey?: string | null;
+  kind?: number;
 };
 
 type MessageGroupingCandidate = {
@@ -31,6 +33,11 @@ export function hasSameMessageAuthor(
   previous: MessageAuthorCandidate | null | undefined,
   current: MessageAuthorCandidate | null | undefined,
 ) {
+  if (
+    previous?.kind === KIND_AGENT_STATUS ||
+    current?.kind === KIND_AGENT_STATUS
+  )
+    return false;
   const previousPubkey = previous?.pubkey?.trim().toLowerCase();
   const currentPubkey = current?.pubkey?.trim().toLowerCase();
 
