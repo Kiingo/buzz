@@ -690,7 +690,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 41);
+        assert_eq!(migrations.len(), 42);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -716,6 +716,12 @@ mod tests {
             .contains("search_tsv  TSVECTOR GENERATED ALWAYS"));
 
         assert_eq!(migrations[40].version, 41);
+        assert_eq!(migrations[41].version, 42);
+        assert!(migrations[41]
+            .sql
+            .as_str()
+            .contains("UPDATE thread_metadata"));
+        assert!(!migrations[41].sql.as_str().contains("UPDATE events"));
         for table in [
             "managed_runtime_issuers",
             "managed_publication_scopes",
