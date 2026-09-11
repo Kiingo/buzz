@@ -390,6 +390,31 @@ impl EventQueue {
         })
     }
 
+    /// Retain only one trigger for a structured-input adapter. Return all other
+    /// inputs, including interrupted work, to the queue without acknowledging
+    /// them or changing retry state. Called synchronously after claiming a process.
+    pub fn restrict_to_single_event(&mut self, batch: &mut FlushBatch) {
+        let mut inputs = std::mem::take(&mut batch.cancelled_events);
+        inputs.append(&mut batch.events);
+        let mut inputs = inputs.into_iter();
+        batch.events.extend(inputs.next());
+        // These are existing queue-owned inputs, not new arrivals. Do not apply
+        // the admission cap again and silently discard undelivered work.
+        if inputs.len() > 0 {
+            let queue = self.queues.entry(batch.channel_id).or_default();
+            for event in inputs.rev() {
+                queue.push_front(QueuedEvent {
+                    channel_id: batch.channel_id,
+                    event: event.event,
+                    prompt_tag: event.prompt_tag,
+                    received_at: event.received_at,
+                });
+            }
+        }
+        self.in_flight_batch_sizes
+            .insert(batch.channel_id, batch.events.len());
+    }
+
     /// Mark the prompt for `channel_id` as complete.
     ///
     /// Removes the channel from `in_flight_channels` and `in_flight_deadlines`.
@@ -3037,6 +3062,79 @@ mod tests {
         // No [Base] or [Agent Instructions] in user message
         assert!(!prompt.contains("[Base]"));
         assert!(!prompt.contains("[Agent Instructions]"));
+    }
+
+    #[test]
+    fn single_event_prompts_preserve_batch_ids_across_partial_failure() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let inputs: Vec<_> = (0..MAX_BATCH_EVENTS + 2)
+            .map(|index| make_queued_created_at(ch, &format!("input-{index}"), 1_700_000_000))
+            .collect();
+        let expected: Vec<_> = inputs.iter().map(|input| input.event.id).collect();
+        for input in inputs {
+            assert!(q.push(input));
+        }
+        let mut admitted = Vec::new();
+        for (index, expected_id) in expected.iter().enumerate() {
+            let mut batch = q.flush_next().expect("pending input");
+            q.restrict_to_single_event(&mut batch);
+            assert_eq!(batch.events.len(), 1);
+            assert!(batch.cancelled_events.is_empty());
+            assert_eq!(batch.events[0].event.id, *expected_id);
+            assert_eq!(q.in_flight_batch_sizes[&ch], 1);
+            assert_eq!(pending_count(&q), expected.len() - index - 1);
+            assert!(q.flush_next().is_none(), "one owner per channel");
+            if index == 1 {
+                assert!(q.requeue(batch).is_none());
+                q.mark_complete(ch);
+                assert!(q.flush_next().is_none(), "failure observes retry delay");
+                q.retry_after.remove(&ch);
+                batch = q.flush_next().expect("retry same input");
+                q.restrict_to_single_event(&mut batch);
+                assert_eq!(batch.events[0].event.id, *expected_id);
+            }
+            admitted.push(batch.events[0].event.id);
+            q.mark_complete(ch);
+        }
+        assert_eq!(admitted, expected);
+        assert!(q.flush_next().is_none());
+        assert!(
+            !q.queues.contains_key(&ch),
+            "no empty channel queue is retained"
+        );
+    }
+
+    #[test]
+    fn single_event_prompts_recover_interrupted_inputs_without_hidden_ack() {
+        for with_new_input in [false, true] {
+            let mut q = EventQueue::new(DedupMode::Queue);
+            let ch = Uuid::new_v4();
+            q.push(make_queued(ch, "old-1"));
+            q.push(make_queued(ch, "old-2"));
+            let interrupted = q.flush_next().expect("initial batch");
+            let mut expected: Vec<_> = interrupted
+                .events
+                .iter()
+                .map(|input| input.event.id)
+                .collect();
+            q.requeue_as_cancelled(interrupted, CancelReason::Steer);
+            q.mark_complete(ch);
+            if with_new_input {
+                let input = make_queued(ch, "new");
+                expected.push(input.event.id);
+                q.push(input);
+            }
+            let mut admitted = Vec::new();
+            while let Some(mut batch) = q.flush_next() {
+                q.restrict_to_single_event(&mut batch);
+                assert_eq!(batch.events.len(), 1);
+                assert!(batch.cancelled_events.is_empty());
+                admitted.push(batch.events[0].event.id);
+                q.mark_complete(ch);
+            }
+            assert_eq!(admitted, expected);
+        }
     }
 
     #[test]

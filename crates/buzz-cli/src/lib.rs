@@ -513,6 +513,36 @@ pub enum MessagesCmd {
         #[arg(long)]
         depth_limit: Option<u32>,
     },
+    /// Read a bounded page of channel inputs in relay commit order, not authored time
+    Sequence {
+        /// Exact channel UUID
+        #[arg(long)]
+        channel: String,
+        /// Last durably accepted decimal position; 0 starts this transport's history
+        #[arg(long, default_value = "0")]
+        after: String,
+        /// Maximum records for this read, from 1 through 64
+        #[arg(long, default_value_t = 64)]
+        limit: u16,
+    },
+    /// Read original signed thread Stop commands (control evidence, not chat history)
+    Stops {
+        /// Exact channel UUID
+        #[arg(long)]
+        channel: String,
+        /// Exact requester public key (64-character hex)
+        #[arg(long)]
+        author: String,
+        /// Effective thread root event ID; repeat once for a request-root alias
+        #[arg(long = "root", required = true)]
+        roots: Vec<String>,
+        /// Discussion start Unix timestamp (inclusive); not an expiry or timeout
+        #[arg(long)]
+        since: u64,
+        /// Maximum evidence rows in this read, from 1 through 16
+        #[arg(long, default_value_t = 16)]
+        limit: u16,
+    },
     /// Full-text search across messages
     #[command(
         after_help = "Examples:\n  buzz messages search --query checkout\n  buzz messages search --author npub1... --since 1783497600\n  buzz messages search --author Aaron --query checkout --limit 20"
@@ -2380,6 +2410,8 @@ mod tests {
                 "search",
                 "send",
                 "send-diff",
+                "sequence",
+                "stops",
                 "thread",
                 "vote"
             ]
@@ -2515,7 +2547,7 @@ mod tests {
             ("feed", 1),
             ("issues", 6),
             ("media", 1),
-            ("messages", 8),
+            ("messages", 10),
             ("pack", 2),
             ("patches", 4),
             ("pr", 5),

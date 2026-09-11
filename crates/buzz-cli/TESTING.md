@@ -112,6 +112,23 @@ Run each command, verify exit code 0 and check output. Most commands
 return JSON (pipe through `jq .` to validate). Commands are ordered so
 earlier ones create resources that later ones need.
 
+### Commit-ordered channel inputs
+
+`buzz messages sequence --channel <UUID> --after 0 --limit 64` returns a bounded
+JSON array of `{sequence,event}` records. `event` contains the unchanged seven
+signed Nostr fields. Save the exact decimal `sequence` only after durably accepting
+that input; retrying an ambiguous acknowledgement must use the same event ID.
+Use the last accepted sequence as `--after` after reconnect or process replacement.
+The relay orders commits within the exact community/channel, not authored time.
+Current channel access and genuine message deletion still apply. Events predating
+the sequence migration are historical messages, not new input, and are not replayed.
+
+The focused database test uses concurrent real transactions to prove delayed
+commit/rollback ordering, replacement reads and positions beyond machine integers:
+`cargo test -p buzz-db --lib channel_sequence -- --include-ignored --test-threads=1`
+requires a fresh isolated `BUZZ_CHANNEL_SEQUENCE_TEST_DATABASE_URL`. No model,
+production mutation or delivery acknowledgement is performed by the read command.
+
 ### 6.1 Channels
 
 ```bash
@@ -225,6 +242,17 @@ buzz messages thread \
 # messages search
 buzz messages search --query "Hello" | jq .
 buzz messages search --query "CLI test" --limit 5 | jq .
+
+# messages stops (read-only control evidence; use an actual signed Stop fixture)
+buzz messages stops --channel "$CHANNEL_ID" --author "$REQUESTER_PUBKEY" \
+  --root "$EVENT_ID" --since "$DISCUSSION_STARTED_AT" --limit 16 | jq .
+# Expected: only original kind-9 !cancel replies by this exact author whose
+# effective NIP-10 root matches, retaining id/pubkey/created_at/tags/content/sig.
+# Optional --root may be repeated once for the original request-root alias.
+# An empty result does not finish a discussion. This read neither cancels nor
+# acknowledges anything. Control evidence survives chat deletion/retention;
+# ordinary get/thread/search still honor the original deletion/tombstone.
+# The deployed relay must support the user_stop query extension.
 
 # messages edit
 buzz messages edit --event "$EVENT_ID" --content "Edited by CLI test" | jq .

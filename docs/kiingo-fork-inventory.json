@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 91,
-    "modifiedUpstreamFiles": 131,
-    "changedUpstreamProductionSourceLines": 4480,
-    "upstreamProductionSourceDiffHunks": 584,
+    "modifiedUpstreamProductionSourceFiles": 94,
+    "modifiedUpstreamFiles": 135,
+    "changedUpstreamProductionSourceLines": 5005,
+    "upstreamProductionSourceDiffHunks": 624,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -134,10 +134,16 @@
       "hook": "crates/buzz-acp/src/lib.rs",
       "implementations": [
         "crates/buzz-acp/src/local_publication.rs",
-        "crates/buzz-acp/src/local_publication/cancellation.rs"
+        "crates/buzz-acp/src/local_publication/cancellation.rs",
+        "crates/buzz-acp/src/runtime_failure_status.rs"
       ],
       "contract": "Provider-neutral durable publication and explicit-user cancellation recovery, deterministic signed event identity, and thread-scoped non-chat operational status. Non-chat invocation control cannot create or delete a chat message.",
-      "focusedTests": ["cargo test -p buzz-acp local_publication --locked"]
+      "focusedTests": [
+        "cargo test -p buzz-acp local_publication --locked",
+        "cargo test -p buzz-acp runtime_failure_status --locked",
+        "cargo test -p buzz-acp error_outcome_emission_tests --locked",
+        "cargo test -p buzz-acp single_event_prompts --locked"
+      ]
     },
     {
       "hook": "crates/buzz-media/src/storage.rs",
@@ -229,6 +235,36 @@
       "focusedTests": ["crates/buzz-db/src/store/managed_publication/tests.rs"]
     },
     {
+      "hook": "crates/buzz-relay/src/api/bridge.rs",
+      "implementations": [
+        "crates/buzz-relay/src/api/bridge/user_stop.rs",
+        "crates/buzz-db/src/store/user_stop.rs",
+        "migrations/0043_user_stop_events.sql",
+        "crates/buzz-relay/src/api/bridge/channel_event_sequence.rs",
+        "crates/buzz-db/src/store/channel_event_sequence.rs",
+        "migrations/0044_channel_event_sequence.sql"
+      ],
+      "contract": "The authenticated generic Nostr query bridge exposes original signed Stop evidence for an exact community/channel/author/thread scope and a writer-only commit-ordered channel event stream. Atomic event-store triggers retain exact Stop commands independently of chat retention and assign exact decimal channel positions without skipping a later-committing event. Neither read acknowledges input or invents runtime admission, outcome, or scheduling policy.",
+      "focusedTests": [
+        "crates/buzz-relay/src/api/bridge/user_stop.rs",
+        "crates/buzz-db/src/store/user_stop/tests.rs",
+        "crates/buzz-relay/src/api/bridge/channel_event_sequence.rs",
+        "crates/buzz-db/src/store/channel_event_sequence/tests.rs"
+      ]
+    },
+    {
+      "hook": "crates/buzz-cli/src/commands/messages.rs",
+      "implementations": [
+        "crates/buzz-cli/src/commands/user_stop.rs",
+        "crates/buzz-cli/src/commands/channel_event_sequence.rs"
+      ],
+      "contract": "Read-only bounded Stop evidence and commit-ordered channel queries over the existing NIP-98 bridge. Preserve all seven signed fields and exact decimal sequence strings without replaying chat or acknowledging input/cancellation.",
+      "focusedTests": [
+        "crates/buzz-cli/src/commands/user_stop.rs",
+        "crates/buzz-cli/src/commands/channel_event_sequence.rs"
+      ]
+    },
+    {
       "hook": "crates/buzz-admin/src/main.rs",
       "implementations": ["crates/buzz-admin/src/runtime_issuers.rs"],
       "contract": "Operator-only immutable verification-key provisioning within the explicitly configured relay community; events cannot provision their own authority.",
@@ -240,7 +276,7 @@
         "crates/buzz-sdk/src/agent_invocation.rs",
         "crates/buzz-sdk/src/agent_status.rs"
       ],
-      "contract": "Signed recipient-only invocation wakes and thread-only operational observations use dedicated event kinds, never chat send/delete plumbing.",
+      "contract": "Signed recipient-only invocation wakes, including self-addressed recovery wakes whose signer is also the recipient, and thread-only operational observations use dedicated event kinds, never chat send/delete plumbing.",
       "focusedTests": [
         "crates/buzz-sdk/src/agent_invocation.rs",
         "crates/buzz-sdk/src/agent_status.rs"
@@ -263,6 +299,38 @@
     }
   ],
   "deltas": [
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz event-store maintainers",
+      "purpose": "Expose bounded writer-only channel event reads with transactionally assigned commit-ordered decimal positions. Preserve signed content and current channel access; avoid timestamp/identity high-watermark races without encoding external runtime admission or discussion policy. Pre-migration history is not newly submitted input.",
+      "upstreamStatus": "Commit-order recovery prerequisite; not submitted upstream.",
+      "removalCondition": "Remove when block/buzz exposes an equivalent authenticated, commit-ordered channel event stream with exact cursors and unchanged signed events.",
+      "paths": [
+        "crates/buzz-cli/src/commands/channel_event_sequence.rs",
+        "crates/buzz-db/src/store/channel_event_sequence.rs",
+        "crates/buzz-db/src/store/channel_event_sequence/tests.rs",
+        "crates/buzz-relay/src/api/bridge/channel_event_sequence.rs",
+        "migrations/0044_channel_event_sequence.sql"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz conversation lifecycle maintainers",
+      "purpose": "Retain original signed, exactly scoped user Stop commands atomically with accepted events, independent of chat deletion/retention. Expose bounded current-membership-authorized evidence through the existing Nostr query bridge and agent CLI; preserve community destruction ownership and leave cancellation admission to the consuming runtime.",
+      "upstreamStatus": "Offline signed-Stop recovery correction; not submitted upstream.",
+      "removalCondition": "Remove when block/buzz provides equivalent durable signed Stop evidence, exact scoping and atomic retention without chat replay or synthetic cancellation acknowledgements.",
+      "paths": [
+        "crates/buzz-cli/TESTING.md",
+        "crates/buzz-cli/src/commands/messages.rs",
+        "crates/buzz-cli/src/commands/mod.rs",
+        "crates/buzz-cli/src/commands/user_stop.rs",
+        "crates/buzz-db/src/store/user_stop.rs",
+        "crates/buzz-db/src/store/user_stop/tests.rs",
+        "crates/buzz-relay/src/api/bridge.rs",
+        "crates/buzz-relay/src/api/bridge/user_stop.rs",
+        "migrations/0043_user_stop_events.sql"
+      ]
+    },
     {
       "classification": "retain-generic",
       "owner": "Buzz runtime maintainers",
@@ -493,13 +561,14 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz conversation lifecycle maintainers",
-      "purpose": "Recipient-only non-chat invocation controls; immutable thread-scoped operational status on desktop/mobile; operator-provisioned runtime verification keys; and atomic, community-bound publication/explicit-user cancellation fences across every event-store entry point. Durable admission and agent finish/handoff policy stay in the external runtime.",
+      "purpose": "Recipient-only non-chat invocation controls with exact self-recipient tagging and ACP self-event filtering; immutable thread-scoped operational status on desktop/mobile; operator-provisioned runtime verification keys; and atomic, community-bound publication/explicit-user cancellation fences across every event-store entry point. Durable admission and agent finish/handoff policy stay in the external runtime.",
       "upstreamStatus": "Current agent-owned discussion cutover additions; not submitted upstream. Earlier ACP runtime patches retain their separately recorded upstream status.",
       "removalCondition": "Remove each retained patch only when block/buzz provides an equivalent non-chat control, operational status, and exact transactional cancellation/publication authority contract.",
       "paths": [
         "crates/buzz-acp/Cargo.toml",
         "crates/buzz-acp/src/local_publication/cancellation.rs",
         "crates/buzz-acp/src/local_publication/tests.rs",
+        "crates/buzz-acp/src/runtime_failure_status.rs",
         "crates/buzz-admin/src/main.rs",
         "crates/buzz-admin/src/runtime_issuers.rs",
         "crates/buzz-cli/src/commands/agents.rs",

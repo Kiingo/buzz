@@ -10,6 +10,8 @@ pub mod api_token;
 pub mod archived_identities;
 /// Channel lifecycle and metadata persistence.
 pub mod channel;
+/// Commit-ordered, writer-only channel input cursor reads.
+pub mod channel_event_sequence;
 /// Channel membership and roster persistence.
 pub mod channel_members;
 /// Community lifecycle and host-map persistence.
@@ -54,5 +56,7 @@ pub mod thread;
 pub mod usage;
 /// User profile persistence.
 pub mod user;
+/// Durable original signed Stop command reads.
+pub mod user_stop;
 /// Workflow, run, and approval persistence.
 pub mod workflow;

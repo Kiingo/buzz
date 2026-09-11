@@ -21,6 +21,8 @@ BEGIN
         DROP TRIGGER IF EXISTS events_created_at_floor ON events_p_past;
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p_past;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p_past;
+        DROP TRIGGER IF EXISTS retain_user_stop_event ON events_p_past;
+        DROP TRIGGER IF EXISTS trg_assign_channel_event_sequence ON events_p_past;
         ALTER TABLE events ATTACH PARTITION events_p_past
             FOR VALUES FROM (MINVALUE) TO ('2026-01-01');
     END IF;
@@ -35,6 +37,8 @@ BEGIN
         DROP TRIGGER IF EXISTS events_created_at_floor ON events_p2026_01;
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_01;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_01;
+        DROP TRIGGER IF EXISTS retain_user_stop_event ON events_p2026_01;
+        DROP TRIGGER IF EXISTS trg_assign_channel_event_sequence ON events_p2026_01;
         ALTER TABLE events ATTACH PARTITION events_p2026_01
             FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
     END IF;
@@ -49,6 +53,8 @@ BEGIN
         DROP TRIGGER IF EXISTS events_created_at_floor ON events_p2026_02;
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_02;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_02;
+        DROP TRIGGER IF EXISTS retain_user_stop_event ON events_p2026_02;
+        DROP TRIGGER IF EXISTS trg_assign_channel_event_sequence ON events_p2026_02;
         ALTER TABLE events ATTACH PARTITION events_p2026_02
             FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');
     END IF;
@@ -63,6 +69,8 @@ BEGIN
         DROP TRIGGER IF EXISTS events_created_at_floor ON events_p2026_03;
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_03;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_03;
+        DROP TRIGGER IF EXISTS retain_user_stop_event ON events_p2026_03;
+        DROP TRIGGER IF EXISTS trg_assign_channel_event_sequence ON events_p2026_03;
         ALTER TABLE events ATTACH PARTITION events_p2026_03
             FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');
     END IF;
@@ -77,6 +85,8 @@ BEGIN
         DROP TRIGGER IF EXISTS events_created_at_floor ON events_p2026_04;
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_04;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_04;
+        DROP TRIGGER IF EXISTS retain_user_stop_event ON events_p2026_04;
+        DROP TRIGGER IF EXISTS trg_assign_channel_event_sequence ON events_p2026_04;
         ALTER TABLE events ATTACH PARTITION events_p2026_04
             FOR VALUES FROM ('2026-04-01') TO ('2026-05-01');
     END IF;
@@ -91,6 +101,8 @@ BEGIN
         DROP TRIGGER IF EXISTS events_created_at_floor ON events_p2026_05;
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_05;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_05;
+        DROP TRIGGER IF EXISTS retain_user_stop_event ON events_p2026_05;
+        DROP TRIGGER IF EXISTS trg_assign_channel_event_sequence ON events_p2026_05;
         ALTER TABLE events ATTACH PARTITION events_p2026_05
             FOR VALUES FROM ('2026-05-01') TO ('2026-06-01');
     END IF;
@@ -105,6 +117,8 @@ BEGIN
         DROP TRIGGER IF EXISTS events_created_at_floor ON events_p2026_06;
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p2026_06;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p2026_06;
+        DROP TRIGGER IF EXISTS retain_user_stop_event ON events_p2026_06;
+        DROP TRIGGER IF EXISTS trg_assign_channel_event_sequence ON events_p2026_06;
         ALTER TABLE events ATTACH PARTITION events_p2026_06
             FOR VALUES FROM ('2026-06-01') TO ('2026-07-01');
     END IF;
@@ -119,6 +133,8 @@ BEGIN
         DROP TRIGGER IF EXISTS events_created_at_floor ON events_p_future;
         DROP TRIGGER IF EXISTS community_write_fence_events ON events_p_future;
         DROP TRIGGER IF EXISTS trg_events_guard_channel_roster_snapshot ON events_p_future;
+        DROP TRIGGER IF EXISTS retain_user_stop_event ON events_p_future;
+        DROP TRIGGER IF EXISTS trg_assign_channel_event_sequence ON events_p_future;
         ALTER TABLE events ATTACH PARTITION events_p_future
             FOR VALUES FROM ('2026-07-01') TO (MAXVALUE);
     END IF;
@@ -208,6 +224,7 @@ SELECT attach_community_write_fence('managed_runtime_issuers');
 SELECT attach_community_write_fence('managed_publication_scopes');
 SELECT attach_community_write_fence('managed_publication_receipts');
 SELECT attach_community_write_fence('managed_publications');
+SELECT attach_community_write_fence('user_stop_events');
 
 DO $$
 BEGIN
@@ -218,11 +235,11 @@ BEGIN
         JOIN pg_proc p ON p.oid = t.tgfoid
         WHERE n.nspname = current_schema()
           AND c.relname IN ('managed_runtime_issuers', 'managed_publication_scopes',
-                            'managed_publication_receipts', 'managed_publications')
+                            'managed_publication_receipts', 'managed_publications', 'user_stop_events')
           AND t.tgname = 'community_write_fence_' || c.relname
           AND p.proname = 'enforce_community_write_fence'
           AND t.tgenabled = 'O' AND NOT t.tgisinternal AND t.tgtype = 31
-    ) <> 4 THEN
+    ) <> 5 THEN
         RAISE EXCEPTION 'managed publication tables require community write fences';
     END IF;
 END $$;

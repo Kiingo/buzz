@@ -12,6 +12,7 @@ mod prompt_framing;
 mod prompt_project;
 mod queue;
 mod relay;
+mod runtime_failure_status;
 mod setup_mode;
 mod usage;
 
@@ -44,7 +45,7 @@ use pool::{
     PromptResult, PromptSource, SessionState, TimeoutKind,
 };
 use pool_lifecycle::PoolLifecycle;
-use queue::{CancelReason, EventQueue, FlushBatch, QueuedEvent, ThreadTags};
+use queue::{CancelReason, EventQueue, QueuedEvent, ThreadTags};
 use relay::{HarnessRelay, RelayEventPublisher};
 use tokio::sync::{mpsc, watch};
 use tracing_subscriber::EnvFilter;
@@ -2788,7 +2789,7 @@ async fn tokio_main() -> Result<()> {
                                 continue;
                             }
 
-                            if config.ignore_self && buzz_event.event.pubkey.to_hex() == pubkey_hex {
+                            if config.ignore_self && should_ignore_self_event(&buzz_event.event, &pubkey_hex) {
                                 tracing::debug!(channel_id = %buzz_event.channel_id, "dropping self-authored event");
                                 continue;
                             }
@@ -3625,6 +3626,16 @@ fn event_mentions_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
     })
 }
 
+fn should_ignore_self_event(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
+    // A hosted participant may deliver its own opaque recovery capability in a
+    // private channel. Chat still cannot trigger itself; the signed wake keeps
+    // exact recipient routing, normal author gates and runtime token consumption.
+    event.pubkey.to_hex() == agent_pubkey_hex
+        && buzz_sdk::agent_invocation::invocation_route(event).map_or(true, |(_, recipient)| {
+            recipient.to_hex() != agent_pubkey_hex
+        })
+}
+
 fn is_owner_control_command(
     event: &nostr::Event,
     kind_u32: u32,
@@ -3842,16 +3853,11 @@ fn dispatch_pending(
 ) -> Vec<(Uuid, ThreadTags)> {
     let mut dispatched_channels = Vec::new();
     loop {
-        let batch = match queue.flush_next() {
+        let mut batch = match queue.flush_next() {
             Some(b) => b,
             None => break,
         };
         let channel_id = batch.channel_id;
-        let typing_scope = batch
-            .events
-            .last()
-            .map(|event| queue::parse_thread_tags(&event.event))
-            .unwrap_or_default();
         let affinity_hit = pool.has_session_for(channel_id);
         let mut agent = match pool.try_claim(Some(channel_id)) {
             Some(a) => a,
@@ -3863,6 +3869,14 @@ fn dispatch_pending(
                 break;
             }
         };
+        if agent.acp.single_event_prompts() {
+            queue.restrict_to_single_event(&mut batch);
+        }
+        let typing_scope = batch
+            .events
+            .last()
+            .map(|event| queue::parse_thread_tags(&event.event))
+            .unwrap_or_default();
         tracing::debug!(agent = agent.index, channel = %channel_id, affinity_hit, "agent_claimed");
 
         let prompt_author_pubkeys = batch
@@ -3967,29 +3981,6 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
     message.contains("Re-authenticate") || message.contains("API Error: 401")
 }
 
-/// Spawn a task that posts a user-visible failure notice to the relay.
-///
-/// Shared by the hard-cap immediate dead-letter path and the retries-exhausted
-/// dead-letter path so neither duplicates the tokio::spawn block.
-fn spawn_failure_notice(
-    rest_client: Option<&relay::RestClient>,
-    batch: &FlushBatch,
-    content: String,
-) {
-    if let Some(rest) = rest_client {
-        let thread_tags = batch
-            .events
-            .last()
-            .map(|be| queue::parse_thread_tags(&be.event))
-            .unwrap_or_default();
-        let rest = rest.clone();
-        let channel_id = batch.channel_id;
-        tokio::spawn(async move {
-            pool::post_failure_notice(&rest, channel_id, &thread_tags, &content).await;
-        });
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn handle_prompt_result(
     pool: &mut AgentPool,
@@ -4069,6 +4060,17 @@ fn handle_prompt_result(
                 // accounting, same as a clean cancel.
                 let reason = batch.cancel_reason.unwrap_or(CancelReason::Steer);
                 queue.requeue_as_cancelled(batch, reason);
+            } else if batch.events.iter().any(|event| {
+                event.event.kind.as_u16() as u32 == buzz_core::kind::KIND_AGENT_INVOCATION
+            }) {
+                // This is a delivery attempt, not ownership of the discussion.
+                // The receiving runtime validates the capability and decides
+                // whether its durable dispatch is still actionable. Preserve
+                // the exact wake through credential attention and process
+                // deadlines, using the queue's bounded invocation backoff.
+                // Invocation batches are never dead-lettered by requeue().
+                let _ = queue.requeue(batch);
+                hard_timeout_fate_suffix = Some(" — invocation delivery retained for retry");
             } else if matches!(
                 result.outcome,
                 PromptOutcome::Timeout(TimeoutKind::Hard {
@@ -4081,11 +4083,12 @@ fn handle_prompt_result(
                     "dead-lettering batch after hard-cap timeout (no recent activity) — discarding {} events",
                     batch.events.len(),
                 );
-                let content = format!(
-                    "⚠️ I couldn't process the last request (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
-                    config.max_turn_duration_secs
+                runtime_failure_status::spawn(
+                    rest_client,
+                    &batch,
+                    &result.turn_id,
+                    runtime_failure_status::Failure::Timeout,
                 );
-                spawn_failure_notice(rest_client, &batch, content);
                 hard_timeout_fate_suffix = Some(" — dead-lettered (no recent activity)");
             } else if matches!(
                 result.outcome,
@@ -4099,11 +4102,12 @@ fn handle_prompt_result(
                     "hard-cap timeout with recent activity — requeueing for retry"
                 );
                 if let Some(dead) = queue.requeue(batch) {
-                    let content = format!(
-                        "⚠️ I couldn't process the last request after multiple retries (the turn exceeded the maximum duration ({}s)). Please re-send if it's still needed.",
-                        config.max_turn_duration_secs
+                    runtime_failure_status::spawn(
+                        rest_client,
+                        &dead,
+                        &result.turn_id,
+                        runtime_failure_status::Failure::Timeout,
                     );
-                    spawn_failure_notice(rest_client, &dead, content);
                     hard_timeout_fate_suffix = Some(" — dead-lettered (retry budget exhausted)");
                 } else {
                     hard_timeout_fate_suffix = Some(" — requeued for retry (recently active)");
@@ -4118,26 +4122,19 @@ fn handle_prompt_result(
                     events = batch.events.len(),
                     "dead-lettering batch immediately — non-retryable auth error"
                 );
-                let content = "⚠️ I couldn't process the last request: authentication failed. \
-                    Please re-authenticate the CLI (e.g. run `claude /login` or `codex login`) \
-                    and then re-send."
-                    .to_string();
-                spawn_failure_notice(rest_client, &batch, content);
-            } else if let Some(dead) = queue.requeue(batch) {
-                let reason = match &result.outcome {
-                    PromptOutcome::Timeout(TimeoutKind::Idle) => "the turn timed out".to_string(),
-                    PromptOutcome::Timeout(TimeoutKind::Hard { .. }) => {
-                        "the turn exceeded the maximum duration".to_string()
-                    }
-                    PromptOutcome::AgentExited => "the agent process exited".to_string(),
-                    PromptOutcome::Error(e) => format!("{e}"),
-                    PromptOutcome::ProjectContextIndeterminate(reason) => reason.clone(),
-                    _ => "repeated failures".to_string(),
-                };
-                let content = format!(
-                    "⚠️ I couldn't process the last request after multiple retries ({reason}). Please re-send if it's still needed."
+                runtime_failure_status::spawn(
+                    rest_client,
+                    &batch,
+                    &result.turn_id,
+                    runtime_failure_status::Failure::Authentication,
                 );
-                spawn_failure_notice(rest_client, &dead, content);
+            } else if let Some(dead) = queue.requeue(batch) {
+                runtime_failure_status::spawn(
+                    rest_client,
+                    &dead,
+                    &result.turn_id,
+                    runtime_failure_status::Failure::RetryExhausted,
+                );
             }
         } else {
             tracing::debug!(
@@ -5294,6 +5291,42 @@ mod heartbeat_base_prompt_tests {
 mod owner_control_command_tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Tag};
+
+    #[test]
+    fn self_invocation_recovery_does_not_enable_self_chat_or_foreign_recipient_wakes() {
+        let agent = Keys::generate();
+        let channel = uuid::Uuid::new_v4();
+        let own = agent.public_key().to_hex();
+        let wake = buzz_sdk::agent_invocation::build_agent_invocation(
+            channel,
+            agent.public_key(),
+            &"a".repeat(43),
+        )
+        .unwrap()
+        .sign_with_keys(&agent)
+        .unwrap();
+        assert_eq!(
+            buzz_sdk::agent_invocation::invocation_route(&wake).unwrap(),
+            (channel, agent.public_key())
+        );
+        assert!(!should_ignore_self_event(&wake, &own));
+        let other = buzz_sdk::agent_invocation::build_agent_invocation(
+            channel,
+            Keys::generate().public_key(),
+            &"a".repeat(43),
+        )
+        .unwrap()
+        .sign_with_keys(&agent)
+        .unwrap();
+        assert!(should_ignore_self_event(&other, &own));
+        for kind in [9, 24201] {
+            let malformed = EventBuilder::new(Kind::Custom(kind), "ordinary answer")
+                .tags([Tag::public_key(agent.public_key())])
+                .sign_with_keys(&agent)
+                .unwrap();
+            assert!(should_ignore_self_event(&malformed, &own));
+        }
+    }
 
     fn make_event(kind: u32, content: &str, p_hex: Option<&str>) -> nostr::Event {
         let keys = Keys::generate();
@@ -7183,11 +7216,10 @@ mod error_outcome_emission_tests {
     //! Pins the policy that error-class outcomes surface to the activity feed
     //! and never to the channel:
     //!
-    //! - Channel silence is enforced *structurally* — `handle_prompt_result`
-    //!   takes no relay handle, so it has no way to post a channel message. A
-    //!   future re-introduction of channel notices would have to add the relay
-    //!   parameter back, which these tests' construction would then refuse to
-    //!   compile against.
+    //! - Operational notices use the optional relay client through
+    //!   `runtime_failure_status`; its signed-event tests pin non-chat kind,
+    //!   thread scope and sanitized content. These observer tests do not prove
+    //!   relay delivery or native rendering.
     //! - Feed coverage is the regression-prone half and is asserted at runtime:
     //!   each error outcome must emit exactly one `turn_error` observer event.
     //!   If any branch drops its `emit_turn_error` call, the matching test goes
@@ -7557,6 +7589,128 @@ mod error_outcome_emission_tests {
 
         let returned = pool.agents_mut()[0].as_ref().expect("returned agent");
         assert!(!returned.state.deliveries.contains_key(&channel_id));
+    }
+
+    #[tokio::test]
+    async fn invocation_delivery_failures_retain_exact_wake_past_retry_limit() {
+        for removed in [false, true] {
+            for outcome in [
+                PromptOutcome::Timeout(TimeoutKind::Hard {
+                    recently_active: false,
+                }),
+                PromptOutcome::Timeout(TimeoutKind::Hard {
+                    recently_active: true,
+                }),
+                PromptOutcome::Timeout(TimeoutKind::Idle),
+                PromptOutcome::AgentExited,
+                PromptOutcome::Error(acp::AcpError::AgentError {
+                    code: -32000,
+                    message: "API Error: 401 OAuth access token has expired.".into(),
+                }),
+                PromptOutcome::Error(acp::AcpError::WriteTimeout(Duration::from_secs(1))),
+            ] {
+                let hard_timeout =
+                    matches!(outcome, PromptOutcome::Timeout(TimeoutKind::Hard { .. }));
+                let channel = Uuid::new_v4();
+                let config = test_config();
+                let event = buzz_sdk::agent_invocation::build_agent_invocation(
+                    channel,
+                    config.keys.public_key(),
+                    &"a".repeat(43),
+                )
+                .unwrap()
+                .sign_with_keys(&Keys::generate())
+                .unwrap();
+                let expected_id = event.id.to_hex();
+                let batch = FlushBatch {
+                    channel_id: channel,
+                    events: vec![BatchEvent {
+                        event,
+                        prompt_tag: "invocation".into(),
+                        received_at: std::time::Instant::now(),
+                    }],
+                    cancelled_events: vec![],
+                    cancel_reason: None,
+                };
+                let mut queue = EventQueue::new(config::DedupMode::Queue);
+                queue.set_retry_count_for_test(channel, u32::MAX);
+                let mut pool = AgentPool::from_slots(vec![None]);
+                let task_id = pool.join_set.spawn(async {}).id();
+                pool.task_map_mut().insert(
+                    task_id,
+                    crate::pool::TaskMeta {
+                        agent_index: 0,
+                        channel_id: Some(channel),
+                        prompt_author_pubkeys: Vec::new(),
+                        turn_id: "11111111-1111-4111-8111-111111111111".into(),
+                        recoverable_batch: None,
+                        control_tx: None,
+                        steer_tx: None,
+                        successful_steer_deliveries: HashSet::new(),
+                    },
+                );
+                let mut heartbeat = false;
+                let removed_channels = if removed {
+                    HashSet::from([channel])
+                } else {
+                    HashSet::new()
+                };
+                let mut crash_history = vec![SlotCircuit {
+                    crash_times: Vec::new(),
+                    open_until: None,
+                    respawn_in_flight: false,
+                }];
+                let (respawn_tx, _) = mpsc::channel(8);
+                let mut respawn_tasks = tokio::task::JoinSet::new();
+                let observer = ObserverHandle::in_process();
+                handle_prompt_result(
+                    &mut pool,
+                    &mut queue,
+                    &config,
+                    PromptResult {
+                        agent: dummy_agent(0).await,
+                        source: PromptSource::Channel(channel),
+                        turn_id: "11111111-1111-4111-8111-111111111111".into(),
+                        outcome,
+                        batch: Some(batch),
+                    },
+                    &mut heartbeat,
+                    &removed_channels,
+                    &mut crash_history,
+                    &respawn_tx,
+                    &mut respawn_tasks,
+                    Some(observer.clone()),
+                    None,
+                );
+                assert_eq!(queue.queued_event_count(&channel), usize::from(!removed));
+                assert!(!queue.is_channel_in_flight(channel));
+                if removed {
+                    assert!(queue.next_retry_deadline().is_none());
+                } else {
+                    let deadline = queue
+                        .next_retry_deadline()
+                        .expect("bounded retry remains scheduled");
+                    assert!(deadline > std::time::Instant::now());
+                    assert!(deadline <= std::time::Instant::now() + Duration::from_secs(360));
+                    assert!(queue.flush_next().is_none(), "retry must respect backoff");
+                    assert_eq!(queue.drain_channel(channel), vec![expected_id]);
+                }
+                let events = observer.snapshot();
+                let errors: Vec<_> = events
+                    .iter()
+                    .filter(|event| event.kind == "turn_error")
+                    .collect();
+                assert_eq!(errors.len(), 1);
+                if hard_timeout && !removed {
+                    assert!(errors[0].payload["error"]
+                        .as_str()
+                        .unwrap()
+                        .contains("invocation delivery retained for retry"));
+                }
+                respawn_tasks.abort_all();
+                while respawn_tasks.join_next().await.is_some() {}
+            }
+        }
     }
 
     /// Drive one error outcome through `handle_prompt_result` and return how

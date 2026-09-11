@@ -255,13 +255,25 @@ Forum event kinds:
 1. **Startup** — Spawns N agent subprocesses (default 1), sends ACP `initialize` to each, connects to the relay with NIP-42 auth.
 2. **Channel discovery** — Queries the relay REST API for accessible channels, subscribes to each.
 3. **Event loop** — Listens for @mention events (kind 9 with the agent's pubkey in a `#p` tag). Events queue per channel.
-4. **Prompting** — When events are pending and no prompt is in flight for that channel, drains all queued events for the oldest channel into a single batched prompt via ACP `session/prompt`.
+4. **Prompting** — When events are pending and no prompt is in flight for that channel, drains up to 50 queued events for the oldest channel into a batched ACP `session/prompt`. Structured-input adapters can require individually acknowledged triggers as described below.
 5. **Agent response** — The agent processes the prompt and uses the Buzz CLI (`send_message`, `get_messages`, etc.) to interact with Buzz.
 6. **Recovery** — If the agent crashes, the harness respawns it. If the relay disconnects, the harness reconnects with a `since` filter to avoid missing events.
 
 Each channel has at most one prompt in flight. Multiple channels can be processed concurrently when agents > 1.
 
-> **Note:** On startup, the harness replays all unprocessed @mentions since the last run. Expect a burst of activity if there are stale events in the channel.
+An adapter that admits only the structured trigger advertises `_meta.buzz.singleEventPrompts: true` in its ACP `initialize` result. Before dispatch, the harness retains exactly one input in that process's batch and returns every other input, including interrupted inputs, to the queue. Ownership, retry payload and thread scope refer only to the dispatched input. This capability belongs to the initialized process and is negotiated again after replacement; it is not a runtime-name heuristic or a discussion limit. Text-consuming adapters retain normal batching.
+
+The prompt's `_meta.buzz` contract version **3** includes `inputEventCount`, counting both current and interrupted inputs represented by the prompt. A single-trigger consumer must require version 3 and count 1 before acknowledging input. Older metadata named only the last trigger and could not prove that all batched inputs were admitted. Conversation context remains read context, not additional admission authority.
+
+On startup, the harness captures a new watermark before connecting; reconnects use the current process's observed event position. This is not a durable acknowledgement of every earlier input. Integrations that own long-running work must retain their own admission, continuation and delivery records across process replacement.
+
+Recipient-scoped invocation controls (kind 24201) are delivered one at a time. Failed delivery retains the exact wake with bounded exponential backoff, including authentication attention and hard/idle request timeouts; the ordinary message retry limit does not discard it. Channel removal still prevents requeue, and explicit cancellation keeps its existing path. The receiving runtime must validate the capability and current durable dispatch before starting work. This in-process retry policy does not replace durable dispatch ownership across harness restarts or prove that ordinary chat inputs are durably queued.
+
+### Runtime failure status
+
+Native timeout, authentication-attention and exhausted-retry notices are signed kind-40098 system status, not kind-9 agent answers. Each affected thread receives one status for the native prompt attempt; an unthreaded input is the root of its own status thread. Mixed-thread batches are scoped separately. Payloads use fixed operational descriptions, never raw provider errors or request content, and do not request a user to resend completed work.
+
+The status `receipt_id` identifies the native prompt invocation, not an external service's receipt or a discussion decision. Status delivery is best-effort and does not establish durable recovery custody, acknowledge successful work, change queue policy or grant cancellation authority. Ordinary queue exhaustion remains an operational failure; it is not evidence that an externally managed conversation finished. Durable control dispatch, saved output and explicit cancellation need their own authoritative recovery and fencing.
 
 ## Bring Your Own Harness (BYOH)
 

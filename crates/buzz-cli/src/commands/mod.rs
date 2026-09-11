@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod channel_event_sequence;
 pub mod channel_templates;
 pub mod channels;
 pub mod dms;
@@ -18,6 +19,7 @@ pub mod reactions;
 pub mod repos;
 pub mod social;
 pub mod upload;
+pub mod user_stop;
 pub mod users;
 pub mod workflows;
 

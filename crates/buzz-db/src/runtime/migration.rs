@@ -690,7 +690,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 42);
+        assert_eq!(migrations.len(), 44);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1185,6 +1185,37 @@ mod tests {
         assert!(pgschema_reconciliation.contains("pg_class"));
         assert!(pgschema_reconciliation.contains("reloptions"));
 
+        // pgschema materializes parent triggers on detached event tables. Every
+        // copied trigger must be removed before ATTACH PARTITION, when Postgres
+        // recreates the inherited triggers and rejects duplicate names.
+        for partition in [
+            "events_p_past",
+            "events_p2026_01",
+            "events_p2026_02",
+            "events_p2026_03",
+            "events_p2026_04",
+            "events_p2026_05",
+            "events_p2026_06",
+            "events_p_future",
+        ] {
+            for trigger in [
+                "events_enqueue_push_match",
+                "events_refresh_channel_ttl",
+                "events_created_at_floor",
+                "community_write_fence_events",
+                "trg_events_guard_channel_roster_snapshot",
+                "retain_user_stop_event",
+                "trg_assign_channel_event_sequence",
+            ] {
+                assert!(
+                    pgschema_reconciliation.contains(&format!(
+                        "DROP TRIGGER IF EXISTS {trigger} ON {partition};"
+                    )),
+                    "pgschema reconciliation must drop copied {trigger} on {partition} before attach"
+                );
+            }
+        }
+
         assert_eq!(migrations[34].version, 35);
         let relay_operators = migrations[34].sql.as_str();
         assert!(
@@ -1252,6 +1283,23 @@ mod tests {
             operator_audit.contains("_operator_global_tables"),
             "migration 39 must register relay_operator_audit in _operator_global_tables"
         );
+
+        assert_eq!(migrations[42].version, 43);
+        let user_stop_events = migrations[42].sql.as_str();
+        assert!(user_stop_events.contains("CREATE TABLE user_stop_events"));
+        assert!(user_stop_events.contains("CREATE FUNCTION retain_user_stop_event()"));
+        assert!(user_stop_events.contains("CREATE TRIGGER retain_user_stop_event"));
+        assert!(desired_schema.contains("CREATE TABLE user_stop_events"));
+        assert!(desired_schema.contains("CREATE TRIGGER retain_user_stop_event"));
+
+        assert_eq!(migrations[43].version, 44);
+        let channel_event_sequence = migrations[43].sql.as_str();
+        assert!(channel_event_sequence.contains("ALTER TABLE events ADD COLUMN channel_sequence"));
+        assert!(channel_event_sequence.contains("CREATE TABLE channel_event_heads"));
+        assert!(channel_event_sequence.contains("CREATE TRIGGER trg_assign_channel_event_sequence"));
+        assert!(desired_schema.contains("channel_sequence NUMERIC"));
+        assert!(desired_schema.contains("CREATE TABLE channel_event_heads"));
+        assert!(desired_schema.contains("CREATE TRIGGER trg_assign_channel_event_sequence"));
     }
 
     #[test]
@@ -1735,6 +1783,22 @@ mod tests {
                 .sql
                 .as_ref(),
         );
+        let user_stop_events = surface(
+            MIGRATOR
+                .iter()
+                .find(|migration| migration.version == 43)
+                .expect("embedded migration 0043")
+                .sql
+                .as_ref(),
+        );
+        let channel_event_sequence = surface(
+            MIGRATOR
+                .iter()
+                .find(|migration| migration.version == 44)
+                .expect("embedded migration 0044")
+                .sql
+                .as_ref(),
+        );
         let schema = surface(&schema_sql);
         assert_eq!(
             managed_publication.fence_attachments,
@@ -1746,6 +1810,16 @@ mod tests {
             ]),
             "0041 must fence every managed-publication table"
         );
+        assert_eq!(
+            user_stop_events.fence_attachments,
+            BTreeSet::from(["user_stop_events".to_owned()]),
+            "0043 must fence retained user Stop evidence"
+        );
+        assert_eq!(
+            channel_event_sequence.fence_attachments,
+            BTreeSet::from(["channel_event_heads".to_owned()]),
+            "0044 must fence channel event sequence heads"
+        );
 
         assert_eq!(
             migration.tables.len(),
@@ -1756,7 +1830,13 @@ mod tests {
         assert!(!migration.fence_attachments.is_empty());
         assert!(!migration.registry_rows.is_empty());
 
-        for (table, definition) in migration.tables.iter().chain(&managed_publication.tables) {
+        for (table, definition) in migration
+            .tables
+            .iter()
+            .chain(&managed_publication.tables)
+            .chain(&user_stop_events.tables)
+            .chain(&channel_event_sequence.tables)
+        {
             let in_schema = schema
                 .tables
                 .get(table)
@@ -1806,6 +1886,8 @@ mod tests {
         expected_fences.remove("product_feedback");
         expected_fences.remove("rate_limit_violations");
         expected_fences.extend(managed_publication.fence_attachments);
+        expected_fences.extend(user_stop_events.fence_attachments);
+        expected_fences.extend(channel_event_sequence.fence_attachments);
         assert_eq!(
             expected_fences, schema.fence_attachments,
             "write-fence attachment targets differ after recovery policy"
