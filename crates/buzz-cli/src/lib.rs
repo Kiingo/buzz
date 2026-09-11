@@ -2410,6 +2410,8 @@ mod tests {
                 "search",
                 "send",
                 "send-diff",
+                "sequence",
+                "stops",
                 "thread",
                 "vote"
             ]
