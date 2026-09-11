@@ -1031,6 +1031,18 @@ pub async fn dispatch(
             )
             .await
         }
+        MessagesCmd::Sequence {
+            channel,
+            after,
+            limit,
+        } => super::channel_event_sequence::read(client, &channel, &after, limit).await,
+        MessagesCmd::Stops {
+            channel,
+            author,
+            roots,
+            since,
+            limit,
+        } => super::user_stop::read(client, &channel, &author, &roots, since, limit).await,
         MessagesCmd::Search {
             query,
             author,

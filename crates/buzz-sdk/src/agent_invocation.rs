@@ -15,11 +15,15 @@ pub fn build_agent_invocation(
 ) -> Result<EventBuilder, SdkError> {
     validate_token(token)?;
     Ok(
-        EventBuilder::new(Kind::Custom(KIND_AGENT_INVOCATION as u16), token).tags([
-            Tag::parse(["h", &channel_id.to_string()])
-                .map_err(|e| SdkError::InvalidTag(e.to_string()))?,
-            Tag::public_key(recipient),
-        ]),
+        EventBuilder::new(Kind::Custom(KIND_AGENT_INVOCATION as u16), token)
+            // A hosted DM participant may publish its own recipient-only wake;
+            // Nostr builders otherwise strip p-tags matching the signer.
+            .allow_self_tagging()
+            .tags([
+                Tag::parse(["h", &channel_id.to_string()])
+                    .map_err(|e| SdkError::InvalidTag(e.to_string()))?,
+                Tag::public_key(recipient),
+            ]),
     )
 }
 
@@ -108,5 +112,19 @@ mod tests {
                 .unwrap();
             assert!(invocation_route(&event).is_err());
         }
+    }
+
+    #[test]
+    fn self_addressed_wake_preserves_its_exact_recipient_route() {
+        let keys = Keys::generate();
+        let channel = Uuid::new_v4();
+        let event = build_agent_invocation(channel, keys.public_key(), &"c".repeat(43))
+            .unwrap()
+            .sign_with_keys(&keys)
+            .unwrap();
+        assert_eq!(
+            invocation_route(&event).unwrap(),
+            (channel, keys.public_key())
+        );
     }
 }

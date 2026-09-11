@@ -58,6 +58,7 @@ pub const EXPECTED_SCOPED_TABLES: &[&str] = &[
     "api_tokens",
     "archived_identities",
     "audit_log",
+    "channel_event_heads",
     "channel_members",
     "channels",
     "community_bans",
@@ -83,6 +84,7 @@ pub const EXPECTED_SCOPED_TABLES: &[&str] = &[
     "scheduled_workflow_fires",
     "subscriptions",
     "thread_metadata",
+    "user_stop_events",
     "users",
     "workflow_approvals",
     "workflow_runs",
@@ -91,6 +93,8 @@ pub const EXPECTED_SCOPED_TABLES: &[&str] = &[
 
 /// Foreign-key-safe child-before-parent order for the PostgreSQL purge.
 pub const PURGE_SCOPED_TABLES: &[&str] = &[
+    "channel_event_heads",
+    "user_stop_events",
     "managed_publications",
     "managed_publication_receipts",
     "managed_publication_scopes",

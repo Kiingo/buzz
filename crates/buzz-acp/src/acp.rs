@@ -207,6 +207,8 @@ pub struct AcpClient {
     /// a JSON-RPC *success*, not `-32601` — which the main loop would read as
     /// a delivered steer and drop the user's message from the queue.
     steering_supported: bool,
+    /// Structured-input adapters require one trigger per prompt acknowledgement.
+    single_event_prompts: bool,
     /// Per-turn channel for receiving goose-native non-cancelling steer
     /// requests from the main loop. Installed by
     /// [`install_steer_rx`](Self::install_steer_rx) at dispatch and
@@ -574,6 +576,7 @@ impl AcpClient {
             observer_context: ObserverContext::default(),
             active_run_id: None,
             steering_supported: false,
+            single_event_prompts: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
             local_publication_publisher: None,
@@ -674,6 +677,10 @@ impl AcpClient {
         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
         let params = build_initialize_params();
         let result = self.send_request("initialize", params).await?;
+        self.single_event_prompts = result
+            .pointer("/_meta/buzz/singleEventPrompts")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         self.steering_supported = result
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
@@ -938,6 +945,11 @@ impl AcpClient {
     /// for the supervisor's post-initialize log line.
     pub fn steering_supported(&self) -> bool {
         self.steering_supported
+    }
+
+    /// Whether this process requires individually acknowledged input events.
+    pub fn single_event_prompts(&self) -> bool {
+        self.single_event_prompts
     }
 
     /// Consume per-turn usage for NIP-AM publishing. Goose/buzz-agent is an
@@ -4203,6 +4215,23 @@ mod tests {
             .await
             .expect("initialize should succeed");
         client.steering_supported()
+    }
+
+    #[tokio::test]
+    async fn single_event_prompts_capability_is_captured_per_process() {
+        for (metadata, expected) in [
+            ("{}", false),
+            (r#"{"_meta":{"buzz":{"singleEventPrompts":true}}}"#, true),
+            (r#"{"_meta":{"buzz":{"singleEventPrompts":false}}}"#, false),
+            (r#"{"_meta":{"buzz":{"singleEventPrompts":"true"}}}"#, false),
+        ] {
+            let script = format!(
+                "read -r _init; printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{metadata}}}'"
+            );
+            let mut client = spawn_script(&script).await;
+            client.initialize().await.expect("initialize");
+            assert_eq!(client.single_event_prompts(), expected);
+        }
     }
 
     /// Test 1a: an adapter advertising `_meta.steering.supported: true`

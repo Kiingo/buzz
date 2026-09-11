@@ -21,6 +21,9 @@ use crate::state::AppState;
 
 use super::{api_error, internal_error, not_found};
 
+mod channel_event_sequence;
+mod user_stop;
+
 pub(crate) async fn enforce_http_admission(
     state: &AppState,
     tenant: &TenantContext,
@@ -1105,6 +1108,17 @@ async fn query_events_authed(
         &mut accessible_channels,
     )
     .await?;
+
+    if let Some(result) =
+        channel_event_sequence::query(&state.db, tenant, &raw_filters, &accessible_channels).await
+    {
+        return result;
+    }
+    if let Some(result) =
+        user_stop::query(&state.db, tenant, &raw_filters, &accessible_channels).await
+    {
+        return result;
+    }
 
     if filters.iter().any(|f| f.search.is_some()) {
         if has_mixed_search_filters(&filters) {
