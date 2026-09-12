@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 94,
-    "modifiedUpstreamFiles": 135,
+    "modifiedUpstreamFiles": 136,
     "changedUpstreamProductionSourceLines": 5005,
     "upstreamProductionSourceDiffHunks": 624,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -299,6 +299,14 @@
     }
   ],
   "deltas": [
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz integration maintainers",
+      "purpose": "Keep the development and integration object-store dependency on MinIO's public multi-architecture registry after the former Docker Hub image paths stopped serving anonymous pulls.",
+      "upstreamStatus": "Generic dependency-registry correction discovered by hosted integration CI; not submitted upstream.",
+      "removalCondition": "Remove when block/buzz uses an equivalent available MinIO registry or replaces this development dependency.",
+      "paths": ["docker-compose.yml"]
+    },
     {
       "classification": "retain-generic",
       "owner": "Buzz event-store maintainers",

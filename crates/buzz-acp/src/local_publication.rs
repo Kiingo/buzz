@@ -8,7 +8,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -80,6 +80,12 @@ pub(crate) struct LocalPublicationIntent {
 pub(crate) struct LocalPublicationPublisher {
     worker: Arc<LocalPublicationWorker>,
     queue: mpsc::Sender<LocalPublicationIntent>,
+}
+
+static PROCESS_PUBLISHER: OnceLock<Option<LocalPublicationPublisher>> = OnceLock::new();
+
+pub(crate) fn ensure_started(rest: RestClient) {
+    let _ = LocalPublicationPublisher::from_env(rest);
 }
 
 #[derive(Debug)]
@@ -225,6 +231,12 @@ impl LocalPublicationQueueState {
 
 impl LocalPublicationPublisher {
     pub(crate) fn from_env(rest: RestClient) -> Option<Self> {
+        PROCESS_PUBLISHER
+            .get_or_init(|| Self::configured(rest))
+            .clone()
+    }
+
+    fn configured(rest: RestClient) -> Option<Self> {
         if !matches!(
             std::env::var("BUZZ_ACP_LOCAL_PUBLICATION_ENABLED")
                 .ok()
@@ -255,6 +267,20 @@ impl LocalPublicationPublisher {
         let community_id = std::env::var("BUZZ_COMMUNITY_ID")
             .ok()
             .filter(|value| !value.trim().is_empty())?;
+        Some(Self::start(
+            rest,
+            community_id,
+            completion_api_base_url,
+            internal_token,
+        ))
+    }
+
+    fn start(
+        rest: RestClient,
+        community_id: String,
+        completion_api_base_url: String,
+        internal_token: String,
+    ) -> Self {
         let worker = Arc::new(LocalPublicationWorker {
             rest,
             community_id,
@@ -266,7 +292,7 @@ impl LocalPublicationPublisher {
         tokio::spawn(async move {
             queued_worker.run(&mut receiver).await;
         });
-        Some(Self { worker, queue })
+        Self { worker, queue }
     }
 
     pub(crate) fn enqueue(&self, intent: LocalPublicationIntent) {

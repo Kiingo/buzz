@@ -86,6 +86,51 @@ fn intent(agent_public_key: String) -> LocalPublicationIntent {
     }
 }
 
+#[tokio::test]
+async fn idle_publisher_polls_the_durable_outbox_without_a_prompt_or_enqueue() {
+    tokio::time::timeout(Duration::from_secs(7), async {
+        let keys = Keys::generate();
+        let public_key = keys.public_key().to_hex();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let expected_public_key = public_key.clone();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, body) = receive_http(&mut stream).await;
+            assert!(headers.starts_with("POST /api/buzz-bridge/publications/recover HTTP/1.1"));
+            assert!(headers
+                .to_lowercase()
+                .contains("authorization: bearer idle-recovery-test-token"));
+            assert_eq!(
+                body,
+                serde_json::json!({
+                    "community_id": "example-community",
+                    "agent_public_key": expected_public_key,
+                })
+            );
+            respond_http(
+                &mut stream,
+                200,
+                serde_json::json!({"cancellations": [], "publications": []}),
+            )
+            .await;
+        });
+        let publisher = LocalPublicationPublisher::start(
+            RestClient {
+                base_url: base.clone(),
+                ..rest(keys)
+            },
+            "example-community".into(),
+            base,
+            "idle-recovery-test-token".into(),
+        );
+        server.await.unwrap();
+        drop(publisher);
+    })
+    .await
+    .expect("idle durable recovery poll");
+}
+
 #[test]
 fn accepts_intent_only_for_the_local_signer() {
     let keys = Keys::generate();
