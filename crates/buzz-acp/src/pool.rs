@@ -1900,7 +1900,7 @@ pub async fn run_prompt_task(
         turn_id.clone(),
         turn_started_at.clone(),
     ));
-    agent.acp.set_local_publication_publisher(
+    agent.acp.set_local_publisher(
         crate::local_publication::LocalPublicationPublisher::from_env(ctx.rest_client.clone()),
     );
     let triggering_event_ids: Vec<String> = batch

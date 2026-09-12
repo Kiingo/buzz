@@ -589,10 +589,7 @@ impl AcpClient {
     /// Install (or clear) the local publication boundary for this
     /// process. Production enables it explicitly with
     /// `BUZZ_ACP_LOCAL_PUBLICATION_ENABLED=true`.
-    pub(crate) fn set_local_publication_publisher(
-        &mut self,
-        publisher: Option<LocalPublicationPublisher>,
-    ) {
+    pub(crate) fn set_local_publisher(&mut self, publisher: Option<LocalPublicationPublisher>) {
         self.local_publication_publisher = publisher;
     }
 
