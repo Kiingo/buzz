@@ -74,6 +74,30 @@ fn map_huddle_backing_channel_error(error: buzz_db::DbError) -> IngestError {
     }
 }
 
+const MAX_TIMESTAMP_DRIFT_SECS: i128 = 900; // ±15 minutes
+
+/// Enforce ordinary event freshness without expiring durable Stop authority.
+///
+/// A managed cancellation is signed once from the immutable user Stop event
+/// and retried with the same event id until the relay durably accepts it. Its
+/// original timestamp can therefore predate a restart or outage by more than
+/// the ordinary freshness window. Only stale (past) cancellation controls are
+/// exempt: future-dated controls still fail the shared skew bound. The caller
+/// verifies the event signature before this check, and the event-store
+/// transaction still verifies the trusted runtime authorization and exact
+/// cancellation routing before it records the fence.
+fn validate_event_timestamp(kind: u32, event_ts: u64, now: i64) -> Result<(), IngestError> {
+    let drift = i128::from(event_ts) - i128::from(now);
+    let too_far_in_future = drift > MAX_TIMESTAMP_DRIFT_SECS;
+    let too_far_in_past = drift < -MAX_TIMESTAMP_DRIFT_SECS;
+    if too_far_in_future || (too_far_in_past && kind != KIND_AGENT_CANCELLATION) {
+        return Err(IngestError::Rejected(
+            "invalid: event timestamp too far from server time".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn expected_huddle_backing_ttl(ephemeral_ttl_override: Option<i32>) -> i32 {
     ephemeral_ttl_override.unwrap_or(3600)
 }
@@ -2229,14 +2253,8 @@ async fn ingest_event_inner(
     }
     let event = std::sync::Arc::try_unwrap(event).unwrap_or_else(|arc| (*arc).clone());
 
-    const MAX_TIMESTAMP_DRIFT_SECS: i64 = 900; // ±15 minutes
     let now = chrono::Utc::now().timestamp();
-    let event_ts = event.created_at.as_secs() as i64;
-    if (event_ts - now).abs() > MAX_TIMESTAMP_DRIFT_SECS {
-        return Err(IngestError::Rejected(
-            "invalid: event timestamp too far from server time".into(),
-        ));
-    }
+    validate_event_timestamp(kind_u32, event.created_at.as_secs(), now)?;
 
     const MAX_EVENT_CONTENT_BYTES: usize = 256 * 1024; // 256 KB
     if event.content.len() > MAX_EVENT_CONTENT_BYTES {
@@ -3319,7 +3337,54 @@ mod tests {
         KIND_MANAGED_AGENT, KIND_PERSONA, KIND_PRESENCE_UPDATE, KIND_STREAM_MESSAGE,
         KIND_STREAM_MESSAGE_DIFF, KIND_TEAM, KIND_USER_STATUS,
     };
-    use nostr::{EventBuilder, Kind};
+    use nostr::{EventBuilder, Kind, Timestamp};
+
+    #[test]
+    fn stale_managed_cancellation_replay_is_accepted_without_weakening_other_freshness() {
+        let now = 1_900_000_000;
+        let stale = (now - 86_400) as u64;
+
+        assert!(validate_event_timestamp(KIND_AGENT_CANCELLATION, stale, now).is_ok());
+        assert!(matches!(
+            validate_event_timestamp(KIND_STREAM_MESSAGE, stale, now),
+            Err(IngestError::Rejected(message))
+                if message == "invalid: event timestamp too far from server time"
+        ));
+        assert!(matches!(
+            validate_event_timestamp(KIND_AGENT_CANCELLATION, (now + 901) as u64, now),
+            Err(IngestError::Rejected(message))
+                if message == "invalid: event timestamp too far from server time"
+        ));
+    }
+
+    #[test]
+    fn stale_cancellation_exemption_does_not_accept_a_forged_event() {
+        let now = 1_900_000_000;
+        let keys = nostr::Keys::generate();
+        let event = EventBuilder::new(Kind::Custom(KIND_AGENT_CANCELLATION as u16), "authority")
+            .custom_created_at(Timestamp::from_secs((now - 86_400) as u64))
+            .sign_with_keys(&keys)
+            .expect("sign cancellation");
+
+        assert!(verify_event(&event).is_ok());
+        assert!(
+            validate_event_timestamp(KIND_AGENT_CANCELLATION, event.created_at.as_secs(), now)
+                .is_ok()
+        );
+
+        let mut forged = event;
+        forged.content = "forged authority".into();
+        assert!(verify_event(&forged).is_err());
+        // Freshness is deliberately not an authentication decision: relay
+        // ingest verifies the Nostr signature before this exemption, and the
+        // database separately verifies the trusted runtime authorization.
+        assert!(validate_event_timestamp(
+            KIND_AGENT_CANCELLATION,
+            forged.created_at.as_secs(),
+            now
+        )
+        .is_ok());
+    }
 
     #[test]
     fn missing_huddle_backing_channel_is_a_client_rejection() {
