@@ -74,7 +74,7 @@ fn map_huddle_backing_channel_error(error: buzz_db::DbError) -> IngestError {
     }
 }
 
-const MAX_TIMESTAMP_DRIFT_SECS: i128 = 900; // ±15 minutes
+const MAX_TIMESTAMP_DRIFT_SECS: i64 = 900; // ±15 minutes
 
 /// Enforce ordinary event freshness without expiring durable Stop authority.
 ///
@@ -88,8 +88,8 @@ const MAX_TIMESTAMP_DRIFT_SECS: i128 = 900; // ±15 minutes
 /// cancellation routing before it records the fence.
 fn validate_event_timestamp(kind: u32, event_ts: u64, now: i64) -> Result<(), IngestError> {
     let drift = i128::from(event_ts) - i128::from(now);
-    let too_far_in_future = drift > MAX_TIMESTAMP_DRIFT_SECS;
-    let too_far_in_past = drift < -MAX_TIMESTAMP_DRIFT_SECS;
+    let too_far_in_future = drift > i128::from(MAX_TIMESTAMP_DRIFT_SECS);
+    let too_far_in_past = drift < -i128::from(MAX_TIMESTAMP_DRIFT_SECS);
     if too_far_in_future || (too_far_in_past && kind != KIND_AGENT_CANCELLATION) {
         return Err(IngestError::Rejected(
             "invalid: event timestamp too far from server time".into(),
