@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 94,
-    "modifiedUpstreamFiles": 136,
-    "changedUpstreamProductionSourceLines": 5084,
-    "upstreamProductionSourceDiffHunks": 628,
+    "modifiedUpstreamProductionSourceFiles": 95,
+    "modifiedUpstreamFiles": 139,
+    "changedUpstreamProductionSourceLines": 5937,
+    "upstreamProductionSourceDiffHunks": 704,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -518,6 +518,7 @@
       "removalCondition": "Remove only if Kiingo stops distributing a Buzz composition.",
       "paths": [
         ".github/workflows/ci.yml",
+        "docs/implementation-plans/buzz-durable-conversation-reliability.md",
         "docs/kiingo-fork-inventory.json",
         "docs/kiingo-fork-last-mile-conflict-isolation-plan-2026-08-11.md",
         "docs/kiingo-fork-maintenance.md",
@@ -610,6 +611,9 @@
         "desktop/src-tauri/src/commands/messages/event_batch.rs",
         "desktop/src/features/messages/lib/agentStatus.test.mjs",
         "desktop/src/features/messages/lib/agentStatus.ts",
+        "desktop/src/features/messages/lib/channelWindowResponse.test.mjs",
+        "desktop/src/features/messages/lib/channelWindowResponse.ts",
+        "desktop/src/features/messages/lib/channelWindowStore.test.mjs",
         "desktop/src/features/messages/lib/formatTimelineMessages.ts",
         "desktop/src/features/messages/lib/formatTimelineMessages.test.mjs",
         "desktop/src/features/messages/lib/messageGrouping.ts",
