@@ -204,6 +204,20 @@ test("live aux stays separate from authoritative page closure", () => {
   assert.equal(mergeLiveChannelWindowEvent(withAux, aux, false), withAux);
 });
 
+test("live agent status is retained as root-window aux without becoming a row", () => {
+  const store = replaceNewestChannelWindow(
+    emptyChannelWindowStore(),
+    page(null, [event("root", 100)], { hasMore: false }),
+  );
+  const status = event("status", 110, 40098);
+  const withStatus = mergeLiveChannelWindowEvent(store, status, false);
+
+  assert.deepEqual(withStatus.pages, store.pages);
+  assert.deepEqual(withStatus.liveOverlay, []);
+  assert.deepEqual(withStatus.liveAux, [status]);
+  assert.equal(flattenChannelWindowEvents(withStatus).at(-1).id, status.id);
+});
+
 test("authoritative refresh reconciles duplicate live rows", () => {
   const initial = replaceNewestChannelWindow(
     emptyChannelWindowStore(),

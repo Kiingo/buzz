@@ -69,12 +69,13 @@ import {
   type ChannelWindowStore,
 } from "@/features/messages/lib/channelWindowStore";
 import {
+  isChannelWindowAuxEventKind,
   parseChannelWindowResponse,
   parseLiveThreadSummary,
 } from "@/features/messages/lib/channelWindowResponse";
 import {
-  CHANNEL_AUX_EVENT_KINDS,
   CHANNEL_TIMELINE_CONTENT_KINDS,
+  KIND_AGENT_STATUS,
   KIND_CHANNEL_THREAD_SUMMARY,
   KIND_STREAM_MESSAGE,
   KIND_SYSTEM_MESSAGE,
@@ -89,7 +90,6 @@ type MessageQueryContext = {
 };
 
 const CHANNEL_TIMELINE_KINDS = new Set<number>(CHANNEL_TIMELINE_CONTENT_KINDS);
-const CHANNEL_AUX_KINDS = new Set<number>(CHANNEL_AUX_EVENT_KINDS);
 
 export function resolveCachedReplyRootId(
   parentEventId: string,
@@ -339,10 +339,12 @@ export function useChannelSubscription(channel: Channel | null) {
       if (next !== current) queryClient.setQueryData(windowKey, next);
       return;
     }
-    const isTimelineRow = CHANNEL_TIMELINE_KINDS.has(event.kind);
-    const threadReference = isTimelineRow
-      ? getThreadReference(event.tags)
-      : null;
+    const isAgentStatus = event.kind === KIND_AGENT_STATUS;
+    const isChannelWindowAux = isChannelWindowAuxEventKind(event.kind);
+    const isTimelineRow =
+      CHANNEL_TIMELINE_KINDS.has(event.kind) && !isChannelWindowAux;
+    const threadReference =
+      isTimelineRow || isAgentStatus ? getThreadReference(event.tags) : null;
     if (threadReference?.parentId != null) {
       const rootId = threadReference?.rootId;
       if (rootId) {
@@ -351,10 +353,10 @@ export function useChannelSubscription(channel: Channel | null) {
           (current = []) => mergeMessages(current, event),
         );
       }
-      if (!isBroadcastReply(event.tags)) return;
+      if (!isAgentStatus && !isBroadcastReply(event.tags)) return;
     }
-    if (!isTimelineRow && !CHANNEL_AUX_KINDS.has(event.kind)) return;
-    if (!isTimelineRow) {
+    if (!isTimelineRow && !isChannelWindowAux) return;
+    if (!isTimelineRow && !isAgentStatus) {
       queryClient.setQueriesData<RelayEvent[]>(
         { queryKey: ["thread-replies", channelId] },
         (current = []) => mergeMessages(current, event),

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AgentStatusRow } from "../ui/AgentStatusRow.tsx";
+import { AgentStatusRow, AgentStatusRows } from "../ui/AgentStatusRow.tsx";
 import { MessageThreadRow } from "../ui/MessageThreadRow.tsx";
 import { parseAgentStatus } from "./agentStatus.ts";
 import {
@@ -44,6 +44,32 @@ function event(overrides = {}) {
     }),
     ...overrides,
   };
+}
+
+function withStatusState(state, text = state, overrides = {}) {
+  return event({
+    content: JSON.stringify({
+      version: 1,
+      receipt_id: receipt,
+      state,
+      text,
+    }),
+    ...overrides,
+  });
+}
+
+function reply(overrides = {}) {
+  return event({
+    id: "d".repeat(64),
+    kind: 9,
+    created_at: 20,
+    tags: [
+      ["h", channel],
+      ["e", root, "", "reply"],
+    ],
+    content: "Finished.",
+    ...overrides,
+  });
 }
 
 test("operational status is durable readable system content, not an unread chat message", () => {
@@ -189,10 +215,89 @@ test("operational rows stay visible in the thread without inflating reply counts
     undefined,
     null,
   );
-  assert.equal(buildMainTimelineEntries(statusOnly)[0].summary, null);
+  const [statusOnlyEntry] = buildMainTimelineEntries(statusOnly);
+  assert.equal(statusOnlyEntry.summary, null);
+  assert.deepEqual(
+    statusOnlyEntry.operationalStatuses.map(({ id }) => id),
+    [status.id],
+  );
+  const anchoredMarkup = renderToStaticMarkup(
+    createElement(AgentStatusRows, {
+      messages: statusOnlyEntry.operationalStatuses,
+    }),
+  );
+  assert.match(anchoredMarkup, /agent-operational-status/);
   assert.equal(
     buildThreadPanelData(statusOnly, root, null, new Set()).visibleReplies
       .length,
     1,
   );
+});
+
+test("a durable same-signer final reply hides nonterminal root status only", () => {
+  const rootEvent = event({
+    id: root,
+    kind: 9,
+    tags: [["h", channel]],
+    content: "Discuss this.",
+  });
+  const progress = withStatusState("progress", "Working.", {
+    created_at: 15,
+  });
+  const finalReply = reply({ pubkey: progress.pubkey, created_at: 15 });
+
+  const completed = formatTimelineMessages(
+    [rootEvent, progress, finalReply],
+    null,
+    undefined,
+    null,
+  );
+  assert.equal(
+    buildMainTimelineEntries(completed)[0].operationalStatuses,
+    undefined,
+  );
+
+  for (const retainedStatus of [
+    withStatusState("error", "Needs attention.", { created_at: 15 }),
+    withStatusState("cancelled", "Cancelled.", { created_at: 15 }),
+  ]) {
+    const messages = formatTimelineMessages(
+      [rootEvent, retainedStatus, finalReply],
+      null,
+      undefined,
+      null,
+    );
+    assert.deepEqual(
+      buildMainTimelineEntries(messages)[0].operationalStatuses.map(
+        ({ id }) => id,
+      ),
+      [retainedStatus.id],
+    );
+  }
+
+  for (const nonFinalEvidence of [
+    reply({ pubkey: "f".repeat(64), created_at: 30 }),
+    reply({ pubkey: progress.pubkey, created_at: 14 }),
+    reply({
+      pubkey: progress.pubkey,
+      created_at: 30,
+      tags: [
+        ["h", channel],
+        ["e", "e".repeat(64), "", "reply"],
+      ],
+    }),
+  ]) {
+    const messages = formatTimelineMessages(
+      [rootEvent, progress, nonFinalEvidence],
+      null,
+      undefined,
+      null,
+    );
+    assert.deepEqual(
+      buildMainTimelineEntries(messages)[0].operationalStatuses.map(
+        ({ id }) => id,
+      ),
+      [progress.id],
+    );
+  }
 });

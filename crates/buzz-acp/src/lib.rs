@@ -2763,20 +2763,19 @@ async fn tokio_main() -> Result<()> {
                                     // their sessions stripped when they return to the pool.
                                     removed_channels.insert(ch);
                                     typing_channels.remove(&ch);
-                                    // Best-effort: clean up 👀 on drained events.
+                                    // Best-effort: clear every authoritative indicator on
+                                    // drained events.
                                     // Note: the relay revokes membership before
                                     // emitting the notification, so this DELETE may
                                     // 403 on non-open channels. Stale 👀 in that
                                     // case is a known limitation — fix belongs in
                                     // the relay (clean up bot reactions on removal).
                                     if !drained_ids.is_empty() {
-                                        let rc = ctx.rest_client.clone();
-                                        let ids = drained_ids.clone();
-                                        tokio::spawn(async move {
-                                            for eid in &ids {
-                                                pool::reaction_remove(&rc, eid, "👀").await;
-                                            }
-                                        });
+                                        pool::spawn_reconcile_reactions(
+                                            ctx.rest_client.clone(),
+                                            drained_ids.clone(),
+                                            pool::ReactionState::Clear,
+                                        );
                                     }
                                     if !drained_ids.is_empty() || invalidated > 0 {
                                         tracing::info!(
@@ -2998,15 +2997,14 @@ async fn tokio_main() -> Result<()> {
                             });
                             // 👀 — immediate "seen" reaction, only if the event
                             // was actually queued (not dropped by DedupMode::Drop).
-                            // Fire-and-forget: on rare fast-failure paths the
-                            // guard's cleanup may race with this add, leaving a
-                            // cosmetic stale 👀. Acceptable — see ReactionGuard docs.
+                            // Generation sequencing prevents this asynchronous
+                            // request from overwriting a later running/result state.
                             if accepted && !is_invocation {
-                                let rc = ctx.rest_client.clone();
-                                let eid = event_id_hex.clone();
-                                tokio::spawn(async move {
-                                    pool::reaction_add(&rc, &eid, "👀").await;
-                                });
+                                pool::spawn_reconcile_reactions(
+                                    ctx.rest_client.clone(),
+                                    vec![event_id_hex.clone()],
+                                    pool::ReactionState::Queued,
+                                );
                             }
                             // Event is already queued. If mode requires it AND
                             // the channel has an in-flight task, fire cancel —
