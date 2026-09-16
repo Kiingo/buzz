@@ -94,6 +94,7 @@ struct LocalPublicationWorker {
     community_id: String,
     completion_api_base_url: String,
     internal_token: String,
+    reconcile_reactions: bool,
 }
 
 #[derive(Debug, Default)]
@@ -286,6 +287,7 @@ impl LocalPublicationPublisher {
             community_id,
             completion_api_base_url,
             internal_token,
+            reconcile_reactions: true,
         });
         let (queue, mut receiver) = mpsc::channel(PUBLICATION_QUEUE_CAPACITY);
         let queued_worker = Arc::clone(&worker);
@@ -641,6 +643,16 @@ impl LocalPublicationWorker {
                 .map_err(|_| "publication relay submission timed out".to_string())?
                 .map_err(|error| format!("publication relay submission failed: {error}"))?;
         }
+        if self.reconcile_reactions {
+            if let Some(state) = reaction_state_for_publication_kind(&intent.publication_kind) {
+                crate::pool::reconcile_reactions(
+                    &self.rest,
+                    std::slice::from_ref(&intent.reply_to_event_id),
+                    state,
+                )
+                .await;
+            }
+        }
         self.complete_fence(intent, &event_id).await?;
         tracing::info!(
             target: "buzz::local_publication",
@@ -760,6 +772,19 @@ fn publication_event_kind(intent: &LocalPublicationIntent) -> u16 {
         9
     } else {
         buzz_sdk::kind::KIND_AGENT_STATUS as u16
+    }
+}
+
+fn reaction_state_for_publication_kind(
+    publication_kind: &str,
+) -> Option<crate::pool::ReactionState> {
+    match publication_kind {
+        "receipt" | "capacity" => Some(crate::pool::ReactionState::Queued),
+        "progress" => Some(crate::pool::ReactionState::Running),
+        "error" => Some(crate::pool::ReactionState::TerminalError),
+        "final" | "cancelled" => Some(crate::pool::ReactionState::Clear),
+        "action" => None,
+        _ => None,
     }
 }
 

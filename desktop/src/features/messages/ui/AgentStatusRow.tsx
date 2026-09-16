@@ -25,3 +25,13 @@ export function AgentStatusRow({ message }: { message: TimelineMessage }) {
     </div>
   );
 }
+
+export function AgentStatusRows({
+  messages = [],
+}: {
+  messages?: readonly TimelineMessage[];
+}) {
+  return messages.map((message) => (
+    <AgentStatusRow key={message.renderKey ?? message.id} message={message} />
+  ));
+}

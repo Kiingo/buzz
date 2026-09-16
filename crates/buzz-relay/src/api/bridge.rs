@@ -391,8 +391,21 @@ fn extract_page_offset(raw: &Value, limit: Option<i64>) -> Option<i64> {
 const BRIDGE_WINDOW_DEFAULT_LIMIT: u32 = 50;
 const BRIDGE_WINDOW_MAX_LIMIT: u32 = 200;
 
-/// Aux closure kinds: reactions, deletions (NIP-09 + NIP-29), edits.
-const WINDOW_AUX_KINDS: [u32; 4] = [
+/// Aux closure kinds: reactions, deletions (NIP-09 + NIP-29), edits, and
+/// thread-confined operational status. Status is auxiliary to the root row so
+/// a closed thread can show current agent state without becoming a reply or
+/// consuming the visible-row budget.
+const WINDOW_AUX_KINDS: [u32; 5] = [
+    buzz_core::kind::KIND_DELETION,
+    buzz_core::kind::KIND_REACTION,
+    buzz_core::kind::KIND_NIP29_DELETE_EVENT,
+    buzz_core::kind::KIND_STREAM_MESSAGE_EDIT,
+    buzz_core::kind::KIND_AGENT_STATUS,
+];
+/// The thread reply query already returns status rows through thread metadata;
+/// its aux closure therefore needs only structural overlays, avoiding a second
+/// copy of each status in the flat bridge response.
+const THREAD_AUX_KINDS: [u32; 4] = [
     buzz_core::kind::KIND_DELETION,
     buzz_core::kind::KIND_REACTION,
     buzz_core::kind::KIND_NIP29_DELETE_EVENT,
@@ -479,6 +492,90 @@ async fn query_all_pages(
         "aux closure hop exceeded page cap; returning truncated closure"
     );
     Ok(events)
+}
+
+fn final_reply_supersedes_status(
+    status_event: &nostr::Event,
+    final_replies: &[buzz_core::StoredEvent],
+) -> bool {
+    use buzz_core::agent_status::AgentStatusState;
+
+    let Ok((status, _, root_id)) = buzz_core::agent_status::validate_event(status_event) else {
+        return false;
+    };
+    if !matches!(
+        status.state,
+        AgentStatusState::Receipt | AgentStatusState::Progress | AgentStatusState::Capacity
+    ) {
+        return false;
+    }
+    let root_id = root_id.to_hex();
+    final_replies.iter().any(|candidate| {
+        candidate.event.pubkey == status_event.pubkey
+            && candidate.event.created_at >= status_event.created_at
+            && buzz_core::nip10::parse_thread_markers(&candidate.event.tags)
+                .resolve()
+                .is_some_and(|(candidate_root, _)| candidate_root == root_id)
+    })
+}
+
+/// Find nonterminal statuses that durable chat evidence has already closed.
+/// The final replies are read from the same repeatable-read session as the
+/// window and aux closure, so a stale progress row cannot reappear on reload
+/// after the matching agent reply is visible in durable storage.
+async fn superseded_channel_window_status_ids(
+    community: buzz_core::CommunityId,
+    channel_id: uuid::Uuid,
+    aux_events: &[buzz_core::StoredEvent],
+    reader: &mut AuxReader<'_>,
+) -> buzz_db::Result<std::collections::HashSet<nostr::EventId>> {
+    let statuses: Vec<_> = aux_events
+        .iter()
+        .filter(|stored| {
+            u32::from(stored.event.kind.as_u16()) == buzz_core::kind::KIND_AGENT_STATUS
+        })
+        .filter(|stored| {
+            buzz_core::agent_status::validate_event(&stored.event).is_ok_and(|(status, _, _)| {
+                matches!(
+                    status.state,
+                    buzz_core::agent_status::AgentStatusState::Receipt
+                        | buzz_core::agent_status::AgentStatusState::Progress
+                        | buzz_core::agent_status::AgentStatusState::Capacity
+                )
+            })
+        })
+        .collect();
+    if statuses.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+
+    let mut roots = std::collections::HashSet::new();
+    let mut authors = std::collections::HashSet::new();
+    let mut earliest = statuses[0].event.created_at;
+    for stored in &statuses {
+        if let Ok((_, _, root_id)) = buzz_core::agent_status::validate_event(&stored.event) {
+            roots.insert(root_id.to_hex());
+        }
+        authors.insert(stored.event.pubkey.to_bytes().to_vec());
+        earliest = earliest.min(stored.event.created_at);
+    }
+
+    let mut final_query = buzz_db::EventQuery::for_community(community);
+    final_query.channel_id = Some(channel_id);
+    final_query.kinds = Some(vec![
+        buzz_core::kind::KIND_STREAM_MESSAGE as i32,
+        buzz_core::kind::KIND_STREAM_MESSAGE_V2 as i32,
+    ]);
+    final_query.authors = Some(authors.into_iter().collect());
+    final_query.e_tags = Some(roots.into_iter().collect());
+    final_query.since = chrono::DateTime::from_timestamp(earliest.as_secs() as i64, 0);
+    let final_replies = query_all_pages(final_query, AUX_PAGE_LIMIT, reader).await?;
+
+    Ok(statuses
+        .into_iter()
+        .filter(|stored| final_reply_supersedes_status(&stored.event, &final_replies))
+        .map(|stored| stored.event.id)
+        .collect())
 }
 
 /// Serve one `top_level: true` channel-window filter on the bridge `/query`
@@ -571,8 +668,8 @@ async fn handle_channel_window_filter(
         events.push(v);
     }
 
-    // 2. Aux closure: reactions/deletions/edits targeting retained rows, plus
-    //    deletions targeting those aux events (the transitive second hop).
+    // 2. Aux closure: reactions/deletions/edits/status targeting retained rows,
+    //    plus deletions targeting those aux events (the transitive second hop).
     //    One round trip for the client instead of an #e fan-out. Runs in the
     //    SAME request transaction that served the window: when the page came
     //    from a proved replica session, the heartbeat observation anchored a
@@ -583,16 +680,28 @@ async fn handle_channel_window_filter(
         let mut seen_aux: std::collections::HashSet<nostr::EventId> =
             std::collections::HashSet::new();
         let mut hop_ids = row_ids_hex.clone();
-        for hop_kinds in [&WINDOW_AUX_KINDS[..], &WINDOW_AUX_DELETE_KINDS[..]] {
+        let mut reader = AuxReader::Session(&mut session);
+        for (hop_index, hop_kinds) in [&WINDOW_AUX_KINDS[..], &WINDOW_AUX_DELETE_KINDS[..]]
+            .into_iter()
+            .enumerate()
+        {
             let aux_query =
                 build_aux_query(tenant.community(), std::mem::take(&mut hop_ids), hop_kinds);
-            let aux_events = query_all_pages(
-                aux_query,
-                AUX_PAGE_LIMIT,
-                &mut AuxReader::Session(&mut session),
-            )
-            .await
-            .map_err(|e| internal_error(&format!("window aux error: {e}")))?;
+            let aux_events = query_all_pages(aux_query, AUX_PAGE_LIMIT, &mut reader)
+                .await
+                .map_err(|e| internal_error(&format!("window aux error: {e}")))?;
+            let superseded_status_ids = if hop_index == 0 {
+                superseded_channel_window_status_ids(
+                    tenant.community(),
+                    ch_id,
+                    &aux_events,
+                    &mut reader,
+                )
+                .await
+                .map_err(|e| internal_error(&format!("window status evidence error: {e}")))?
+            } else {
+                std::collections::HashSet::new()
+            };
             for se in aux_events {
                 if !seen_aux.insert(se.event.id) {
                     continue;
@@ -600,6 +709,9 @@ async fn handle_channel_window_filter(
                 // Deletions can be stored channel-less; access-check instead
                 // of channel-constraining so they aren't silently dropped.
                 if !event_in_accessible_channel(&se, accessible_channels) {
+                    continue;
+                }
+                if superseded_status_ids.contains(&se.event.id) {
                     continue;
                 }
                 hop_ids.push(se.event.id.to_hex());
@@ -1327,7 +1439,7 @@ async fn query_events_authed(
         if extension_flag(raw, "include_aux") && !thread_row_ids.is_empty() {
             let mut seen_aux = std::collections::HashSet::new();
             let mut hop_ids = thread_row_ids;
-            for hop_kinds in [&WINDOW_AUX_KINDS[..], &WINDOW_AUX_DELETE_KINDS[..]] {
+            for hop_kinds in [&THREAD_AUX_KINDS[..], &WINDOW_AUX_DELETE_KINDS[..]] {
                 let aux_query =
                     build_aux_query(tenant.community(), std::mem::take(&mut hop_ids), hop_kinds);
                 let aux_events = query_all_pages(
@@ -2579,16 +2691,89 @@ mod tests {
     fn thread_aux_query_targets_root_and_replies() {
         let tenant = fresh_tenant("relay.example");
         let targets = vec!["root".to_string(), "reply".to_string()];
-        let query = build_aux_query(tenant.community(), targets.clone(), &WINDOW_AUX_KINDS);
+        let query = build_aux_query(tenant.community(), targets.clone(), &THREAD_AUX_KINDS);
 
         assert_eq!(query.e_tags, Some(targets));
         assert_eq!(
             query.kinds,
-            Some(WINDOW_AUX_KINDS.iter().map(|kind| *kind as i32).collect())
+            Some(THREAD_AUX_KINDS.iter().map(|kind| *kind as i32).collect())
         );
         assert_eq!(query.limit, None);
         assert_eq!(query.until, None);
         assert_eq!(query.before_id, None);
+        assert!(!THREAD_AUX_KINDS.contains(&buzz_core::kind::KIND_AGENT_STATUS));
+        assert!(WINDOW_AUX_KINDS.contains(&buzz_core::kind::KIND_AGENT_STATUS));
+    }
+
+    fn status_event(keys: &Keys, root_id: &str, state: &str, created_at: u64) -> nostr::Event {
+        let channel = "11111111-1111-4111-8111-111111111111";
+        EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_AGENT_STATUS as u16),
+            serde_json::json!({
+                "version": 1,
+                "receipt_id": "22222222-2222-4222-8222-222222222222",
+                "state": state,
+                "text": "Working on it.",
+            })
+            .to_string(),
+        )
+        .tags(vec![
+            Tag::parse(["h", channel]).unwrap(),
+            Tag::parse(["e", root_id, "", "reply"]).unwrap(),
+            Tag::parse(["d", "status-fence"]).unwrap(),
+        ])
+        .custom_created_at(nostr::Timestamp::from(created_at))
+        .sign_with_keys(keys)
+        .unwrap()
+    }
+
+    fn final_reply(keys: &Keys, root_id: &str, created_at: u64) -> buzz_core::StoredEvent {
+        let event = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_STREAM_MESSAGE as u16),
+            "Finished.",
+        )
+        .tags(vec![
+            Tag::parse(["h", "11111111-1111-4111-8111-111111111111"]).unwrap(),
+            Tag::parse(["e", root_id, "", "reply"]).unwrap(),
+        ])
+        .custom_created_at(nostr::Timestamp::from(created_at))
+        .sign_with_keys(keys)
+        .unwrap();
+        buzz_core::StoredEvent::new(event, None)
+    }
+
+    #[test]
+    fn durable_same_agent_final_reply_suppresses_only_nonterminal_status() {
+        let agent = Keys::generate();
+        let other_agent = Keys::generate();
+        let root_id = "a".repeat(64);
+        let other_root_id = "b".repeat(64);
+        let final_at_same_second = final_reply(&agent, &root_id, 20);
+
+        assert!(final_reply_supersedes_status(
+            &status_event(&agent, &root_id, "progress", 20),
+            std::slice::from_ref(&final_at_same_second),
+        ));
+        assert!(!final_reply_supersedes_status(
+            &status_event(&agent, &root_id, "error", 20),
+            std::slice::from_ref(&final_at_same_second),
+        ));
+        assert!(!final_reply_supersedes_status(
+            &status_event(&agent, &root_id, "cancelled", 20),
+            std::slice::from_ref(&final_at_same_second),
+        ));
+        assert!(!final_reply_supersedes_status(
+            &status_event(&agent, &root_id, "capacity", 21),
+            std::slice::from_ref(&final_at_same_second),
+        ));
+        assert!(!final_reply_supersedes_status(
+            &status_event(&other_agent, &root_id, "receipt", 19),
+            std::slice::from_ref(&final_at_same_second),
+        ));
+        assert!(!final_reply_supersedes_status(
+            &status_event(&agent, &other_root_id, "progress", 19),
+            &[final_at_same_second],
+        ));
     }
 
     fn aux_event(keys: &Keys, created_at: u64, content: &str) -> buzz_core::StoredEvent {

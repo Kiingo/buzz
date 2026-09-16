@@ -10,7 +10,7 @@ import { cn } from "@/shared/lib/cn";
 import { MessageRow } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { SystemMessageRow } from "./SystemMessageRow";
-import { AgentStatusRow } from "./AgentStatusRow";
+import { AgentStatusRow, AgentStatusRows } from "./AgentStatusRow";
 import { KIND_AGENT_STATUS } from "@/shared/constants/kinds";
 
 type ToggleReaction = (
@@ -128,7 +128,7 @@ export function MessageRowItem({
   unfollowThreadById,
   videoReviewContext,
 }: MessageRowItemProps) {
-  const { message, summary } = entry;
+  const { message, operationalStatuses, summary } = entry;
   const canManage = canManageMessageForCurrentUser(
     message,
     currentPubkey,
@@ -182,6 +182,7 @@ export function MessageRowItem({
           showDepthGuides={false}
           videoReviewContext={videoReviewContext}
         />
+        <AgentStatusRows messages={operationalStatuses} />
         <MessageThreadSummaryRow
           depth={message.depth}
           message={message}
@@ -228,6 +229,7 @@ export function MessageRowItem({
         showDepthGuides={false}
         videoReviewContext={videoReviewContext}
       />
+      <AgentStatusRows messages={operationalStatuses} />
       {footer}
     </div>
   );

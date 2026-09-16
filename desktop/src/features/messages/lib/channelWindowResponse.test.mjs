@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  isChannelWindowAuxEventKind,
   parseChannelWindowResponse,
   parseLiveThreadSummary,
 } from "./channelWindowResponse.ts";
@@ -58,6 +59,36 @@ test("partitions flat rows, summaries, aux, and authoritative bounds", () => {
   );
   assert.deepEqual(page.nextCursor, { createdAt: 100, eventId: root.id });
   assert.equal(page.hasMore, true);
+});
+
+test("partitions agent status as root-window aux rather than a cursor row", () => {
+  const root = event("a", 9, 100);
+  const status = event("status", 40098, 110, "{}", [
+    ["e", root.id, "", "reply"],
+    ["d", "status-fence"],
+  ]);
+  const bounds = event(
+    "b",
+    39006,
+    120,
+    JSON.stringify({ has_more: false, next_cursor: null }),
+    [["d", "channel:head"]],
+  );
+
+  const page = parseChannelWindowResponse(
+    [root, status, bounds],
+    "channel",
+    null,
+  );
+  assert.deepEqual(
+    page.rows.map((row) => row.event.id),
+    [root.id],
+  );
+  assert.deepEqual(
+    page.aux.map((item) => item.id),
+    [status.id],
+  );
+  assert.equal(isChannelWindowAuxEventKind(40098), true);
 });
 
 test("metadata timestamps never influence row cursor math", () => {

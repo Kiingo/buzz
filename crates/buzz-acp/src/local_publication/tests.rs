@@ -178,6 +178,7 @@ fn recovered_output_is_bounded_and_bound_to_this_signer_and_community() {
         community_id: saved.community_id.clone(),
         completion_api_base_url: "http://127.0.0.1".into(),
         internal_token: "test-token".into(),
+        reconcile_reactions: false,
     };
     let decoded = worker
         .parse_recovered_publications(serde_json::json!({"publications": [saved]}))
@@ -225,6 +226,37 @@ fn operational_status_is_never_chat_or_deletion() {
         publication_event_kind(&intent(keys.public_key().to_hex())),
         9
     );
+}
+
+#[test]
+fn publication_kind_reasserts_the_authoritative_reaction_state() {
+    use crate::pool::ReactionState;
+
+    assert_eq!(
+        reaction_state_for_publication_kind("receipt"),
+        Some(ReactionState::Queued)
+    );
+    assert_eq!(
+        reaction_state_for_publication_kind("capacity"),
+        Some(ReactionState::Queued)
+    );
+    assert_eq!(
+        reaction_state_for_publication_kind("progress"),
+        Some(ReactionState::Running)
+    );
+    assert_eq!(
+        reaction_state_for_publication_kind("error"),
+        Some(ReactionState::TerminalError)
+    );
+    assert_eq!(
+        reaction_state_for_publication_kind("final"),
+        Some(ReactionState::Clear)
+    );
+    assert_eq!(
+        reaction_state_for_publication_kind("cancelled"),
+        Some(ReactionState::Clear)
+    );
+    assert_eq!(reaction_state_for_publication_kind("action"), None);
 }
 
 #[test]
@@ -392,6 +424,7 @@ async fn deferred_delivery_never_submits_or_completes_an_event() {
             community_id: saved.community_id.clone(),
             completion_api_base_url: base,
             internal_token: "test-token".into(),
+            reconcile_reactions: false,
         };
         let fence = saved.fence_id.clone();
         let server = tokio::spawn(async move {
@@ -516,6 +549,7 @@ async fn explicit_stop_control_recovers_exactly_without_chat_lookup_or_deletion(
             community_id: saved.community_id.clone(),
             completion_api_base_url: base,
             internal_token: "stop-recovery-token".into(),
+            reconcile_reactions: false,
         };
         let server = tokio::spawn(async move {
             let cancellation = &batch["cancellations"][0];
@@ -634,6 +668,7 @@ async fn control_batch_rejects_foreign_identity_and_ordinary_publication_authori
         community_id: saved.community_id.clone(),
         completion_api_base_url: base,
         internal_token: "control-validation-token".into(),
+        reconcile_reactions: false,
     };
     for field in [
         "community_id",
@@ -680,6 +715,7 @@ async fn missing_or_substituted_runtime_authority_never_reaches_relay_or_complet
             community_id: saved.community_id.clone(),
             completion_api_base_url: base,
             internal_token: "authority-rejection-test".into(),
+            reconcile_reactions: false,
         };
         let server = tokio::spawn(async move {
             for variant in [
@@ -790,6 +826,7 @@ async fn cancellation_observation_preempts_a_stalled_answer_but_cannot_cancel_it
                 community_id: answer.community_id.clone(),
                 completion_api_base_url: base,
                 internal_token: "preemption-test-token".into(),
+                reconcile_reactions: false,
             });
             let (sender, mut receiver) = mpsc::channel(4);
             let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -886,6 +923,7 @@ async fn continuous_live_delivery_does_not_reset_durable_recovery_deadline() {
             community_id: progress.community_id.clone(),
             completion_api_base_url: base,
             internal_token: "fairness-test-token".into(),
+            reconcile_reactions: false,
         });
         let (sender, mut receiver) = mpsc::channel(4);
         let (recovered_tx, mut recovered_rx) = tokio::sync::oneshot::channel();
@@ -968,6 +1006,7 @@ async fn http_reconciliation_acknowledges_only_the_exact_verified_event() {
                 community_id: saved.community_id.clone(),
                 completion_api_base_url: base,
                 internal_token: "reconciliation-test-token".into(),
+                reconcile_reactions: false,
             };
             let server_saved = saved.clone();
             let server = tokio::spawn(async move {
@@ -1115,6 +1154,7 @@ async fn http_recovery_preserves_event_identity_after_publisher_and_acknowledgem
             community_id: saved.community_id.clone(),
             completion_api_base_url: base.clone(),
             internal_token: "local-recovery-test-token".into(),
+            reconcile_reactions: false,
         };
         let response_saved = saved.clone();
         let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();

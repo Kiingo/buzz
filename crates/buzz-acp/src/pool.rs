@@ -21,7 +21,8 @@
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -1852,7 +1853,9 @@ fn send_prompt_result(
     source: PromptSource,
     outcome: PromptOutcome,
     batch: Option<FlushBatch>,
+    reaction_guard: &mut ReactionGuard,
 ) {
+    reaction_guard.finish(reaction_state_for_prompt_exit(&outcome, batch.is_some()));
     agent.acp.clear_steer_rx();
     let _ = result_tx.send(PromptResult {
         agent,
@@ -1972,7 +1975,7 @@ pub async fn run_prompt_task(
                 .collect()
         })
         .unwrap_or_default();
-    let _reaction_guard = ReactionGuard::new(ctx.rest_client.clone(), reaction_ids.clone());
+    let mut reaction_guard = ReactionGuard::new(ctx.rest_client.clone(), reaction_ids.clone());
 
     // Resolve project authority exactly once, before any ACP session creation or
     // initial-message delivery. An indeterminate result is a local relay-state
@@ -1994,6 +1997,7 @@ pub async fn run_prompt_task(
                     source,
                     PromptOutcome::ProjectContextIndeterminate(error.0),
                     requeue_batch_if_queue(&ctx, batch),
+                    &mut reaction_guard,
                 );
                 return;
             }
@@ -2175,6 +2179,7 @@ pub async fn run_prompt_task(
                             source,
                             PromptOutcome::AgentExited,
                             requeue_batch_if_queue(&ctx, batch),
+                            &mut reaction_guard,
                         );
                         return;
                     }
@@ -2188,6 +2193,7 @@ pub async fn run_prompt_task(
                             source,
                             PromptOutcome::Error(e),
                             requeue_batch_if_queue(&ctx, batch),
+                            &mut reaction_guard,
                         );
                         return;
                     }
@@ -2232,6 +2238,7 @@ pub async fn run_prompt_task(
                             source,
                             PromptOutcome::AgentExited,
                             None,
+                            &mut reaction_guard,
                         );
                         return;
                     }
@@ -2243,6 +2250,7 @@ pub async fn run_prompt_task(
                             source,
                             PromptOutcome::Error(e),
                             None,
+                            &mut reaction_guard,
                         );
                         return;
                     }
@@ -2352,6 +2360,7 @@ pub async fn run_prompt_task(
                         source,
                         PromptOutcome::AgentExited,
                         requeue_batch_if_queue(&ctx, batch),
+                        &mut reaction_guard,
                     );
                     return;
                 }
@@ -2388,6 +2397,7 @@ pub async fn run_prompt_task(
                                 source,
                                 PromptOutcome::AgentExited,
                                 requeue_batch_if_queue(&ctx, batch),
+                                &mut reaction_guard,
                             );
                             return;
                         }
@@ -2406,6 +2416,7 @@ pub async fn run_prompt_task(
                         source,
                         PromptOutcome::Timeout(TimeoutKind::Idle),
                         requeue_batch_if_queue(&ctx, batch),
+                        &mut reaction_guard,
                     );
                     return;
                 }
@@ -2424,6 +2435,7 @@ pub async fn run_prompt_task(
                         source,
                         PromptOutcome::Timeout(TimeoutKind::Hard { recently_active }),
                         requeue_batch_if_queue(&ctx, batch),
+                        &mut reaction_guard,
                     );
                     return;
                 }
@@ -2440,6 +2452,7 @@ pub async fn run_prompt_task(
                         source,
                         PromptOutcome::Error(e),
                         requeue_batch_if_queue(&ctx, batch),
+                        &mut reaction_guard,
                     );
                     return;
                 }
@@ -2635,6 +2648,7 @@ pub async fn run_prompt_task(
             source,
             PromptOutcome::Error(AcpError::Protocol("no batch and no prompt_text".into())),
             None,
+            &mut reaction_guard,
         );
         return;
     };
@@ -2779,6 +2793,7 @@ pub async fn run_prompt_task(
                                     source,
                                     PromptOutcome::Cancelled,
                                     retry_batch,
+                                    &mut reaction_guard,
                                 );
                                 return;
                             }
@@ -2815,6 +2830,7 @@ pub async fn run_prompt_task(
                                     source,
                                     failure.outcome,
                                     failure.retry_batch,
+                                    &mut reaction_guard,
                                 );
                                 return;
                             }
@@ -2880,6 +2896,7 @@ pub async fn run_prompt_task(
                             source,
                             PromptOutcome::Ok(StopReason::EndTurn),
                             None, // turn succeeded — batch was processed, no requeue
+                            &mut reaction_guard,
                         );
                         return;
                     }
@@ -2955,6 +2972,7 @@ pub async fn run_prompt_task(
                 source,
                 PromptOutcome::Ok(stop_reason),
                 None,
+                &mut reaction_guard,
             );
         }
         Err(AcpError::AgentExited) => {
@@ -2977,6 +2995,7 @@ pub async fn run_prompt_task(
                 source,
                 PromptOutcome::AgentExited,
                 requeue_batch_if_queue(&ctx, batch),
+                &mut reaction_guard,
             );
         }
         Err(AcpError::IdleTimeout(_)) => {
@@ -3011,6 +3030,7 @@ pub async fn run_prompt_task(
                         source,
                         PromptOutcome::Timeout(TimeoutKind::Idle),
                         requeue_batch_if_queue(&ctx, batch),
+                        &mut reaction_guard,
                     );
                 }
                 Err(AcpError::AgentExited) => {
@@ -3037,6 +3057,7 @@ pub async fn run_prompt_task(
                         source,
                         PromptOutcome::AgentExited,
                         requeue_batch_if_queue(&ctx, batch),
+                        &mut reaction_guard,
                     );
                 }
                 Err(e) => {
@@ -3062,6 +3083,7 @@ pub async fn run_prompt_task(
                         source,
                         PromptOutcome::Timeout(TimeoutKind::Idle),
                         requeue_batch_if_queue(&ctx, batch),
+                        &mut reaction_guard,
                     );
                 }
             }
@@ -3091,6 +3113,7 @@ pub async fn run_prompt_task(
                 source,
                 PromptOutcome::Timeout(TimeoutKind::Hard { recently_active }),
                 requeue_batch_if_queue(&ctx, batch),
+                &mut reaction_guard,
             );
         }
         Err(e) => {
@@ -3118,10 +3141,10 @@ pub async fn run_prompt_task(
                 source,
                 PromptOutcome::Error(e),
                 requeue_batch_if_queue(&ctx, batch),
+                &mut reaction_guard,
             );
         }
     }
-    // _reaction_guard drops here → spawns clear_reactions for all exit paths.
 }
 
 /// Retry wrapper for context fetches: one retry with `CONTEXT_FETCH_RETRY_DELAY`
@@ -4413,35 +4436,32 @@ fn record_channel_delivery_success(
     );
 }
 
-//
-// Two-phase lifecycle visible to users:
-//   👀  "seen"    — event was queued and an agent will handle it
-//   💬  "working" — agent is actively prompting
-//
-// 💬 is awaited inline in `run_prompt_task` before the prompt fires, so
-// add-before-remove ordering is structural. 👀 is fire-and-forget from
-// `main.rs` at queue-push time for immediate responsiveness; on rare
-// fast-failure paths the guard's cleanup may race with the 👀 add,
-// leaving a cosmetic stale 👀 (see `ReactionGuard` docs).
-//
-// Cleanup is fire-and-forget via `ReactionGuard` (spawned on drop).
-// Failures are debug-logged and ignored — reactions are cosmetic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReactionState {
+    Queued,
+    Running,
+    TerminalError,
+    Clear,
+}
 
-/// Drop guard that spawns reaction cleanup on any exit path.
-///
-/// Created at the top of `run_prompt_task`. On drop — normal return, early
-/// return, or panic — spawns fire-and-forget removal of both 👀 and 💬.
-///
-/// ## Ordering
-///
-/// 💬 (`react_working`) is fire-and-forget (spawned before the prompt fires).
-/// A brief race where 💬 appears slightly after the agent starts is acceptable.
-///
-/// 👀 (`react_seen`) is fire-and-forget from `main.rs` at queue-push time.
-/// On rare fast-failure paths (e.g., `session_new` error on an idle agent),
-/// the cleanup spawn may race with the 👀 add, leaving a stale 👀. This is
-/// accepted as a cosmetic edge case — the message will be retried and the
-/// stale 👀 is harmless.
+fn reaction_state_for_prompt_exit(outcome: &PromptOutcome, has_retry_batch: bool) -> ReactionState {
+    if has_retry_batch {
+        return ReactionState::Queued;
+    }
+    match outcome {
+        PromptOutcome::Ok(_) | PromptOutcome::Cancelled => ReactionState::Clear,
+        PromptOutcome::Error(_)
+        | PromptOutcome::ProjectContextIndeterminate(_)
+        | PromptOutcome::AgentExited
+        | PromptOutcome::Timeout(_)
+        | PromptOutcome::CancelDrainTimeout(_) => ReactionState::TerminalError,
+    }
+}
+
+/// Panic-safe reaction ownership for one prompt. Ordinary exits disarm this
+/// guard with their explicit queued/success/error state. An unwind never runs
+/// that handoff, so `Drop` reasserts terminal error instead of applying a
+/// generic cleanup that erases the only visible failure evidence.
 struct ReactionGuard {
     rest: Option<crate::relay::RestClient>,
     ids: Vec<String>,
@@ -4454,23 +4474,26 @@ impl ReactionGuard {
             ids,
         }
     }
+
+    #[cfg(test)]
+    fn empty() -> Self {
+        Self {
+            rest: None,
+            ids: Vec::new(),
+        }
+    }
+
+    fn finish(&mut self, state: ReactionState) {
+        if let Some(rest) = self.rest.take() {
+            let ids = std::mem::take(&mut self.ids);
+            spawn_reconcile_reactions(rest, ids, state);
+        }
+    }
 }
 
 impl Drop for ReactionGuard {
     fn drop(&mut self) {
-        // Guard against drop outside a tokio runtime (e.g., in unit tests or
-        // during process teardown before the runtime is fully initialized).
-        // `run_prompt_task` is always spawned via `JoinSet::spawn`, so a
-        // runtime handle is normally available; `try_current` is the safe
-        // fallback for the rare cases it isn't.
-        if let Some(rest) = self.rest.take() {
-            let ids = std::mem::take(&mut self.ids);
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                handle.spawn(clear_reactions(rest, ids));
-            }
-            // If no runtime is available, reactions are left as-is — they are
-            // cosmetic indicators and the stale state is harmless.
-        }
+        self.finish(ReactionState::TerminalError);
     }
 }
 
@@ -4807,6 +4830,8 @@ async fn publish_agent_turn_metric(
 
 const REACTION_SEEN: &str = "👀";
 const REACTION_WORKING: &str = "💬";
+const REACTION_WARNING: &str = "⚠️";
+const AUTHORITATIVE_REACTIONS: [&str; 3] = [REACTION_SEEN, REACTION_WORKING, REACTION_WARNING];
 
 /// Best-effort timeout for a single reaction REST call.
 const REACTION_TIMEOUT: Duration = Duration::from_millis(500);
@@ -4877,7 +4902,8 @@ pub(crate) async fn reaction_remove(rest: &crate::relay::RestClient, event_id: &
     let filter = nostr::Filter::new()
         .kind(nostr::Kind::Reaction)
         .author(my_pubkey)
-        .custom_tags(e_tag, [event_id]);
+        .custom_tags(e_tag, [event_id])
+        .limit(32);
 
     let resp = match tokio::time::timeout(Duration::from_millis(1_000), rest.query(&[filter])).await
     {
@@ -4892,55 +4918,50 @@ pub(crate) async fn reaction_remove(rest: &crate::relay::RestClient, event_id: &
         }
     };
 
-    // Find our reaction event with matching emoji content.
-    let reid = resp.as_array().and_then(|events| {
-        events.iter().find_map(|ev| {
-            let content = ev.get("content")?.as_str()?;
-            if content != emoji {
-                return None;
+    // Remove every matching reaction. State reassertion can run repeatedly
+    // after ambiguous publication ACKs; deleting only the first match leaves
+    // older duplicates behind and makes terminal cleanup non-idempotent.
+    let reaction_ids: Vec<_> = resp
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|event| event.get("content").and_then(serde_json::Value::as_str) == Some(emoji))
+        .filter_map(|event| event.get("id").and_then(serde_json::Value::as_str))
+        .take(32)
+        .collect();
+    if reaction_ids.is_empty() {
+        tracing::debug!(event_id, emoji, "reaction remove: no reaction event found");
+        return;
+    }
+
+    for reaction_id in reaction_ids {
+        let target_id = match nostr::EventId::from_hex(reaction_id) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::debug!(event_id, emoji, "reaction remove: invalid reaction ID: {e}");
+                continue;
             }
-            ev.get("id")?.as_str().map(|s| s.to_string())
-        })
-    });
-
-    let reid = match reid {
-        Some(id) => id,
-        None => {
-            tracing::debug!(event_id, emoji, "reaction remove: no reaction event found");
-            return;
+        };
+        let builder = match buzz_sdk::build_remove_reaction(target_id) {
+            Ok(builder) => builder,
+            Err(e) => {
+                tracing::warn!(event_id, emoji, "reaction remove: build failed: {e}");
+                continue;
+            }
+        };
+        let deletion = match builder.sign_with_keys(&rest.keys) {
+            Ok(event) => event,
+            Err(e) => {
+                tracing::warn!(event_id, emoji, "reaction remove: sign failed: {e}");
+                continue;
+            }
+        };
+        match tokio::time::timeout(Duration::from_millis(1_000), rest.submit_event(&deletion)).await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => tracing::debug!(event_id, emoji, "reaction remove failed: {e}"),
+            Err(_) => tracing::debug!(event_id, emoji, "reaction remove timed out"),
         }
-    };
-
-    // Step 2: build and submit a signed kind:5 deletion for the reaction event.
-    let target_id = match nostr::EventId::from_hex(&reid) {
-        Ok(id) => id,
-        Err(e) => {
-            tracing::debug!(
-                event_id,
-                emoji,
-                "reaction remove: invalid reaction event ID: {e}"
-            );
-            return;
-        }
-    };
-    let builder = match buzz_sdk::build_remove_reaction(target_id) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!(event_id, emoji, "reaction remove: build failed: {e}");
-            return;
-        }
-    };
-    let event = match builder.sign_with_keys(&rest.keys) {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::warn!(event_id, emoji, "reaction remove: sign failed: {e}");
-            return;
-        }
-    };
-    match tokio::time::timeout(Duration::from_millis(1_000), rest.submit_event(&event)).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => tracing::debug!(event_id, emoji, "reaction remove failed: {e}"),
-        Err(_) => tracing::debug!(event_id, emoji, "reaction remove timed out"),
     }
 }
 
@@ -4948,34 +4969,141 @@ pub(crate) async fn reaction_remove(rest: &crate::relay::RestClient, event_id: &
 /// Prevents unbounded parallelism when a large batch of events arrives.
 const REACTION_CONCURRENCY: usize = 10;
 
-/// Add 💬 to all events, capped at `REACTION_CONCURRENCY` concurrent requests.
-/// Awaited inline before the prompt fires.
-async fn react_working(rest: &crate::relay::RestClient, event_ids: &[String]) {
-    for chunk in event_ids.chunks(REACTION_CONCURRENCY) {
-        futures_util::future::join_all(
-            chunk
-                .iter()
-                .map(|eid| reaction_add(rest, eid, REACTION_WORKING)),
-        )
+#[derive(Debug)]
+struct ReactionCoordinator {
+    gate: tokio::sync::Mutex<()>,
+    latest_generation: AtomicU64,
+}
+
+#[derive(Debug)]
+struct PreparedReactionReconciliation {
+    event_id: String,
+    coordinator: Arc<ReactionCoordinator>,
+    generation: u64,
+}
+
+static REACTION_COORDINATORS: OnceLock<Mutex<HashMap<String, Weak<ReactionCoordinator>>>> =
+    OnceLock::new();
+static NEXT_REACTION_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+/// Assign the desired state a generation before any spawned network work can
+/// race with a later lifecycle transition. The registry keeps only weak
+/// references and is pruned on every preparation, so completed messages do not
+/// accumulate process-lifetime state.
+fn prepare_reaction_reconciliation(event_ids: &[String]) -> Vec<PreparedReactionReconciliation> {
+    let registry = REACTION_COORDINATORS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut coordinators = match registry.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    coordinators.retain(|_, coordinator| coordinator.strong_count() > 0);
+
+    event_ids
+        .iter()
+        .map(|event_id| {
+            let coordinator = coordinators
+                .get(event_id)
+                .and_then(Weak::upgrade)
+                .unwrap_or_else(|| {
+                    let coordinator = Arc::new(ReactionCoordinator {
+                        gate: tokio::sync::Mutex::new(()),
+                        latest_generation: AtomicU64::new(0),
+                    });
+                    coordinators.insert(event_id.clone(), Arc::downgrade(&coordinator));
+                    coordinator
+                });
+            let generation = NEXT_REACTION_GENERATION.fetch_add(1, Ordering::Relaxed);
+            coordinator
+                .latest_generation
+                .store(generation, Ordering::Release);
+            PreparedReactionReconciliation {
+                event_id: event_id.clone(),
+                coordinator,
+                generation,
+            }
+        })
+        .collect()
+}
+
+fn desired_reaction(state: ReactionState) -> Option<&'static str> {
+    match state {
+        ReactionState::Queued => Some(REACTION_SEEN),
+        ReactionState::Running => Some(REACTION_WORKING),
+        ReactionState::TerminalError => Some(REACTION_WARNING),
+        ReactionState::Clear => None,
+    }
+}
+
+/// Execute a prepared reconciliation. The per-message gate prevents an older
+/// add from landing after a newer state, while the generation check drops work
+/// that was superseded before it acquired the gate.
+async fn reconcile_prepared_reactions(
+    rest: &crate::relay::RestClient,
+    reconciliations: Vec<PreparedReactionReconciliation>,
+    state: ReactionState,
+) {
+    for chunk in reconciliations.chunks(REACTION_CONCURRENCY) {
+        futures_util::future::join_all(chunk.iter().map(|reconciliation| async move {
+            let _gate = reconciliation.coordinator.gate.lock().await;
+            if reconciliation
+                .coordinator
+                .latest_generation
+                .load(Ordering::Acquire)
+                != reconciliation.generation
+            {
+                return;
+            }
+            for emoji in AUTHORITATIVE_REACTIONS {
+                reaction_remove(rest, &reconciliation.event_id, emoji).await;
+            }
+            // A newer request may have arrived while the relay calls above were
+            // in flight. It will run next under this same gate and owns the add.
+            if reconciliation
+                .coordinator
+                .latest_generation
+                .load(Ordering::Acquire)
+                != reconciliation.generation
+            {
+                return;
+            }
+            if let Some(emoji) = desired_reaction(state) {
+                reaction_add(rest, &reconciliation.event_id, emoji).await;
+            }
+        }))
         .await;
     }
 }
 
-/// Fire-and-forget: remove both 👀 and 💬 from all events. Spawned on turn complete.
-/// Capped at `REACTION_CONCURRENCY` concurrent requests per chunk to avoid
-/// unbounded HTTP fan-out on large batches.
-async fn clear_reactions(rest: crate::relay::RestClient, event_ids: Vec<String>) {
-    // Each event needs two removals (👀 and 💬); pair them and chunk by
-    // REACTION_CONCURRENCY pairs so the total concurrent requests stay bounded.
-    for chunk in event_ids.chunks(REACTION_CONCURRENCY) {
-        futures_util::future::join_all(chunk.iter().flat_map(|eid| {
-            [
-                reaction_remove(&rest, eid, REACTION_SEEN),
-                reaction_remove(&rest, eid, REACTION_WORKING),
-            ]
-        }))
-        .await;
+/// Reconcile the full authoritative indicator set. Preparation is synchronous:
+/// calling this function immediately supersedes older spawned work, even before
+/// the returned future is polled.
+pub(crate) fn reconcile_reactions<'a>(
+    rest: &'a crate::relay::RestClient,
+    event_ids: &[String],
+    state: ReactionState,
+) -> impl std::future::Future<Output = ()> + 'a {
+    let reconciliations = prepare_reaction_reconciliation(event_ids);
+    async move { reconcile_prepared_reactions(rest, reconciliations, state).await }
+}
+
+pub(crate) fn spawn_reconcile_reactions(
+    rest: crate::relay::RestClient,
+    event_ids: Vec<String>,
+    state: ReactionState,
+) {
+    if event_ids.is_empty() {
+        return;
     }
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let reconciliations = prepare_reaction_reconciliation(&event_ids);
+        handle.spawn(async move {
+            reconcile_prepared_reactions(&rest, reconciliations, state).await;
+        });
+    }
+}
+
+async fn react_working(rest: &crate::relay::RestClient, event_ids: &[String]) {
+    reconcile_reactions(rest, event_ids, ReactionState::Running).await;
 }
 
 #[cfg(test)]
@@ -5002,6 +5130,165 @@ mod tests {
             delivery_receipt_line(channel_id, &event_ids),
             format!("turn delivered Buzz events for channel {channel_id}: alpha,beta")
         );
+    }
+
+    #[test]
+    fn prompt_exit_reactions_preserve_retry_and_terminal_failure_state() {
+        assert_eq!(
+            reaction_state_for_prompt_exit(&PromptOutcome::Ok(StopReason::EndTurn), false),
+            ReactionState::Clear
+        );
+        assert_eq!(
+            reaction_state_for_prompt_exit(&PromptOutcome::Cancelled, false),
+            ReactionState::Clear
+        );
+        assert_eq!(
+            reaction_state_for_prompt_exit(
+                &PromptOutcome::Error(AcpError::Protocol("boom".into())),
+                false,
+            ),
+            ReactionState::TerminalError
+        );
+        assert_eq!(
+            reaction_state_for_prompt_exit(&PromptOutcome::AgentExited, true),
+            ReactionState::Queued
+        );
+        assert_eq!(desired_reaction(ReactionState::Queued), Some("👀"));
+        assert_eq!(desired_reaction(ReactionState::Running), Some("💬"));
+        assert_eq!(desired_reaction(ReactionState::TerminalError), Some("⚠️"));
+        assert_eq!(desired_reaction(ReactionState::Clear), None);
+    }
+
+    #[test]
+    fn newer_reaction_state_supersedes_queued_before_network_work() {
+        let event_ids = vec!["reaction-generation-test-event".to_string()];
+        let queued = prepare_reaction_reconciliation(&event_ids);
+        let running = prepare_reaction_reconciliation(&event_ids);
+
+        assert!(Arc::ptr_eq(&queued[0].coordinator, &running[0].coordinator));
+        assert_ne!(queued[0].generation, running[0].generation);
+        assert_eq!(
+            queued[0]
+                .coordinator
+                .latest_generation
+                .load(Ordering::Acquire),
+            running[0].generation
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_error_then_final_success_reconciles_authoritative_indicators() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let keys = Keys::generate();
+        let target = EventBuilder::new(Kind::Custom(9), "trigger")
+            .sign_with_keys(&Keys::generate())
+            .expect("sign trigger");
+        let reactions: Vec<_> = AUTHORITATIVE_REACTIONS
+            .iter()
+            .map(|emoji| {
+                buzz_sdk::build_reaction(target.id, emoji)
+                    .expect("build reaction")
+                    .sign_with_keys(&keys)
+                    .expect("sign reaction")
+            })
+            .collect();
+        let reaction_ids: HashSet<_> = reactions.iter().map(|event| event.id.to_hex()).collect();
+        let query_body = serde_json::to_string(&reactions).expect("serialize reactions");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind reaction server");
+        let base_url = format!("http://{}", listener.local_addr().expect("server address"));
+        let submissions = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let server_submissions = Arc::clone(&submissions);
+        let server = tokio::spawn(async move {
+            for _ in 0..13 {
+                let (mut socket, _) = listener.accept().await.expect("accept request");
+                let mut request = vec![0; 64 * 1024];
+                let bytes_read = socket.read(&mut request).await.expect("read request");
+                let request = String::from_utf8_lossy(&request[..bytes_read]);
+                let (status, body) = if request.starts_with("POST /query ") {
+                    ("200 OK", query_body.as_str())
+                } else if request.starts_with("POST /events ") {
+                    let body = request
+                        .split_once("\r\n\r\n")
+                        .map(|(_, body)| body)
+                        .expect("event request body");
+                    let event = serde_json::from_str(body).expect("submitted event JSON");
+                    match server_submissions.lock() {
+                        Ok(mut guard) => guard.push(event),
+                        Err(poisoned) => poisoned.into_inner().push(event),
+                    }
+                    ("200 OK", "{}")
+                } else {
+                    ("404 Not Found", "{}")
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write response");
+            }
+        });
+        let rest = RestClient {
+            http: reqwest::Client::new(),
+            base_url,
+            keys,
+            auth_tag_json: None,
+        };
+
+        // Dropping without an explicit finish models panic/unwind. It must
+        // converge to terminal warning rather than the old generic clear.
+        drop(ReactionGuard::new(rest.clone(), vec![target.id.to_hex()]));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let submitted = match submissions.lock() {
+                    Ok(guard) => guard.len(),
+                    Err(poisoned) => poisoned.into_inner().len(),
+                };
+                if submitted >= 4 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("panic cleanup published terminal warning");
+        reconcile_reactions(&rest, &[target.id.to_hex()], ReactionState::Clear).await;
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("reaction server finished")
+            .expect("reaction server task");
+
+        let submissions = match submissions.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        assert_eq!(submissions.len(), 7);
+        assert!(submissions[..3].iter().all(|event| event["kind"] == 5));
+        assert_eq!(submissions[3]["kind"], 7);
+        assert_eq!(submissions[3]["content"], REACTION_WARNING);
+        assert!(submissions[4..].iter().all(|event| event["kind"] == 5));
+        let deleted_ids: HashSet<_> = submissions
+            .iter()
+            .filter(|event| event["kind"] == 5)
+            .flat_map(|event| {
+                event["tags"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|tag| {
+                        let tag = tag.as_array()?;
+                        (tag.first()?.as_str()? == "e")
+                            .then(|| tag.get(1)?.as_str().map(str::to_owned))?
+                    })
+            })
+            .collect();
+        assert_eq!(deleted_ids, reaction_ids);
     }
 
     // MINOR (#2884): the permission-mode RPC is gated on agent_supports_mode.
@@ -7792,6 +8079,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         // `send_prompt_result` without the read loop ever running `take()`.
         let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel::<PromptResult>();
         let source = PromptSource::Heartbeat;
+        let mut reaction_guard = ReactionGuard::empty();
         send_prompt_result(
             &result_tx,
             "test-turn-id",
@@ -7799,6 +8087,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             source,
             PromptOutcome::Error(AcpError::Protocol("simulated session-create error".into())),
             None,
+            &mut reaction_guard,
         );
 
         // Receive the PromptResult back from the channel.
@@ -7853,6 +8142,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
 
         let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel::<PromptResult>();
         let source = PromptSource::Heartbeat;
+        let mut reaction_guard = ReactionGuard::empty();
         send_prompt_result(
             &result_tx,
             "test-turn-id",
@@ -7860,6 +8150,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             source,
             PromptOutcome::Ok(StopReason::EndTurn),
             None,
+            &mut reaction_guard,
         );
 
         let mut result = result_rx.recv().await.expect("PromptResult must be sent");

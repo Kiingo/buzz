@@ -2,6 +2,7 @@ import type { RelayEvent } from "@/shared/api/types";
 import {
   CHANNEL_AUX_EVENT_KINDS,
   CHANNEL_TIMELINE_CONTENT_KINDS,
+  KIND_AGENT_STATUS,
   KIND_CHANNEL_THREAD_SUMMARY,
   KIND_CHANNEL_WINDOW_BOUNDS,
 } from "@/shared/constants/kinds";
@@ -14,6 +15,13 @@ import type {
 
 const CONTENT_KINDS = new Set<number>(CHANNEL_TIMELINE_CONTENT_KINDS);
 const AUX_KINDS = new Set<number>(CHANNEL_AUX_EVENT_KINDS);
+
+/** Agent status is visible content inside its thread, but auxiliary to the
+ * channel window's root row. Keeping this classification in one helper makes
+ * the page and live paths agree. */
+export function isChannelWindowAuxEventKind(kind: number) {
+  return kind === KIND_AGENT_STATUS || AUX_KINDS.has(kind);
+}
 
 type WireCursor = { created_at: number; id: string };
 type BoundsPayload = { has_more: boolean; next_cursor: WireCursor | null };
@@ -88,7 +96,11 @@ export function parseChannelWindowResponse(
   startCursor: ChannelWindowCursor | null,
 ): ChannelWindowPage {
   const rows = events
-    .filter((event) => CONTENT_KINDS.has(event.kind))
+    .filter(
+      (event) =>
+        CONTENT_KINDS.has(event.kind) &&
+        !isChannelWindowAuxEventKind(event.kind),
+    )
     .map((event) => ({
       event,
       thread: null as ChannelWindowThreadSummary | null,
@@ -125,6 +137,6 @@ export function parseChannelWindowResponse(
   }
 
   // Summaries/bounds are metadata, never durable raw timeline events.
-  const aux = events.filter((event) => AUX_KINDS.has(event.kind));
+  const aux = events.filter((event) => isChannelWindowAuxEventKind(event.kind));
   return { startCursor, rows, aux, nextCursor, hasMore: bounds.has_more };
 }

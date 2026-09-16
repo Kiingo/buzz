@@ -1,10 +1,13 @@
 import type { TimelineMessage } from "@/features/messages/types";
 import type { ChannelWindowThreadSummary } from "@/features/messages/lib/channelWindowStore";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { parseAgentStatus } from "@/features/messages/lib/agentStatus";
 import { isBroadcastReply } from "@/features/messages/lib/threading";
 import {
   KIND_AGENT_STATUS,
   KIND_HUDDLE_STARTED,
+  KIND_STREAM_MESSAGE,
+  KIND_STREAM_MESSAGE_V2,
 } from "@/shared/constants/kinds";
 
 type ThreadPanelData = {
@@ -30,6 +33,8 @@ export type TimelineThreadSummary = {
 export type MainTimelineEntry = {
   message: TimelineMessage;
   summary: TimelineThreadSummary | null;
+  /** Current operational states anchored immediately beneath this root. */
+  operationalStatuses?: TimelineMessage[];
 };
 
 export type ThreadDescendantStats = {
@@ -446,6 +451,48 @@ export function buildMainTimelineEntries(
     unreadReplyIds,
   );
 
+  const durableReplies = messages.filter(
+    (message) =>
+      (message.kind === KIND_STREAM_MESSAGE ||
+        message.kind === KIND_STREAM_MESSAGE_V2) &&
+      message.parentId != null,
+  );
+  const statusesByRoot = new Map<string, TimelineMessage[]>();
+  for (const message of messages) {
+    if (message.kind !== KIND_AGENT_STATUS) continue;
+    const status = parseAgentStatus({
+      kind: message.kind,
+      content: message.body,
+      tags: message.tags,
+    });
+    if (!status || !message.signerPubkey) continue;
+
+    const isNonterminal =
+      status.state === "receipt" ||
+      status.state === "progress" ||
+      status.state === "capacity";
+    const hasDurableFinalReply =
+      isNonterminal &&
+      durableReplies.some(
+        (reply) =>
+          reply.signerPubkey?.toLowerCase() ===
+            message.signerPubkey?.toLowerCase() &&
+          (reply.rootId ?? reply.parentId) === status.rootId &&
+          reply.createdAt >= message.createdAt,
+      );
+    if (hasDurableFinalReply) continue;
+
+    const statuses = statusesByRoot.get(status.rootId) ?? [];
+    statuses.push(message);
+    statusesByRoot.set(status.rootId, statuses);
+  }
+  for (const statuses of statusesByRoot.values()) {
+    statuses.sort(
+      (left, right) =>
+        left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+    );
+  }
+
   return messages
     .filter(
       (message) =>
@@ -453,6 +500,7 @@ export function buildMainTimelineEntries(
     )
     .map((message) => {
       const relaySummary = relaySummaries.get(message.id);
+      const operationalStatuses = statusesByRoot.get(message.id);
       return {
         message,
         summary:
@@ -467,6 +515,7 @@ export function buildMainTimelineEntries(
                   ? buildRelayThreadSummary(message.id, relaySummary, profiles)
                   : null,
               ),
+        ...(operationalStatuses?.length ? { operationalStatuses } : {}),
       };
     });
 }
