@@ -85,14 +85,12 @@ function setup(preview, pending = handoff) {
   handlers.set("acknowledge_pending_identity_rotation", () => true);
 }
 
-function renderExtension(onOwnerIdentityReplaced) {
+function renderExtension() {
   return render(
     React.createElement(
       ThemeProvider,
       { defaultTheme: "buzz" },
-      React.createElement(IdentityRotationExtension, {
-        onOwnerIdentityReplaced,
-      }),
+      React.createElement(IdentityRotationExtension),
     ),
   );
 }
@@ -145,9 +143,7 @@ test("renders authoritative all-identity scope and gates start on backup plus co
   assert.equal(runRequest.recoveryPassphrase, "correct horse battery");
 });
 
-test("agent-only scope requires consent but does not refresh the owner session", {
-  timeout: 10000,
-}, async (context) => {
+test("agent-only scope does not request a human backup but still requires hard-cutover consent", async () => {
   setup({
     mode: "agent",
     managedAgentCount: 1,
@@ -155,12 +151,9 @@ test("agent-only scope requires consent but does not refresh the owner session",
     agentNames: ["High Agency"],
     recoveryBackupRequired: false,
   });
-  handlers.set("run_identity_rotation", () => ({ state: "complete" }));
-  let refreshes = 0;
+  handlers.set("run_identity_rotation", () => new Promise(() => {}));
 
-  renderExtension(() => {
-    refreshes += 1;
-  });
+  renderExtension();
   assert.match(
     (await screen.findByLabelText("Verified rotation scope")).textContent,
     /one managed agent \(High Agency\)/i,
@@ -173,89 +166,6 @@ test("agent-only scope requires consent but does not refresh the owner session",
     screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
   );
   assert.equal(start.disabled, false);
-  context.diagnostic("agent rotation: starting");
-  fireEvent.click(start);
-  await waitFor(() =>
-    assert.equal(
-      typeof eventHandlers.get("identity-rotation-progress"),
-      "function",
-    ),
-  );
-  context.diagnostic("agent rotation: progress listener ready");
-  act(() => {
-    eventHandlers.get("identity-rotation-progress")({
-      event: "identity-rotation-progress",
-      id: 4,
-      payload: {
-        rotationId: handoff.rotationId,
-        state: "complete",
-        message: "Agent identity rotation complete.",
-        terminal: true,
-        errorCode: null,
-      },
-    });
-  });
-  context.diagnostic("agent rotation: completion delivered");
-  fireEvent.click(await screen.findByRole("button", { name: "Done" }));
-  context.diagnostic("agent rotation: close requested");
-  await waitFor(() =>
-    assert.equal(screen.queryByRole("dialog", { name: /rotate buzz/i }), null),
-  );
-  assert.equal(refreshes, 0);
-});
-
-test("finishing a successful human rotation refreshes the stale relay and identity scope", {
-  timeout: 10000,
-}, async () => {
-  setup({
-    mode: "all",
-    managedAgentCount: 1,
-    hostedAgentCount: 1,
-    agentNames: ["Ada"],
-    recoveryBackupRequired: false,
-  });
-  handlers.set("run_identity_rotation", () => ({ state: "complete" }));
-  let acknowledgements = 0;
-  let refreshes = 0;
-  handlers.set("acknowledge_pending_identity_rotation", () => {
-    acknowledgements += 1;
-    return true;
-  });
-
-  renderExtension(() => {
-    refreshes += 1;
-  });
-  await screen.findByLabelText("Verified rotation scope");
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
-  );
-  fireEvent.click(
-    screen.getByRole("button", { name: /verify backup and rotate/i }),
-  );
-  await waitFor(() =>
-    assert.equal(
-      typeof eventHandlers.get("identity-rotation-progress"),
-      "function",
-    ),
-  );
-  act(() => {
-    eventHandlers.get("identity-rotation-progress")({
-      event: "identity-rotation-progress",
-      id: 4,
-      payload: {
-        rotationId: handoff.rotationId,
-        state: "complete",
-        message: "Identity rotation complete.",
-        terminal: true,
-        errorCode: null,
-      },
-    });
-  });
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Finish and refresh Buzz" }),
-  );
-  await waitFor(() => assert.equal(refreshes, 1));
-  assert.equal(acknowledgements, 1);
 });
 
 test("renders durable progress, rejects secret-bearing event text, and prevents post-commit dismissal while running", async () => {

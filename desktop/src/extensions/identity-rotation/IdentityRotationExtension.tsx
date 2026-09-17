@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
+import { shouldRefreshOwnerSessionAfterRotation } from "./shouldRefreshOwnerSessionAfterRotation";
 
 type PublicHandoff = {
   id: string;
@@ -128,13 +129,7 @@ const ROTATION_ERROR_MESSAGES: Record<string, string> = {
     "Buzz encountered an unexpected error after committing the replacement identity locally. The prior authority has not been purged. Do not start another rotation; install the latest Buzz update and resume this same rotation.",
 };
 
-const refreshAfterOwnerIdentityRotation = () => window.location.reload();
-
-export function IdentityRotationExtension({
-  onOwnerIdentityReplaced = refreshAfterOwnerIdentityRotation,
-}: {
-  onOwnerIdentityReplaced?: () => void;
-} = {}) {
+export function IdentityRotationExtension() {
   const [handoff, setHandoff] = React.useState<PublicHandoff | null>(null);
   const [confirmed, setConfirmed] = React.useState(false);
   const [passphrase, setPassphrase] = React.useState("");
@@ -237,14 +232,10 @@ export function IdentityRotationExtension({
     // The native signer and relay memberships have changed. A full renderer
     // refresh runs the pre-render continuity migration, discards the old relay
     // AUTH socket and identity-scoped caches, and reopens as the replacement.
-    if (complete && ownerIdentityReplaced) onOwnerIdentityReplaced();
-  }, [
-    complete,
-    handoff,
-    onOwnerIdentityReplaced,
-    ownerIdentityReplaced,
-    running,
-  ]);
+    if (shouldRefreshOwnerSessionAfterRotation(complete, preview?.mode)) {
+      window.location.reload();
+    }
+  }, [complete, handoff, preview?.mode, running]);
 
   const start = React.useCallback(async () => {
     if (!handoff || !preview || !confirmed || !passphraseValid || running)
