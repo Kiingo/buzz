@@ -171,9 +171,13 @@ test("agent-only scope requires consent but does not refresh the owner session",
     screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
   );
   assert.equal(start.disabled, false);
-  await act(async () => {
-    fireEvent.click(start);
-  });
+  fireEvent.click(start);
+  await waitFor(() =>
+    assert.equal(
+      typeof eventHandlers.get("identity-rotation-progress"),
+      "function",
+    ),
+  );
   await act(async () => {
     eventHandlers.get("identity-rotation-progress")({
       event: "identity-rotation-progress",
@@ -217,11 +221,9 @@ test("finishing a successful human rotation refreshes the stale relay and identi
   fireEvent.click(
     screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
   );
-  await act(async () => {
-    fireEvent.click(
-      screen.getByRole("button", { name: /verify backup and rotate/i }),
-    );
-  });
+  fireEvent.click(
+    screen.getByRole("button", { name: /verify backup and rotate/i }),
+  );
   await waitFor(() =>
     assert.equal(
       typeof eventHandlers.get("identity-rotation-progress"),
