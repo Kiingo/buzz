@@ -85,12 +85,14 @@ function setup(preview, pending = handoff) {
   handlers.set("acknowledge_pending_identity_rotation", () => true);
 }
 
-function renderExtension() {
+function renderExtension(onOwnerIdentityReplaced) {
   return render(
     React.createElement(
       ThemeProvider,
       { defaultTheme: "buzz" },
-      React.createElement(IdentityRotationExtension),
+      React.createElement(IdentityRotationExtension, {
+        onOwnerIdentityReplaced,
+      }),
     ),
   );
 }
@@ -143,7 +145,7 @@ test("renders authoritative all-identity scope and gates start on backup plus co
   assert.equal(runRequest.recoveryPassphrase, "correct horse battery");
 });
 
-test("agent-only scope does not request a human backup but still requires hard-cutover consent", async () => {
+test("agent-only scope requires consent but does not refresh the owner session", async () => {
   setup({
     mode: "agent",
     managedAgentCount: 1,
@@ -151,9 +153,12 @@ test("agent-only scope does not request a human backup but still requires hard-c
     agentNames: ["High Agency"],
     recoveryBackupRequired: false,
   });
-  handlers.set("run_identity_rotation", () => new Promise(() => {}));
+  handlers.set("run_identity_rotation", () => ({ state: "complete" }));
+  let refreshes = 0;
 
-  renderExtension();
+  renderExtension(() => {
+    refreshes += 1;
+  });
   assert.match(
     (await screen.findByLabelText("Verified rotation scope")).textContent,
     /one managed agent \(High Agency\)/i,
@@ -166,6 +171,78 @@ test("agent-only scope does not request a human backup but still requires hard-c
     screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
   );
   assert.equal(start.disabled, false);
+  await act(async () => {
+    fireEvent.click(start);
+  });
+  await act(async () => {
+    eventHandlers.get("identity-rotation-progress")({
+      event: "identity-rotation-progress",
+      id: 4,
+      payload: {
+        rotationId: handoff.rotationId,
+        state: "complete",
+        message: "Agent identity rotation complete.",
+        terminal: true,
+        errorCode: null,
+      },
+    });
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+  await waitFor(() =>
+    assert.equal(screen.queryByRole("dialog", { name: /rotate buzz/i }), null),
+  );
+  assert.equal(refreshes, 0);
+});
+
+test("finishing a successful human rotation refreshes the stale relay and identity scope", async () => {
+  setup({
+    mode: "all",
+    managedAgentCount: 1,
+    hostedAgentCount: 1,
+    agentNames: ["Ada"],
+    recoveryBackupRequired: false,
+  });
+  handlers.set("run_identity_rotation", () => ({ state: "complete" }));
+  let acknowledgements = 0;
+  let refreshes = 0;
+  handlers.set("acknowledge_pending_identity_rotation", () => {
+    acknowledgements += 1;
+    return true;
+  });
+
+  renderExtension(() => {
+    refreshes += 1;
+  });
+  await screen.findByLabelText("Verified rotation scope");
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
+  );
+  await act(async () => {
+    fireEvent.click(
+      screen.getByRole("button", { name: /verify backup and rotate/i }),
+    );
+  });
+  await waitFor(() =>
+    assert.equal(typeof eventHandlers.get("identity-rotation-progress"), "function"),
+  );
+  await act(async () => {
+    eventHandlers.get("identity-rotation-progress")({
+      event: "identity-rotation-progress",
+      id: 4,
+      payload: {
+        rotationId: handoff.rotationId,
+        state: "complete",
+        message: "Identity rotation complete.",
+        terminal: true,
+        errorCode: null,
+      },
+    });
+  });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Finish and refresh Buzz" }),
+  );
+  await waitFor(() => assert.equal(refreshes, 1));
+  assert.equal(acknowledgements, 1);
 });
 
 test("renders durable progress, rejects secret-bearing event text, and prevents post-commit dismissal while running", async () => {

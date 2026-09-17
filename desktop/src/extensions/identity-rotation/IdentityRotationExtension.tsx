@@ -128,7 +128,13 @@ const ROTATION_ERROR_MESSAGES: Record<string, string> = {
     "Buzz encountered an unexpected error after committing the replacement identity locally. The prior authority has not been purged. Do not start another rotation; install the latest Buzz update and resume this same rotation.",
 };
 
-export function IdentityRotationExtension() {
+const refreshAfterOwnerIdentityRotation = () => window.location.reload();
+
+export function IdentityRotationExtension({
+  onOwnerIdentityReplaced = refreshAfterOwnerIdentityRotation,
+}: {
+  onOwnerIdentityReplaced?: () => void;
+} = {}) {
   const [handoff, setHandoff] = React.useState<PublicHandoff | null>(null);
   const [confirmed, setConfirmed] = React.useState(false);
   const [passphrase, setPassphrase] = React.useState("");
@@ -208,6 +214,8 @@ export function IdentityRotationExtension() {
     !recoveryBackupRequired ||
     (passphrase.length >= 12 && passphrase === passphraseAgain);
   const complete = progress?.state === "complete";
+  const ownerIdentityReplaced =
+    preview?.mode === "human" || preview?.mode === "all";
   const scopeSummary = preview
     ? preview.mode === "human"
       ? "your human Buzz identity"
@@ -226,7 +234,11 @@ export function IdentityRotationExtension() {
     setHandoff(null);
     setPassphrase("");
     setPassphraseAgain("");
-  }, [complete, handoff, running]);
+    // The native signer and relay memberships have changed. A full renderer
+    // refresh runs the pre-render continuity migration, discards the old relay
+    // AUTH socket and identity-scoped caches, and reopens as the replacement.
+    if (complete && ownerIdentityReplaced) onOwnerIdentityReplaced();
+  }, [complete, handoff, onOwnerIdentityReplaced, ownerIdentityReplaced, running]);
 
   const start = React.useCallback(async () => {
     if (!handoff || !preview || !confirmed || !passphraseValid || running)
@@ -433,7 +445,11 @@ export function IdentityRotationExtension() {
         <DialogFooter>
           {complete || progress?.terminal ? (
             <Button onClick={() => void close()} type="button">
-              {complete ? "Done" : "Close"}
+              {complete
+                ? ownerIdentityReplaced
+                  ? "Finish and refresh Buzz"
+                  : "Done"
+                : "Close"}
             </Button>
           ) : (
             <>
