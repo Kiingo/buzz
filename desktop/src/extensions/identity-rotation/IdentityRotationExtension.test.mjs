@@ -145,7 +145,9 @@ test("renders authoritative all-identity scope and gates start on backup plus co
   assert.equal(runRequest.recoveryPassphrase, "correct horse battery");
 });
 
-test("agent-only scope requires consent but does not refresh the owner session", async () => {
+test("agent-only scope requires consent but does not refresh the owner session", {
+  timeout: 10000,
+}, async (context) => {
   setup({
     mode: "agent",
     managedAgentCount: 1,
@@ -171,6 +173,7 @@ test("agent-only scope requires consent but does not refresh the owner session",
     screen.getByRole("checkbox", { name: /prior authority.*will be revoked/i }),
   );
   assert.equal(start.disabled, false);
+  context.diagnostic("agent rotation: starting");
   fireEvent.click(start);
   await waitFor(() =>
     assert.equal(
@@ -178,7 +181,8 @@ test("agent-only scope requires consent but does not refresh the owner session",
       "function",
     ),
   );
-  await act(async () => {
+  context.diagnostic("agent rotation: progress listener ready");
+  act(() => {
     eventHandlers.get("identity-rotation-progress")({
       event: "identity-rotation-progress",
       id: 4,
@@ -191,14 +195,18 @@ test("agent-only scope requires consent but does not refresh the owner session",
       },
     });
   });
+  context.diagnostic("agent rotation: completion delivered");
   fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+  context.diagnostic("agent rotation: close requested");
   await waitFor(() =>
     assert.equal(screen.queryByRole("dialog", { name: /rotate buzz/i }), null),
   );
   assert.equal(refreshes, 0);
 });
 
-test("finishing a successful human rotation refreshes the stale relay and identity scope", async () => {
+test("finishing a successful human rotation refreshes the stale relay and identity scope", {
+  timeout: 10000,
+}, async () => {
   setup({
     mode: "all",
     managedAgentCount: 1,
@@ -230,7 +238,7 @@ test("finishing a successful human rotation refreshes the stale relay and identi
       "function",
     ),
   );
-  await act(async () => {
+  act(() => {
     eventHandlers.get("identity-rotation-progress")({
       event: "identity-rotation-progress",
       id: 4,
