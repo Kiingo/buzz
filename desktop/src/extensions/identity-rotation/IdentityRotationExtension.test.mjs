@@ -223,7 +223,10 @@ test("finishing a successful human rotation refreshes the stale relay and identi
     );
   });
   await waitFor(() =>
-    assert.equal(typeof eventHandlers.get("identity-rotation-progress"), "function"),
+    assert.equal(
+      typeof eventHandlers.get("identity-rotation-progress"),
+      "function",
+    ),
   );
   await act(async () => {
     eventHandlers.get("identity-rotation-progress")({

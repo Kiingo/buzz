@@ -238,7 +238,13 @@ export function IdentityRotationExtension({
     // refresh runs the pre-render continuity migration, discards the old relay
     // AUTH socket and identity-scoped caches, and reopens as the replacement.
     if (complete && ownerIdentityReplaced) onOwnerIdentityReplaced();
-  }, [complete, handoff, onOwnerIdentityReplaced, ownerIdentityReplaced, running]);
+  }, [
+    complete,
+    handoff,
+    onOwnerIdentityReplaced,
+    ownerIdentityReplaced,
+    running,
+  ]);
 
   const start = React.useCallback(async () => {
     if (!handoff || !preview || !confirmed || !passphraseValid || running)
