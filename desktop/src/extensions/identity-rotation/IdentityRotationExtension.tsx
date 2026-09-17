@@ -18,7 +18,6 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
-import { shouldRefreshOwnerSessionAfterRotation } from "./shouldRefreshOwnerSessionAfterRotation";
 
 type PublicHandoff = {
   id: string;
@@ -36,6 +35,13 @@ type RotationPreview = {
   agentNames: string[];
   recoveryBackupRequired: boolean;
 };
+
+export function shouldRefreshOwnerSessionAfterRotation(
+  complete: boolean,
+  mode: RotationPreview["mode"] | null | undefined,
+): boolean {
+  return complete && (mode === "human" || mode === "all");
+}
 
 type RotationProgress = {
   rotationId: string;

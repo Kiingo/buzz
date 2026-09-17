@@ -60,9 +60,8 @@ const React = await import("react");
 const { act, cleanup, fireEvent, render, screen, waitFor } = await import(
   "@testing-library/react"
 );
-const { IdentityRotationExtension } = await import(
-  "./IdentityRotationExtension.tsx"
-);
+const { IdentityRotationExtension, shouldRefreshOwnerSessionAfterRotation } =
+  await import("./IdentityRotationExtension.tsx");
 const { ThemeProvider } = await import("@/shared/theme/ThemeProvider");
 
 const handoff = {
@@ -141,6 +140,15 @@ test("renders authoritative all-identity scope and gates start on backup plus co
   await waitFor(() => assert.ok(runRequest));
   assert.equal(runRequest.handoffId, "handoff-1");
   assert.equal(runRequest.recoveryPassphrase, "correct horse battery");
+});
+
+test("refreshes only after a completed owner identity rotation", () => {
+  assert.equal(shouldRefreshOwnerSessionAfterRotation(true, "human"), true);
+  assert.equal(shouldRefreshOwnerSessionAfterRotation(true, "all"), true);
+  assert.equal(shouldRefreshOwnerSessionAfterRotation(true, "agent"), false);
+  assert.equal(shouldRefreshOwnerSessionAfterRotation(false, "human"), false);
+  assert.equal(shouldRefreshOwnerSessionAfterRotation(false, "all"), false);
+  assert.equal(shouldRefreshOwnerSessionAfterRotation(true, null), false);
 });
 
 test("agent-only scope does not request a human backup but still requires hard-cutover consent", async () => {
