@@ -93,12 +93,16 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check mobile-check security-review-check file-size-check
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check mobile-check security-review-check sidecar-stub-contract-check file-size-check
 
 # Validate the trusted security-review workflow support and renderer contract.
 security-review-check:
     node --check .github/scripts/codex-security-review.js
     node --test .github/scripts/codex-security-review.test.js
+
+# Verify Tauri placeholder sidecars use the platform filenames its build validates.
+sidecar-stub-contract-check:
+    ./scripts/test-sidecar-stub-contract.sh
 
 # Run the repository-wide differential file-size ratchet and its policy tests.
 # The ratchet inspects only files changed from the merge base, so this stays
@@ -171,11 +175,14 @@ _ensure-sidecar-stubs:
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     mkdir -p desktop/src-tauri/binaries
     SIDECARS=(buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr buzz)
-    if [[ "$TARGET" != *windows* ]]; then
+    EXE=""
+    if [[ "$TARGET" == *windows* ]]; then
+        EXE=".exe"
+    else
         SIDECARS+=(buzz-backend-kubernetes)
     fi
     for bin in "${SIDECARS[@]}"; do
-        touch "desktop/src-tauri/binaries/${bin}-${TARGET}"
+        touch "desktop/src-tauri/binaries/${bin}-${TARGET}${EXE}"
     done
 
 # Ensure Docker dev services (Postgres, Redis, etc.) are running and healthy
@@ -265,14 +272,16 @@ desktop-release-build target="aarch64-apple-darwin":
     set -euo pipefail
     TARGET={{target}}
     mkdir -p desktop/src-tauri/binaries
-    touch "desktop/src-tauri/binaries/buzz-acp-$TARGET"
-    touch "desktop/src-tauri/binaries/buzz-agent-$TARGET"
-    if [[ "$TARGET" != *windows* ]]; then
-        touch "desktop/src-tauri/binaries/buzz-backend-kubernetes-$TARGET"
+    SIDECARS=(buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr buzz)
+    EXE=""
+    if [[ "$TARGET" == *windows* ]]; then
+        EXE=".exe"
+    else
+        SIDECARS+=(buzz-backend-kubernetes)
     fi
-    touch "desktop/src-tauri/binaries/buzz-dev-mcp-$TARGET"
-    touch "desktop/src-tauri/binaries/git-credential-nostr-$TARGET"
-    touch "desktop/src-tauri/binaries/buzz-$TARGET"
+    for bin in "${SIDECARS[@]}"; do
+        touch "desktop/src-tauri/binaries/${bin}-${TARGET}${EXE}"
+    done
     pnpm install
     cd {{desktop_dir}} && pnpm tauri build --features mesh-llm --target {{target}}
 
