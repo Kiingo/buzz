@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 95,
-    "modifiedUpstreamFiles": 139,
+    "modifiedUpstreamFiles": 140,
     "changedUpstreamProductionSourceLines": 5937,
     "upstreamProductionSourceDiffHunks": 704,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -519,6 +519,7 @@
       "paths": [
         ".github/workflows/ci.yml",
         "docs/implementation-plans/buzz-durable-conversation-reliability.md",
+        "docs/implementation-plans/m-92-windows-sidecar-preflight.md",
         "docs/kiingo-fork-inventory.json",
         "docs/kiingo-fork-last-mile-conflict-isolation-plan-2026-08-11.md",
         "docs/kiingo-fork-maintenance.md",
@@ -533,10 +534,11 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz desktop maintainers",
-      "purpose": "Keep Unix-only terminal and desktop helpers under their existing platform boundary while preserving cross-platform pure-helper tests; remove unused private non-Unix stubs and redundant Windows expressions; group existing Git Bash standard search paths without changing resolution order or public signatures. Required Windows desktop validation, without warning suppression or runtime policy changes.",
-      "upstreamStatus": "Discovered during the native discussion cutover's Windows validation; not submitted upstream.",
-      "removalCondition": "Remove when block/buzz provides equivalent warning-clean Windows platform boundaries and resolver expressions.",
+      "purpose": "Keep Unix-only terminal and desktop helpers under their existing platform boundary while preserving cross-platform pure-helper tests; remove unused private non-Unix stubs and redundant Windows expressions; group existing Git Bash standard search paths without changing resolution order or public signatures; and keep Tauri sidecar placeholder names aligned with platform executable suffixes. Required Windows desktop validation, without warning suppression or runtime policy changes.",
+      "upstreamStatus": "Discovered during native Windows validation, including the M-92 sidecar-preflight defect; not submitted upstream.",
+      "removalCondition": "Remove when block/buzz provides equivalent warning-clean Windows platform boundaries, resolver expressions, and platform-correct sidecar preflight naming.",
       "paths": [
+        "Justfile",
         "desktop/src-tauri/crates/buzz-terminal/src/lifecycle.rs",
         "desktop/src-tauri/crates/buzz-terminal/src/shell.rs",
         "desktop/src-tauri/src/archive/mod_tests.rs",
@@ -564,7 +566,8 @@
         "desktop/src-tauri/src/managed_agents/runtime/process.rs",
         "desktop/src-tauri/src/managed_agents/runtime/sweep.rs",
         "desktop/src-tauri/src/managed_agents/storage.rs",
-        "desktop/src-tauri/src/util.rs"
+        "desktop/src-tauri/src/util.rs",
+        "scripts/test-sidecar-stub-contract.sh"
       ]
     },
     {
