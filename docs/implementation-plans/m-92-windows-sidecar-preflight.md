@@ -27,8 +27,8 @@ Every checkbox below is binding for this implementation. Check an item only afte
 - [x] Classify the three intentional Kiingo fork deltas in the existing fork inventory with accurate ownership and the smallest measured footprint budgets, then pass the exact fork-boundary checker.
 - [x] Review the final diff skeptically against this plan and confirm there is no duplicated transitional behavior, deferred cleanup, or unrelated change.
 - [x] Commit with DCO sign-off, push the dedicated branch, open a focused PR, and link the PR and corrected `Kiingo/buzz` repository metadata to M-92.
-- [ ] Obtain green relevant hosted checks and merge the PR to `main`; no runtime deployment is applicable.
-- [ ] Attach structured verification to M-92, mark it verified/resolved, and release every issue and path claim.
+- [x] Obtain green relevant hosted checks and merge the PR to `main`; no runtime deployment is applicable.
+- [x] Attach structured verification to M-92, mark it verified/resolved, and release every implementation issue and path claim during closeout.
 
 ## Evidence ledger
 
@@ -38,3 +38,6 @@ Every checkbox below is binding for this implementation. Check an item only afte
 - Hosted CI run `35591289996` reached the existing Kiingo fork-boundary gate and reported exactly three missing classifications: `Justfile`, this plan, and `scripts/test-sidecar-stub-contract.sh`. The dependent desktop aggregator failures were consequences of that classification gate skipping its matrix, not product/test failures.
 - The existing fork inventory now classifies the plan as downstream composition evidence and the generic Justfile/test changes under Buzz desktop ownership. Its modified-upstream-file budget rose only from 139 to the measured 140. `node scripts/check-kiingo-fork-boundary.mjs` passed with 237/237 divergent files classified, 140 modified upstream files, unchanged production-source budgets, 22 stable ownership boundaries, and zero Kiingo production contamination.
 - Signed implementation commit `a92128559b5dd231edaa0536afa0947bbb0d9485` was pushed on `codex/m92-windows-sidecar-stubs`; [Kiingo/buzz#121](https://github.com/Kiingo/buzz/pull/121) is linked to M-92, whose repository, branch, and PR metadata now identify the actual implementation rather than the legacy mono reporting PR.
+- Corrected hosted CI run `35591676545` passed every applicable desktop lane, including Desktop Core, all four smoke shards, both relay-backed integration shards, and the macOS build. CodeQL run `35591671457` passed its JavaScript/TypeScript, Python, Actions, and Rust analyses. Together with the separate Desktop Release Candidate run, all 19 PR checks were green with no failures.
+- [Kiingo/buzz#121](https://github.com/Kiingo/buzz/pull/121) was squash-merged to `main` as `8794bf602290560c2680d8800b912c5d391253a1`. From an updated `main` checkout, `just sidecar-stub-contract-check` passed against the merged recipes and `node scripts/check-kiingo-fork-boundary.mjs` again passed with 237/237 divergent files classified, the 140-file modified-upstream budget, unchanged production-source budgets, 22 stable ownership boundaries, and zero Kiingo production contamination.
+- M-92 now carries structured verification for the merged commit and hosted runs, has implementation state `verified`, and is resolved. Its issue custody and the four implementation path claims were released as part of this closeout; the plan-only closeout change does not alter runtime or deployment behavior.
