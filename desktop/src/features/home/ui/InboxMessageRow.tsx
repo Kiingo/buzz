@@ -8,6 +8,7 @@ import { formatItemTimestamp } from "@/shared/lib/datetime";
 import type { TimelineMessage } from "@/features/messages/types";
 import { getConfigNudgeAuthorPubkey } from "@/features/messages/ui/configNudgeAuthPubkey";
 import { MessageActionBar } from "@/features/messages/ui/MessageActionBar";
+import { AgentStatusRow } from "@/features/messages/ui/AgentStatusRow";
 import { MessageAgentOwner } from "@/features/messages/ui/MessageAgentOwner";
 import { MessageMetaSeparator } from "@/features/messages/ui/MessageHeader";
 import { MessageReactions } from "@/features/messages/ui/MessageReactions";
@@ -22,6 +23,7 @@ import { UserAvatar } from "@/shared/ui/UserAvatar";
 import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { VideoReviewCommentMarkdown } from "@/shared/ui/VideoReviewCommentMarkdown";
 import { parseImetaTags } from "@/shared/ui/markdown/parseImeta";
+import { KIND_AGENT_STATUS } from "@/shared/constants/kinds";
 
 export type InboxDisplayMessage = InboxContextMessage & {
   depth: number;
@@ -49,7 +51,21 @@ type InboxMessageRowProps = {
   videoReviewContext?: VideoReviewContext;
 };
 
-export function InboxMessageRow({
+export function InboxMessageRow(props: InboxMessageRowProps) {
+  // Inbox has its own message renderer, separate from the channel and thread
+  // timelines. Keep signed operational events out of chat affordances here too.
+  if (props.message.kind === KIND_AGENT_STATUS) {
+    return (
+      <div className="relative px-2" data-testid="home-inbox-agent-status">
+        {props.showUnreadBoundary ? <UnreadDivider /> : null}
+        <AgentStatusRow message={toTimelineMessage(props.message)} />
+      </div>
+    );
+  }
+  return <InboxChatMessageRow {...props} />;
+}
+
+function InboxChatMessageRow({
   agentPubkeys,
   canReply,
   channelId = null,

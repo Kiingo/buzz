@@ -3,6 +3,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentStatusRow, AgentStatusRows } from "../ui/AgentStatusRow.tsx";
+import { InboxMessageRow } from "../../home/ui/InboxMessageRow.tsx";
 import { MessageThreadRow } from "../ui/MessageThreadRow.tsx";
 import { parseAgentStatus } from "./agentStatus.ts";
 import {
@@ -141,6 +142,36 @@ test("the canonical thread row routes operational events to the system renderer"
     ),
     "",
   );
+});
+
+test("Home Inbox renders signed operational status as text without chat actions", () => {
+  const [message] = formatTimelineMessages([event()], null, undefined, null);
+  const inboxMessage = {
+    id: message.id,
+    authorLabel: message.author,
+    authorPubkey: message.pubkey,
+    content: message.body,
+    createdAt: message.createdAt,
+    depth: message.depth,
+    fullTimestampLabel: "today",
+    isSelected: false,
+    kind: message.kind,
+    reactions: [],
+    tags: message.tags,
+    timeLabel: message.time,
+  };
+  const markup = renderToStaticMarkup(
+    createElement(InboxMessageRow, {
+      canReply: true,
+      isFocusHighlightVisible: false,
+      message: inboxMessage,
+      onSelectReplyTarget: () => {},
+    }),
+  );
+  assert.match(markup, /data-testid="home-inbox-agent-status"/);
+  assert.match(markup, /System status/);
+  assert.match(markup, /Cancelled by the user\./);
+  assert.doesNotMatch(markup, /receipt_id|<button|message-actions/);
 });
 
 test("status updates coalesce per signed actor, receipt, and thread in event-time order", () => {
