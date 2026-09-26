@@ -48,6 +48,20 @@ export function armRelayAuthentication(
   });
 }
 
+/**
+ * Error for requests made after the session latched terminal. It carries the
+ * rejection that caused the latch so callers can still classify it (e.g.
+ * onboarding routes `restricted: not a relay member` to the membership screen
+ * instead of a generic server error).
+ */
+export function terminalSessionError(reason: string | null): Error {
+  return new Error(
+    reason
+      ? `Relay session is terminal: ${reason}`
+      : "Relay session is terminal; cannot reconnect.",
+  );
+}
+
 /** Tracks consecutive AUTH rejections across reconnect attempts. */
 export class AuthOkTracker {
   private consecutiveRejections = 0;

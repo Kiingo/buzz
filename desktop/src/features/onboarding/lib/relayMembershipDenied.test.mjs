@@ -10,6 +10,8 @@ test("recognizes relay membership and allowlist denials", () => {
     "restricted: not a relay member",
     "restricted: pubkey not allowlisted",
     "invalid: you are not a relay member",
+    "Relay session is terminal: restricted: not a relay member",
+    "relay returned 403 Forbidden: You must be a relay member to access this relay",
   ]) {
     assert.equal(isRelayMembershipDeniedError(new Error(message)), true);
   }

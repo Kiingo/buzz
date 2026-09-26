@@ -75,6 +75,7 @@ import {
   armRelayAuthentication,
   AuthOkTracker,
   type RelayAuthRequest,
+  terminalSessionError,
 } from "@/shared/api/relayAuthPolicy";
 import { createRelayInboundBuffer } from "@/shared/api/relayInboundBuffer";
 import { buildThreadReferenceTags } from "@/features/messages/lib/threading";
@@ -101,6 +102,7 @@ export class RelayClient {
   private visibleChannelId: string | null = null;
   private authOkTracker = new AuthOkTracker();
   private terminal = false;
+  private terminalReason: string | null = null;
 
   private connectionStateEmitter = new RelayConnectionStateEmitter("idle");
   private stallWatchdog = new RelayStallWatchdog({
@@ -132,6 +134,7 @@ export class RelayClient {
     this.hasConnectedOnce = false;
     this.notifyReconnectListeners = false;
     this.terminal = false;
+    this.terminalReason = null;
     this.visibleChannelId = null;
     this.authOkTracker.reset();
     this.connectionStateEmitter.set("idle");
@@ -429,6 +432,7 @@ export class RelayClient {
     // Explicit re-engagement (reconnect card / community switch): clears the
     // terminal latch and AUTH rejection streak, and bypasses backoff once.
     this.terminal = false;
+    this.terminalReason = null;
     this.authOkTracker.reset();
     this.keepAliveRequested = true;
     await this.connectBypassingBackoff();
@@ -488,7 +492,7 @@ export class RelayClient {
       // preconnect() clears the latch, else the reconnect-timer catch and
       // the publish/subscribe retry wrappers would race the terminal
       // "disconnected" state back to "reconnecting".
-      throw new Error("Relay session is terminal; cannot reconnect.");
+      throw terminalSessionError(this.terminalReason);
     }
 
     if (this.connectPromise) {
@@ -1025,6 +1029,7 @@ export class RelayClient {
 
     if (options?.reconnect === false) {
       this.terminal = true;
+      this.terminalReason = error.message;
       this.connectionStateEmitter.set("disconnected");
     } else if (
       // A late retry failure racing a terminal latch must not paint
