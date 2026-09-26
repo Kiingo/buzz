@@ -26,6 +26,7 @@ import {
 } from "./NostrKeyImportForm";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { CommunityChangeOverlay } from "@/features/communities/ui/CommunityChangeOverlay";
+import { isRelayMembershipDeniedError } from "@/features/onboarding/lib/relayMembershipDenied";
 import {
   type OnboardingTransitionDirection,
   OnboardingSlideTransition,
@@ -38,19 +39,6 @@ import type {
   OnboardingProfileValues,
   ProfileStepState,
 } from "./types";
-
-function isRelayMembershipDeniedError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  return (
-    error.message.includes("You must be a relay member") ||
-    error.message.includes("relay_membership_required") ||
-    error.message.includes("restricted: not a relay member") ||
-    error.message.includes("invalid: you are not a relay member")
-  );
-}
 
 type MembershipCheckResult = "denied" | "ok" | "unreachable" | "error";
 

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   AuthOkTracker,
   MAX_CONSECUTIVE_AUTH_REJECTIONS,
+  terminalSessionError,
 } from "./relayAuthPolicy.ts";
 
 test("success resolves authenticated and resets the streak", () => {
@@ -89,5 +90,16 @@ test("already-authenticated wins even past the cap (session is usable)", () => {
   assert.equal(
     tracker.record(false, "auth-required: already authenticated"),
     "authenticated",
+  );
+});
+
+test("terminal session errors keep the rejection that latched them", () => {
+  assert.equal(
+    terminalSessionError("restricted: not a relay member").message,
+    "Relay session is terminal: restricted: not a relay member",
+  );
+  assert.equal(
+    terminalSessionError(null).message,
+    "Relay session is terminal; cannot reconnect.",
   );
 });

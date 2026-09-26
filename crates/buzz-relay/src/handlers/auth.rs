@@ -187,28 +187,30 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
             if state.config.pubkey_allowlist_enabled
                 && auth_ctx.auth_method == buzz_auth::AuthMethod::Nip42
             {
-                let allowed = match state
+                // A lookup error keeps the retryable `auth-required:` reason;
+                // only a definitive miss is reported as a permanent
+                // `restricted:` denial that clients show as access-required.
+                let denial = match state
                     .db
                     .is_pubkey_allowed(conn.tenant.community(), pubkey.as_bytes())
                     .await
                 {
-                    Ok(v) => v,
+                    Ok(true) => None,
+                    Ok(false) => {
+                        warn!(conn_id = %conn_id, pubkey = %pubkey.to_hex(), "pubkey not in allowlist");
+                        Some("restricted: pubkey not allowlisted")
+                    }
                     Err(e) => {
                         warn!(conn_id = %conn_id, pubkey = %pubkey.to_hex(), error = %e,
                               "allowlist DB lookup failed, denying (fail-closed)");
-                        false
+                        Some("auth-required: verification failed")
                     }
                 };
-                if !allowed {
-                    warn!(conn_id = %conn_id, pubkey = %pubkey.to_hex(), "pubkey not in allowlist");
+                if let Some(reason) = denial {
                     metrics::counter!("buzz_auth_failures_total", "reason" => "allowlist_denied")
                         .increment(1);
                     *conn.auth_state.write().await = AuthState::Failed;
-                    conn.send(RelayMessage::ok(
-                        &event_id_hex,
-                        false,
-                        "auth-required: verification failed",
-                    ));
+                    conn.send(RelayMessage::ok(&event_id_hex, false, reason));
                     return;
                 }
             }

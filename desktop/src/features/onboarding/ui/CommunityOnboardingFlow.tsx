@@ -7,6 +7,7 @@ import {
   useCommunityOnboarding,
 } from "@/features/onboarding/communityOnboarding";
 import { initializeStarterChannels } from "@/features/onboarding/hooks";
+import { isRelayMembershipDeniedError } from "@/features/onboarding/lib/relayMembershipDenied";
 import { useClaimInvite } from "@/features/onboarding/useClaimInvite";
 import { CommunityChangeOverlay } from "@/features/communities/ui/CommunityChangeOverlay";
 import {
@@ -42,16 +43,6 @@ import {
   type OnboardingTransitionDirection,
   OnboardingSlideTransition,
 } from "./OnboardingSlideTransition";
-
-function isRelayMembershipDeniedError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return (
-    error.message.includes("You must be a relay member") ||
-    error.message.includes("relay_membership_required") ||
-    error.message.includes("restricted: not a relay member") ||
-    error.message.includes("invalid: you are not a relay member")
-  );
-}
 
 const STARTER_PERSONA_ANIMATIONS: Record<string, string> = {
   Fizz: "/onboarding/starter-team/fizz.png",
