@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 97,
-    "modifiedUpstreamFiles": 142,
-    "changedUpstreamProductionSourceLines": 5979,
-    "upstreamProductionSourceDiffHunks": 716,
+    "modifiedUpstreamProductionSourceFiles": 98,
+    "modifiedUpstreamFiles": 143,
+    "changedUpstreamProductionSourceLines": 6013,
+    "upstreamProductionSourceDiffHunks": 719,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -648,6 +648,7 @@
       "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
       "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
       "paths": [
+        "desktop/src-tauri/src/managed_agents/persona_events/tests.rs",
         "desktop/src/shared/api/relayClientSession.ts"
       ]
     }
