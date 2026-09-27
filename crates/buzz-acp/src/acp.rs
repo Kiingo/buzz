@@ -22,6 +22,8 @@ use crate::usage::{
 /// Maximum allowed size of a single NDJSON line from the agent's stdout.
 /// Lines exceeding this limit are rejected to prevent OOM from rogue agents.
 const MAX_LINE_SIZE: usize = 10_000_000; // 10 MB
+/// Cap on retained final-answer text per turn (Buzz messages max at 64 KiB).
+const MAX_TURN_REPLY_TEXT_BYTES: usize = 64 * 1024;
 
 fn is_local_publication_update(msg: &serde_json::Value) -> bool {
     msg.pointer("/params/update/sessionUpdate")
@@ -231,6 +233,10 @@ pub struct AcpClient {
     standard_usage: StandardUsageTracker,
     /// Known adapter identity for prompt-response usage mapping.
     standard_adapter: Option<StandardAdapterKind>,
+    /// Assistant text streamed since the turn's last tool call (the model's
+    /// final answer). Reset when a prompt is sent and whenever a tool call
+    /// starts. Consumed by the unpublished-reply safety net.
+    turn_reply_text: String,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -583,6 +589,7 @@ impl AcpClient {
             buzz_prompt_metadata: None,
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
+            turn_reply_text: String::new(),
         })
     }
 
@@ -856,6 +863,7 @@ impl AcpClient {
         // misattributed to this turn.
         self.goose_usage.begin_turn(session_id);
         self.standard_usage.begin_turn(session_id);
+        self.turn_reply_text.clear();
 
         self.last_prompt_id = Some(self.next_id);
         let id = self.next_id;
@@ -956,6 +964,13 @@ impl AcpClient {
         let goose_usage = self.goose_usage.take();
         let standard_usage = self.standard_usage.take();
         goose_usage.or(standard_usage)
+    }
+
+    /// Take the assistant text streamed after the turn's last tool call.
+    ///
+    /// Empty when the turn produced no final text (or it was already taken).
+    pub fn take_turn_reply_text(&mut self) -> String {
+        std::mem::take(&mut self.turn_reply_text)
     }
 
     /// Notify the usage tracker that buzz-acp just spawned a new session.
@@ -1841,10 +1856,15 @@ impl AcpClient {
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
                     tracing::info!(target: "acp::stream", "{text}");
+                    if self.turn_reply_text.len() < MAX_TURN_REPLY_TEXT_BYTES {
+                        self.turn_reply_text.push_str(text);
+                    }
                 }
                 false
             }
             "tool_call" => {
+                // Text before a tool call is narration, not the final answer.
+                self.turn_reply_text.clear();
                 let title = update
                     .get("title")
                     .and_then(|v| v.as_str())
@@ -3814,6 +3834,41 @@ mod tests {
         AcpClient::spawn("cat", &[], &[], false)
             .await
             .expect("spawn cat as inert client")
+    }
+
+    fn session_update_msg(update: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {"sessionId": "test-session", "update": update},
+        })
+    }
+
+    #[tokio::test]
+    async fn turn_reply_text_keeps_only_text_after_last_tool_call() {
+        let mut client = spawn_inert_client().await;
+        let chunk = |text: &str| {
+            session_update_msg(serde_json::json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": text},
+            }))
+        };
+        client.handle_session_update(&chunk("Let me check. "));
+        client.handle_session_update(&session_update_msg(serde_json::json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Bash",
+            "kind": "execute",
+        })));
+        client.handle_session_update(&chunk("Final "));
+        client.handle_session_update(&session_update_msg(serde_json::json!({
+            "sessionUpdate": "agent_thought_chunk",
+            "content": {"type": "text", "text": "private reasoning"},
+        })));
+        client.handle_session_update(&chunk("answer."));
+
+        assert_eq!(client.take_turn_reply_text(), "Final answer.");
+        assert_eq!(client.take_turn_reply_text(), "", "take consumes the text");
     }
 
     /// Build a `session/update` JSON-RPC notification carrying a

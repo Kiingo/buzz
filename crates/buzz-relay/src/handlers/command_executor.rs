@@ -30,7 +30,7 @@ use crate::webhook_secret;
 use super::ingest::{extract_channel_id, IngestAuth, IngestError, IngestResult};
 use super::side_effects::{
     emit_group_discovery_events, emit_membership_notification, emit_system_message,
-    publish_dm_visibility_snapshot,
+    ensure_group_discovery_events, publish_dm_visibility_snapshot,
 };
 
 /// Route a command-kind event to the appropriate handler.
@@ -407,6 +407,14 @@ async fn handle_dm_open(
             }
         }
     } else {
+        // Creation-time discovery is best-effort; repair a DM whose kind:39000
+        // was never stored so the opener's metadata read can resolve it.
+        match ensure_group_discovery_events(tenant, state, channel.id).await {
+            Ok(true) => warn!(channel = %channel.id, "DM re-open: repaired missing discovery"),
+            Ok(false) => {}
+            Err(e) => warn!(channel = %channel.id, "DM re-open: discovery repair failed: {e}"),
+        }
+
         // Re-open of an existing DM cleared the caller's hidden_at; refresh
         // their NIP-DV snapshot so the DM reappears in the sidebar.
         if let Err(e) = publish_dm_visibility_snapshot(tenant, state, &self_bytes).await {
@@ -1626,5 +1634,95 @@ mod tests {
             IngestError::Rejected(ref message)
                 if message == "invalid: bad expected workflow revision"
         ));
+    }
+
+    async fn dm_test_state() -> Arc<AppState> {
+        let mut config = crate::config::Config::from_env().expect("default config loads");
+        config.require_relay_membership = false;
+        config.redis_url = "redis://127.0.0.1:1".to_string();
+        let url = std::env::var("BUZZ_TEST_DATABASE_URL").unwrap_or(config.database_url.clone());
+        let pool = sqlx::PgPool::connect_lazy(&url).expect("lazy pg pool");
+        let db = buzz_db::Db::from_pool(pool.clone());
+        let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .expect("redis pool");
+        let pubsub = Arc::new(
+            buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
+                .await
+                .expect("pubsub manager"),
+        );
+        let (state, _audit_shutdown) = AppState::new(
+            config.clone(),
+            db.clone(),
+            redis_pool,
+            buzz_audit::AuditService::new(pool.clone()),
+            pubsub,
+            buzz_auth::AuthService::new(config.auth.clone()),
+            buzz_search::SearchService::new(pool),
+            Arc::new(buzz_workflow::WorkflowEngine::new(
+                db,
+                buzz_workflow::WorkflowConfig::default(),
+            )),
+            Keys::generate(),
+            buzz_media::MediaStorage::new(&config.media).expect("media storage"),
+        );
+        Arc::new(state)
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn dm_reopen_repairs_missing_group_metadata() {
+        let (db, tenant) = persistence_test_context().await;
+        let state = dm_test_state().await;
+        let opener = Keys::generate();
+        let peer = Keys::generate();
+        let opener_bytes = opener.public_key().to_bytes();
+        let peer_bytes = peer.public_key().to_bytes();
+
+        // A DM whose creation-time discovery emission never landed.
+        let (channel, was_created) = db
+            .open_dm(
+                tenant.community(),
+                &[opener_bytes.as_slice(), peer_bytes.as_slice()],
+                opener_bytes.as_slice(),
+            )
+            .await
+            .expect("seed dm");
+        assert!(was_created);
+        let metadata = || buzz_db::event::EventQuery {
+            kinds: Some(vec![buzz_core::kind::KIND_NIP29_GROUP_METADATA as i32]),
+            d_tag: Some(channel.id.to_string()),
+            channel_ids: Some(vec![channel.id]),
+            ..buzz_db::event::EventQuery::for_community(tenant.community())
+        };
+        assert!(db
+            .query_events(&metadata())
+            .await
+            .expect("query")
+            .is_empty());
+
+        let auth = IngestAuth::Http {
+            pubkey: opener.public_key(),
+            scopes: vec![],
+            auth_method: super::super::ingest::HttpAuthMethod::Nip98,
+        };
+        let mut repaired = None;
+        for attempt in 0..2 {
+            let open = EventBuilder::new(Kind::Custom(KIND_DM_OPEN as u16), "")
+                .tags([Tag::parse(["p", &peer.public_key().to_hex()]).expect("p tag")])
+                .custom_created_at(Timestamp::from(Timestamp::now().as_secs() + attempt))
+                .sign_with_keys(&opener)
+                .expect("dm open event");
+            let result = handle_dm_open(&tenant, &state, &open, &auth)
+                .await
+                .expect("dm re-open");
+            assert!(result.message.contains(&channel.id.to_string()));
+
+            let events = db.query_events(&metadata()).await.expect("query");
+            assert_eq!(events.len(), 1, "exactly one live kind:39000");
+            let id = events[0].event.id;
+            // The second re-open finds metadata and must not churn it.
+            assert_eq!(*repaired.get_or_insert(id), id);
+        }
     }
 }

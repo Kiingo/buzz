@@ -58,6 +58,12 @@ const PUBLICATION_QUEUE_CAPACITY: usize = 64;
 const RECOVERY_BATCH_CAPACITY: usize = 4;
 const LIVE_QUEUE_CAPACITY: usize = PUBLICATION_QUEUE_CAPACITY - RECOVERY_BATCH_CAPACITY;
 const TERMINAL_RECEIPT_CACHE_CAPACITY: usize = 128;
+// Mirrors the relay's ingest window (`MAX_TIMESTAMP_DRIFT_SECS`). Operational
+// status is signed at its immutable fence time, so once that time leaves the
+// window no retry can ever be accepted.
+const RELAY_TIMESTAMP_TOLERANCE_SECS: u64 = 900;
+const RELAY_TIMESTAMP_REJECTION: &str = "event timestamp too far from server time";
+const STALE_STATUS_FENCE_CACHE_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -102,6 +108,8 @@ struct LocalPublicationQueueState {
     pending: VecDeque<LocalPublicationIntent>,
     // This is only a bounded cache. The durable API decides delivery eligibility.
     terminal_receipts: HashMap<String, Instant>,
+    // Bounded so a stale status fence the outbox keeps re-leasing logs once.
+    dropped_stale_status_fences: VecDeque<String>,
 }
 
 impl LocalPublicationQueueState {
@@ -222,6 +230,35 @@ impl LocalPublicationQueueState {
         }
         self.terminal_receipts
             .insert(receipt_id.to_owned(), Instant::now());
+    }
+
+    /// Drop recovered operational status whose fence time the relay can no
+    /// longer accept. Final, error, cancelled, and action output keep their
+    /// durable delivery semantics.
+    fn drop_stale_status(&mut self, intent: &LocalPublicationIntent, now_secs: u64) -> bool {
+        if !status_publication_outside_relay_window(intent, now_secs) {
+            return false;
+        }
+        if !self
+            .dropped_stale_status_fences
+            .iter()
+            .any(|fence_id| fence_id == &intent.fence_id)
+        {
+            tracing::warn!(
+                target: "buzz::local_publication",
+                receipt_id = %intent.receipt_id,
+                fence_id = %intent.fence_id,
+                publication_kind = %intent.publication_kind,
+                event_created_at = intent.event_created_at,
+                "dropping recovered operational status outside the relay timestamp window"
+            );
+            if self.dropped_stale_status_fences.len() >= STALE_STATUS_FENCE_CACHE_CAPACITY {
+                self.dropped_stale_status_fences.pop_front();
+            }
+            self.dropped_stale_status_fences
+                .push_back(intent.fence_id.clone());
+        }
+        true
     }
 
     fn prune_terminal_receipts(&mut self) {
@@ -345,8 +382,11 @@ impl LocalPublicationWorker {
             if tokio::time::Instant::now() >= next_recovery {
                 match self.recover_saved_publications().await {
                     Ok(intents) => {
+                        let now_secs = crate::relay::unix_now_secs();
                         for intent in intents {
-                            state.accept(intent);
+                            if !state.drop_stale_status(&intent, now_secs) {
+                                state.accept(intent);
+                            }
                         }
                     }
                     Err(error) => tracing::warn!(target: "buzz::local_publication", error = %error,
@@ -434,6 +474,20 @@ impl LocalPublicationWorker {
             match result {
                 Ok(event_id) => return event_id,
                 Err(error) => {
+                    if is_status_publication(intent) && error.contains(RELAY_TIMESTAMP_REJECTION) {
+                        // Ephemeral status signed at a stale fence time is
+                        // permanently unacceptable; retrying only spams the relay.
+                        tracing::warn!(
+                            target: "buzz::local_publication",
+                            receipt_id = %intent.receipt_id,
+                            fence_id = %intent.fence_id,
+                            publication_kind = %intent.publication_kind,
+                            attempt,
+                            error = %error,
+                            "dropping operational status the relay rejected as outside its timestamp window"
+                        );
+                        return None;
+                    }
                     let delay = publication_retry_delay(attempt);
                     if started_at.elapsed().saturating_add(delay)
                         > publication_retry_max_elapsed(intent)
@@ -800,6 +854,11 @@ fn is_terminal_publication(intent: &LocalPublicationIntent) -> bool {
         intent.publication_kind.as_str(),
         "final" | "error" | "cancelled"
     )
+}
+
+fn status_publication_outside_relay_window(intent: &LocalPublicationIntent, now_secs: u64) -> bool {
+    is_status_publication(intent)
+        && intent.event_created_at.abs_diff(now_secs) > RELAY_TIMESTAMP_TOLERANCE_SECS
 }
 
 fn publication_retry_max_elapsed(intent: &LocalPublicationIntent) -> Duration {

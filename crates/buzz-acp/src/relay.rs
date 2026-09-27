@@ -277,7 +277,20 @@ const REST_RETRY_BASE_DELAYS: [Duration; 3] = [
     Duration::from_millis(2000),
 ];
 
-fn unix_now_secs() -> u64 {
+const ERROR_BODY_MAX_BYTES: usize = 256;
+
+fn truncate_error_body(body: &str) -> &str {
+    if body.len() <= ERROR_BODY_MAX_BYTES {
+        return body;
+    }
+    let mut end = ERROR_BODY_MAX_BYTES;
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    &body[..end]
+}
+
+pub(crate) fn unix_now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -372,11 +385,16 @@ impl RestClient {
                     )));
                 }
                 Ok(resp) => {
-                    return Err(RelayError::Http(format!(
-                        "{method} {} returned HTTP {}",
-                        path,
-                        resp.status()
-                    )));
+                    let status = resp.status();
+                    // Keep the relay's reason (e.g. an `invalid:` rejection) so
+                    // callers can tell permanent refusals from transient ones.
+                    let reason = resp.text().await.unwrap_or_default();
+                    let reason = truncate_error_body(reason.trim());
+                    return Err(RelayError::Http(if reason.is_empty() {
+                        format!("{method} {path} returned HTTP {status}")
+                    } else {
+                        format!("{method} {path} returned HTTP {status}: {reason}")
+                    }));
                 }
                 Err(e) if e.is_timeout() || e.is_connect() => {
                     tracing::warn!("{method} {path} network error: {e}");

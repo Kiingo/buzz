@@ -453,6 +453,125 @@ async fn deferred_delivery_never_submits_or_completes_an_event() {
 }
 
 #[test]
+fn only_status_outside_the_relay_window_is_stale() {
+    let keys = Keys::generate();
+    let mut saved = intent(keys.public_key().to_hex());
+    let now = saved.event_created_at + RELAY_TIMESTAMP_TOLERANCE_SECS;
+    for kind in ["receipt", "progress", "capacity"] {
+        saved.publication_kind = kind.into();
+        assert!(!status_publication_outside_relay_window(&saved, now));
+        assert!(status_publication_outside_relay_window(&saved, now + 1));
+        // A future-dated fence is equally unacceptable to the relay.
+        assert!(status_publication_outside_relay_window(
+            &saved,
+            saved.event_created_at - RELAY_TIMESTAMP_TOLERANCE_SECS - 1
+        ));
+    }
+    for kind in ["final", "error", "cancelled", "action"] {
+        saved.publication_kind = kind.into();
+        assert!(!status_publication_outside_relay_window(
+            &saved,
+            now + 86_400
+        ));
+    }
+}
+
+#[test]
+fn stale_recovered_status_is_dropped_once_while_durable_output_is_kept() {
+    let keys = Keys::generate();
+    let answer = intent(keys.public_key().to_hex());
+    let mut progress = answer.clone();
+    progress.receipt_id = Uuid::new_v4().to_string();
+    progress.fence_id = Uuid::new_v4().to_string();
+    progress.publication_kind = "progress".into();
+    let now = answer.event_created_at + RELAY_TIMESTAMP_TOLERANCE_SECS + 60;
+    let mut state = LocalPublicationQueueState::default();
+    // The durable outbox re-leases the same stale fence on every recovery.
+    for _ in 0..3 {
+        assert!(state.drop_stale_status(&progress, now));
+    }
+    assert_eq!(state.dropped_stale_status_fences.len(), 1);
+    assert!(!state.drop_stale_status(&answer, now));
+    let mut fresh = progress.clone();
+    fresh.fence_id = Uuid::new_v4().to_string();
+    fresh.event_created_at = now;
+    assert!(!state.drop_stale_status(&fresh, now));
+    for index in 0..(STALE_STATUS_FENCE_CACHE_CAPACITY * 2) {
+        let mut next = progress.clone();
+        next.fence_id = format!("stale-{index}");
+        assert!(state.drop_stale_status(&next, now));
+    }
+    assert_eq!(
+        state.dropped_stale_status_fences.len(),
+        STALE_STATUS_FENCE_CACHE_CAPACITY
+    );
+}
+
+#[tokio::test]
+async fn relay_timestamp_rejection_of_status_is_terminal_without_retry() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let keys = Keys::generate();
+        let mut saved = intent(keys.public_key().to_hex());
+        saved.publication_kind = "progress".into();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let worker = LocalPublicationWorker {
+            rest: RestClient {
+                base_url: base.clone(),
+                ..rest(keys)
+            },
+            community_id: saved.community_id.clone(),
+            completion_api_base_url: base,
+            internal_token: "stale-status-test-token".into(),
+            reconcile_reactions: false,
+        };
+        let fence = saved.fence_id.clone();
+        let server = tokio::spawn(async move {
+            for path in [
+                format!("/api/buzz-bridge/publications/{fence}/authorize"),
+                "/query".to_string(),
+                "/events".to_string(),
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (headers, _) = receive_http(&mut stream).await;
+                assert!(headers.starts_with(&format!("POST {path} ")), "{headers}");
+                match path.as_str() {
+                    "/query" => respond_http(&mut stream, 200, serde_json::json!([])).await,
+                    "/events" => {
+                        respond_http(
+                            &mut stream,
+                            400,
+                            serde_json::json!({
+                                "error": "invalid: event timestamp too far from server time"
+                            }),
+                        )
+                        .await
+                    }
+                    _ => {
+                        respond_http(
+                            &mut stream,
+                            200,
+                            serde_json::json!({"should_publish": true}),
+                        )
+                        .await
+                    }
+                }
+            }
+            // No retry, and the fence is never completed with a rejected event.
+            assert!(
+                tokio::time::timeout(Duration::from_millis(300), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        assert!(worker.publish_with_retry(&saved).await.is_none());
+        server.await.unwrap();
+    })
+    .await
+    .expect("stale status rejection must not retry");
+}
+
+#[test]
 fn batched_answer_never_overtakes_its_queued_actions() {
     let keys = Keys::generate();
     let answer = intent(keys.public_key().to_hex());

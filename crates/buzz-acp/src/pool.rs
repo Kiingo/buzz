@@ -745,6 +745,9 @@ pub struct PromptContext {
     /// `<core-memory>` section. On by default; disabled via
     /// `--no-memory` / `BUZZ_ACP_NO_MEMORY`.
     pub memory_enabled: bool,
+    /// Post unpublished final assistant text as the turn's reply (see
+    /// [`crate::unpublished_reply`]). Disabled via `BUZZ_ACP_NO_REPLY_FALLBACK`.
+    pub reply_fallback_enabled: bool,
     /// Harness identity string for NIP-AM `harness` field. Derived from the
     /// configured `agent_command` at startup (e.g. `"goose"`, `"buzz-agent"`).
     pub harness_name: String,
@@ -1896,7 +1899,8 @@ pub async fn run_prompt_task(
         PromptSource::Channel(channel_id) => Some(*channel_id),
         PromptSource::Heartbeat => None,
     };
-    let turn_started_at = chrono::Utc::now().to_rfc3339();
+    let turn_started_now = chrono::Utc::now();
+    let turn_started_at = turn_started_now.to_rfc3339();
     agent.acp.set_observer_context(observer::context_for_turn(
         observer_channel_id,
         None,
@@ -2951,6 +2955,24 @@ pub async fn run_prompt_task(
                     "rotating session for {source:?} after {stop_reason:?}",
                 );
                 agent.state.invalidate(&source);
+            }
+
+            let reply_text = agent.acp.take_turn_reply_text();
+            if ctx.reply_fallback_enabled && stop_reason == StopReason::EndTurn {
+                let is_dm = resolved_channel_info
+                    .as_ref()
+                    .is_some_and(|info| info.channel_type == "dm");
+                if let Some(reply) = batch
+                    .as_ref()
+                    .and_then(|b| crate::unpublished_reply::plan(b, is_dm, &reply_text))
+                {
+                    crate::unpublished_reply::spawn(
+                        ctx.rest_client.clone(),
+                        reply,
+                        turn_started_now.timestamp().max(0) as u64,
+                        chrono::Utc::now().timestamp().max(0) as u64,
+                    );
+                }
             }
 
             let core_stop = acp_stop_to_core(&stop_reason);
@@ -8616,6 +8638,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             agent_keys: agent_keys.clone(),
             agent_owner_pubkey: owner_pubkey,
             memory_enabled: false,
+            reply_fallback_enabled: false,
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
         }
