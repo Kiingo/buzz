@@ -1234,6 +1234,32 @@ pub async fn emit_group_discovery_events(
     Ok(())
 }
 
+/// Emit discovery events only when the channel has no live kind:39000 yet.
+///
+/// Creation-time emission is best-effort, so a failure there would otherwise
+/// leave the channel permanently without metadata: idempotent re-opens (e.g.
+/// DM open) never take the creation branch again. Returns whether it emitted.
+pub async fn ensure_group_discovery_events(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    channel_id: Uuid,
+) -> anyhow::Result<bool> {
+    let existing = state
+        .db
+        .query_events(&buzz_db::event::EventQuery {
+            kinds: Some(vec![KIND_NIP29_GROUP_METADATA as i32]),
+            channel_id: Some(channel_id),
+            limit: Some(1),
+            ..buzz_db::event::EventQuery::for_community(tenant.community())
+        })
+        .await?;
+    if !existing.is_empty() {
+        return Ok(false);
+    }
+    emit_group_discovery_events(tenant, state, channel_id).await?;
+    Ok(true)
+}
+
 async fn handle_agent_profile(
     tenant: &TenantContext,
     event: &Event,
