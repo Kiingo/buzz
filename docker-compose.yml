@@ -101,8 +101,11 @@ services:
     restart: unless-stopped
 
   minio:
-    image: quay.io/minio/minio:latest
+    # MinIO no longer publishes anonymously pullable images; use Chainguard's
+    # build of the same server. -dev carries a shell for the health check.
+    image: cgr.dev/chainguard/minio:latest-dev@sha256:c79eec487f2de16a5513d4106e976b8d0d2fc5a87b6c0374cee9fb801a33738f
     container_name: buzz-minio
+    user: "0:0"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: buzz_dev
@@ -115,7 +118,7 @@ services:
     networks:
       - buzz-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9000/minio/health/live || curl -fs http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -130,7 +133,7 @@ services:
     restart: unless-stopped
 
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: cgr.dev/chainguard/minio-client:latest-dev@sha256:fdb40d819ca51969c86fa76f45a67bb841759daf85d4c6ce9aa86d27f6e47ae9
     container_name: buzz-minio-init
     depends_on:
       minio:
