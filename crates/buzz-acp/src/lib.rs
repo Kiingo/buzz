@@ -2921,13 +2921,14 @@ async fn tokio_main() -> Result<()> {
                             // launched by the same human). Allowlist adds the
                             // explicit pubkey list on top, for external people;
                             // it never revokes same-owner team bots.
+                            //
+                            // DM hardening: resolve channel type (fail-closed
+                            // to DM) so allowlist/anyone modes cannot be
+                            // exercised by non-owner authors inside DMs.
+                            let is_dm =
+                                is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await;
                             {
                                 let author = buzz_event.event.pubkey.to_hex();
-                                // DM hardening: resolve channel type (fail-closed
-                                // to DM) so allowlist/anyone modes cannot be
-                                // exercised by non-owner authors inside DMs.
-                                let is_dm =
-                                    is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await;
                                 let allowed = author_allowed(
                                     &config.respond_to,
                                     &config.respond_to_allowlist,
@@ -2968,6 +2969,26 @@ async fn tokio_main() -> Result<()> {
                                     );
                                 }
                                 continue; // consume control event; never queue as a prompt
+                            }
+
+                            // Addressed-elsewhere gate: in a channel, a non-owner
+                            // message that @mentions others but not this agent is
+                            // not for this agent, even when its subscription does
+                            // not require a mention (`all`, config rules,
+                            // `--no-mention-filter`).
+                            if addressed_to_someone_else(
+                                &buzz_event.event,
+                                kind_u32,
+                                &pubkey_hex,
+                                owner_cache.get(),
+                                is_dm,
+                            ) {
+                                tracing::debug!(
+                                    channel_id = %buzz_event.channel_id,
+                                    author = %buzz_event.event.pubkey.to_hex(),
+                                    "message mentions other participants only — dropping"
+                                );
+                                continue;
                             }
 
                             let matched = filter::match_event(&buzz_event.event, buzz_event.channel_id, &rules, &pubkey_hex).await;
@@ -3628,6 +3649,26 @@ fn event_mentions_agent(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
         t.as_slice().first().map(|s| s.as_str()) == Some("p")
             && t.as_slice().get(1).map(|s| s.as_str()) == Some(agent_pubkey_hex)
     })
+}
+
+/// A non-owner channel stream message that `p`-tags (mentions) someone but
+/// not this agent is addressed to them, so this agent must not take a turn on
+/// it. Messages that mention nobody, owner messages, and DMs are unaffected.
+fn addressed_to_someone_else(
+    event: &nostr::Event,
+    kind_u32: u32,
+    agent_pubkey_hex: &str,
+    owner_pubkey_hex: Option<&str>,
+    is_dm: bool,
+) -> bool {
+    !is_dm
+        && kind_u32 == KIND_STREAM_MESSAGE
+        && owner_pubkey_hex != Some(event.pubkey.to_hex().as_str())
+        && event
+            .tags
+            .iter()
+            .any(|t| t.as_slice().first().map(|s| s.as_str()) == Some("p"))
+        && !event_mentions_agent(event, agent_pubkey_hex)
 }
 
 fn should_ignore_self_event(event: &nostr::Event, agent_pubkey_hex: &str) -> bool {
@@ -5342,6 +5383,80 @@ mod owner_control_command_tests {
             .tags(tags)
             .sign_with_keys(&keys)
             .unwrap()
+    }
+
+    #[test]
+    fn message_mentioning_only_others_is_addressed_elsewhere() {
+        let me = "ab".repeat(32);
+        let other_agent = "cd".repeat(32);
+
+        let to_other = make_event(
+            KIND_STREAM_MESSAGE,
+            "@Marlowe your turn",
+            Some(&other_agent),
+        );
+        assert!(addressed_to_someone_else(
+            &to_other,
+            KIND_STREAM_MESSAGE,
+            &me,
+            None,
+            false
+        ));
+
+        // Mentioning this agent (alone or alongside others) is for this agent.
+        let to_me = make_event(KIND_STREAM_MESSAGE, "@Juniper", Some(&me));
+        assert!(!addressed_to_someone_else(
+            &to_me,
+            KIND_STREAM_MESSAGE,
+            &me,
+            None,
+            false
+        ));
+        let both = EventBuilder::new(Kind::Custom(KIND_STREAM_MESSAGE as u16), "@both")
+            .tags([
+                Tag::parse(["p", &other_agent]).unwrap(),
+                Tag::parse(["p", &me]).unwrap(),
+            ])
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        assert!(!addressed_to_someone_else(
+            &both,
+            KIND_STREAM_MESSAGE,
+            &me,
+            None,
+            false
+        ));
+
+        // Messages that mention nobody keep current behavior.
+        let nobody = make_event(KIND_STREAM_MESSAGE, "status update", None);
+        assert!(!addressed_to_someone_else(
+            &nobody,
+            KIND_STREAM_MESSAGE,
+            &me,
+            None,
+            false
+        ));
+
+        // The owner, DMs, and non-chat kinds are exempt.
+        let owner = to_other.pubkey.to_hex();
+        assert!(!addressed_to_someone_else(
+            &to_other,
+            KIND_STREAM_MESSAGE,
+            &me,
+            Some(&owner),
+            false
+        ));
+        assert!(!addressed_to_someone_else(
+            &to_other,
+            KIND_STREAM_MESSAGE,
+            &me,
+            None,
+            true
+        ));
+        let approval = make_event(46010, "approve", Some(&other_agent));
+        assert!(!addressed_to_someone_else(
+            &approval, 46010, &me, None, false
+        ));
     }
 
     #[test]
