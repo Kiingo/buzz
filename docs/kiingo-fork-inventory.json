@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 96,
-    "modifiedUpstreamFiles": 141,
-    "changedUpstreamProductionSourceLines": 5955,
-    "upstreamProductionSourceDiffHunks": 707,
+    "modifiedUpstreamProductionSourceFiles": 97,
+    "modifiedUpstreamFiles": 142,
+    "changedUpstreamProductionSourceLines": 5979,
+    "upstreamProductionSourceDiffHunks": 716,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -639,6 +639,16 @@
         "mobile/test/features/channels/agent_status_test.dart",
         "schema/schema.sql",
         "scripts/reconcile-schema-after-pgschema.sql"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz reliability maintainers",
+      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error, and similar small robustness fixes.",
+      "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
+      "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
+      "paths": [
+        "desktop/src/shared/api/relayClientSession.ts"
       ]
     }
   ]
