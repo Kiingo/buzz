@@ -15,6 +15,7 @@ mod queue;
 mod relay;
 mod runtime_failure_status;
 mod setup_mode;
+mod unpublished_reply;
 mod usage;
 
 pub use usage::TurnUsage;
@@ -2239,6 +2240,7 @@ async fn tokio_main() -> Result<()> {
             .as_deref()
             .and_then(|hex| nostr::PublicKey::from_hex(hex).ok()),
         memory_enabled: config.memory_enabled,
+        reply_fallback_enabled: config.reply_fallback_enabled,
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
     });
@@ -7027,6 +7029,7 @@ mod build_mcp_servers_tests {
             max_turns_per_session: 0,
             presence_enabled: true,
             typing_enabled: true,
+            reply_fallback_enabled: true,
             memory_enabled: false,
             model: None,
             effort_level: None,
@@ -7268,6 +7271,7 @@ mod error_outcome_emission_tests {
             max_turns_per_session: 0,
             presence_enabled: true,
             typing_enabled: true,
+            reply_fallback_enabled: true,
             memory_enabled: false,
             model: None,
             effort_level: None,

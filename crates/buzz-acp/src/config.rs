@@ -387,6 +387,14 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_NO_TYPING")]
     pub no_typing: bool,
 
+    /// Disable the unpublished-reply safety net.
+    ///
+    /// On by default: when a channel turn ends with final assistant text but
+    /// the agent published no message to the triggering channel during the
+    /// turn, the harness posts that text as a threaded reply.
+    #[arg(long, env = "BUZZ_ACP_NO_REPLY_FALLBACK")]
+    pub no_reply_fallback: bool,
+
     /// Enable NIP-AE agent core memory injection.
     ///
     /// Memory injection is on by default. When enabled, the harness
@@ -547,6 +555,9 @@ pub struct Config {
     pub max_turns_per_session: u32,
     pub presence_enabled: bool,
     pub typing_enabled: bool,
+    /// Whether unpublished final assistant text is posted as the turn's
+    /// reply. On by default; disabled via `BUZZ_ACP_NO_REPLY_FALLBACK`.
+    pub reply_fallback_enabled: bool,
     /// Whether NIP-AE agent core memory injection is enabled. When false,
     /// the harness skips the per-session core engram fetch and renders no
     /// `<core-memory>` section. On by default; disabled via the
@@ -1123,6 +1134,7 @@ impl Config {
             max_turns_per_session: args.max_turns_per_session,
             presence_enabled: !args.no_presence,
             typing_enabled: !args.no_typing,
+            reply_fallback_enabled: !args.no_reply_fallback,
             memory_enabled: args.memory && !args.no_memory,
             model,
             effort_level: args.effort_level,
@@ -1499,6 +1511,7 @@ mod tests {
             max_turns_per_session: 0,
             presence_enabled: true,
             typing_enabled: true,
+            reply_fallback_enabled: true,
             memory_enabled: true,
             model: None,
             effort_level: None,
