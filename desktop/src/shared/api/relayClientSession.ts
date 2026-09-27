@@ -101,8 +101,7 @@ export class RelayClient {
   private stabilityTimer: number | null = null;
   private visibleChannelId: string | null = null;
   private authOkTracker = new AuthOkTracker();
-  private terminal = false;
-  private terminalReason: string | null = null;
+  private terminal: string | null = null; // latching rejection, or null
 
   private connectionStateEmitter = new RelayConnectionStateEmitter("idle");
   private stallWatchdog = new RelayStallWatchdog({
@@ -133,8 +132,7 @@ export class RelayClient {
     this.relayUrl = null;
     this.hasConnectedOnce = false;
     this.notifyReconnectListeners = false;
-    this.terminal = false;
-    this.terminalReason = null;
+    this.terminal = null;
     this.visibleChannelId = null;
     this.authOkTracker.reset();
     this.connectionStateEmitter.set("idle");
@@ -431,8 +429,7 @@ export class RelayClient {
   async preconnect() {
     // Explicit re-engagement (reconnect card / community switch): clears the
     // terminal latch and AUTH rejection streak, and bypasses backoff once.
-    this.terminal = false;
-    this.terminalReason = null;
+    this.terminal = null;
     this.authOkTracker.reset();
     this.keepAliveRequested = true;
     await this.connectBypassingBackoff();
@@ -445,7 +442,7 @@ export class RelayClient {
    * AUTH rejection cannot defeat the consecutive-rejection cap.
    */
   async resumeReconnect() {
-    if (this.terminal) return;
+    if (this.terminal !== null) return;
     await this.connectBypassingBackoff();
   }
 
@@ -487,12 +484,11 @@ export class RelayClient {
   }
 
   private async ensureConnected() {
-    if (shouldRefuseConnect({ terminal: this.terminal })) {
+    if (shouldRefuseConnect({ terminal: this.terminal !== null })) {
       // Terminal (e.g. relay rejected auth): refuse until disconnect() or
-      // preconnect() clears the latch, else the reconnect-timer catch and
-      // the publish/subscribe retry wrappers would race the terminal
-      // "disconnected" state back to "reconnecting".
-      throw terminalSessionError(this.terminalReason);
+      // preconnect() clears the latch, else reconnect/retry wrappers would
+      // race the terminal "disconnected" state back to "reconnecting".
+      throw terminalSessionError(this.terminal);
     }
 
     if (this.connectPromise) {
@@ -958,7 +954,7 @@ export class RelayClient {
   private scheduleReconnect() {
     if (
       !shouldScheduleReconnect({
-        terminal: this.terminal,
+        terminal: this.terminal !== null,
         hasPendingReconnect: this.reconnectTimeout !== null,
         hasLiveSocket: this.wsId !== null,
         keepAliveRequested: this.keepAliveRequested,
@@ -1028,14 +1024,13 @@ export class RelayClient {
     this.eventBuffer = [];
 
     if (options?.reconnect === false) {
-      this.terminal = true;
-      this.terminalReason = error.message;
+      this.terminal = error.message;
       this.connectionStateEmitter.set("disconnected");
     } else if (
       // A late retry failure racing a terminal latch must not paint
       // "reconnecting" over the terminal "disconnected" state; stall is a
       // stronger signal than a generic drop and is kept until reconnect.
-      !this.terminal &&
+      this.terminal === null &&
       this.connectionStateEmitter.get() !== "stalled"
     ) {
       this.connectionStateEmitter.set("reconnecting");
