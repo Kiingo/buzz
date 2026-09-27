@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 95,
-    "modifiedUpstreamFiles": 140,
-    "changedUpstreamProductionSourceLines": 5937,
-    "upstreamProductionSourceDiffHunks": 704,
+    "modifiedUpstreamProductionSourceFiles": 96,
+    "modifiedUpstreamFiles": 141,
+    "changedUpstreamProductionSourceLines": 5955,
+    "upstreamProductionSourceDiffHunks": 707,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -444,6 +444,7 @@
         "desktop/src/features/messages/hooks.ts",
         "desktop/src/features/messages/ui/useMentionSendFlow.ts",
         "desktop/src/features/home/ui/HomeView.tsx",
+        "desktop/src/features/home/ui/InboxMessageRow.tsx",
         "desktop/src/features/huddle/lib/ttsLiveMessages.security.test.mjs",
         "desktop/src/features/huddle/lib/ttsLiveMessageSanitizer.ts",
         "desktop/src/features/huddle/lib/ttsLiveMessages.ts",
