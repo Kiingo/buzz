@@ -399,6 +399,17 @@ pub(crate) async fn flush_pending_events_at(
             // and `mark_synced` below still compares against the retained row's
             // original `created_at`/`content`, which are untouched.
             resign_with_fresh_timestamp(&event, state)?
+        } else if retained_head_is_outside_relay_window(
+            current.created_at,
+            nostr::Timestamp::now().as_secs() as i64,
+            RELAY_ACCEPT_WINDOW_SECS,
+        ) {
+            // A persona/managed-agent head that stayed pending past the relay's
+            // ±15 min window (e.g. the owner was briefly not a relay member)
+            // would be rejected on every sweep forever. Re-sign it now; it is
+            // this device's newest local edit, and `mark_synced` still matches
+            // the retained row's original `created_at`/`content`.
+            resign_with_fresh_timestamp(&event, state)?
         } else {
             event
         };
@@ -439,6 +450,12 @@ pub(crate) async fn flush_pending_events_at(
     }
 
     Ok(flushed)
+}
+
+/// Whether a retained head's `created_at` is too old or too new for the relay
+/// to accept, so publishing the stored signature can never succeed.
+fn retained_head_is_outside_relay_window(created_at: i64, now: i64, window_secs: i64) -> bool {
+    (created_at - now).abs() > window_secs
 }
 
 /// Re-sign a retained event with the current owner keys and a fresh

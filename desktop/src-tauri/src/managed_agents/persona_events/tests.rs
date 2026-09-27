@@ -945,3 +945,20 @@ mod flush_barrier {
         );
     }
 }
+
+#[test]
+fn retained_head_outside_relay_window_is_resigned_before_publish() {
+    let now = 1_800_000_000;
+    // Inside the ±900s window: the stored signature is still publishable.
+    assert!(!retained_head_is_outside_relay_window(now, now, 900));
+    assert!(!retained_head_is_outside_relay_window(now - 900, now, 900));
+    assert!(!retained_head_is_outside_relay_window(now + 900, now, 900));
+    // Stale or future-dated past the window: the relay rejects it forever.
+    assert!(retained_head_is_outside_relay_window(now - 901, now, 900));
+    assert!(retained_head_is_outside_relay_window(
+        now - 86_400,
+        now,
+        900
+    ));
+    assert!(retained_head_is_outside_relay_window(now + 901, now, 900));
+}
