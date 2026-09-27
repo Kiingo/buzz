@@ -13,6 +13,7 @@ mod prompt_framing;
 mod prompt_project;
 mod queue;
 mod relay;
+mod respond_allowlist_file;
 mod runtime_failure_status;
 mod setup_mode;
 mod unpublished_reply;
@@ -274,6 +275,7 @@ async fn author_allowed(
         RespondTo::OwnerOnly => is_owner_or_sibling(author, owner_cache, rest_client).await,
         RespondTo::Allowlist => {
             allowlist.contains(author)
+                || respond_allowlist_file::contains(author)
                 || is_owner_or_sibling(author, owner_cache, rest_client).await
         }
     }
