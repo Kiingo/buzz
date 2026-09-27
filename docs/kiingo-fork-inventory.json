@@ -6,8 +6,8 @@
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 101,
     "modifiedUpstreamFiles": 148,
-    "changedUpstreamProductionSourceLines": 6394,
-    "upstreamProductionSourceDiffHunks": 748,
+    "changedUpstreamProductionSourceLines": 6407,
+    "upstreamProductionSourceDiffHunks": 751,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -644,7 +644,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz reliability maintainers",
-      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; and repair missing DM discovery metadata on re-open.",
+      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; and an optional hot-reloaded respond-to allowlist file.",
       "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
       "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
       "paths": [
@@ -652,6 +652,7 @@
         "crates/buzz-acp/src/base_prompt.md",
         "crates/buzz-acp/src/config.rs",
         "crates/buzz-acp/src/profile_publication.rs",
+        "crates/buzz-acp/src/respond_allowlist_file.rs",
         "crates/buzz-acp/src/unpublished_reply.rs",
         "crates/buzz-relay/src/handlers/command_executor.rs",
         "crates/buzz-relay/src/handlers/side_effects.rs",

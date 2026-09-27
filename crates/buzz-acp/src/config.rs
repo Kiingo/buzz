@@ -1044,12 +1044,19 @@ impl Config {
 
         let respond_to_allowlist = if args.respond_to == RespondTo::Allowlist {
             let raw = args.respond_to_allowlist.unwrap_or_default();
-            if raw.is_empty() {
+            let has_file =
+                std::env::var_os(crate::respond_allowlist_file::RESPOND_TO_ALLOWLIST_FILE_ENV)
+                    .is_some();
+            if raw.is_empty() && !has_file {
                 return Err(ConfigError::ConfigFile(
                     "--respond-to=allowlist requires --respond-to-allowlist with at least one pubkey".into(),
                 ));
             }
-            validate_allowlist(&raw)?
+            if raw.is_empty() {
+                HashSet::new()
+            } else {
+                validate_allowlist(&raw)?
+            }
         } else {
             if args.respond_to_allowlist.is_some() {
                 tracing::warn!(
