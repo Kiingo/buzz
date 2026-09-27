@@ -8,6 +8,7 @@ mod local_publication;
 mod observer;
 mod pool;
 mod pool_lifecycle;
+mod profile_publication;
 mod prompt_framing;
 mod prompt_project;
 mod queue;
@@ -2554,7 +2555,9 @@ async fn tokio_main() -> Result<()> {
         // A failed batch may be the only work on an otherwise quiet relay.
         // Snapshot its exact deadline before splitting the pool borrow so the
         // select loop can wake and redispatch it without external traffic.
-        local_publication::ensure_started(relay.rest_client());
+        let rest = relay.rest_client();
+        profile_publication::ensure_started(&rest);
+        local_publication::ensure_started(rest);
         let queue_retry_deadline = if pool_ready {
             queue
                 .next_retry_deadline()
