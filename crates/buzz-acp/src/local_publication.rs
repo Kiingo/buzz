@@ -522,6 +522,21 @@ impl LocalPublicationWorker {
 
     async fn publish(&self, intent: &LocalPublicationIntent) -> Result<Option<String>, String> {
         self.validate_scoped_intent(intent)?;
+        // Status output is signed at its fence time. Whatever route delivered
+        // the intent, never submit one the relay's timestamp check must reject.
+        let now_secs = crate::relay::unix_now_secs();
+        if status_publication_outside_relay_window(intent, now_secs) {
+            tracing::warn!(
+                target: "buzz::local_publication",
+                receipt_id = %intent.receipt_id,
+                fence_id = %intent.fence_id,
+                publication_kind = %intent.publication_kind,
+                event_created_at = intent.event_created_at,
+                skew_secs = intent.event_created_at as i64 - now_secs as i64,
+                "skipping status publication outside the relay timestamp window"
+            );
+            return Ok(None);
+        }
         let authorization = self.authorize(intent).await?;
         if !authorization.should_publish {
             return Ok(None);
