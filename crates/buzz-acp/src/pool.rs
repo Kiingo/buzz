@@ -1365,13 +1365,35 @@ async fn create_session_and_apply_model(
     );
 
     // Apply permission mode if not the agent's built-in default AND the agent
-    // advertises the requested mode in session/new. Agents that don't support
-    // the mode (e.g., goose crashes on unrecognized set_config_option values)
-    // are safely skipped — the harness auto-approves via handle_permission_request.
-    if !ctx.permission_mode.is_default()
-        && agent_supports_mode(&resp.raw, ctx.permission_mode.as_wire_str())
-    {
-        apply_permission_mode(&mut agent.acp, &resp.session_id, &ctx.permission_mode).await?;
+    // advertises a matching mode in session/new (exact id, or the adapter's
+    // `full_access` mode for bypassPermissions). Agents that don't support the
+    // mode (e.g., goose crashes on unrecognized set_config_option values) are
+    // skipped with a warning — the harness auto-approves via
+    // handle_permission_request.
+    if !ctx.permission_mode.is_default() {
+        match resolve_advertised_mode(&resp.raw, ctx.permission_mode) {
+            Some(mode_id) => {
+                apply_permission_mode(&mut agent.acp, &resp.session_id, &mode_id).await?;
+            }
+            None => {
+                let advertised: Vec<&str> = advertised_modes(&resp.raw)
+                    .map(|modes| {
+                        modes
+                            .iter()
+                            .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                tracing::warn!(
+                    target: "pool::permission",
+                    "configured permission mode {:?} is not advertised by the agent \
+                     (available modes: {advertised:?}) on session {} — leaving the \
+                     agent's own mode in place",
+                    ctx.permission_mode.as_wire_str(),
+                    resp.session_id
+                );
+            }
+        }
     }
 
     Ok(resp.session_id)
@@ -1618,26 +1640,58 @@ fn patch_config_option_current_value(
     }
 }
 
-/// Set the session permission mode via `session/set_config_option`.
-///
-/// Non-fatal for most errors: logs and proceeds. The agent falls back
-/// to its default permission mode (`"default"`), which still works via
-/// Check if the agent's `session/new` response advertises a given mode ID
-/// in `result.modes.availableModes[].id`. Returns `false` if the modes
-/// field is absent or the mode isn't listed.
-fn agent_supports_mode(session_new_result: &serde_json::Value, mode_wire: &str) -> bool {
+/// `_meta.kind` value ACP adapters use to tag their unrestricted mode
+/// (codex-acp `agent-full-access`, claude-agent-acp `bypassPermissions`).
+const FULL_ACCESS_MODE_KIND: &str = "full_access";
+
+/// Advertised session modes from a `session/new` response
+/// (`result.modes.availableModes`), or `None` when the field is absent.
+fn advertised_modes(session_new_result: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
     session_new_result
         .get("modes")
         .and_then(|m| m.get("availableModes"))
         .and_then(|a| a.as_array())
-        .map(|modes| {
-            modes
-                .iter()
-                .any(|m| m.get("id").and_then(|v| v.as_str()) == Some(mode_wire))
-        })
-        .unwrap_or(false)
 }
 
+/// Resolve the agent-specific session-mode id that implements `mode`.
+///
+/// An exact id match wins (claude-agent-acp names its modes after
+/// [`PermissionMode`] wire strings). `bypassPermissions` additionally maps to
+/// whichever advertised mode is tagged `_meta.kind == "full_access"` — this is
+/// how codex-acp's `agent-full-access` (danger-full-access sandbox, approval
+/// policy `never`) is selected. Without that mapping codex-acp stays in its
+/// default `agent` mode, whose per-turn sandbox policy denies network access.
+///
+/// Returns `None` if the modes field is absent or nothing matches.
+fn resolve_advertised_mode(
+    session_new_result: &serde_json::Value,
+    mode: PermissionMode,
+) -> Option<String> {
+    let modes = advertised_modes(session_new_result)?;
+    let id_of = |m: &serde_json::Value| m.get("id").and_then(|v| v.as_str()).map(str::to_owned);
+    let wire = mode.as_wire_str();
+    if let Some(id) = modes
+        .iter()
+        .filter_map(id_of)
+        .find(|id| id.as_str() == wire)
+    {
+        return Some(id);
+    }
+    if mode == PermissionMode::BypassPermissions {
+        return modes
+            .iter()
+            .find(|m| {
+                m.pointer("/_meta/kind").and_then(|k| k.as_str()) == Some(FULL_ACCESS_MODE_KIND)
+            })
+            .and_then(id_of);
+    }
+    None
+}
+
+/// Set the session permission mode via `session/set_config_option`.
+///
+/// Non-fatal for most errors: logs and proceeds. The agent falls back
+/// to its default permission mode, which still works via
 /// per-tool auto-approval in `handle_permission_request`.
 ///
 /// **Fatal exception:** if the agent process exits (e.g., goose crashes on
@@ -1645,9 +1699,8 @@ fn agent_supports_mode(session_new_result: &serde_json::Value, mode_wire: &str) 
 async fn apply_permission_mode(
     acp: &mut AcpClient,
     session_id: &str,
-    mode: &PermissionMode,
+    wire: &str,
 ) -> Result<(), AcpError> {
-    let wire = mode.as_wire_str();
     let result = tokio::time::timeout(PERMISSION_MODE_TIMEOUT, async {
         acp.session_set_config_option(session_id, "mode", wire)
             .await
@@ -5313,38 +5366,113 @@ mod tests {
         assert_eq!(deleted_ids, reaction_ids);
     }
 
-    // MINOR (#2884): the permission-mode RPC is gated on agent_supports_mode.
-    // An advertised mode issues set_config_option; an absent one is skipped so
-    // the harness falls back to per-tool auto-approval. Pin both edges directly.
+    // MINOR (#2884): the permission-mode RPC is gated on resolve_advertised_mode.
+    // An advertised mode issues set_config_option; an absent one is skipped
+    // (with a warning) so the harness falls back to per-tool auto-approval.
     #[test]
-    fn agent_supports_mode_advertised_auto_is_true() {
+    fn resolve_advertised_mode_exact_match() {
         let session_new = json!({
             "modes": { "availableModes": [{ "id": "default" }, { "id": "auto" }] }
         });
-        assert!(agent_supports_mode(
-            &session_new,
-            PermissionMode::Auto.as_wire_str()
-        ));
+        assert_eq!(
+            resolve_advertised_mode(&session_new, PermissionMode::Auto).as_deref(),
+            Some("auto")
+        );
     }
 
     #[test]
-    fn agent_supports_mode_absent_auto_is_false() {
+    fn resolve_advertised_mode_absent_is_none() {
         let session_new = json!({
             "modes": { "availableModes": [{ "id": "default" }] }
         });
-        assert!(!agent_supports_mode(
-            &session_new,
-            PermissionMode::Auto.as_wire_str()
-        ));
+        assert_eq!(
+            resolve_advertised_mode(&session_new, PermissionMode::Auto),
+            None
+        );
     }
 
     #[test]
-    fn agent_supports_mode_missing_modes_field_is_false() {
+    fn resolve_advertised_mode_missing_modes_field_is_none() {
         let session_new = json!({ "sessionId": "sess-1" });
-        assert!(!agent_supports_mode(
-            &session_new,
-            PermissionMode::Auto.as_wire_str()
-        ));
+        assert_eq!(
+            resolve_advertised_mode(&session_new, PermissionMode::BypassPermissions),
+            None
+        );
+    }
+
+    /// claude-agent-acp 0.81 advertises `bypassPermissions` (kind full_access)
+    /// alongside `auto`; the exact id is selected.
+    #[test]
+    fn resolve_advertised_mode_claude_bypass_permissions() {
+        let session_new = json!({
+            "modes": { "availableModes": [
+                { "id": "default", "_meta": { "kind": "standard" } },
+                { "id": "acceptEdits", "_meta": { "kind": "standard" } },
+                { "id": "plan", "_meta": { "kind": "plan" } },
+                { "id": "auto", "_meta": { "kind": "auto_review" } },
+                { "id": "bypassPermissions", "_meta": { "kind": "full_access" } }
+            ] }
+        });
+        assert_eq!(
+            resolve_advertised_mode(&session_new, PermissionMode::BypassPermissions).as_deref(),
+            Some("bypassPermissions")
+        );
+    }
+
+    /// codex-acp 1.13 has no `bypassPermissions` id; its full-access mode is
+    /// `agent-full-access`, tagged `_meta.kind == "full_access"`.
+    #[test]
+    fn resolve_advertised_mode_codex_maps_bypass_to_full_access_kind() {
+        let session_new = json!({
+            "modes": {
+                "availableModes": [
+                    { "id": "read-only", "_meta": { "kind": "standard" } },
+                    { "id": "agent", "_meta": { "kind": "auto_review" } },
+                    { "id": "agent-full-access", "_meta": { "kind": "full_access" } }
+                ],
+                "currentModeId": "agent"
+            }
+        });
+        assert_eq!(
+            resolve_advertised_mode(&session_new, PermissionMode::BypassPermissions).as_deref(),
+            Some("agent-full-access")
+        );
+    }
+
+    /// The full_access fallback is only for bypassPermissions — a sandboxed
+    /// request must never be widened to full access.
+    #[test]
+    fn resolve_advertised_mode_kind_fallback_only_for_bypass() {
+        let session_new = json!({
+            "modes": { "availableModes": [
+                { "id": "agent", "_meta": { "kind": "auto_review" } },
+                { "id": "agent-full-access", "_meta": { "kind": "full_access" } }
+            ] }
+        });
+        for mode in [
+            PermissionMode::Auto,
+            PermissionMode::AcceptEdits,
+            PermissionMode::DontAsk,
+            PermissionMode::Plan,
+        ] {
+            assert_eq!(resolve_advertised_mode(&session_new, mode), None, "{mode}");
+        }
+    }
+
+    /// Root without IS_SANDBOX: claude-agent-acp omits bypassPermissions and
+    /// has no full_access mode, so nothing is applied (and a warning is logged).
+    #[test]
+    fn resolve_advertised_mode_bypass_without_full_access_is_none() {
+        let session_new = json!({
+            "modes": { "availableModes": [
+                { "id": "default", "_meta": { "kind": "standard" } },
+                { "id": "auto", "_meta": { "kind": "auto_review" } }
+            ] }
+        });
+        assert_eq!(
+            resolve_advertised_mode(&session_new, PermissionMode::BypassPermissions),
+            None
+        );
     }
 
     #[test]
