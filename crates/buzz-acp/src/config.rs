@@ -454,9 +454,11 @@ pub struct CliArgs {
     /// Permission mode for agents that support `session/set_config_option`
     /// with `configId: "mode"` (e.g. `claude-agent-acp`).
     ///
-    /// Defaults to `bypassPermissions` which skips the per-tool-call
-    /// permission flow. Set to `default` to restore the agent's built-in
-    /// behaviour.
+    /// Defaults to `bypassPermissions`: full disk + network access with no
+    /// approval prompts. It maps to the adapter's full-access mode — the exact
+    /// `bypassPermissions` id for claude-agent-acp, or the mode tagged
+    /// `_meta.kind == "full_access"` (`agent-full-access`) for codex-acp.
+    /// Set to `default` (or another mode) to keep the agent sandboxed.
     #[arg(
         long,
         env = "BUZZ_ACP_PERMISSION_MODE",
@@ -830,6 +832,35 @@ pub fn codex_network_env(agent_command: &str, relay_url: &str) -> Option<(String
     ))
 }
 
+/// Env var codex-acp (1.x) reads for the initial mode of every new session.
+pub const CODEX_INITIAL_MODE_ENV: &str = "INITIAL_AGENT_MODE";
+
+/// codex-acp's unrestricted mode: `danger-full-access` sandbox (full disk and
+/// network) with approval policy `never`.
+pub const CODEX_FULL_ACCESS_MODE: &str = "agent-full-access";
+
+/// Build `INITIAL_AGENT_MODE=agent-full-access` for Codex agents configured
+/// with [`PermissionMode::BypassPermissions`].
+///
+/// Returns `None` for non-Codex agents, for any other permission mode (an
+/// operator who asked for a sandboxed mode keeps codex-acp's default `agent`
+/// mode), or when the operator already set `INITIAL_AGENT_MODE` explicitly
+/// (`operator_set`), which always wins.
+pub fn codex_initial_mode_env(
+    agent_command: &str,
+    permission_mode: PermissionMode,
+    operator_set: bool,
+) -> Option<(String, String)> {
+    match normalize_agent_command_identity(agent_command).as_str() {
+        "codex" | "codex-acp" => {}
+        _ => return None,
+    }
+    if permission_mode != PermissionMode::BypassPermissions || operator_set {
+        return None;
+    }
+    Some((CODEX_INITIAL_MODE_ENV.into(), CODEX_FULL_ACCESS_MODE.into()))
+}
+
 pub fn normalize_agent_args(command: &str, agent_args: Vec<String>) -> Vec<String> {
     let normalized = agent_args
         .into_iter()
@@ -1120,6 +1151,18 @@ impl Config {
             } else {
                 false
             };
+        // Start every codex-acp session in its full-access mode when the
+        // configured permission mode is bypassPermissions. Belt-and-braces with
+        // the per-session `set_config_option` in the pool: codex-acp sends its
+        // mode's sandbox policy on every turn, so a session left in the default
+        // `agent` mode runs with network access disabled.
+        if let Some(mode_env) = codex_initial_mode_env(
+            &agent_command,
+            args.permission_mode,
+            std::env::var_os(CODEX_INITIAL_MODE_ENV).is_some(),
+        ) {
+            persona_env_vars.push(mode_env);
+        }
 
         validate_multiple_event_handling(args.multiple_event_handling, args.dedup)?;
 
@@ -1814,6 +1857,54 @@ mod tests {
         assert!(codex_network_env("goose", "wss://relay.example.com").is_none());
         assert!(codex_network_env("claude-agent-acp", "wss://relay.example.com").is_none());
         assert!(codex_network_env("buzz-agent", "wss://relay.example.com").is_none());
+    }
+
+    #[test]
+    fn codex_initial_mode_env_full_access_for_codex_bypass() {
+        for cmd in ["codex-acp", "codex", "/usr/local/bin/codex-acp"] {
+            assert_eq!(
+                codex_initial_mode_env(cmd, PermissionMode::BypassPermissions, false),
+                Some((
+                    "INITIAL_AGENT_MODE".to_string(),
+                    "agent-full-access".to_string()
+                )),
+                "{cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_initial_mode_env_skipped_for_sandboxed_modes() {
+        for mode in [
+            PermissionMode::Default,
+            PermissionMode::Auto,
+            PermissionMode::AcceptEdits,
+            PermissionMode::DontAsk,
+            PermissionMode::Plan,
+        ] {
+            assert_eq!(
+                codex_initial_mode_env("codex-acp", mode, false),
+                None,
+                "{mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_initial_mode_env_skipped_for_non_codex_and_operator_override() {
+        assert_eq!(
+            codex_initial_mode_env("claude-agent-acp", PermissionMode::BypassPermissions, false),
+            None
+        );
+        assert_eq!(
+            codex_initial_mode_env("goose", PermissionMode::BypassPermissions, false),
+            None
+        );
+        assert_eq!(
+            codex_initial_mode_env("codex-acp", PermissionMode::BypassPermissions, true),
+            None,
+            "an operator-set INITIAL_AGENT_MODE must win"
+        );
     }
 
     #[test]
