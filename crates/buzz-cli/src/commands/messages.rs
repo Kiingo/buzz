@@ -173,8 +173,13 @@ async fn resolve_content_mentions(
         "#d": [channel_id],
         "limit": 1,
     });
-    let member_pubkeys = fetch_member_pubkeys(client, &members_filter)
-        .await
+    // Propagate transport errors (network/DNS/auth) as themselves so callers
+    // see the real cause and its retryability; only a missing roster is ours.
+    let raw = client.query(&members_filter).await?;
+    let member_pubkeys = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.as_array().and_then(|a| a.first().cloned()))
+        .map(|event| parse_member_pubkeys(&event))
         .ok_or_else(|| {
             CliError::Other("could not load channel membership for mention preflight".into())
         })?;
@@ -300,15 +305,6 @@ async fn fetch_events(
     let raw = client.query(filter).await.ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
     parsed.as_array().cloned()
-}
-
-/// Extract member pubkeys (the `p` tag values) from a single 39002 event.
-async fn fetch_member_pubkeys(
-    client: &BuzzClient,
-    filter: &serde_json::Value,
-) -> Option<Vec<String>> {
-    let events = fetch_events(client, filter).await?;
-    Some(parse_member_pubkeys(events.first()?))
 }
 
 /// Parse member pubkeys from a kind 39002 event JSON value.

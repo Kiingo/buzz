@@ -928,18 +928,11 @@ pub fn spawn_agent_child(
     })
 }
 
-/// Mirrors `buzz_acp::DEFAULT_LOG_FILTER`: buzz-acp logs turn completion,
-/// cancellation, and timeouts under custom `pool::*` targets that a bare
-/// `buzz_acp=info` directive drops, which made finished turns look wedged.
-const CHILD_DEFAULT_LOG_FILTER: &str = "buzz_acp=info,pool=info,acp=warn,buzz::local_publication=warn,buzz::profile=warn,canvas=warn,engram=warn,observer=warn";
-
 fn child_rust_log_filter() -> String {
     match std::env::var("RUST_LOG") {
         Ok(existing) if existing.contains("buzz_acp") => existing,
-        Ok(existing) if !existing.trim().is_empty() => {
-            format!("{existing},{CHILD_DEFAULT_LOG_FILTER}")
-        }
-        _ => CHILD_DEFAULT_LOG_FILTER.to_string(),
+        Ok(existing) if !existing.trim().is_empty() => format!("{existing},buzz_acp=info"),
+        _ => "buzz_acp=info".to_string(),
     }
 }
 
