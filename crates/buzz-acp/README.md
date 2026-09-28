@@ -139,6 +139,7 @@ Controls which authors' events the harness forwards to the agent. Events from di
 |------|---------|---------|-------------|
 | `--respond-to` | `BUZZ_ACP_RESPOND_TO` | `owner-only` | Author gate mode: `owner-only`, `allowlist`, `anyone`, `nobody`. |
 | `--respond-to-allowlist` | `BUZZ_ACP_RESPOND_TO_ALLOWLIST` | — | Comma-separated 64-char hex pubkeys (required when mode is `allowlist`). Owner is always implicitly included. |
+| `--allowlist-in-dms` | `BUZZ_ACP_ALLOWLIST_IN_DMS` | `false` | Opt-in, `allowlist` mode only: also admit allowlisted authors inside DMs, but only when **every** DM participant (relay kind:39002 roster) is this agent, the owner / a same-owner sibling, or allowlisted. Unresolvable rosters are denied. Off by default: DMs admit only the owner and siblings. |
 
 **Modes:**
 
