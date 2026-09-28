@@ -354,6 +354,9 @@ pub async fn list_dms_for_user(
 ///
 /// Returns `(channel, was_created)`:
 /// - `was_created = true`  -- a new DM was created.
+///   This includes the case where the existing DM was sealed because the
+///   caller's own membership in it had been revoked (see
+///   [`seal_dm_if_opener_inactive`]).
 /// - `was_created = false` -- an existing DM was returned.
 pub async fn open_dm(
     pool: &PgPool,
@@ -378,15 +381,59 @@ pub async fn open_dm(
 
     // Check for existing DM first (fast path, no transaction).
     if let Some(existing) = find_dm_by_participants(pool, community_id, &hash).await? {
-        // Clear hidden_at for the caller so the DM reappears in their sidebar.
-        unhide_dm(pool, community_id, existing.id, created_by).await?;
-        return Ok((existing, false));
+        if !seal_dm_if_opener_inactive(pool, community_id, existing.id, created_by).await? {
+            // Clear hidden_at for the caller so the DM reappears in their sidebar.
+            unhide_dm(pool, community_id, existing.id, created_by).await?;
+            return Ok((existing, false));
+        }
+        // The opener's access to the existing DM was revoked (e.g. identity
+        // rotation retired this key); it is now sealed, so start a fresh DM.
     }
 
     // Create new DM.
     let channel = create_dm(pool, community_id, &all, created_by).await?;
 
     Ok((channel, true))
+}
+
+/// Seal a DM the opener no longer has an active membership in.
+///
+/// Membership removal is how access is revoked (identity rotation removes the
+/// retired key from its old conversations), and must never be undone by a
+/// re-open. Instead the old DM is detached from its participant set by
+/// clearing `participant_hash`, which frees the `idx_channels_dm_hash` unique
+/// slot so [`create_dm`] can start a fresh DM for the same participants. The
+/// sealed channel, its history and the other participants' memberships are
+/// untouched. Single statement, so the membership check and the seal are
+/// atomic. Returns `true` when the DM was sealed.
+async fn seal_dm_if_opener_inactive(
+    pool: &PgPool,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    opener: &[u8],
+) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        UPDATE channels c
+        SET participant_hash = NULL
+        WHERE c.community_id = $1
+          AND c.id = $2
+          AND c.channel_type = 'dm'
+          AND NOT EXISTS (
+              SELECT 1 FROM channel_members cm
+              WHERE cm.community_id = c.community_id
+                AND cm.channel_id = c.id
+                AND cm.pubkey = $3
+                AND cm.removed_at IS NULL
+          )
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(channel_id)
+    .bind(opener)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 // -- Hide / unhide ------------------------------------------------------------

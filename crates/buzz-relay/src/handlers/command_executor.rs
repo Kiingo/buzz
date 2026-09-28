@@ -1725,4 +1725,150 @@ mod tests {
             assert_eq!(*repaired.get_or_insert(id), id);
         }
     }
+
+    /// Identity rotation removes the retired key from its old DMs. If that key
+    /// is later used again, re-opening the DM must not restore access to the
+    /// revoked conversation: it opens a fresh DM the key can actually read.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn dm_reopen_after_revoked_membership_opens_fresh_dm() {
+        let (db, tenant) = persistence_test_context().await;
+        let state = dm_test_state().await;
+        let user = Keys::generate();
+        let agent = Keys::generate();
+        let successor = Keys::generate();
+        let user_bytes = user.public_key().to_bytes();
+        let agent_bytes = agent.public_key().to_bytes();
+
+        let (old, was_created) = db
+            .open_dm(
+                tenant.community(),
+                &[user_bytes.as_slice(), agent_bytes.as_slice()],
+                agent_bytes.as_slice(),
+            )
+            .await
+            .expect("seed dm");
+        assert!(was_created);
+        crate::handlers::side_effects::emit_group_discovery_events(&tenant, &state, old.id)
+            .await
+            .expect("seed discovery");
+
+        // Simulate identity rotation: the successor key revokes the user's row.
+        let url = std::env::var("BUZZ_TEST_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string());
+        let pool = sqlx::PgPool::connect(&url).await.expect("connect");
+        sqlx::query(
+            "UPDATE channel_members SET removed_at = NOW(), removed_by = $4 \
+             WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3",
+        )
+        .bind(tenant.community().as_uuid())
+        .bind(old.id)
+        .bind(user_bytes.as_slice())
+        .bind(successor.public_key().to_bytes().as_slice())
+        .execute(&pool)
+        .await
+        .expect("revoke");
+
+        // Exactly the bridge /query path for `{kinds:[39000], #d:[dm], limit:1}`.
+        let bridge_metadata = |channel_id: Uuid| {
+            let state = state.clone();
+            let tenant = tenant.clone();
+            async move {
+                let filter: nostr::Filter = serde_json::from_value(serde_json::json!({
+                    "kinds": [39000], "#d": [channel_id.to_string()], "limit": 1
+                }))
+                .expect("filter");
+                let accessible = state
+                    .get_accessible_channel_ids_cached(tenant.community(), &user_bytes)
+                    .await
+                    .expect("accessible");
+                let mut query = crate::handlers::req::build_event_query_from_filter(
+                    &filter,
+                    &user_bytes,
+                    &state,
+                    tenant.community(),
+                )
+                .await;
+                crate::handlers::req::apply_channel_scope_to_query(
+                    &mut query,
+                    &filter,
+                    None,
+                    &accessible,
+                );
+                state.db.query_events(&query).await.expect("query")
+            }
+        };
+        assert!(
+            bridge_metadata(old.id).await.is_empty(),
+            "repro: old DM hidden"
+        );
+
+        let auth = IngestAuth::Http {
+            pubkey: user.public_key(),
+            scopes: vec![],
+            auth_method: super::super::ingest::HttpAuthMethod::Nip98,
+        };
+        let open = |attempt: u64| {
+            EventBuilder::new(Kind::Custom(KIND_DM_OPEN as u16), "")
+                .tags([Tag::parse(["p", &agent.public_key().to_hex()]).expect("p tag")])
+                .custom_created_at(Timestamp::from(Timestamp::now().as_secs() + attempt))
+                .sign_with_keys(&user)
+                .expect("dm open event")
+        };
+        let channel_of = |message: &str| -> Uuid {
+            let json: serde_json::Value =
+                serde_json::from_str(message.strip_prefix("response:").expect("response"))
+                    .expect("json");
+            json["channel_id"]
+                .as_str()
+                .expect("channel_id")
+                .parse()
+                .expect("uuid")
+        };
+
+        let first = handle_dm_open(&tenant, &state, &open(0), &auth)
+            .await
+            .expect("dm re-open");
+        let fresh = channel_of(&first.message);
+        assert_ne!(fresh, old.id, "revoked opener must get a fresh DM");
+        assert!(first.message.contains("\"created\":true"));
+
+        let events = bridge_metadata(fresh).await;
+        assert_eq!(events.len(), 1, "opener can read the fresh DM's kind:39000");
+        assert!(
+            bridge_metadata(old.id).await.is_empty(),
+            "revoked DM stays inaccessible to the opener"
+        );
+        let listed: Vec<Uuid> = state
+            .db
+            .list_dms_for_user(tenant.community(), &user_bytes, 50, None)
+            .await
+            .expect("list")
+            .iter()
+            .map(|dm| dm.channel_id)
+            .collect();
+        assert_eq!(listed, vec![fresh]);
+
+        let second = handle_dm_open(&tenant, &state, &open(1), &auth)
+            .await
+            .expect("dm second open");
+        assert_eq!(
+            channel_of(&second.message),
+            fresh,
+            "second open reuses fresh DM"
+        );
+        assert!(second.message.contains("\"created\":false"));
+
+        // The other participant keeps the sealed DM and sees the fresh one.
+        let agent_dms: Vec<Uuid> = state
+            .db
+            .list_dms_for_user(tenant.community(), &agent_bytes, 50, None)
+            .await
+            .expect("list agent")
+            .iter()
+            .map(|dm| dm.channel_id)
+            .collect();
+        assert!(agent_dms.contains(&old.id) && agent_dms.contains(&fresh));
+    }
 }
