@@ -488,6 +488,13 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_ALLOWED_RESPOND_TO", value_delimiter = ',')]
     pub allowed_respond_to: Option<Vec<String>>,
 
+    /// Opt-in: in `allowlist` mode, also let allowlisted authors fire turns
+    /// inside DMs — but only when EVERY DM participant is this agent, the
+    /// owner / a same-owner sibling, or allowlisted. Unresolvable rosters are
+    /// denied. Default off: DMs admit only the owner and siblings.
+    #[arg(long, env = "BUZZ_ACP_ALLOWLIST_IN_DMS", default_value_t = false)]
+    pub allowlist_in_dms: bool,
+
     /// Team-owned instructions layered after `<system>` and before agent memory.
     #[arg(long, env = "BUZZ_ACP_TEAM_INSTRUCTIONS")]
     pub team_instructions: Option<String>,
@@ -582,6 +589,9 @@ pub struct Config {
     pub respond_to_allowlist: HashSet<String>,
     /// Allowed `respond_to` modes. Empty = all modes allowed.
     pub allowed_respond_to: Vec<String>,
+    /// Opt-in: admit allowlisted authors in DMs whose participants are all
+    /// trusted (`BUZZ_ACP_ALLOWLIST_IN_DMS`). Only applies in allowlist mode.
+    pub allowlist_in_dms: bool,
     /// Per-persona env vars to inject at agent spawn time (e.g., GOOSE_PROVIDER, GOOSE_MODEL, BUZZ_AGENT_MODEL).
     /// Populated from persona pack resolution. Empty when no pack is configured.
     pub persona_env_vars: Vec<(String, String)>,
@@ -1066,6 +1076,10 @@ impl Config {
             HashSet::new()
         };
 
+        if args.allowlist_in_dms && args.respond_to != RespondTo::Allowlist {
+            tracing::warn!("--allowlist-in-dms is ignored when --respond-to is not 'allowlist'");
+        }
+
         // Validate respond_to against the allowed set.
         let allowed_respond_to = if let Some(raw) = args.allowed_respond_to {
             // Validate each entry is a known RespondTo mode.
@@ -1153,6 +1167,7 @@ impl Config {
             respond_to: args.respond_to,
             respond_to_allowlist,
             allowed_respond_to,
+            allowlist_in_dms: args.allowlist_in_dms,
             persona_env_vars,
             has_generated_codex_config,
             relay_observer: args.relay_observer,
@@ -1170,9 +1185,15 @@ impl Config {
     /// Human-readable summary (no secrets).
     pub fn summary(&self) -> String {
         let respond_to_detail = match &self.respond_to {
-            RespondTo::Allowlist => {
-                format!("respond_to=allowlist({})", self.respond_to_allowlist.len())
-            }
+            RespondTo::Allowlist => format!(
+                "respond_to=allowlist({}){}",
+                self.respond_to_allowlist.len(),
+                if self.allowlist_in_dms {
+                    " allowlist_in_dms=true"
+                } else {
+                    ""
+                }
+            ),
             other => format!("respond_to={other}"),
         };
         let allowed_respond_to_detail = if self.allowed_respond_to.is_empty() {
@@ -1527,6 +1548,7 @@ mod tests {
             respond_to: RespondTo::Anyone,
             respond_to_allowlist: HashSet::new(),
             allowed_respond_to: Vec::new(),
+            allowlist_in_dms: false,
             persona_env_vars: vec![],
             has_generated_codex_config: false,
             relay_observer: false,
@@ -2267,6 +2289,28 @@ channels = "ALL"
             "300",
         ]);
         assert_eq!(configured.idle_pool_sleep, 300);
+    }
+
+    #[test]
+    fn allowlist_in_dms_defaults_off_and_cli_flag_enables() {
+        let key = "0".repeat(64);
+        assert!(!CliArgs::parse_from(["buzz-acp", "--private-key", &key]).allowlist_in_dms);
+        assert!(
+            CliArgs::parse_from(["buzz-acp", "--private-key", &key, "--allowlist-in-dms"])
+                .allowlist_in_dms
+        );
+        assert!(!test_config(SubscribeMode::Mentions).allowlist_in_dms);
+    }
+
+    #[test]
+    fn test_summary_reports_allowlist_in_dms_only_when_enabled() {
+        let mut config = test_config(SubscribeMode::Mentions);
+        config.respond_to = RespondTo::Allowlist;
+        assert!(!config.summary().contains("allowlist_in_dms"));
+        config.allowlist_in_dms = true;
+        assert!(config
+            .summary()
+            .contains("respond_to=allowlist(0) allowlist_in_dms=true"));
     }
 
     #[test]
