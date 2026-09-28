@@ -598,6 +598,26 @@ fn match_profiles_by_name(events: &[serde_json::Value], name: &str) -> Vec<(Stri
     matches
 }
 
+/// The parent author to notify for a reply that mentions no one, if any.
+/// Never notifies the sender itself. The parent author posted in this channel;
+/// when the member list was loaded, they must still be on it.
+fn parent_reply_notification(
+    mentions: &[String],
+    parent_author: Option<&str>,
+    self_pubkey: &str,
+    member_pubkeys: &[String],
+) -> Option<String> {
+    let author = parent_author?.to_ascii_lowercase();
+    (mentions.is_empty()
+        && author.len() == 64
+        && author != self_pubkey.to_ascii_lowercase()
+        && (member_pubkeys.is_empty()
+            || member_pubkeys
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case(&author))))
+    .then_some(author)
+}
+
 pub struct SendMessageParams {
     pub channel_id: String,
     pub content: String,
@@ -672,11 +692,29 @@ pub async fn cmd_send_message(
 
     // Build thread ref if replying. `--reply-to` is the immediate parent; the
     // thread root is derived from the parent's NIP-10 tags via the relay.
-    let thread_ref = if let Some(ref r) = p.reply_to {
-        Some(resolve_thread_ref(client, r).await?)
+    let (thread_ref, parent_author) = if let Some(ref r) = p.reply_to {
+        let parent = fetch_event(client, r).await?;
+        let author = parent
+            .get("pubkey")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        (Some(thread_ref_from_event(r, &parent)?), author)
     } else {
-        None
+        (None, None)
     };
+
+    // NIP-10: a reply that addresses no one notifies the author it answers, so
+    // an agent that asked a question is woken by the answer. Replies that
+    // @mention someone keep exactly the identities the sender chose.
+    let mut mention_pubkeys = mention_pubkeys;
+    if let Some(author) = parent_reply_notification(
+        &mention_pubkeys,
+        parent_author.as_deref(),
+        &client.keys().public_key().to_hex(),
+        &member_pubkeys,
+    ) {
+        mention_pubkeys.push(author);
+    }
 
     let mention_refs: Vec<&str> = mention_pubkeys.iter().map(String::as_str).collect();
 
@@ -1067,6 +1105,34 @@ pub async fn dispatch(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unaddressed_reply_notifies_the_parent_author_only() {
+        use super::parent_reply_notification as notify;
+        let me = "a".repeat(64);
+        let parent = "B".repeat(64);
+        let other = "c".repeat(64);
+        // No mentions: notify the parent author (normalized), member list unknown.
+        assert_eq!(notify(&[], Some(&parent), &me, &[]), Some("b".repeat(64)));
+        // Loaded member list must still contain them.
+        assert_eq!(
+            notify(&[], Some(&parent), &me, std::slice::from_ref(&other)),
+            None
+        );
+        assert_eq!(
+            notify(&[], Some(&parent), &me, &["b".repeat(64)]),
+            Some("b".repeat(64))
+        );
+        // Explicit mentions are left exactly as the sender chose.
+        assert_eq!(
+            notify(std::slice::from_ref(&other), Some(&parent), &me, &[]),
+            None
+        );
+        // Never notify yourself, a missing author, or a malformed key.
+        assert_eq!(notify(&[], Some(&me), &me, &[]), None);
+        assert_eq!(notify(&[], None, &me, &[]), None);
+        assert_eq!(notify(&[], Some("short"), &me, &[]), None);
+    }
+
     use super::{
         channel_id_from_event, cmd_get_thread, event_mention_pubkeys, find_root_from_tags,
         format_events, match_profiles_by_name, merge_message_mentions, missing_members,
