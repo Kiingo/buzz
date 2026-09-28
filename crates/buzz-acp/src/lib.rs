@@ -2,6 +2,7 @@
 
 mod acp;
 mod config;
+mod dm_participants;
 mod engram_fetch;
 mod filter;
 mod local_publication;
@@ -250,11 +251,24 @@ async fn is_owner_or_sibling(
     is_sibling
 }
 
+/// Opt-in context for admitting allowlisted authors inside DMs
+/// (`BUZZ_ACP_ALLOWLIST_IN_DMS`). Passing `None` to [`author_allowed`] keeps
+/// the default DM hardening exactly as before.
+pub(crate) struct DmAllowlistGate<'a> {
+    /// The DM channel the event arrived in.
+    pub(crate) channel_id: Uuid,
+    /// This agent's own pubkey (lowercase hex); always a trusted participant.
+    pub(crate) agent_pubkey: &'a str,
+    /// Cached kind:39002 roster resolver.
+    pub(crate) participants: &'a dm_participants::DmParticipantResolver,
+}
+
 /// Inbound author gate decision: does this author's event fire a turn?
 ///
 /// Coarse security policy applied before subscription rules. Both `OwnerOnly`
 /// and `Allowlist` accept the owner and same-owner siblings; `Allowlist`
-/// additionally accepts the explicit external pubkey list.
+/// additionally accepts the explicit external pubkey list (static
+/// `--respond-to-allowlist` plus the hot-reloaded allowlist file).
 ///
 /// # DM hardening (`is_dm`)
 ///
@@ -264,21 +278,45 @@ async fn is_owner_or_sibling(
 /// turns `anyone`/`allowlist` modes into transitive access grants: whoever
 /// lands in a DM with the agent can prompt it. To close that hole, when
 /// `is_dm` is true only the owner and cryptographically verified same-owner
-/// siblings may fire a turn — the explicit allowlist and `anyone` mode do
-/// NOT apply inside DMs. `Nobody` still drops everything. Callers must
+/// siblings may fire a turn — by default the explicit allowlist and `anyone`
+/// mode do NOT apply inside DMs. `Nobody` still drops everything. Callers must
 /// resolve `is_dm` fail-closed: unknown channel type ⇒ treat as DM.
+///
+/// # Opt-in: allowlist in DMs (`dm_allowlist`)
+///
+/// When `dm_allowlist` is `Some` (set only if `BUZZ_ACP_ALLOWLIST_IN_DMS` is
+/// enabled) AND `respond_to` is `Allowlist`, an allowlisted author may also
+/// fire a turn in a DM — but only if EVERY participant of that DM (per the
+/// relay's kind:39002 roster) is this agent, the owner / a verified sibling,
+/// or allowlisted, and the author appears in that roster. This keeps the
+/// transitive-grant hole closed: a DM that contains any non-trusted party
+/// (e.g. one the agent was asked to open with an outsider) still never fires
+/// a turn for a non-owner. If the roster cannot be resolved (fetch failure,
+/// timeout, empty/oversized roster) the author is denied (fail closed).
+/// `anyone` and `owner-only` modes are unaffected by the flag.
 async fn author_allowed(
     respond_to: &RespondTo,
     allowlist: &HashSet<String>,
     author: &str,
     is_dm: bool,
+    dm_allowlist: Option<&DmAllowlistGate<'_>>,
     owner_cache: &OwnerCache,
     rest_client: &relay::RestClient,
 ) -> bool {
+    let is_listed = |pk: &str| allowlist.contains(pk) || respond_allowlist_file::contains(pk);
     if is_dm {
-        return match respond_to {
-            RespondTo::Nobody => false,
-            _ => is_owner_or_sibling(author, owner_cache, rest_client).await,
+        if matches!(respond_to, RespondTo::Nobody) {
+            return false;
+        }
+        if is_owner_or_sibling(author, owner_cache, rest_client).await {
+            return true;
+        }
+        return match (respond_to, dm_allowlist) {
+            (RespondTo::Allowlist, Some(gate)) if is_listed(author) => {
+                dm_participants_all_trusted(gate, author, &is_listed, owner_cache, rest_client)
+                    .await
+            }
+            _ => false,
         };
     }
     match respond_to {
@@ -286,11 +324,55 @@ async fn author_allowed(
         RespondTo::Nobody => false,
         RespondTo::OwnerOnly => is_owner_or_sibling(author, owner_cache, rest_client).await,
         RespondTo::Allowlist => {
-            allowlist.contains(author)
-                || respond_allowlist_file::contains(author)
-                || is_owner_or_sibling(author, owner_cache, rest_client).await
+            is_listed(author) || is_owner_or_sibling(author, owner_cache, rest_client).await
         }
     }
+}
+
+/// Whether every participant of the DM in `gate` is trusted: this agent, the
+/// owner / a verified sibling, or allowlisted. Fails closed on an unresolved,
+/// oversized, or inconsistent (author missing) roster.
+async fn dm_participants_all_trusted(
+    gate: &DmAllowlistGate<'_>,
+    author: &str,
+    is_listed: &impl Fn(&str) -> bool,
+    owner_cache: &OwnerCache,
+    rest_client: &relay::RestClient,
+) -> bool {
+    let Some(members) = gate
+        .participants
+        .participants(gate.channel_id, author)
+        .await
+    else {
+        tracing::warn!(
+            channel_id = %gate.channel_id,
+            "DM participants unresolved — denying allowlisted author (fail closed)"
+        );
+        return false;
+    };
+    if members.len() > dm_participants::MAX_DM_PARTICIPANTS || !members.contains(author) {
+        tracing::warn!(
+            channel_id = %gate.channel_id,
+            participants = members.len(),
+            "DM roster oversized or missing author — denying allowlisted author"
+        );
+        return false;
+    }
+    for member in &members {
+        if member == gate.agent_pubkey || is_listed(member) {
+            continue;
+        }
+        if is_owner_or_sibling(member, owner_cache, rest_client).await {
+            continue;
+        }
+        tracing::debug!(
+            channel_id = %gate.channel_id,
+            participant = %member,
+            "DM contains a non-allowlisted participant — denying allowlisted author"
+        );
+        return false;
+    }
+    true
 }
 
 /// Resolve whether `channel_id` is a DM, for the inbound author gate.
@@ -2226,6 +2308,11 @@ async fn tokio_main() -> Result<()> {
 
     let base_prompt_content = config.base_prompt_content.take();
     let cwd = current_working_directory()?;
+    // Opt-in allowlist-in-DMs (BUZZ_ACP_ALLOWLIST_IN_DMS): only meaningful in
+    // allowlist mode. `None` keeps the default DM hardening byte-for-byte.
+    let dm_participant_resolver = (config.allowlist_in_dms
+        && config.respond_to == RespondTo::Allowlist)
+        .then(|| dm_participants::DmParticipantResolver::new(relay.rest_client()));
     let ctx = Arc::new(PromptContext {
         mcp_servers: build_mcp_servers(&config),
         initial_message: config.initial_message.clone(),
@@ -2944,11 +3031,19 @@ async fn tokio_main() -> Result<()> {
                                 is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await;
                             {
                                 let author = buzz_event.event.pubkey.to_hex();
+                                let dm_gate = dm_participant_resolver.as_ref().filter(|_| is_dm).map(
+                                    |participants| DmAllowlistGate {
+                                        channel_id: buzz_event.channel_id,
+                                        agent_pubkey: &pubkey_hex,
+                                        participants,
+                                    },
+                                );
                                 let allowed = author_allowed(
                                     &config.respond_to,
                                     &config.respond_to_allowlist,
                                     &author,
                                     is_dm,
+                                    dm_gate.as_ref(),
                                     &owner_cache,
                                     &ctx.rest_client,
                                 )
@@ -5748,6 +5843,7 @@ mod author_gate_tests {
                 &allowlist,
                 SIBLING,
                 false,
+                None,
                 &cache,
                 &dummy_rest_client()
             )
@@ -5766,6 +5862,7 @@ mod author_gate_tests {
                 &allowlist,
                 EXTERNAL,
                 false,
+                None,
                 &cache,
                 &dummy_rest_client()
             )
@@ -5784,6 +5881,7 @@ mod author_gate_tests {
                 &allowlist,
                 STRANGER,
                 false,
+                None,
                 &cache,
                 &dummy_rest_client()
             )
@@ -5802,6 +5900,7 @@ mod author_gate_tests {
                 &allowlist,
                 OWNER,
                 false,
+                None,
                 &cache,
                 &dummy_rest_client()
             )
@@ -5823,6 +5922,7 @@ mod author_gate_tests {
                 &HashSet::new(),
                 STRANGER,
                 false,
+                None,
                 &cache,
                 &dummy_rest_client()
             )
@@ -5841,6 +5941,7 @@ mod author_gate_tests {
                     &HashSet::new(),
                     who,
                     false,
+                    None,
                     &cache,
                     &dummy_rest_client()
                 )
@@ -5867,6 +5968,7 @@ mod author_gate_tests {
                 &allowlist,
                 EXTERNAL,
                 true,
+                None,
                 &cache,
                 &dummy_rest_client()
             )
@@ -5884,6 +5986,7 @@ mod author_gate_tests {
                 &HashSet::new(),
                 STRANGER,
                 true,
+                None,
                 &cache,
                 &dummy_rest_client()
             )
@@ -5907,6 +6010,7 @@ mod author_gate_tests {
                         &HashSet::new(),
                         who,
                         true,
+                        None,
                         &cache,
                         &dummy_rest_client()
                     )
@@ -5926,12 +6030,260 @@ mod author_gate_tests {
                 &HashSet::new(),
                 OWNER,
                 true,
+                None,
                 &cache,
                 &dummy_rest_client()
             )
             .await,
             "respond_to=nobody must drop everything, DMs included"
         );
+    }
+
+    // ── Opt-in allowlist in DMs (BUZZ_ACP_ALLOWLIST_IN_DMS) ────────────────
+    //
+    // With the flag on and respond_to=allowlist, an allowlisted author fires
+    // a turn in a DM only when every participant is this agent, the owner /
+    // a sibling, or allowlisted. Anything unresolvable is denied.
+
+    const AGENT: &str = "aa";
+    const EXTERNAL_2: &str = "44";
+
+    fn dm_resolver() -> dm_participants::DmParticipantResolver {
+        dm_participants::DmParticipantResolver::new(dummy_rest_client())
+    }
+
+    async fn dm_gate_allows(
+        mode: RespondTo,
+        author: &str,
+        roster: Option<&[&str]>,
+        enabled: bool,
+    ) -> bool {
+        let cache = cache_with_sibling();
+        cache.cache_sibling(EXTERNAL_2.into(), false);
+        let allowlist = HashSet::from([EXTERNAL.to_string(), EXTERNAL_2.to_string()]);
+        let channel_id = Uuid::new_v4();
+        let resolver = dm_resolver();
+        if let Some(roster) = roster {
+            resolver.seed(channel_id, roster);
+        }
+        let gate = DmAllowlistGate {
+            channel_id,
+            agent_pubkey: AGENT,
+            participants: &resolver,
+        };
+        author_allowed(
+            &mode,
+            &allowlist,
+            author,
+            true,
+            enabled.then_some(&gate),
+            &cache,
+            &dummy_rest_client(),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_disabled_keeps_rejecting_allowlisted_author() {
+        assert!(
+            !dm_gate_allows(
+                RespondTo::Allowlist,
+                EXTERNAL,
+                Some(&[AGENT, EXTERNAL]),
+                false
+            )
+            .await,
+            "with the flag off, an all-trusted DM must still not admit an allowlisted author"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_enabled_admits_author_in_one_to_one_dm() {
+        assert!(
+            dm_gate_allows(
+                RespondTo::Allowlist,
+                EXTERNAL,
+                Some(&[AGENT, EXTERNAL]),
+                true
+            )
+            .await,
+            "flag on: an allowlisted author alone with the agent must fire a turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_enabled_admits_group_dm_of_trusted_participants() {
+        assert!(
+            dm_gate_allows(
+                RespondTo::Allowlist,
+                EXTERNAL,
+                Some(&[AGENT, EXTERNAL, EXTERNAL_2, OWNER, SIBLING]),
+                true
+            )
+            .await,
+            "flag on: a DM of agent + allowlisted + owner + sibling must admit the author"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_enabled_rejects_dm_with_untrusted_third_party() {
+        assert!(
+            !dm_gate_allows(
+                RespondTo::Allowlist,
+                EXTERNAL,
+                Some(&[AGENT, EXTERNAL, STRANGER]),
+                true
+            )
+            .await,
+            "flag on: a non-allowlisted participant anywhere in the DM must deny the turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_enabled_rejects_non_allowlisted_author() {
+        assert!(
+            !dm_gate_allows(
+                RespondTo::Allowlist,
+                STRANGER,
+                Some(&[AGENT, STRANGER]),
+                true
+            )
+            .await,
+            "flag on: the author itself must be allowlisted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_enabled_fails_closed_when_roster_unresolved() {
+        // No seeded roster and an unreachable relay: the fetch fails.
+        assert!(
+            !dm_gate_allows(RespondTo::Allowlist, EXTERNAL, None, true).await,
+            "flag on: an unresolvable DM roster must deny (fail closed)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_enabled_rejects_roster_missing_author() {
+        // Cached roster lacks the author → refetch (fails here) → deny.
+        assert!(
+            !dm_gate_allows(
+                RespondTo::Allowlist,
+                EXTERNAL,
+                Some(&[AGENT, EXTERNAL_2]),
+                true
+            )
+            .await,
+            "flag on: a roster that does not contain the author must deny"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_enabled_does_not_widen_other_modes() {
+        for mode in [RespondTo::Anyone, RespondTo::OwnerOnly, RespondTo::Nobody] {
+            assert!(
+                !dm_gate_allows(mode.clone(), EXTERNAL, Some(&[AGENT, EXTERNAL]), true).await,
+                "flag on: {mode} must not admit a non-owner author in a DM"
+            );
+        }
+        assert!(
+            !dm_gate_allows(RespondTo::Nobody, OWNER, Some(&[AGENT, OWNER]), true).await,
+            "flag on: nobody must still drop even the owner"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_enabled_owner_and_sibling_unchanged() {
+        for who in [OWNER, SIBLING] {
+            assert!(
+                dm_gate_allows(RespondTo::Allowlist, who, None, true).await,
+                "flag on: owner/sibling must be admitted without any roster lookup"
+            );
+            assert!(
+                dm_gate_allows(
+                    RespondTo::Allowlist,
+                    who,
+                    Some(&[AGENT, who, STRANGER]),
+                    true
+                )
+                .await,
+                "flag on: owner/sibling DM behavior must be unchanged by the roster"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_gate_does_not_affect_non_dm_channels() {
+        let cache = cache_with_sibling();
+        let allowlist = HashSet::from([EXTERNAL.to_string()]);
+        let resolver = dm_resolver(); // unseeded + unreachable: any lookup would fail
+        let gate = DmAllowlistGate {
+            channel_id: Uuid::new_v4(),
+            agent_pubkey: AGENT,
+            participants: &resolver,
+        };
+        for (who, expected) in [(EXTERNAL, true), (STRANGER, false), (OWNER, true)] {
+            assert_eq!(
+                author_allowed(
+                    &RespondTo::Allowlist,
+                    &allowlist,
+                    who,
+                    false,
+                    Some(&gate),
+                    &cache,
+                    &dummy_rest_client(),
+                )
+                .await,
+                expected,
+                "non-DM channels must keep the plain allowlist decision"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dm_allowlist_resolves_roster_from_relay_and_caches_it() {
+        use std::sync::atomic::Ordering;
+
+        let channel_id = Uuid::new_v4();
+        let agent = "a".repeat(64);
+        let external = "b".repeat(64);
+        let (rest, requests, server) = test_rest_server(serde_json::json!([{
+            "kind": 39002,
+            "created_at": 1,
+            "tags": [
+                ["d", channel_id.to_string()],
+                ["p", agent, "", "member"],
+                ["p", external, "", "member"],
+            ],
+        }]))
+        .await;
+        let resolver = dm_participants::DmParticipantResolver::new(rest);
+        let gate = DmAllowlistGate {
+            channel_id,
+            agent_pubkey: &agent,
+            participants: &resolver,
+        };
+        let cache = OwnerCache::new(Some(OWNER.into()));
+        let allowlist = HashSet::from([external.clone()]);
+        for _ in 0..2 {
+            assert!(
+                author_allowed(
+                    &RespondTo::Allowlist,
+                    &allowlist,
+                    &external,
+                    true,
+                    Some(&gate),
+                    &cache,
+                    &dummy_rest_client(),
+                )
+                .await
+            );
+        }
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "the roster must be cached between events in the same DM"
+        );
+        server.abort();
     }
 
     // ── is_dm_channel resolution ──────────────────────────────────────────
@@ -5991,6 +6343,23 @@ mod author_gate_tests {
         std::sync::Arc<std::sync::atomic::AtomicUsize>,
         tokio::task::JoinHandle<()>,
     ) {
+        let (rest, requests, server) = test_rest_server(response).await;
+        (
+            pool::ChannelInfoResolver::new(HashMap::new(), rest),
+            requests,
+            server,
+        )
+    }
+
+    /// A `RestClient` served by a local HTTP server that answers every
+    /// request with `response`, plus a request counter.
+    async fn test_rest_server(
+        response: serde_json::Value,
+    ) -> (
+        relay::RestClient,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -6023,11 +6392,7 @@ mod author_gate_tests {
             keys: nostr::Keys::generate(),
             auth_tag_json: None,
         };
-        (
-            pool::ChannelInfoResolver::new(HashMap::new(), rest),
-            requests,
-            server,
-        )
+        (rest, requests, server)
     }
 
     #[tokio::test]
@@ -6066,6 +6431,7 @@ mod author_gate_tests {
                 &allowlist,
                 EXTERNAL,
                 is_dm,
+                None,
                 &owner_cache,
                 &dummy_rest_client(),
             )
@@ -7168,6 +7534,7 @@ mod build_mcp_servers_tests {
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: std::collections::HashSet::new(),
             allowed_respond_to: vec![],
+            allowlist_in_dms: false,
             persona_env_vars: vec![],
             has_generated_codex_config: false,
             relay_observer: false,
@@ -7410,6 +7777,7 @@ mod error_outcome_emission_tests {
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: HashSet::new(),
             allowed_respond_to: vec![],
+            allowlist_in_dms: false,
             persona_env_vars: vec![],
             has_generated_codex_config: false,
             relay_observer: false,

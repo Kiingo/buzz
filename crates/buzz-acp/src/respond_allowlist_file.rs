@@ -7,7 +7,9 @@
 //! by rewriting the file instead of restarting the agent. The file is re-read
 //! at most every [`RELOAD_INTERVAL`]; an unreadable file keeps the last good
 //! set rather than widening or silently emptying access. DM hardening in the
-//! author gate is unaffected: the file never applies inside DMs.
+//! author gate is unaffected: by default the file never applies inside DMs.
+//! With the opt-in `BUZZ_ACP_ALLOWLIST_IN_DMS`, file entries count exactly like
+//! static allowlist entries for the all-participants-trusted DM check.
 
 use std::{
     collections::HashSet,

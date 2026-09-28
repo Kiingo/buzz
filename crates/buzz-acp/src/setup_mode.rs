@@ -384,6 +384,9 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
     let rest_client = relay.rest_client();
 
     let channel_info = crate::pool::ChannelInfoResolver::new(channel_info_map, rest_client.clone());
+    let dm_participant_resolver = (config.allowlist_in_dms
+        && config.respond_to == crate::config::RespondTo::Allowlist)
+        .then(|| crate::dm_participants::DmParticipantResolver::new(rest_client.clone()));
 
     // Deduplicate by event-id so reconnect replay cannot double-nudge.
     let mut nudged_event_ids: HashSet<EventId> = HashSet::new();
@@ -435,6 +438,15 @@ pub(crate) async fn run_setup_listener(config: Config, payload: SetupPayload) ->
             &config.respond_to_allowlist,
             &author_hex,
             is_dm,
+            dm_participant_resolver
+                .as_ref()
+                .filter(|_| is_dm)
+                .map(|participants| crate::DmAllowlistGate {
+                    channel_id: buzz_event.channel_id,
+                    agent_pubkey: &pubkey_hex,
+                    participants,
+                })
+                .as_ref(),
             &owner_cache,
             &rest_client,
         )

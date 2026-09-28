@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 102,
-    "modifiedUpstreamFiles": 150,
-    "changedUpstreamProductionSourceLines": 6770,
-    "upstreamProductionSourceDiffHunks": 764,
+    "modifiedUpstreamProductionSourceFiles": 103,
+    "modifiedUpstreamFiles": 151,
+    "changedUpstreamProductionSourceLines": 7226,
+    "upstreamProductionSourceDiffHunks": 800,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -644,15 +644,17 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz reliability maintainers",
-      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; and NIP-10 parent-author notification for unaddressed CLI replies.",
+      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; and an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted.",
       "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
       "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
       "paths": [
         ".env.example",
         "crates/buzz-acp/src/base_prompt.md",
         "crates/buzz-acp/src/config.rs",
+        "crates/buzz-acp/src/dm_participants.rs",
         "crates/buzz-acp/src/profile_publication.rs",
         "crates/buzz-acp/src/respond_allowlist_file.rs",
+        "crates/buzz-acp/src/setup_mode.rs",
         "crates/buzz-acp/src/unpublished_reply.rs",
         "crates/buzz-db/src/store/dm.rs",
         "crates/buzz-relay/src/handlers/command_executor.rs",
