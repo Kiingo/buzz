@@ -513,6 +513,8 @@ async fn relay_timestamp_rejection_of_status_is_terminal_without_retry() {
         let keys = Keys::generate();
         let mut saved = intent(keys.public_key().to_hex());
         saved.publication_kind = "progress".into();
+        // Inside the window locally; the mock relay still rejects it.
+        saved.event_created_at = crate::relay::unix_now_secs();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let worker = LocalPublicationWorker {
@@ -569,6 +571,37 @@ async fn relay_timestamp_rejection_of_status_is_terminal_without_retry() {
     })
     .await
     .expect("stale status rejection must not retry");
+}
+
+#[tokio::test]
+async fn stale_status_is_never_submitted_from_any_route() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let keys = Keys::generate();
+        let mut saved = intent(keys.public_key().to_hex());
+        saved.publication_kind = "receipt".into();
+        saved.event_created_at = crate::relay::unix_now_secs() - 3_600;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let worker = LocalPublicationWorker {
+            rest: RestClient {
+                base_url: base.clone(),
+                ..rest(keys)
+            },
+            community_id: saved.community_id.clone(),
+            completion_api_base_url: base,
+            internal_token: "stale-status-guard-token".into(),
+            reconcile_reactions: false,
+        };
+        assert!(worker.publish_with_retry(&saved).await.is_none());
+        // Neither authorization nor the relay is contacted.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), listener.accept())
+                .await
+                .is_err()
+        );
+    })
+    .await
+    .expect("stale status must be skipped locally");
 }
 
 #[test]
@@ -1032,6 +1065,8 @@ async fn continuous_live_delivery_does_not_reset_durable_recovery_deadline() {
         let keys = Keys::generate();
         let mut progress = intent(keys.public_key().to_hex());
         progress.publication_kind = "progress".into();
+        // A live status update is signed near "now".
+        progress.event_created_at = crate::relay::unix_now_secs();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let worker = Arc::new(LocalPublicationWorker {
