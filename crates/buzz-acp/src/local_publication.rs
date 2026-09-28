@@ -232,9 +232,9 @@ impl LocalPublicationQueueState {
             .insert(receipt_id.to_owned(), Instant::now());
     }
 
-    /// Drop recovered operational status whose fence time the relay can no
-    /// longer accept. Final, error, cancelled, and action output keep their
-    /// durable delivery semantics.
+    /// Drop recovered status events (operational status and terminal
+    /// error/cancelled notices) whose fence time the relay can no longer
+    /// accept. Chat `final`/`action` output keeps its durable delivery.
     fn drop_stale_status(&mut self, intent: &LocalPublicationIntent, now_secs: u64) -> bool {
         if !status_publication_outside_relay_window(intent, now_secs) {
             return false;
@@ -382,7 +382,7 @@ impl LocalPublicationWorker {
             if tokio::time::Instant::now() >= next_recovery {
                 match self.recover_saved_publications().await {
                     Ok(intents) => {
-                        let now_secs = crate::relay::unix_now_secs();
+                        let now_secs = publication_now_secs();
                         for intent in intents {
                             if !state.drop_stale_status(&intent, now_secs) {
                                 state.accept(intent);
@@ -474,8 +474,10 @@ impl LocalPublicationWorker {
             match result {
                 Ok(event_id) => return event_id,
                 Err(error) => {
-                    if is_status_publication(intent) && error.contains(RELAY_TIMESTAMP_REJECTION) {
-                        // Ephemeral status signed at a stale fence time is
+                    if is_status_event_publication(intent)
+                        && error.contains(RELAY_TIMESTAMP_REJECTION)
+                    {
+                        // A status event signed at a stale fence time is
                         // permanently unacceptable; retrying only spams the relay.
                         tracing::warn!(
                             target: "buzz::local_publication",
@@ -524,7 +526,7 @@ impl LocalPublicationWorker {
         self.validate_scoped_intent(intent)?;
         // Status output is signed at its fence time. Whatever route delivered
         // the intent, never submit one the relay's timestamp check must reject.
-        let now_secs = crate::relay::unix_now_secs();
+        let now_secs = publication_now_secs();
         if status_publication_outside_relay_window(intent, now_secs) {
             tracing::warn!(
                 target: "buzz::local_publication",
@@ -871,8 +873,31 @@ fn is_terminal_publication(intent: &LocalPublicationIntent) -> bool {
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only wall clock for fixed shared test vectors; `None` = real time.
+    pub(crate) static TEST_NOW_SECS: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn publication_now_secs() -> u64 {
+    #[cfg(test)]
+    if let Some(now) = TEST_NOW_SECS.with(std::cell::Cell::get) {
+        return now;
+    }
+    crate::relay::unix_now_secs()
+}
+
+/// Every publication signed as a kind:40098 status event (all but chat
+/// `final`/`action`): operational status plus terminal `error`/`cancelled`
+/// notices. Each is signed at its immutable fence time, so once outside the
+/// relay's window it can never be accepted.
+fn is_status_event_publication(intent: &LocalPublicationIntent) -> bool {
+    publication_event_kind(intent) != 9
+}
+
 fn status_publication_outside_relay_window(intent: &LocalPublicationIntent, now_secs: u64) -> bool {
-    is_status_publication(intent)
+    is_status_event_publication(intent)
         && intent.event_created_at.abs_diff(now_secs) > RELAY_TIMESTAMP_TOLERANCE_SECS
 }
 

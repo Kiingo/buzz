@@ -453,11 +453,13 @@ async fn deferred_delivery_never_submits_or_completes_an_event() {
 }
 
 #[test]
-fn only_status_outside_the_relay_window_is_stale() {
+fn only_status_events_outside_the_relay_window_are_stale() {
     let keys = Keys::generate();
     let mut saved = intent(keys.public_key().to_hex());
     let now = saved.event_created_at + RELAY_TIMESTAMP_TOLERANCE_SECS;
-    for kind in ["receipt", "progress", "capacity"] {
+    // Every kind:40098 status event, including terminal error/cancelled
+    // notices, is signed at its fence time and bounded by the relay window.
+    for kind in ["receipt", "progress", "capacity", "error", "cancelled"] {
         saved.publication_kind = kind.into();
         assert!(!status_publication_outside_relay_window(&saved, now));
         assert!(status_publication_outside_relay_window(&saved, now + 1));
@@ -467,7 +469,8 @@ fn only_status_outside_the_relay_window_is_stale() {
             saved.event_created_at - RELAY_TIMESTAMP_TOLERANCE_SECS - 1
         ));
     }
-    for kind in ["final", "error", "cancelled", "action"] {
+    // Chat output keeps durable delivery regardless of age.
+    for kind in ["final", "action"] {
         saved.publication_kind = kind.into();
         assert!(!status_publication_outside_relay_window(
             &saved,
@@ -964,6 +967,8 @@ async fn cancellation_observation_preempts_a_stalled_answer_but_cannot_cancel_it
         for final_still_authorized in [false, true] {
             let keys = Keys::generate();
             let answer = intent(keys.public_key().to_hex());
+            // A live Stop acknowledgement is signed near "now".
+            super::TEST_NOW_SECS.with(|now| now.set(Some(answer.event_created_at)));
             let mut cancelled = answer.clone();
             cancelled.fence_id = Uuid::new_v4().to_string();
             cancelled.publication_kind = "cancelled".into();
@@ -1150,6 +1155,8 @@ async fn http_reconciliation_acknowledges_only_the_exact_verified_event() {
             saved.channel_id = "33333333-3333-4333-8333-333333333333".into();
             saved.community_id = "kiingo-prod".into();
             saved.publication_kind = publication_kind.into();
+            // The shared vector's hashes pin its timestamp; treat it as "now".
+            super::TEST_NOW_SECS.with(|now| now.set(Some(saved.event_created_at)));
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}", listener.local_addr().unwrap());
             let worker = LocalPublicationWorker {
