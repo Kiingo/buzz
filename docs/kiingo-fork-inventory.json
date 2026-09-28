@@ -6,8 +6,8 @@
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 103,
     "modifiedUpstreamFiles": 151,
-    "changedUpstreamProductionSourceLines": 7226,
-    "upstreamProductionSourceDiffHunks": 800,
+    "changedUpstreamProductionSourceLines": 7533,
+    "upstreamProductionSourceDiffHunks": 816,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -644,7 +644,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz reliability maintainers",
-      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; and an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted.",
+      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised.",
       "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
       "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
       "paths": [
