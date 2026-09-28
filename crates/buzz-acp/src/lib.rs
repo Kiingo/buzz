@@ -54,6 +54,18 @@ use tokio::sync::{mpsc, watch};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+/// Default `tracing` filter when `RUST_LOG` is unset.
+///
+/// Many harness events are emitted under custom targets (`pool::prompt`,
+/// `pool::session`, `acp::wire`, ...) that a bare `buzz_acp=info` directive
+/// does not match, so turn completion, cancellation, and turn-timeout logs
+/// were silently dropped. That made a finished turn indistinguishable from a
+/// wedged one in agent logs. `pool::*` is enabled at info; the chattier `acp::*`
+/// targets (`acp::stream` logs streamed agent text) and the remaining custom
+/// targets stay at warn. Keep in sync with the desktop's
+/// `child_rust_log_filter` (`desktop/src-tauri/src/managed_agents/runtime.rs`).
+pub const DEFAULT_LOG_FILTER: &str = "buzz_acp=info,pool=info,acp=warn,buzz::local_publication=warn,buzz::profile=warn,canvas=warn,engram=warn,observer=warn";
+
 /// Check if argv[1] matches a subcommand name, before any clap parsing.
 ///
 /// This avoids clap rejecting harness flags (like `--private-key`) that aren't
@@ -1960,7 +1972,8 @@ async fn tokio_main() -> Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("buzz_acp=info")),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER)),
         )
         .compact()
         .init();
@@ -9320,5 +9333,64 @@ mod observer_payload_trim_tests {
         assert!(leaf.starts_with('…'));
         assert!(leaf.ends_with('…'));
         assert!(leaf.contains("[elided"));
+    }
+}
+
+#[cfg(test)]
+mod default_log_filter_tests {
+    use super::DEFAULT_LOG_FILTER;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::{EnvFilter, Layer};
+
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<String>>>);
+
+    impl<S: tracing::Subscriber> Layer<S> for Capture {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let meta = event.metadata();
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("{}:{}", meta.target(), meta.level()));
+        }
+    }
+
+    fn captured(emit: impl FnOnce()) -> Vec<String> {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::registry().with(
+            capture
+                .clone()
+                .with_filter(EnvFilter::new(DEFAULT_LOG_FILTER)),
+        );
+        tracing::subscriber::with_default(subscriber, emit);
+        let out = capture.0.lock().unwrap().clone();
+        out
+    }
+
+    #[test]
+    fn turn_lifecycle_targets_are_logged_at_info() {
+        let seen = captured(|| {
+            tracing::info!(target: "pool::prompt", "turn complete for channel: end_turn");
+            tracing::info!(target: "pool::session", "rotating session");
+            tracing::info!("module-path target");
+        });
+        assert!(seen.contains(&"pool::prompt:INFO".to_string()), "{seen:?}");
+        assert!(seen.contains(&"pool::session:INFO".to_string()), "{seen:?}");
+        assert!(
+            seen.iter().any(|entry| entry.starts_with("buzz_acp")),
+            "{seen:?}"
+        );
+    }
+
+    #[test]
+    fn chatty_acp_targets_stay_at_warn() {
+        let seen = captured(|| {
+            tracing::info!(target: "acp::stream", "streamed agent text");
+            tracing::debug!(target: "acp::wire", "raw frame");
+            tracing::warn!(target: "acp::wire", "protocol problem");
+            tracing::debug!(target: "pool::prompt", "debug detail");
+        });
+        assert_eq!(seen, vec!["acp::wire:WARN".to_string()]);
     }
 }
