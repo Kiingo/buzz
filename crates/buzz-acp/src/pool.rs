@@ -2645,6 +2645,7 @@ pub async fn run_prompt_task(
                 "eventId": trigger_event_id,
                 "channelId": b.channel_id.to_string(),
                 "channelName": channel_info.as_ref().map(|info| info.name.as_str()),
+                "channelType": channel_info.as_ref().map(|info| info.channel_type.as_str()),
                 "kind": trigger.event.kind.as_u16() as u32,
                 "authorPublicKey": trigger.event.pubkey.to_hex(),
                 "authoredAt": chrono::DateTime::from_timestamp(

@@ -80,6 +80,10 @@ pub(crate) struct LocalPublicationIntent {
     pub reply_to_event_id: String,
     pub publication_kind: String,
     pub content: String,
+    /// Chat answers a top-level DM message top-level, with no NIP-10 thread
+    /// tags. Status events stay anchored to `reply_to_event_id`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub top_level: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -661,7 +665,7 @@ impl LocalPublicationWorker {
             buzz_sdk::build_message_with_extra_tags(
                 channel_id,
                 &intent.content,
-                Some(&thread_ref),
+                (!intent.top_level).then_some(&thread_ref),
                 &[],
                 false,
                 &[],
@@ -949,6 +953,11 @@ fn validate_intent(intent: &LocalPublicationIntent, rest: &RestClient) -> Result
         if root.len() != 64 || !root.chars().all(|character| character.is_ascii_hexdigit()) {
             return Err("publication thread root event id is invalid".to_string());
         }
+    }
+    if intent.top_level
+        && (intent.thread_root_event_id.is_some() || publication_event_kind(intent) != 9)
+    {
+        return Err("only unthreaded chat can be published top-level".to_string());
     }
     Ok(())
 }

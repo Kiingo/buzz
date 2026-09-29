@@ -19,22 +19,26 @@ fn authorization_response(intent: &serde_json::Value, should_publish: bool) -> s
         .as_str()
         .or_else(|| intent["reply_to_event_id"].as_str())
         .unwrap();
+    let mut tags = vec![serde_json::json!([
+        "h",
+        intent["channel_id"].as_str().unwrap()
+    ])];
+    if intent["top_level"] != true {
+        tags.push(serde_json::json!(["e", root, "", "reply"]));
+    }
+    tags.push(serde_json::json!([
+        "d",
+        format!(
+            "buzz-local-publication:{}",
+            intent["fence_id"].as_str().unwrap()
+        )
+    ]));
     let template = serde_json::json!([
         0,
         intent["agent_public_key"],
         intent["event_created_at"],
         9,
-        [
-            ["h", intent["channel_id"].as_str().unwrap()],
-            ["e", root, "", "reply"],
-            [
-                "d",
-                &format!(
-                    "buzz-local-publication:{}",
-                    intent["fence_id"].as_str().unwrap()
-                )
-            ]
-        ],
+        tags,
         intent["content"]
     ]);
     let claims: Claims = serde_json::from_value(serde_json::json!({
@@ -83,6 +87,7 @@ fn intent(agent_public_key: String) -> LocalPublicationIntent {
             .to_string(),
         publication_kind: "final".to_string(),
         content: "Done".to_string(),
+        top_level: false,
     }
 }
 
@@ -1393,4 +1398,108 @@ async fn http_recovery_preserves_event_identity_after_publisher_and_acknowledgem
         assert_eq!(completions[0]["buzz_event_id"], final_id);
         assert_eq!(completions[0]["receipt_id"], saved.receipt_id);
     }).await.expect("bounded HTTP recovery regression");
+}
+
+#[test]
+fn top_level_placement_is_only_for_unthreaded_chat_and_is_omitted_by_default() {
+    let keys = Keys::generate();
+    let threaded = intent(keys.public_key().to_hex());
+    assert!(serde_json::to_value(&threaded)
+        .unwrap()
+        .get("top_level")
+        .is_none());
+
+    let mut top_level = threaded.clone();
+    top_level.top_level = true;
+    assert!(validate_intent(&top_level, &rest(keys.clone())).is_ok());
+    let value = serde_json::to_value(&top_level).unwrap();
+    assert_eq!(value["top_level"], true);
+    assert!(
+        serde_json::from_value::<LocalPublicationIntent>(value)
+            .unwrap()
+            .top_level
+    );
+
+    let mut in_thread = top_level.clone();
+    in_thread.thread_root_event_id = Some("b".repeat(64));
+    assert!(validate_intent(&in_thread, &rest(keys.clone())).is_err());
+    let mut status = top_level;
+    status.publication_kind = "progress".into();
+    assert!(validate_intent(&status, &rest(keys)).is_err());
+}
+
+#[tokio::test]
+async fn top_level_dm_answer_is_signed_without_thread_tags() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for top_level in [false, true] {
+            // Public test vector shared with the API's canonical hash verifier.
+            let keys = Keys::parse(&format!("{}1", "0".repeat(63))).unwrap();
+            let mut saved = intent(keys.public_key().to_hex());
+            saved.fence_id = "11111111-1111-4111-8111-111111111111".into();
+            saved.receipt_id = "22222222-2222-4222-8222-222222222222".into();
+            saved.channel_id = "33333333-3333-4333-8333-333333333333".into();
+            saved.community_id = "kiingo-prod".into();
+            saved.top_level = top_level;
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let worker = LocalPublicationWorker {
+                rest: RestClient {
+                    base_url: base.clone(),
+                    ..rest(keys.clone())
+                },
+                community_id: saved.community_id.clone(),
+                completion_api_base_url: base,
+                internal_token: "placement-test-token".into(),
+                reconcile_reactions: false,
+            };
+            let server_saved = saved.clone();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (_, body) = receive_http(&mut stream).await;
+                assert_eq!(body, serde_json::to_value(&server_saved).unwrap());
+                respond_http(&mut stream, 200, authorization_response(&body, true)).await;
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (headers, _) = receive_http(&mut stream).await;
+                assert!(headers.starts_with("POST /query "));
+                respond_http(&mut stream, 200, serde_json::json!([])).await;
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (headers, body) = receive_http(&mut stream).await;
+                assert!(headers.starts_with("POST /events "));
+                let event: nostr::Event = serde_json::from_value(body).unwrap();
+                event.verify().unwrap();
+                respond_http(&mut stream, 200, serde_json::json!({"accepted": true})).await;
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (headers, _) = receive_http(&mut stream).await;
+                assert!(headers.contains("/complete "));
+                respond_http(&mut stream, 200, serde_json::json!({"status": "published"})).await;
+                event
+            });
+            let id = worker.publish(&saved).await.unwrap().unwrap();
+            let event = server.await.unwrap();
+            assert_eq!(event.kind, Kind::from(9));
+            let thread_tags = event
+                .tags
+                .iter()
+                .filter(|tag| tag.as_slice().first().map(String::as_str) == Some("e"))
+                .count();
+            if top_level {
+                assert_eq!(
+                    thread_tags, 0,
+                    "a top-level DM answer must not be a thread reply"
+                );
+                assert_eq!(
+                    id,
+                    "c67cedab3b75a441f7ac8c6479d2670d9ccf1657c06c72f2662ce6b99bf6d530"
+                );
+            } else {
+                assert_eq!(thread_tags, 1);
+                assert_eq!(
+                    id,
+                    "31fb6eb2c36dd3d28f11c570e68003eef98ca1f375090dc8d0de59ed156a0579"
+                );
+            }
+        }
+    })
+    .await
+    .expect("bounded top-level placement regression");
 }
