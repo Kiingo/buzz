@@ -237,6 +237,8 @@ pub struct AcpClient {
     /// final answer). Reset when a prompt is sent and whenever a tool call
     /// starts. Consumed by the unpublished-reply safety net.
     turn_reply_text: String,
+    /// Per-turn reply destination exported to the agent's tools.
+    turn_context: crate::turn_context::TurnContextFile,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -557,6 +559,10 @@ impl AcpClient {
                 "codex" | "codex-acp" => Some(StandardAdapterKind::Codex),
                 _ => None,
             };
+        let turn_context = crate::turn_context::TurnContextFile::new();
+        if let Some(path) = turn_context.path() {
+            cmd.env(crate::turn_context::TURN_CONTEXT_FILE_ENV, path);
+        }
         let mut child = cmd.spawn()?;
 
         let stdin = child
@@ -590,7 +596,13 @@ impl AcpClient {
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
             turn_reply_text: String::new(),
+            turn_context,
         })
+    }
+
+    /// Per-turn reply destination file exported to this agent's tools.
+    pub(crate) fn turn_context(&self) -> &crate::turn_context::TurnContextFile {
+        &self.turn_context
     }
 
     /// Install (or clear) the local publication boundary for this

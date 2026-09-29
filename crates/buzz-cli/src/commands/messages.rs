@@ -619,6 +619,7 @@ pub struct SendMessageParams {
     pub content: String,
     pub kind: Option<u16>,
     pub reply_to: Option<String>,
+    pub top_level: bool,
     pub broadcast: bool,
     pub files: Vec<String>,
     pub mentions: Vec<String>,
@@ -638,6 +639,9 @@ pub async fn cmd_send_message(
         validate_hex64(r)?;
     }
     let channel_uuid = parse_uuid(&p.channel_id)?;
+    let (reply_to, default_reply) =
+        super::turn_context::resolve_reply_to(p.reply_to.take(), p.top_level, p.kind, channel_uuid);
+    p.reply_to = reply_to;
 
     let explicit_mentions = normalize_explicit_mentions(&p.mentions)?;
     let stripped = strip_code_regions(&p.content);
@@ -758,6 +762,9 @@ pub async fn cmd_send_message(
             "mention_pubkeys".into(),
             serde_json::json!(emitted_mentions),
         );
+        if default_reply {
+            object.insert("default_reply_to".into(), serde_json::json!(p.reply_to));
+        }
     }
     println!("{output}");
     Ok(())
@@ -948,6 +955,7 @@ pub async fn dispatch(
             content,
             kind,
             reply_to,
+            top_level,
             broadcast,
             files,
             mentions,
@@ -959,6 +967,7 @@ pub async fn dispatch(
                     content,
                     kind,
                     reply_to,
+                    top_level,
                     broadcast,
                     files,
                     mentions,
