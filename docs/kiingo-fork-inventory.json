@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 103,
-    "modifiedUpstreamFiles": 151,
-    "changedUpstreamProductionSourceLines": 7567,
-    "upstreamProductionSourceDiffHunks": 818,
+    "modifiedUpstreamProductionSourceFiles": 105,
+    "modifiedUpstreamFiles": 154,
+    "changedUpstreamProductionSourceLines": 7601,
+    "upstreamProductionSourceDiffHunks": 824,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -644,7 +644,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz reliability maintainers",
-      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised.",
+      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised; and keep relay-signed kind:40099 system events (dm_created) out of the Home inbox DM context, which has no system-row renderer and showed their JSON as chat.",
       "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
       "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
       "paths": [
@@ -660,6 +660,9 @@
         "crates/buzz-relay/src/handlers/command_executor.rs",
         "crates/buzz-relay/src/handlers/side_effects.rs",
         "desktop/src-tauri/src/managed_agents/persona_events/tests.rs",
+        "desktop/src/features/home/lib/inboxViewHelpers.test.mjs",
+        "desktop/src/features/home/lib/inboxViewHelpers.ts",
+        "desktop/src/features/home/useInboxThreadContext.ts",
         "desktop/src/shared/api/relayClientSession.ts",
         "desktop/tests/e2e/messaging.spec.ts"
       ]

@@ -16,13 +16,28 @@ import type {
   RelayEvent,
   UserProfileSummary,
 } from "@/shared/api/types";
-import { KIND_REMINDER } from "@/shared/constants/kinds";
+import {
+  CHANNEL_TIMELINE_CONTENT_KINDS,
+  KIND_REMINDER,
+  KIND_SYSTEM_MESSAGE,
+} from "@/shared/constants/kinds";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
 
 function hasThreadReplyTags(tags: string[][]) {
   const thread = getThreadReference(tags);
   return thread.parentId !== null && !isBroadcastReply(tags);
+}
+
+// Full-DM Inbox context rows. Relay-signed kind:40099 system events
+// (dm_created, member_joined, ...) have no Inbox renderer — InboxMessageRow
+// would show their JSON payload as a chat message from the relay key.
+const INBOX_DM_CONTEXT_KINDS = new Set<number>(
+  CHANNEL_TIMELINE_CONTENT_KINDS.filter((kind) => kind !== KIND_SYSTEM_MESSAGE),
+);
+
+export function isInboxDmContextEvent(event: Pick<RelayEvent, "kind">) {
+  return INBOX_DM_CONTEXT_KINDS.has(event.kind);
 }
 
 export function filterInboxItems(items: InboxItem[]) {

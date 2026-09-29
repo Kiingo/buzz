@@ -8,6 +8,7 @@ import {
   getContextMessageDepth,
   getReactionTargetId,
   hasInboxThreadContext,
+  isInboxDmContextEvent,
   isInboxThreadContextEvent,
   matchesInboxAllView,
   matchesInboxFilter,
@@ -21,6 +22,15 @@ test("Inbox uses the dedicated reminder list instead of feed reminder rows", () 
   const items = [message, reminder];
 
   assert.deepEqual(filterInboxItems(items), [message]);
+});
+
+test("DM Inbox context drops relay system events but keeps chat rows", () => {
+  // kind:40099 dm_created is relay-signed JSON; rendering it through
+  // InboxMessageRow showed the raw payload as a chat message.
+  assert.equal(isInboxDmContextEvent({ kind: 40099 }), false);
+  assert.equal(isInboxDmContextEvent({ kind: 9 }), true);
+  assert.equal(isInboxDmContextEvent({ kind: 40002 }), true);
+  assert.equal(isInboxDmContextEvent({ kind: 7 }), false);
 });
 
 test("hasInboxThreadContext finds replies in the grouped row or loaded context", () => {

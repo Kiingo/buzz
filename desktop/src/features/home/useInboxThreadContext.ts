@@ -1,6 +1,9 @@
 import * as React from "react";
 
-import { isInboxThreadContextEvent } from "@/features/home/lib/inboxViewHelpers";
+import {
+  isInboxDmContextEvent,
+  isInboxThreadContextEvent,
+} from "@/features/home/lib/inboxViewHelpers";
 import { relayEventFromFeedItem } from "@/features/home/lib/inbox";
 import { fetchStructuralAuxForMessages } from "@/features/messages/lib/auxBackfill";
 import { getThreadReference } from "@/features/messages/lib/threading";
@@ -8,10 +11,7 @@ import { relayClient } from "@/shared/api/relayClient";
 import { buildChannelReactionAuxFilter } from "@/shared/api/relayChannelFilters";
 import { getEventById } from "@/shared/api/tauri";
 import type { FeedItem, RelayEvent } from "@/shared/api/types";
-import {
-  CHANNEL_TIMELINE_CONTENT_KINDS,
-  HOME_MENTION_EVENT_KINDS,
-} from "@/shared/constants/kinds";
+import { HOME_MENTION_EVENT_KINDS } from "@/shared/constants/kinds";
 
 type InboxThreadContextResult = {
   events: RelayEvent[];
@@ -29,9 +29,6 @@ type InboxThreadContextResult = {
 
 const THREAD_CONTEXT_LIMIT = 100;
 const MAX_ANCESTOR_HOPS = 50;
-const CHANNEL_CONTEXT_EVENT_KINDS = new Set<number>(
-  CHANNEL_TIMELINE_CONTENT_KINDS,
-);
 
 function dedupeEvents(events: RelayEvent[]): RelayEvent[] {
   const eventsById = new Map<string, RelayEvent>();
@@ -216,9 +213,7 @@ export function useInboxThreadContext(
     if (fullChannel) {
       return dedupeEvents([
         selectedEvent,
-        ...(channelMessages ?? []).filter((event) =>
-          CHANNEL_CONTEXT_EVENT_KINDS.has(event.kind),
-        ),
+        ...(channelMessages ?? []).filter(isInboxDmContextEvent),
       ]);
     }
 
