@@ -1384,14 +1384,26 @@ async fn create_session_and_apply_model(
                             .collect()
                     })
                     .unwrap_or_default();
-                tracing::warn!(
-                    target: "pool::permission",
-                    "configured permission mode {:?} is not advertised by the agent \
-                     (available modes: {advertised:?}) on session {} — leaving the \
-                     agent's own mode in place",
-                    ctx.permission_mode.as_wire_str(),
-                    resp.session_id
-                );
+                if advertised.is_empty() {
+                    // The adapter has no session modes at all (e.g. a hosted
+                    // runtime that enforces its own policy): nothing to apply.
+                    tracing::debug!(
+                        target: "pool::permission",
+                        "agent advertises no session modes on session {}; \
+                         permission mode {:?} not applied",
+                        resp.session_id,
+                        ctx.permission_mode.as_wire_str()
+                    );
+                } else {
+                    tracing::warn!(
+                        target: "pool::permission",
+                        "configured permission mode {:?} is not advertised by the agent \
+                         (available modes: {advertised:?}) on session {} — leaving the \
+                         agent's own mode in place",
+                        ctx.permission_mode.as_wire_str(),
+                        resp.session_id
+                    );
+                }
             }
         }
     }
