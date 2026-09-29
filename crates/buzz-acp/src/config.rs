@@ -1198,7 +1198,12 @@ impl Config {
             max_turns_per_session: args.max_turns_per_session,
             presence_enabled: !args.no_presence,
             typing_enabled: !args.no_typing,
-            reply_fallback_enabled: !args.no_reply_fallback,
+            reply_fallback_enabled: reply_fallback_enabled(
+                args.no_reply_fallback,
+                std::env::var("BUZZ_ACP_LOCAL_PUBLICATION_ENABLED")
+                    .ok()
+                    .as_deref(),
+            ),
             memory_enabled: args.memory && !args.no_memory,
             model,
             effort_level: args.effort_level,
@@ -1545,6 +1550,14 @@ fn rule_applies_to_channel(rule: &SubscriptionRule, channel_id: Uuid) -> bool {
             .any(|id| id.parse::<Uuid>().ok() == Some(channel_id)),
         _ => false,
     }
+}
+
+/// The unpublished-reply fallback posts a turn's ACP text when the agent has
+/// not replied. Under local publication the real answer is a fenced intent
+/// signed after the turn ends, so the fallback would race it and post the
+/// adapter's narration first. Local publication therefore disables it.
+fn reply_fallback_enabled(no_reply_fallback: bool, local_publication: Option<&str>) -> bool {
+    !no_reply_fallback && !matches!(local_publication, Some("1" | "true" | "TRUE"))
 }
 
 #[cfg(test)]
@@ -3174,5 +3187,13 @@ channels = "ALL"
             "Found secret-bearing env args without hide_env_values=true. \
              Add `hide_env_values = true` to each: {violations:?}"
         );
+    }
+    #[test]
+    fn local_publication_disables_reply_fallback() {
+        assert!(reply_fallback_enabled(false, None));
+        assert!(reply_fallback_enabled(false, Some("false")));
+        assert!(!reply_fallback_enabled(true, None));
+        assert!(!reply_fallback_enabled(false, Some("true")));
+        assert!(!reply_fallback_enabled(false, Some("1")));
     }
 }
