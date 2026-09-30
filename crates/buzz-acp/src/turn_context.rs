@@ -76,9 +76,13 @@ impl TurnContextFile {
     /// process simply runs without a turn context (plain CLI defaults).
     pub(crate) fn new() -> Self {
         let dir = std::env::temp_dir().join(format!("buzz-turn-{}", Uuid::new_v4().simple()));
-        let mut builder = std::fs::DirBuilder::new();
+        let builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        let builder = {
+            let mut builder = builder;
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder
+        };
         if let Err(error) = builder.create(&dir) {
             tracing::warn!(%error, "turn context directory unavailable");
             return Self { inner: None };
