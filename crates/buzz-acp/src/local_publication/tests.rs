@@ -1503,3 +1503,36 @@ async fn top_level_dm_answer_is_signed_without_thread_tags() {
     .await
     .expect("bounded top-level placement regression");
 }
+
+#[tokio::test]
+async fn recovery_transport_errors_name_timeout_and_connect_causes() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    });
+    let timed_out = reqwest::Client::new()
+        .post(format!(
+            "http://{address}/api/buzz-bridge/publications/recover"
+        ))
+        .timeout(Duration::from_millis(100))
+        .send()
+        .await
+        .unwrap_err();
+    let detail = transport_error_detail(&timed_out);
+    assert!(detail.starts_with("timed out"), "{detail}");
+    assert!(!detail.contains("/publications/recover"), "{detail}");
+    server.abort();
+
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let closed_address = closed.local_addr().unwrap();
+    drop(closed);
+    let refused = reqwest::Client::new()
+        .post(format!("http://{closed_address}/"))
+        .send()
+        .await
+        .unwrap_err();
+    let detail = transport_error_detail(&refused);
+    assert!(detail.starts_with("connect failed: "), "{detail}");
+}

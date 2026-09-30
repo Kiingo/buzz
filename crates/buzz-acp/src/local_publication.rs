@@ -594,7 +594,12 @@ impl LocalPublicationWorker {
             }))
             .send()
             .await
-            .map_err(|error| format!("publication recovery failed: {error}"))?
+            .map_err(|error| {
+                format!(
+                    "publication recovery failed: {}",
+                    transport_error_detail(&error)
+                )
+            })?
             .error_for_status()
             .map_err(|error| format!("publication recovery rejected: {error}"))?;
         let body = response
@@ -960,6 +965,26 @@ fn validate_intent(intent: &LocalPublicationIntent, rest: &RestClient) -> Result
         return Err("only unthreaded chat can be published top-level".to_string());
     }
     Ok(())
+}
+
+/// reqwest's Display stops at "error sending request for url (...)". Name the
+/// failure class and its source chain so a timed-out recovery poll is visible.
+fn transport_error_detail(error: &reqwest::Error) -> String {
+    let class = if error.is_timeout() {
+        "timed out"
+    } else if error.is_connect() {
+        "connect failed"
+    } else {
+        "request failed"
+    };
+    let mut detail = class.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        detail.push_str(": ");
+        detail.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    detail
 }
 
 #[cfg(test)]
