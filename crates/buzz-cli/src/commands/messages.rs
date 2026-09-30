@@ -641,6 +641,12 @@ pub async fn cmd_send_message(
     }
     let channel_uuid = parse_uuid(&p.channel_id)?;
     let turn = super::turn_context::TurnContext::for_send(p.kind, channel_uuid);
+    // Held until this send returns, so a parallel send in the same turn sees
+    // any handoff this one records.
+    let _floor = match &turn {
+        Some(turn) => turn.lock_floor().await?,
+        None => None,
+    };
     if let Some(turn) = &turn {
         turn.check_handoff(p.after_handoff)?;
     }

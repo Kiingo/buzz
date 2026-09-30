@@ -15,10 +15,15 @@
 //!   agent cannot ask a question and post the conclusion before the answer.
 //!   The harness clears the marker when a turn starts or ends; the marker
 //!   carries the `turn_id`, so a leftover from another turn is ignored.
+//!   Parallel sends in one turn serialize on an advisory lock on
+//!   `handoff.lock` in the same directory, held from the check until the
+//!   marker is written, so two sends cannot both pass the check before either
+//!   records a handoff. The OS drops the lock if the holder exits.
 //!
 //! Another channel or a missing file (no turn in progress) is unaffected.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
@@ -27,6 +32,16 @@ use crate::error::CliError;
 const TURN_CONTEXT_FILE_ENV: &str = "BUZZ_TURN_CONTEXT_FILE";
 const HANDOFF_FILE_NAME: &str = "handoff.json";
 const EXCERPT_CHARS: usize = 120;
+const FLOOR_LOCK_FILE_NAME: &str = "handoff.lock";
+const FLOOR_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
+const FLOOR_LOCK_POLL: Duration = Duration::from_millis(25);
+
+/// Exclusive hold on the turn's floor, released when dropped (or when the
+/// process exits).
+#[derive(Debug)]
+pub(crate) struct FloorLock {
+    _file: std::fs::File,
+}
 
 /// The current turn, as seen by a chat send to its channel.
 #[derive(Debug, Clone)]
@@ -92,6 +107,49 @@ impl TurnContext {
         let contents = std::fs::read_to_string(self.handoff_path()).ok()?;
         let marker: serde_json::Value = serde_json::from_str(&contents).ok()?;
         (marker.get("turn_id")?.as_str()? == turn_id).then_some(marker)
+    }
+
+    /// Serialize this send's handoff check, send, and marker write with any
+    /// other send in the same turn. Hold the result until after
+    /// [`Self::record_sent`]. Best effort like the marker itself: a turn file
+    /// without a `turn_id` or a lock the filesystem cannot provide yields no
+    /// lock; only a holder that outlasts the timeout refuses the send.
+    pub(crate) async fn lock_floor(&self) -> Result<Option<FloorLock>, CliError> {
+        self.lock_floor_within(FLOOR_LOCK_TIMEOUT).await
+    }
+
+    async fn lock_floor_within(&self, timeout: Duration) -> Result<Option<FloorLock>, CliError> {
+        if self.turn_id.is_none() {
+            return Ok(None);
+        }
+        let Ok(file) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.dir.join(FLOOR_LOCK_FILE_NAME))
+        else {
+            return Ok(None);
+        };
+        let deadline = Instant::now() + timeout;
+        loop {
+            // Called through the trait: std's inherent `File::try_lock` is
+            // newer than this crate's MSRV.
+            match fs4::FileExt::try_lock(&file) {
+                Ok(()) => return Ok(Some(FloorLock { _file: file })),
+                Err(fs4::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    tokio::time::sleep(FLOOR_LOCK_POLL).await;
+                }
+                Err(fs4::TryLockError::WouldBlock) => {
+                    return Err(CliError::Other(format!(
+                        "not sent: another message send in this turn has held the channel for \
+                         over {}s; retry once it finishes",
+                        timeout.as_secs()
+                    )));
+                }
+                Err(fs4::TryLockError::Error(_)) => return Ok(None),
+            }
+        }
     }
 
     /// Refuse a send after this turn handed the floor to someone else.
@@ -401,6 +459,102 @@ mod tests {
         let ctx = TurnContext::parse(&turn.path, &legacy, channel).unwrap();
         ctx.record_sent(ME, &[JUNIPER.into()], None, "@Juniper?");
         ctx.check_handoff(false).unwrap();
+    }
+
+    /// One in-turn chat send as `run_send` performs it: lock, check, send,
+    /// record. Logs the order of the checks and returns whether it was sent.
+    async fn locked_send(
+        ctx: &TurnContext,
+        handoff: bool,
+        log: &std::sync::Mutex<Vec<bool>>,
+    ) -> bool {
+        let _floor = ctx.lock_floor().await.unwrap();
+        let allowed = ctx.check_handoff(false).is_ok();
+        log.lock().unwrap().push(handoff);
+        // Widen the check-to-record window a real network send would have.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        if allowed {
+            let mentions: Vec<String> = if handoff {
+                vec![JUNIPER.into()]
+            } else {
+                vec![]
+            };
+            ctx.record_sent(ME, &mentions, None, "@Juniper thoughts?");
+        }
+        allowed
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn parallel_sends_see_a_handoff_recorded_by_the_other() {
+        for round in 0..10 {
+            let turn = Turn::new();
+            let channel = Uuid::new_v4();
+            // Each send is its own process, with its own view and lock handle.
+            let a = turn.publish(channel, None, &[TRIGGER], channel).unwrap();
+            let b = TurnContext::parse(
+                &turn.path,
+                &std::fs::read_to_string(&turn.path).unwrap(),
+                channel,
+            )
+            .unwrap();
+            let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let (la, lb) = (log.clone(), log.clone());
+            // Alternate which send starts first; both race for the floor.
+            let (handoff, plain) = if round % 2 == 0 {
+                let h = tokio::spawn(async move { locked_send(&a, true, &la).await });
+                (
+                    h,
+                    tokio::spawn(async move { locked_send(&b, false, &lb).await }),
+                )
+            } else {
+                let p = tokio::spawn(async move { locked_send(&b, false, &lb).await });
+                (
+                    tokio::spawn(async move { locked_send(&a, true, &la).await }),
+                    p,
+                )
+            };
+            let (handoff, plain) = (handoff.await.unwrap(), plain.await.unwrap());
+            assert!(handoff, "nothing precedes the handoff that could refuse it");
+            if log.lock().unwrap()[0] {
+                assert!(!plain, "a send checked after the handoff must be refused");
+            } else {
+                assert!(plain, "a send checked before the handoff goes out");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn floor_lock_is_exclusive_and_released_on_error() {
+        let turn = Turn::new();
+        let channel = Uuid::new_v4();
+        let ctx = turn.publish(channel, None, &[TRIGGER], channel).unwrap();
+        let short = Duration::from_millis(60);
+
+        let held = ctx.lock_floor().await.unwrap().expect("in-turn lock");
+        let err = ctx.lock_floor_within(short).await.unwrap_err().to_string();
+        assert!(err.contains("another message send"), "{err}");
+        ctx.record_sent(ME, &[JUNIPER.into()], None, "@Juniper thoughts?");
+        drop(held);
+
+        // A refused send returns early with `?`; its lock goes with it.
+        async fn send(ctx: &TurnContext) -> Result<(), CliError> {
+            let _floor = ctx.lock_floor().await?;
+            ctx.check_handoff(false)?;
+            Ok(())
+        }
+        send(&ctx).await.unwrap_err();
+        assert!(ctx.lock_floor_within(short).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn no_floor_lock_without_a_turn_id() {
+        let turn = Turn::new();
+        let channel = Uuid::new_v4();
+        let legacy =
+            serde_json::json!({ "channel_id": channel.to_string(), "reply_to": null }).to_string();
+        let ctx = TurnContext::parse(&turn.path, &legacy, channel).unwrap();
+        assert!(ctx.lock_floor().await.unwrap().is_none());
+        assert!(!turn.dir.join(FLOOR_LOCK_FILE_NAME).exists());
     }
 
     #[test]
