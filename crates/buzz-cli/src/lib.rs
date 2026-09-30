@@ -401,6 +401,9 @@ pub enum MessagesCmd {
         /// Post at the channel top level instead of the agent turn's default thread
         #[arg(long, default_value_t = false, conflicts_with = "reply_to")]
         top_level: bool,
+        /// Inside an agent turn, send even though this turn already @mentioned someone to hand them the floor. Use only when this message does not depend on their answer; otherwise end the turn and let their reply wake you
+        #[arg(long, default_value_t = false)]
+        after_handoff: bool,
         /// Also publish to the Nostr network
         #[arg(long, default_value_t = false)]
         broadcast: bool,

@@ -2694,12 +2694,11 @@ pub async fn run_prompt_task(
                 .as_ref()
                 .is_some_and(|info| info.channel_type == "dm");
             let reply_to = crate::turn_context::default_reply_to(b, is_dm, profile_lookup.as_ref());
-            _turn_context = Some(
-                agent
-                    .acp
-                    .turn_context()
-                    .publish(b.channel_id, reply_to.as_deref()),
-            );
+            _turn_context = Some(agent.acp.turn_context().publish(
+                b.channel_id,
+                reply_to.as_deref(),
+                &crate::turn_context::trigger_pubkeys(b),
+            ));
             crate::queue::format_prompt(
                 b,
                 &crate::queue::FormatPromptArgs {

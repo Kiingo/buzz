@@ -7,6 +7,14 @@
 //! replies in the thread that triggered the turn. The file is removed when the
 //! turn ends, so work outside a turn keeps the CLI's plain top-level default.
 //!
+//! The CLI records a handoff next to it: once the agent `@mention`s someone
+//! other than itself and the members who triggered the turn, it writes
+//! [`HANDOFF_FILE_NAME`] (tagged with this turn's `turn_id`) and refuses
+//! further chat sends to the turn's channel, so an agent that asked someone a
+//! question cannot also post the conclusion before they answer. The harness
+//! clears the marker when a turn starts and ends; the `turn_id` makes a
+//! leftover marker inert for any other turn.
+//!
 //! A process runs one turn at a time (pool slots are checked out exclusively),
 //! but the returning turn's guard may drop after the next turn has published.
 //! A generation counter under a mutex keeps a stale guard from removing the
@@ -24,6 +32,22 @@ use crate::queue::{parse_thread_tags, FlushBatch, PromptProfileLookup};
 
 /// Environment variable naming the per-process turn context file.
 pub(crate) const TURN_CONTEXT_FILE_ENV: &str = "BUZZ_TURN_CONTEXT_FILE";
+
+/// Handoff marker written by `buzz messages send`, in the turn file's directory.
+const HANDOFF_FILE_NAME: &str = "handoff.json";
+
+/// Authors of the events that triggered this turn. Mentioning only them is an
+/// answer, not a handoff.
+pub(crate) fn trigger_pubkeys(batch: &FlushBatch) -> Vec<String> {
+    let mut pubkeys: Vec<String> = Vec::new();
+    for event in &batch.events {
+        let pubkey = event.event.pubkey.to_hex();
+        if !pubkeys.contains(&pubkey) {
+            pubkeys.push(pubkey);
+        }
+    }
+    pubkeys
+}
 
 /// Default reply target for ordinary chat posts in this turn's channel.
 ///
@@ -57,6 +81,13 @@ struct Inner {
     dir: PathBuf,
     path: PathBuf,
     generation: Mutex<u64>,
+}
+
+impl Inner {
+    fn clear(&self) {
+        let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_file(self.dir.join(HANDOFF_FILE_NAME));
+    }
 }
 
 impl Drop for Inner {
@@ -103,7 +134,12 @@ impl TurnContextFile {
     }
 
     /// Publish this turn's context; it is removed when the guard drops.
-    pub(crate) fn publish(&self, channel_id: Uuid, reply_to: Option<&str>) -> TurnContextGuard {
+    pub(crate) fn publish(
+        &self,
+        channel_id: Uuid,
+        reply_to: Option<&str>,
+        trigger_pubkeys: &[String],
+    ) -> TurnContextGuard {
         let Some(inner) = self.inner.clone() else {
             return TurnContextGuard {
                 inner: None,
@@ -113,16 +149,20 @@ impl TurnContextFile {
         let body = serde_json::json!({
             "channel_id": channel_id.to_string(),
             "reply_to": reply_to,
+            "turn_id": Uuid::new_v4().to_string(),
+            "trigger_pubkeys": trigger_pubkeys,
         })
         .to_string();
         let mut generation = lock(&inner.generation);
         *generation += 1;
+        // A new turn starts with the floor open.
+        let _ = std::fs::remove_file(inner.dir.join(HANDOFF_FILE_NAME));
         let tmp = inner.dir.join("turn.json.tmp");
         if let Err(error) =
             std::fs::write(&tmp, body).and_then(|()| std::fs::rename(&tmp, &inner.path))
         {
             tracing::warn!(%error, "failed to write turn context");
-            let _ = std::fs::remove_file(&inner.path);
+            inner.clear();
         }
         let current = *generation;
         drop(generation);
@@ -150,7 +190,7 @@ impl Drop for TurnContextGuard {
         if let Some(inner) = self.inner.take() {
             let generation = lock(&inner.generation);
             if *generation == self.generation {
-                let _ = std::fs::remove_file(&inner.path);
+                inner.clear();
             }
         }
     }
@@ -249,21 +289,54 @@ mod tests {
     }
 
     #[test]
+    fn trigger_pubkeys_are_the_distinct_batch_authors() {
+        let (a, b) = (Keys::generate(), Keys::generate());
+        let mut flush = batch(message(&a, None, None));
+        for keys in [&b, &a] {
+            flush.events.push(BatchEvent {
+                event: message(keys, None, None),
+                prompt_tag: "test".into(),
+                received_at: Instant::now(),
+            });
+        }
+        assert_eq!(
+            trigger_pubkeys(&flush),
+            vec![a.public_key().to_hex(), b.public_key().to_hex()]
+        );
+    }
+
+    #[test]
     fn guard_removes_file_unless_a_newer_turn_replaced_it() {
         let file = TurnContextFile::new();
         let path = file.path().unwrap().to_path_buf();
         let channel = Uuid::new_v4();
-        let first = file.publish(channel, Some("aa"));
+        let handoff = path.parent().unwrap().join(HANDOFF_FILE_NAME);
+        let first = file.publish(channel, Some("aa"), &["bb".into()]);
         let written: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(written["channel_id"], channel.to_string());
         assert_eq!(written["reply_to"], "aa");
+        assert_eq!(written["trigger_pubkeys"], serde_json::json!(["bb"]));
+        let first_turn = written["turn_id"].as_str().unwrap().to_string();
 
-        let second = file.publish(channel, None);
+        // The CLI records a handoff during the first turn.
+        std::fs::write(&handoff, "{}").unwrap();
+        let second = file.publish(channel, None, &[]);
+        assert!(!handoff.exists(), "a new turn starts with the floor open");
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_ne!(written["turn_id"].as_str().unwrap(), first_turn);
+
+        std::fs::write(&handoff, "{}").unwrap();
         drop(first);
         assert!(path.exists(), "stale guard must not remove the newer turn");
+        assert!(
+            handoff.exists(),
+            "stale guard must not clear the newer handoff"
+        );
         drop(second);
         assert!(!path.exists());
+        assert!(!handoff.exists(), "turn end clears the handoff marker");
 
         let dir = path.parent().unwrap().to_path_buf();
         drop(file);
