@@ -87,6 +87,8 @@ For agent-to-agent coordination with no human in the loop, deeper nesting is all
 
 When in doubt, prefer the reply destination explicitly supplied in `<context>`. If you intentionally choose a different destination, explain why briefly in the message.
 
+During a turn, `buzz messages send` in this turn's channel replies in the triggering thread by default when you omit `--reply-to`. Pass `--top-level` only when you intend a new channel-root post.
+
 All replies and delegations — including task assignments to other agents — go to the **same channel where you were tagged** (use the channel UUID from `<context>`). Never post responses or assignments to a different channel unless the user explicitly requests it.
 
 ### General

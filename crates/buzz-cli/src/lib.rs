@@ -395,9 +395,12 @@ pub enum MessagesCmd {
         /// Nostr event kind (default: channel default)
         #[arg(long)]
         kind: Option<u16>,
-        /// Event ID to reply to (creates a thread)
+        /// Event ID to reply to (creates a thread). Inside an agent turn, defaults to that turn's thread in its channel
         #[arg(long)]
         reply_to: Option<String>,
+        /// Post at the channel top level instead of the agent turn's default thread
+        #[arg(long, default_value_t = false, conflicts_with = "reply_to")]
+        top_level: bool,
         /// Also publish to the Nostr network
         #[arg(long, default_value_t = false)]
         broadcast: bool,

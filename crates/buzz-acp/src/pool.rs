@@ -2538,6 +2538,7 @@ pub async fn run_prompt_task(
     // Event IDs represented by this prompt. Commit only after ACP reports a
     // successful turn; failed/cancelled prompts must be retryable without loss.
     let mut pending_delivered_event_ids = HashSet::new();
+    let mut _turn_context = None;
     let prompt_sections: Vec<String> = if let Some(text) = prompt_text {
         agent.acp.set_buzz_prompt_metadata(None);
         // Heartbeats create their session before this point, so a Goose method-not-found
@@ -2689,6 +2690,16 @@ pub async fn run_prompt_task(
             // model-facing chat transcript, profile lookup, or observer prompt.
             vec!["Consume the authenticated invocation in runtime metadata.".to_string()]
         } else {
+            let is_dm = channel_info
+                .as_ref()
+                .is_some_and(|info| info.channel_type == "dm");
+            let reply_to = crate::turn_context::default_reply_to(b, is_dm, profile_lookup.as_ref());
+            _turn_context = Some(
+                agent
+                    .acp
+                    .turn_context()
+                    .publish(b.channel_id, reply_to.as_deref()),
+            );
             crate::queue::format_prompt(
                 b,
                 &crate::queue::FormatPromptArgs {

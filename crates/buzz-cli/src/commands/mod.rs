@@ -18,6 +18,7 @@ pub mod projects;
 pub mod reactions;
 pub mod repos;
 pub mod social;
+pub mod turn_context;
 pub mod upload;
 pub mod user_stop;
 pub mod users;

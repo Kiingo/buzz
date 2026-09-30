@@ -6,8 +6,8 @@
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 105,
     "modifiedUpstreamFiles": 154,
-    "changedUpstreamProductionSourceLines": 7601,
-    "upstreamProductionSourceDiffHunks": 824,
+    "changedUpstreamProductionSourceLines": 7648,
+    "upstreamProductionSourceDiffHunks": 838,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -644,7 +644,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz reliability maintainers",
-      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised; and keep relay-signed kind:40099 system events (dm_created) out of the Home inbox DM context, which has no system-row renderer and showed their JSON as chat.",
+      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised; and keep relay-signed kind:40099 system events (dm_created) out of the Home inbox DM context, which has no system-row renderer and showed their JSON as chat; and export each agent turn's reply destination (BUZZ_TURN_CONTEXT_FILE) so `buzz messages send` in the turn's channel replies in the triggering thread by default, with --top-level to opt out.",
       "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
       "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
       "paths": [
@@ -655,7 +655,9 @@
         "crates/buzz-acp/src/profile_publication.rs",
         "crates/buzz-acp/src/respond_allowlist_file.rs",
         "crates/buzz-acp/src/setup_mode.rs",
+        "crates/buzz-acp/src/turn_context.rs",
         "crates/buzz-acp/src/unpublished_reply.rs",
+        "crates/buzz-cli/src/commands/turn_context.rs",
         "crates/buzz-db/src/store/dm.rs",
         "crates/buzz-relay/src/handlers/command_executor.rs",
         "crates/buzz-relay/src/handlers/side_effects.rs",
