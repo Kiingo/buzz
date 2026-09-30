@@ -620,6 +620,7 @@ pub struct SendMessageParams {
     pub kind: Option<u16>,
     pub reply_to: Option<String>,
     pub top_level: bool,
+    pub after_handoff: bool,
     pub broadcast: bool,
     pub files: Vec<String>,
     pub mentions: Vec<String>,
@@ -639,8 +640,12 @@ pub async fn cmd_send_message(
         validate_hex64(r)?;
     }
     let channel_uuid = parse_uuid(&p.channel_id)?;
+    let turn = super::turn_context::TurnContext::for_send(p.kind, channel_uuid);
+    if let Some(turn) = &turn {
+        turn.check_handoff(p.after_handoff)?;
+    }
     let (reply_to, default_reply) =
-        super::turn_context::resolve_reply_to(p.reply_to.take(), p.top_level, p.kind, channel_uuid);
+        super::turn_context::resolve_reply_to(p.reply_to.take(), p.top_level, turn.as_ref());
     p.reply_to = reply_to;
 
     let explicit_mentions = normalize_explicit_mentions(&p.mentions)?;
@@ -706,6 +711,9 @@ pub async fn cmd_send_message(
     // NIP-10: a reply that addresses no one notifies the author it answers, so
     // an agent that asked a question is woken by the answer. Replies that
     // @mention someone keep exactly the identities the sender chose.
+    // Only deliberate mentions can hand off the floor, not the implicit
+    // parent-author notification added below.
+    let handoff_candidates = mention_pubkeys.clone();
     let mut mention_pubkeys = mention_pubkeys;
     if let Some(author) = parent_reply_notification(
         &mention_pubkeys,
@@ -754,7 +762,16 @@ pub async fn cmd_send_message(
 
     let event = client.sign_event(builder)?;
     let emitted_mentions = event_mention_pubkeys(&event);
+    let event_id = event.id.to_hex();
     let resp = client.submit_event(event).await?;
+    if let Some(turn) = &turn {
+        turn.record_sent(
+            &client.keys().public_key().to_hex(),
+            &handoff_candidates,
+            Some(&event_id),
+            &p.content,
+        );
+    }
     let mut output: serde_json::Value = serde_json::from_str(&normalize_write_response(&resp))
         .unwrap_or_else(|_| serde_json::json!({ "response": resp }));
     if let Some(object) = output.as_object_mut() {
@@ -956,6 +973,7 @@ pub async fn dispatch(
             kind,
             reply_to,
             top_level,
+            after_handoff,
             broadcast,
             files,
             mentions,
@@ -968,6 +986,7 @@ pub async fn dispatch(
                     kind,
                     reply_to,
                     top_level,
+                    after_handoff,
                     broadcast,
                     files,
                     mentions,
