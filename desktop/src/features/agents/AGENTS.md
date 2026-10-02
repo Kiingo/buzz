@@ -164,8 +164,11 @@ with a TypeScript lookup table or an id comparison in a component.
    dialog seeds access from the exact clicked instance and saves access through
    `update_managed_agent`; persona behavior remains the definition default, but
    must never bypass the instance command's stop, persist, publish, and restart
-   boundary.** An unknown location falls back to the local wording — never hedge
-   with "computer or server". A remote host requires an
+   boundary.** Saving a definition's access carries it to the linked instances
+   still on the definition's previous access — each through
+   `update_managed_agent`, never a direct record write — while instances whose
+   access was set individually keep it. An unknown location falls back to the
+   local wording — never hedge with "computer or server". A remote host requires an
    installed `buzz-backend-*` provider, and without one `WhereToRunSection`
    never renders, so "server" would name a concept the owner has never been
    shown; when it *is* remote they picked that host from the selector

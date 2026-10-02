@@ -16,6 +16,7 @@ use crate::{
 
 use super::{pending, retain_persona_pending, trim_optional, trim_required};
 
+mod access_propagation;
 #[cfg(test)]
 mod name_propagation_tests;
 
@@ -57,6 +58,9 @@ fn propagate_persona_name_rename(
 /// Profile sync params collected under the store lock for async relay publish.
 type ProfileSyncParams = Vec<(nostr::Keys, String, String, Option<String>, Option<String>)>;
 
+/// Linked instances that follow a definition access edit, and the new access.
+type AccessFollowers = Option<(Vec<(String, String)>, access_propagation::Access)>;
+
 #[tauri::command]
 pub async fn update_persona(
     input: UpdatePersonaRequest,
@@ -89,9 +93,9 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
     use tauri::Manager;
 
     // Phase 1: synchronous save (persona record + linked agent avatar updates)
-    let (result, retained, profile_sync_params) = tokio::task::spawn_blocking({
+    let (result, retained, profile_sync_params, access_followers) = tokio::task::spawn_blocking({
         let app = app.clone();
-        move || -> Result<(AgentDefinition, R, ProfileSyncParams), String> {
+        move || -> Result<(AgentDefinition, R, ProfileSyncParams, AccessFollowers), String> {
             let state = app.state::<AppState>();
             let display_name = trim_required(&input.display_name, "Display name")?;
             let system_prompt = input.system_prompt.clone();
@@ -116,6 +120,7 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
             let avatar_changed = persona.avatar_url != avatar_url;
             let name_changed = persona.display_name != display_name;
             let old_display_name = persona.display_name.clone();
+            let previous_access = access_propagation::definition_access(persona);
 
             persona.display_name = display_name;
             persona.avatar_url = avatar_url;
@@ -141,6 +146,22 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
 
             let retained = retain(&app, &state, &result)?;
             try_regenerate_nest(&app);
+
+            // Instances still on the definition's previous access follow the
+            // edit; individually customized instances keep theirs.
+            let access_followers = match (
+                previous_access,
+                access_propagation::definition_access(&result),
+            ) {
+                (Some(previous), Some(next)) => {
+                    let records = load_managed_agents(&app)?;
+                    let followers = access_propagation::instances_following_access(
+                        &records, &result.id, &previous, &next,
+                    );
+                    (!followers.is_empty()).then_some((followers, next))
+                }
+                _ => None,
+            };
 
             // If the avatar or display_name changed, propagate to linked agent
             // records and collect relay profile sync params for the async phase.
@@ -225,7 +246,7 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
                 Vec::new()
             };
 
-            Ok((result, retained, sync_params))
+            Ok((result, retained, sync_params, access_followers))
         }
     })
     .await
@@ -251,6 +272,13 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
                 eprintln!("buzz-desktop: relay profile sync failed after persona update: {e}");
             }
         }
+    }
+
+    // Phase 3: apply an access edit to the instances that follow it, through
+    // the instance command's stop / persist / publish / restart boundary.
+    if let Some((followers, next)) = access_followers {
+        access_propagation::apply_access_to_instances(&app, &result.display_name, followers, &next)
+            .await?;
     }
 
     Ok((result, retained))
