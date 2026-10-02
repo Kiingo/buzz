@@ -4,6 +4,7 @@ import {
   mergeAllowlist,
   parsePubkeyInput,
 } from "@/features/agents/lib/respondToAllowlist";
+import { parsePubkeyInput as parseCanonicalPubkey } from "@/shared/lib/nostrUtils";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { PubKey } from "@/shared/ui/PubKey";
 import { useIsArchivedPredicate } from "@/features/identity-archive/hooks";
@@ -125,7 +126,10 @@ export function CreateAgentRespondToField({
   );
   const userSearchQuery = useUserSearchQuery(deferredQuery, {
     enabled: mode === "allowlist" && deferredQuery.length > 0,
-    limit: 8,
+    // Same page size as the channel member picker: the relay ranks profile
+    // hits against the whole kind:0 blob, so a tight page can push an exact
+    // display-name match off it before the client re-ranks.
+    limit: 25,
   });
   const isArchivedDiscovery = useIsArchivedPredicate();
   const searchResults = React.useMemo(
@@ -278,8 +282,6 @@ export function CreateAgentRespondToField({
   );
 }
 
-const HEX_64_RE = /^[0-9a-f]{64}$/i;
-
 function AllowlistPicker({
   allowlist,
   deferredQuery,
@@ -325,10 +327,16 @@ function AllowlistPicker({
 }) {
   const isPersona = variant === "persona";
 
-  // Detect if the query is a valid hex pubkey that's not already in the list.
-  const queryIsHexPubkey =
-    HEX_64_RE.test(deferredQuery) &&
-    !allowlist.some((p) => p.toLowerCase() === deferredQuery.toLowerCase());
+  // A pasted npub or hex key can always be added directly, whatever the
+  // profile search returns — people without a searchable kind:0 profile are
+  // otherwise unreachable. Direct entry stores the canonical hex.
+  const queryPubkey = parseCanonicalPubkey(deferredQuery);
+  const directPubkey =
+    queryPubkey !== null &&
+    !allowlist.some((p) => p.toLowerCase() === queryPubkey) &&
+    !searchResults.some((user) => user.pubkey.toLowerCase() === queryPubkey)
+      ? queryPubkey
+      : null;
 
   return (
     <div
@@ -367,7 +375,9 @@ function AllowlistPicker({
             disabled={disabled}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder={
-              isPersona ? "Search people" : "Search by name or NIP-05."
+              isPersona
+                ? "Search people or paste a public key"
+                : "Search by name, NIP-05, or public key."
             }
             value={query}
           />
@@ -401,6 +411,32 @@ function AllowlistPicker({
         ) : null}
         {deferredQuery.length > 0 ? (
           <div className="border-t border-border/70 px-2 py-2">
+            {directPubkey ? (
+              <button
+                className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                data-testid="agent-respond-to-add-raw-pubkey"
+                disabled={disabled}
+                onClick={() => onAddRawPubkey(directPubkey)}
+                type="button"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <UserAvatar
+                    avatarUrl={null}
+                    displayName={truncatePubkey(directPubkey)}
+                    size="xs"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium leading-5">
+                      {truncatePubkey(directPubkey)}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      Add pubkey directly
+                    </p>
+                  </div>
+                </div>
+                <span className="text-xs text-muted-foreground">Add</span>
+              </button>
+            ) : null}
             {searchIsLoading ? (
               <p className="px-2 py-1 text-sm text-muted-foreground">
                 Searching…
@@ -434,31 +470,7 @@ function AllowlistPicker({
                   </button>
                 ))}
               </div>
-            ) : queryIsHexPubkey ? (
-              <button
-                className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
-                data-testid="agent-respond-to-add-raw-pubkey"
-                onClick={() => onAddRawPubkey(deferredQuery.toLowerCase())}
-                type="button"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <UserAvatar
-                    avatarUrl={null}
-                    displayName={truncatePubkey(deferredQuery)}
-                    size="xs"
-                  />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium leading-5">
-                      {truncatePubkey(deferredQuery)}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      Add pubkey directly
-                    </p>
-                  </div>
-                </div>
-                <span className="text-xs text-muted-foreground">Add</span>
-              </button>
-            ) : (
+            ) : directPubkey ? null : (
               <p className="px-2 py-1 text-sm text-muted-foreground">
                 No matching users.
               </p>
@@ -493,8 +505,8 @@ function AllowlistPicker({
               id="agent-respond-to-direct-panel"
             >
               <p className="text-xs text-muted-foreground">
-                One per line, or comma/space-separated. 64-char lowercase hex
-                only — npub decoding is not yet supported here.
+                One per line, or comma/space-separated. Each entry is an npub
+                (npub1…) or a 64-char hex public key.
               </p>
               <Textarea
                 className="min-h-20 font-mono text-xs"
@@ -507,8 +519,8 @@ function AllowlistPicker({
               {pasteInvalid.length > 0 ? (
                 <p className="text-xs text-destructive">
                   {pasteInvalid.length} entr
-                  {pasteInvalid.length === 1 ? "y is" : "ies are"} not 64-char
-                  hex and will be ignored.
+                  {pasteInvalid.length === 1 ? "y is" : "ies are"} not a valid
+                  public key and will be ignored.
                 </p>
               ) : null}
               <div className="flex items-center justify-between gap-2">

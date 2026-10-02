@@ -68,10 +68,33 @@ test("the Only me line names the owner's agents, not the owner alone", () => {
 test("primary respond-to copy does not expose implementation jargon", () => {
   const primaryFieldSource = respondToFieldSource.slice(
     respondToFieldSource.indexOf('data-testid="agent-respond-to"'),
-    respondToFieldSource.indexOf("const HEX_64_RE"),
+    respondToFieldSource.indexOf("function AllowlistPicker"),
   );
 
   for (const jargon of ["Nostr authors", "!shutdown"]) {
     assert.doesNotMatch(primaryFieldSource, new RegExp(jargon));
   }
+});
+
+test("a pasted npub or hex key can be added whatever the search returns", () => {
+  // Someone whose profile the relay search misses must still be addable, so
+  // direct entry parses npub and hex through the shared canonical parser and
+  // renders ahead of — not instead of — the search-result branches.
+  assert.match(
+    respondToFieldSource,
+    /const queryPubkey = parseCanonicalPubkey\(deferredQuery\);/,
+  );
+  const directAt = respondToFieldSource.indexOf(
+    'data-testid="agent-respond-to-add-raw-pubkey"',
+  );
+  const loadingAt = respondToFieldSource.indexOf("{searchIsLoading ? (");
+  assert.ok(directAt > 0 && loadingAt > directAt);
+  assert.match(collapsedSource, /\) : directPubkey \? null : \( <p/);
+});
+
+test("the people search asks for the same page as the member picker", () => {
+  assert.match(
+    collapsedSource,
+    /useUserSearchQuery\(deferredQuery, \{[^}]*limit: 25,/,
+  );
 });
