@@ -2694,6 +2694,7 @@ pub async fn run_prompt_task(
                 .as_ref()
                 .is_some_and(|info| info.channel_type == "dm");
             let reply_to = crate::turn_context::default_reply_to(b, is_dm, profile_lookup.as_ref());
+            let owner_hex = ctx.agent_owner_pubkey.as_ref().map(|owner| owner.to_hex());
             _turn_context = Some(agent.acp.turn_context().publish(
                 b.channel_id,
                 reply_to.as_deref(),
@@ -2708,6 +2709,7 @@ pub async fn run_prompt_task(
                     conversation_context: conversation_context.as_ref(),
                     conversation_context_had_delivered_events,
                     profile_lookup: profile_lookup.as_ref(),
+                    owner_pubkey: owner_hex.as_deref(),
                     has_system_prompt_support: agent.has_system_prompt_support(),
                     base_prompt: standing.base_prompt,
                     system_prompt: standing.system_prompt,

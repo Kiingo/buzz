@@ -6,8 +6,8 @@
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 109,
     "modifiedUpstreamFiles": 161,
-    "changedUpstreamProductionSourceLines": 7838,
-    "upstreamProductionSourceDiffHunks": 866,
+    "changedUpstreamProductionSourceLines": 8324,
+    "upstreamProductionSourceDiffHunks": 897,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {

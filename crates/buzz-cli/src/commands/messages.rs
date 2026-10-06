@@ -614,6 +614,32 @@ fn parent_reply_notification(
     .then_some(author)
 }
 
+/// Agents end deliberately silent turns with the `NO_REPLY` sentinel. It is a
+/// harness signal, never chat content, so a trailing line holding only the
+/// sentinel (optionally wrapped in backticks or bold) is removed before
+/// publishing. A sentinel mentioned inside prose is left alone.
+fn strip_trailing_no_reply(content: &str) -> String {
+    fn is_sentinel(line: &str) -> bool {
+        line.trim_matches(|c: char| c == '`' || c == '*' || c == '.' || c.is_whitespace())
+            .eq_ignore_ascii_case("NO_REPLY")
+    }
+    let mut lines: Vec<&str> = content.lines().collect();
+    let mut stripped = false;
+    while let Some(last) = lines.last() {
+        if last.trim().is_empty() || is_sentinel(last) {
+            stripped |= is_sentinel(last);
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+    if stripped {
+        lines.join("\n").trim_end().to_string()
+    } else {
+        content.to_string()
+    }
+}
+
 pub struct SendMessageParams {
     pub channel_id: String,
     pub content: String,
@@ -634,12 +660,26 @@ pub async fn cmd_send_message(
     // jam shell-metacharacter-heavy text (backticks, $vars, etc.) through argv
     // quoting — the source of countless self-inflicted command-substitution
     // bugs for agent and human users alike.
-    p.content = read_or_stdin(&p.content)?;
+    let raw_content = read_or_stdin(&p.content)?;
+    p.content = strip_trailing_no_reply(&raw_content);
+    let only_sentinel = !raw_content.trim().is_empty() && p.content.trim().is_empty();
     validate_content_size(&p.content)?;
     if let Some(ref r) = p.reply_to {
         validate_hex64(r)?;
     }
     let channel_uuid = parse_uuid(&p.channel_id)?;
+    if only_sentinel && p.files.is_empty() {
+        // The content was only the silence sentinel: staying silent is the
+        // agent's intent, so publish nothing rather than a bare NO_REPLY.
+        println!(
+            "{}",
+            serde_json::json!({
+                "published": false,
+                "reason": "content was only the NO_REPLY silence sentinel; nothing was sent",
+            })
+        );
+        return Ok(());
+    }
     let turn = super::turn_context::TurnContext::for_send(p.kind, channel_uuid);
     // Held until this send returns, so a parallel send in the same turn sees
     // any handoff this one records.
@@ -1135,6 +1175,26 @@ pub async fn dispatch(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn trailing_no_reply_sentinel_is_never_published() {
+        use super::strip_trailing_no_reply as strip;
+        // Production 2026-10-05: a reply was posted ending in a bare NO_REPLY line.
+        assert_eq!(
+            strip("I can't share that.\n\nNO_REPLY"),
+            "I can't share that."
+        );
+        assert_eq!(strip("Done.\n`NO_REPLY`\n\n"), "Done.");
+        assert_eq!(strip("Done.\n**no_reply**"), "Done.");
+        // Sentinel-only content strips to nothing (the caller then sends nothing).
+        assert_eq!(strip("NO_REPLY"), "");
+        assert_eq!(strip("  NO_REPLY\n"), "");
+        // Prose that mentions the sentinel, or content without it, is untouched.
+        let prose = "End silent turns with NO_REPLY.";
+        assert_eq!(strip(prose), prose);
+        let plain = "line one\nline two\n";
+        assert_eq!(strip(plain), plain);
+    }
+
     #[test]
     fn unaddressed_reply_notifies_the_parent_author_only() {
         use super::parent_reply_notification as notify;

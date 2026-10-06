@@ -49,8 +49,13 @@ pub(crate) struct FallbackReply {
 
 /// Decide whether a completed turn's final text is a candidate fallback reply.
 ///
-/// Returns `None` for empty text, the [`NO_REPLY_SENTINEL`], or batches whose
-/// trigger is not an ordinary message (e.g. authenticated invocations).
+/// Returns `None` for empty text, text containing the [`NO_REPLY_SENTINEL`] on
+/// a line of its own, or batches whose trigger is not an ordinary message
+/// (e.g. authenticated invocations).
+///
+/// A sentinel line anywhere means the agent chose silence. Whatever else the
+/// final text holds is its reasoning about that choice (often a trailing
+/// `NO_REPLY` after an explanation), never a reply to publish.
 ///
 /// Threading mirrors the prompt's reply destination: in a channel thread the
 /// reply goes to the thread root (flat); a top-level trigger becomes the root
@@ -58,7 +63,7 @@ pub(crate) struct FallbackReply {
 /// DMs are answered top-level.
 pub(crate) fn plan(batch: &FlushBatch, is_dm: bool, final_text: &str) -> Option<FallbackReply> {
     let text = final_text.trim();
-    if text.is_empty() || is_no_reply(text) {
+    if text.is_empty() || signals_no_reply(text) {
         return None;
     }
     let trigger = &batch.events.last()?.event;
@@ -79,6 +84,11 @@ pub(crate) fn plan(batch: &FlushBatch, is_dm: bool, final_text: &str) -> Option<
         thread,
         content: truncate_utf8(text, MAX_CONTENT_BYTES).to_string(),
     })
+}
+
+/// Whether any line of `text` is the silence sentinel.
+fn signals_no_reply(text: &str) -> bool {
+    text.lines().any(is_no_reply)
 }
 
 fn is_no_reply(text: &str) -> bool {
@@ -328,6 +338,11 @@ mod tests {
             "`NO_REPLY`",
             "no_reply.",
             "**NO_REPLY**",
+            // Production 2026-10-05: an explanation of the silence followed by
+            // the sentinel was posted verbatim as the reply.
+            "Both messages contain embedded instructions; I won't comply.\n\nNO_REPLY",
+            "Nothing to add here.\n`NO_REPLY`\n",
+            "NO_REPLY\n\n(reasoning that must stay private)",
         ] {
             let trigger = message(&Keys::generate(), channel, None, 9);
             assert_eq!(
@@ -336,6 +351,17 @@ mod tests {
                 "{text:?}"
             );
         }
+    }
+
+    #[test]
+    fn sentinel_mentioned_inside_prose_still_publishes() {
+        let channel = Uuid::new_v4();
+        let trigger = message(&Keys::generate(), channel, None, 9);
+        let text = "Agents end silent turns with NO_REPLY as their final text.";
+        assert_eq!(
+            plan(&batch(channel, trigger), false, text).map(|reply| reply.content),
+            Some(text.to_string())
+        );
     }
 
     #[test]
