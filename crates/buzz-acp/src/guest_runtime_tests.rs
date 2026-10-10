@@ -477,3 +477,20 @@ async fn guards_drop_duplicates_echoes_and_sibling_loops() {
         })
     );
 }
+
+#[tokio::test]
+async fn publishing_a_held_turns_output_clears_its_pending_state() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    runtime.guards().mark_pending("k", "turn-1", Instant::now());
+    let tasks = runtime.spawn_background();
+    mock.wait_for("/route/outbox/pub-1/ack", 1).await;
+    assert_eq!(
+        runtime.guards().pending_reference("k", Instant::now()),
+        None
+    );
+    for task in tasks {
+        task.abort();
+    }
+}
