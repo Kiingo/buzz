@@ -160,6 +160,10 @@ pub(crate) struct OutboxItem {
     pub(crate) mentions: Vec<String>,
     #[serde(default)]
     pub(crate) expires_at: Option<String>,
+    /// Event kind to publish: 9 (chat, default) or an owner notification
+    /// kind 46040–46042, which is signed exactly as given (contracts §3, v1.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) event_kind: Option<u32>,
 }
 
 /// `GET /outbox` response.

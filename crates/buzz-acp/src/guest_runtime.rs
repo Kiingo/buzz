@@ -1194,6 +1194,16 @@ pub(crate) fn build_outbox_event(
     agents: &HashSet<String>,
     keys: &Keys,
 ) -> Result<Event, String> {
+    match item
+        .event_kind
+        .unwrap_or(buzz_core::kind::KIND_STREAM_MESSAGE)
+    {
+        buzz_core::kind::KIND_STREAM_MESSAGE => {}
+        kind if OWNER_NOTIFICATION_KINDS.contains(&kind) => {
+            return build_owner_notification(item, kind, keys);
+        }
+        other => return Err(format!("unsupported outbox event kind {other}")),
+    }
     let channel_id = Uuid::parse_str(&item.channel_id).map_err(|e| format!("channel id: {e}"))?;
     let parse = |id: &str| EventId::from_hex(id).map_err(|e| format!("event id: {e}"));
     let thread_ref = match (&item.reply_to_event_id, &item.thread_root_event_id) {
@@ -1242,9 +1252,69 @@ pub(crate) fn build_outbox_event(
     .map_err(|e| e.to_string())
 }
 
+/// Owner notification kinds the outbox may ask the agent to sign
+/// (agent guest approval requested / resolved / alert).
+const OWNER_NOTIFICATION_KINDS: std::ops::RangeInclusive<u32> = 46_040..=46_042;
+
+/// An owner notification (46040–46042) from the outbox: exactly the item's
+/// content and tags, no thread, channel or extra `p` tags. The item carries
+/// the owner's `p` tag itself.
+fn build_owner_notification(item: &OutboxItem, kind: u32, keys: &Keys) -> Result<Event, String> {
+    let owner_tags = item
+        .tags
+        .iter()
+        .filter(|tag| tag.first().is_some_and(|name| name == "p"))
+        .count();
+    if owner_tags != 1 {
+        return Err("owner notification must carry exactly one p tag".into());
+    }
+    let tags = item
+        .tags
+        .iter()
+        .map(|tag| nostr::Tag::parse(tag.iter().map(String::as_str)).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let kind = u16::try_from(kind).map_err(|e| e.to_string())?;
+    nostr::EventBuilder::new(nostr::Kind::Custom(kind), &item.content)
+        .tags(tags)
+        .sign_with_keys(keys)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_notifications_are_signed_exactly_as_given() {
+        let owner = "f".repeat(64);
+        let notification = OutboxItem {
+            event_kind: Some(46040),
+            channel_id: String::new(),
+            reply_to_event_id: None,
+            content: "Jess asked Atlas something that needs your approval.".into(),
+            tags: vec![
+                vec!["p".into(), owner.clone()],
+                vec!["buzz-guest-approval".into(), "ap-1".into()],
+                vec!["agent".into(), "a".repeat(64)],
+            ],
+            mentions: vec![],
+            ..item()
+        };
+        let keys = Keys::generate();
+        let event = build_outbox_event(&notification, &HashSet::new(), &keys).expect("event");
+        buzz_core::verify_event(&event).expect("signed");
+        assert_eq!(event.kind.as_u16(), 46040);
+        assert_eq!(event.content, notification.content);
+        let tags: Vec<Vec<String>> = event.tags.iter().map(|t| t.as_slice().to_vec()).collect();
+        assert_eq!(tags, notification.tags, "no thread, h or extra p tags");
+
+        let mut two_owners = notification.clone();
+        two_owners.tags.push(vec!["p".into(), "e".repeat(64)]);
+        assert!(build_outbox_event(&two_owners, &HashSet::new(), &keys).is_err());
+        let mut odd = notification;
+        odd.event_kind = Some(1);
+        assert!(build_outbox_event(&odd, &HashSet::new(), &keys).is_err());
+    }
 
     fn item() -> OutboxItem {
         OutboxItem {
@@ -1262,6 +1332,7 @@ mod tests {
             ],
             mentions: vec!["b".repeat(64), "c".repeat(64)],
             expires_at: None,
+            event_kind: None,
         }
     }
 
