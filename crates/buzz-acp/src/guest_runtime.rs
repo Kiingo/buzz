@@ -114,8 +114,26 @@ pub(crate) async fn filter_context(
         crate::queue::ConversationContext::Thread { messages, .. }
         | crate::queue::ConversationContext::Dm { messages, .. } => messages,
     };
+    // One concurrent lookup per distinct author (cached profiles are free).
+    let mut authors: Vec<String> = messages
+        .iter()
+        .map(|m| m.pubkey.to_ascii_lowercase())
+        .collect();
+    authors.sort();
+    authors.dedup();
+    let verdicts = futures_util::future::join_all(
+        authors
+            .iter()
+            .map(|author| runtime.is_owner_equivalent_author(author)),
+    )
+    .await;
+    let trusted: HashSet<&String> = authors
+        .iter()
+        .zip(verdicts)
+        .filter_map(|(author, ok)| ok.then_some(author))
+        .collect();
     for message in messages.iter_mut() {
-        if !runtime.is_owner_equivalent_author(&message.pubkey).await {
+        if !trusted.contains(&message.pubkey.to_ascii_lowercase()) {
             message.content = WITHHELD_PLACEHOLDER.to_string();
         }
     }
