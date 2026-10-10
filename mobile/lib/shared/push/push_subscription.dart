@@ -7,6 +7,16 @@ const buzzPushEligibleKinds = [9, 40002, 45001, 45003];
 const buzzPushSelfDirectedKinds = buzzPushEligibleKinds;
 const buzzPushRenderableKinds = buzzPushEligibleKinds;
 const buzzPushChannelKinds = [9];
+
+/// Owner-addressed agent guest access notifications that should wake the
+/// owner: approval requested (46040) and alert (46042). They join the self
+/// `#p` subscription only when the relay advertises them in `push_kinds`,
+/// because a relay that does not know them rejects the whole lease.
+const buzzPushOwnerNotificationKinds = [46040, 46042];
+const _buzzPushFilterKinds = {
+  ...buzzPushEligibleKinds,
+  ...buzzPushOwnerNotificationKinds,
+};
 const buzzPushChannelChunkSize = 50;
 const buzzPushMaxSubscriptions = 16;
 const buzzPushMaxIgnoreFilters = 8;
@@ -63,7 +73,7 @@ class BuzzPushFilter {
 
   void _validate() {
     if (kinds.isEmpty ||
-        kinds.any((kind) => !buzzPushEligibleKinds.contains(kind))) {
+        kinds.any((kind) => !_buzzPushFilterKinds.contains(kind))) {
       throw const FormatException('Push filter contains invalid kinds.');
     }
     for (final value in [...?authors, ...?pTags, ...?eTags]) {
@@ -449,8 +459,10 @@ List<BuzzPushSubscription> buildDesiredBuzzPushSubscriptions({
   required String myPubkey,
   Iterable<String> channelIds = const [],
   Iterable<String> mutedChannelIds = const [],
+  Iterable<int> advertisedPushKinds = const [],
 }) {
   final normalizedPubkey = myPubkey.toLowerCase();
+  final advertised = advertisedPushKinds.toSet();
   if (!_exactHexPattern.hasMatch(normalizedPubkey)) {
     throw const FormatException('Push subscription pubkey must be exact hex.');
   }
@@ -480,7 +492,11 @@ List<BuzzPushSubscription> buildDesiredBuzzPushSubscriptions({
   final subscriptions = <BuzzPushSubscription>[
     BuzzPushSubscription(
       filter: BuzzPushFilter(
-        kinds: buzzPushSelfDirectedKinds,
+        kinds: [
+          ...buzzPushSelfDirectedKinds,
+          for (final kind in buzzPushOwnerNotificationKinds)
+            if (advertised.contains(kind)) kind,
+        ],
         pTags: [normalizedPubkey],
       ),
       notificationClass: 'default',

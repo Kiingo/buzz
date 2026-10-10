@@ -298,6 +298,22 @@ void main() {
     expect(jsonDecode(plaintext), jsonDecode(publication.plaintext));
   });
 
+  test('descriptor exposes the relay advertised push kinds', () {
+    final information = _descriptorJson(relay.public);
+    (information['push'] as Map<String, dynamic>)['push_kinds'] = [
+      9,
+      40002,
+      45001,
+      45003,
+      46040,
+      46042,
+    ];
+    final descriptor = BuzzPushLeaseDescriptor.fromRelayInformation(
+      information,
+    );
+    expect(descriptor.pushKinds, [9, 40002, 45001, 45003, 46040, 46042]);
+  });
+
   test('descriptor rejects canonical origin with a trailing slash', () {
     final information = _descriptorJson(relay.public);
     (information['push'] as Map<String, dynamic>)['origin'] =

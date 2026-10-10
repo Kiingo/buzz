@@ -60,7 +60,10 @@ class FeedItem {
       case 45003:
         return 'Forum reply';
       case 46010:
+      case 46040:
         return 'Approval requested';
+      case 46042:
+        return 'Agent alert';
       case 43001:
         return 'Job requested';
       case 43002:

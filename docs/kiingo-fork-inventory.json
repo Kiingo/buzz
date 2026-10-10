@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 134,
-    "modifiedUpstreamFiles": 187,
+    "modifiedUpstreamFiles": 196,
     "changedUpstreamProductionSourceLines": 9318,
     "upstreamProductionSourceDiffHunks": 1027,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -790,6 +790,26 @@
         "desktop/src/features/notifications/lib/feed.ts",
         "desktop/src/features/settings/ui/SettingsPanels.tsx",
         "desktop/tests/e2e/guest-access.spec.ts"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz agent access maintainers",
+      "purpose": "Mobile side of agent guest access notifications: the self #p push subscription adds owner-addressed kinds 46040 (approval requested) and 46042 (alert) only when the relay advertises them in NIP-11 push_kinds (the descriptor now carries the advertised kinds), the iOS notification resolver presents them, and the Activity inbox shows unresolved 46040 requests and 46042 alerts in Needs Action, accepted only from the owner's own agents (NIP-OA verified kind:0) and dropped once a matching 46041 resolution arrives.",
+      "upstreamStatus": "Generic notification kinds with no deployment-specific behaviour; not yet proposed upstream.",
+      "removalCondition": "Remove when block/buzz ships owner-addressed approval notification kinds on mobile.",
+      "paths": [
+        "mobile/ios/BuzzPushKit/Sources/BuzzPushKit/BuzzPushNotificationResolver.swift",
+        "mobile/lib/features/activity/activity_provider.dart",
+        "mobile/lib/features/activity/feed_item.dart",
+        "mobile/lib/features/activity/guest_notifications.dart",
+        "mobile/lib/shared/push/dev_push_lease.dart",
+        "mobile/lib/shared/push/push_subscription.dart",
+        "mobile/lib/shared/push/push_subscription_provider.dart",
+        "mobile/test/features/activity/activity_provider_test.dart",
+        "mobile/test/features/activity/guest_notifications_test.dart",
+        "mobile/test/shared/push/dev_push_lease_test.dart",
+        "mobile/test/shared/push/push_subscription_test.dart"
       ]
     }
   ]
