@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 113,
-    "modifiedUpstreamFiles": 165,
-    "changedUpstreamProductionSourceLines": 8627,
-    "upstreamProductionSourceDiffHunks": 935,
+    "modifiedUpstreamProductionSourceFiles": 118,
+    "modifiedUpstreamFiles": 171,
+    "changedUpstreamProductionSourceLines": 8750,
+    "upstreamProductionSourceDiffHunks": 953,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -686,6 +686,23 @@
         "desktop/src/features/home/useInboxThreadContext.ts",
         "desktop/src/shared/api/relayClientSession.ts",
         "desktop/tests/e2e/messaging.spec.ts"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz agent access maintainers",
+      "purpose": "Relay support for agent guest access notifications: stored, global, owner-addressed kinds 46040 (approval requested), 46041 (approval resolved) and 46042 (guest-access alert) with strict envelope validation (one hex p tag, agent tag, correlation id, status/severity enums, short content, no h tag); p-gated reads at the filter, result and live fan-out layers (only the addressed owner can read them, including by id); and push eligibility for 46040/46042 (relay NIP-PL push kinds, an additive push-match trigger migration, the activation backfill) so approval requests wake the owner's phone. The read gate now derives from RESULT_GATED_KINDS instead of hard-coded kinds.",
+      "upstreamStatus": "Generic notification kinds with no deployment-specific behaviour; not yet proposed upstream.",
+      "removalCondition": "Remove when block/buzz ships owner-addressed approval notification kinds with private reads and push eligibility.",
+      "paths": [
+        "crates/buzz-core/src/filter.rs",
+        "crates/buzz-db/src/store/push.rs",
+        "crates/buzz-relay/src/handlers/guest_notification.rs",
+        "crates/buzz-relay/src/handlers/mod.rs",
+        "crates/buzz-relay/src/handlers/push_lease.rs",
+        "crates/buzz-relay/src/handlers/req.rs",
+        "crates/buzz-relay/src/push_runtime.rs",
+        "migrations/0045_push_guest_notification_kinds.sql"
       ]
     }
   ]

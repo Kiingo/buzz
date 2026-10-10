@@ -727,6 +727,60 @@ mod tests {
         ));
     }
 
+    fn self_directed_lease(keys: &nostr::Keys) -> buzz_db::push::MatchLease {
+        let hex = keys.public_key().to_hex();
+        buzz_db::push::MatchLease {
+            author: keys.public_key().to_bytes().to_vec(),
+            installation_id: format!("install-{hex}"),
+            generation: 1,
+            subscriptions: serde_json::json!([{
+                "filter": {"kinds": [9, 46040, 46042], "#p": [hex]},
+                "class": "default"
+            }]),
+            expires_at: Utc::now().timestamp() + 3600,
+        }
+    }
+
+    /// A guest approval request wakes only the owner it is addressed to, even
+    /// when another lease (wrongly) asks for every 46040.
+    #[test]
+    fn guest_approval_request_wakes_only_the_addressed_owner() {
+        let owner = nostr::Keys::generate();
+        let other = nostr::Keys::generate();
+        let notifier = nostr::Keys::generate();
+        let event = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_AGENT_GUEST_APPROVAL_REQUESTED as u16),
+            "Jess asked Atlas something that needs your approval.",
+        )
+        .tags([
+            Tag::public_key(owner.public_key()),
+            Tag::parse(["buzz-guest-approval", "a1"]).unwrap(),
+            Tag::parse(["agent", &"b".repeat(64)]).unwrap(),
+        ])
+        .sign_with_keys(&notifier)
+        .unwrap();
+        let mut greedy = self_directed_lease(&other);
+        greedy.subscriptions = serde_json::json!([{
+            "filter": {"kinds": [46040]},
+            "class": "default"
+        }]);
+        let context = MatchContext {
+            leases: vec![
+                self_directed_lease(&owner),
+                self_directed_lease(&other),
+                greedy,
+            ],
+            memberships: Default::default(),
+        };
+        let job = buzz_db::push::BatchedMatch {
+            event: buzz_core::StoredEvent::new(event, None),
+            attempt: 1,
+        };
+        let wakes = match_job(&job, &context).unwrap();
+        assert_eq!(wakes.len(), 1);
+        assert_eq!(wakes[0].author, owner.public_key().to_bytes().to_vec());
+    }
+
     async fn capture(
         State(seen): State<Arc<Mutex<Vec<Value>>>>,
         Json(body): Json<Value>,

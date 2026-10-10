@@ -690,7 +690,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 44);
+        assert_eq!(migrations.len(), 45);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1393,8 +1393,23 @@ mod tests {
         assert!(!sql.contains("NEW.kind IN (7, 9, 1059, 40007, 46010)"));
 
         let desired_schema = include_str!("../../../../schema/schema.sql");
-        assert!(desired_schema.contains("NEW.kind IN (9, 40002, 45001, 45003)"));
         assert!(!desired_schema.contains("NEW.kind IN (7, 9, 1059, 40007, 46010)"));
+    }
+
+    #[test]
+    fn push_match_trigger_adds_guest_notification_kinds_additively() {
+        let mut migrations: Vec<_> = MIGRATOR.iter().collect();
+        migrations.sort_by_key(|migration| migration.version);
+        let guest = migrations
+            .iter()
+            .find(|migration| migration.version == 45)
+            .expect("embedded migration 0045");
+        let sql = guest.sql.as_str();
+        let predicate = "NEW.kind IN (9, 40002, 45001, 45003, 46040, 46042)";
+        assert!(sql.contains("CREATE OR REPLACE FUNCTION enqueue_push_match_job"));
+        assert!(sql.contains(predicate));
+        let desired_schema = include_str!("../../../../schema/schema.sql");
+        assert!(desired_schema.contains(predicate));
     }
 
     #[test]
