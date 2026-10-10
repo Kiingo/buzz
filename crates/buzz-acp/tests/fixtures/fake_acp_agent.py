@@ -75,6 +75,17 @@ def handle_prompt(msg_id, params):
                 log.write(json.dumps({"ask": asks[-1], "rc": result.returncode,
                                       "out": result.stdout[-2000:],
                                       "err": result.stderr[-2000:]}) + "\n")
+    if "READ-CHANNEL" in text and channels and os.environ.get("FAKE_AGENT_BUZZ_BIN"):
+        cmd = [os.environ["FAKE_AGENT_BUZZ_BIN"], "--relay",
+               os.environ.get("FAKE_AGENT_RELAY_HTTP", "http://localhost:3000"),
+               "messages", "get", "--channel", channels[-1], "--limit", "50"]
+        if "SHOW-UNTRUSTED" in text:
+            cmd.append("--show-untrusted")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if LOG:
+            with open(LOG, "a", encoding="utf-8") as log:
+                log.write(json.dumps({"read": result.stdout, "rc": result.returncode,
+                                      "err": result.stderr[-2000:]}) + "\n")
     reply = "ACK " + (tokens[-1] if tokens else "none")
     send({"jsonrpc": "2.0", "method": "session/update", "params": {
         "sessionId": session,

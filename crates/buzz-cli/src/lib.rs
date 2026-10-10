@@ -497,6 +497,11 @@ pub enum MessagesCmd {
         /// Comma-separated event kinds to filter (e.g. 1,1984)
         #[arg(long)]
         kinds: Option<String>,
+        /// In hosted guest mode, show messages from people other than your
+        /// owner inside a fenced "untrusted content" block instead of
+        /// withholding them. Use only when your owner asked to see them.
+        #[arg(long, default_value_t = false)]
+        show_untrusted: bool,
     },
     /// Get the containing thread for a message or Buzz message link
     #[command(
@@ -518,6 +523,11 @@ pub enum MessagesCmd {
         /// Maximum reply nesting depth to include
         #[arg(long)]
         depth_limit: Option<u32>,
+        /// In hosted guest mode, show messages from people other than your
+        /// owner inside a fenced "untrusted content" block instead of
+        /// withholding them. Use only when your owner asked to see them.
+        #[arg(long, default_value_t = false)]
+        show_untrusted: bool,
     },
     /// Read a bounded page of channel inputs in relay commit order, not authored time
     Sequence {
@@ -566,6 +576,11 @@ pub enum MessagesCmd {
         /// Maximum number of results to return
         #[arg(long)]
         limit: Option<u32>,
+        /// In hosted guest mode, show messages from people other than your
+        /// owner inside a fenced "untrusted content" block instead of
+        /// withholding them. Use only when your owner asked to see them.
+        #[arg(long, default_value_t = false)]
+        show_untrusted: bool,
     },
     /// Upvote or downvote a forum post
     Vote {
@@ -1035,6 +1050,11 @@ pub enum FeedCmd {
         /// Comma-separated feed types to include: mentions, needs_action, activity, agent_activity
         #[arg(long)]
         types: Option<String>,
+        /// In hosted guest mode, show messages from people other than your
+        /// owner inside a fenced "untrusted content" block instead of
+        /// withholding them. Use only when your owner asked to see them.
+        #[arg(long, default_value_t = false)]
+        show_untrusted: bool,
     },
 }
 
