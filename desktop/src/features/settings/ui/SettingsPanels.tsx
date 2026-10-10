@@ -77,6 +77,7 @@ import {
 } from "./SettingsOptionGroup";
 import { SegmentedControl } from "@/shared/ui/segmented-control";
 import { ProfileSettingsCard } from "./ProfileSettingsCard";
+import { AccountLinkCard } from "@/features/guest-access/ui/AccountLinkCard";
 import { UpdateChecker } from "../UpdateChecker";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
 import { VoiceSettingsCard } from "./VoiceSettingsCard";
@@ -806,10 +807,13 @@ export function renderSettingsSection(
   switch (section) {
     case "profile":
       return (
-        <ProfileSettingsCard
-          currentPubkey={props.currentPubkey}
-          fallbackDisplayName={props.fallbackDisplayName}
-        />
+        <>
+          <ProfileSettingsCard
+            currentPubkey={props.currentPubkey}
+            fallbackDisplayName={props.fallbackDisplayName}
+          />
+          <AccountLinkCard />
+        </>
       );
     case "notifications":
       return (

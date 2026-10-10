@@ -66,6 +66,7 @@ import {
 } from "./runtimeModelProviderSelection";
 import { AgentCreationPreview } from "./AgentCreationPreview";
 import { OwnerOnlyAccessField } from "./OwnerOnlyAccessField";
+import { AgentGuestAccessSection } from "@/features/guest-access/ui/access/AgentGuestAccessSection";
 import type { EnvVarsValue } from "./EnvVarsEditor";
 import { useRequiredCredentialState } from "./useRequiredCredentialState";
 import { RunOnSummarySection } from "./RunOnSummarySection";
@@ -167,7 +168,6 @@ export function AgentInstanceEditDialog({
     React.useState(false);
   const [isAddHarnessOpen, setIsAddHarnessOpen] = React.useState(false);
   const shouldReduceMotion = useReducedMotion();
-
   // Runtime selector: defaults to "custom" until the dialog opens and the
   // catalog loads. The open-effect re-derives the correct id from the catalog.
   const [selectedRuntimeId, setSelectedRuntimeId] = React.useState("custom");
@@ -942,8 +942,8 @@ export function AgentInstanceEditDialog({
               onAllowlistChange={setRespondToAllowlist}
               onModeChange={setRespondTo}
             />
+            <AgentGuestAccessSection agent={agent} respondTo={respondTo} />
             <RunOnSummarySection backend={agent.backend} />
-
             {/* Provider (runtime) */}
             <div className="space-y-1.5">
               <label

@@ -1,4 +1,5 @@
 import { useAgentManagement } from "@/features/agents/useAgentManagement";
+import { GuestAccessHost } from "@/features/guest-access/ui/GuestAccessHost";
 import { ProjectChannelRequestDialog } from "@/features/projects/ui/ProjectChannelRequestDialog";
 import { AgentCardDialogs } from "./AgentCardViewerDialog";
 import { AgentDialog } from "./AgentDialog";
@@ -45,6 +46,7 @@ export function AgentManagementDialogs() {
       ) : null}
       <ProjectChannelRequestDialog />
       <AgentCardDialogs />
+      <GuestAccessHost />
     </>
   );
 }
