@@ -6,8 +6,8 @@
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 116,
     "modifiedUpstreamFiles": 168,
-    "changedUpstreamProductionSourceLines": 9036,
-    "upstreamProductionSourceDiffHunks": 962,
+    "changedUpstreamProductionSourceLines": 9056,
+    "upstreamProductionSourceDiffHunks": 965,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -691,7 +691,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
-      "purpose": "Cross-owner agent access, harness side: the inbound author gate returns a trust tier (owner, same-owner sibling, guest, other owner's agent) decided from signed data; an optional hosted guest-turn mode (BUZZ_ACP_GUEST_TURNS=hosted, BUZZ_ACP_GUEST_ROUTE_URL) hands every non-owner event, with its thread context, verified relay chain, author profile and audience, to a NIP-98-authenticated guest route instead of the local agent session, publishes the route's outbox verbatim and acknowledges it, and registers the endpoint; the queue's conversation key carries a trust lane so a non-owner event never batches into or steers an owner turn; signed agent-to-agent provenance tags (buzz-relay, buzz-relay-prev, buzz-root-budget, buzz-guest) with per-hop verification and a hop limit of 2, written by `buzz messages send` from the turn's trigger; harness-enforced loop guards (per-pair rate limit, per-root budget, request dedup, echo suppression, no re-asking while approval is pending, no agent p-tags in guest output); a [guest: <name> via <agent>] prompt marker; owner-signed approve/deny guest-reply control frames; and the desktop pinning hosted guest turns (reserved env) with a build-time guest route URL.",
+      "purpose": "Cross-owner agent access, harness side: the inbound author gate returns a trust tier (owner, same-owner sibling, guest, other owner's agent) decided from signed data; an optional hosted guest-turn mode (BUZZ_ACP_GUEST_TURNS=hosted, BUZZ_ACP_GUEST_ROUTE_URL) hands every non-owner event, with its thread context, verified relay chain, author profile and audience, to a NIP-98-authenticated guest route instead of the local agent session, publishes the route's outbox verbatim and acknowledges it, and registers the endpoint; the queue's conversation key carries a trust lane so a non-owner event never batches into or steers an owner turn; signed agent-to-agent provenance tags (buzz-relay, buzz-relay-prev, buzz-root-budget, buzz-guest) with per-hop verification and a hop limit of 2, written by `buzz messages send` from the turn's trigger; harness-enforced loop guards (per-pair rate limit, per-root budget, request dedup, echo suppression, no re-asking while approval is pending, no agent p-tags in guest output); a [guest: <name> via <agent>] prompt marker; in hosted mode, crossing text is withheld from the local session's thread/DM history and guest output never suppresses an owner turn's reply fallback; a live-relay E2E suite; owner-signed approve/deny guest-reply control frames; and the desktop pinning hosted guest turns (reserved env) with a build-time guest route URL.",
       "upstreamStatus": "Generic mechanism (no deployment-specific endpoints); not yet proposed upstream.",
       "removalCondition": "Remove when block/buzz ships an equivalent trust-tiered gate with an out-of-process guest runtime and agent-to-agent provenance.",
       "paths": [
@@ -701,6 +701,8 @@
         "crates/buzz-acp/src/guest_runtime_tests.rs",
         "crates/buzz-acp/src/provenance.rs",
         "crates/buzz-acp/src/trust.rs",
+        "crates/buzz-acp/tests/e2e_guest_routing.rs",
+        "crates/buzz-acp/tests/fixtures/fake_acp_agent.py",
         "crates/buzz-sdk/src/agent_relay.rs",
         "desktop/src-tauri/build.rs",
         "desktop/src-tauri/src/managed_agents/access_policy.rs",
