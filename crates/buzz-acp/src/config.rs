@@ -468,14 +468,27 @@ pub struct CliArgs {
     pub permission_mode: PermissionMode,
 
     /// Inbound author gate: which authors' events the harness forwards.
-    /// Modes: owner-only (default), allowlist, anyone, nobody.
-    #[arg(
-        long,
-        env = "BUZZ_ACP_RESPOND_TO",
-        default_value = "owner-only",
-        value_enum
-    )]
-    pub respond_to: RespondTo,
+    /// Modes: owner-only, allowlist, anyone, nobody. Default: `anyone` when
+    /// guest turns are hosted (non-owners reach only the hosted route), else
+    /// `owner-only`.
+    #[arg(long, env = "BUZZ_ACP_RESPOND_TO", value_enum)]
+    pub respond_to: Option<RespondTo>,
+
+    /// Where turns for non-owner requesters run: `hosted` hands every
+    /// non-owner event to the guest route and never to the local agent;
+    /// `local` runs them here (for runtimes that are themselves the hosted
+    /// guest runtime). Default: `hosted` when a guest route URL is set, else
+    /// `local`.
+    #[arg(long, env = "BUZZ_ACP_GUEST_TURNS", value_enum)]
+    pub guest_turns: Option<crate::trust::GuestTurns>,
+
+    /// Base URL of the hosted guest-turn route (HTTPS, or loopback HTTP).
+    #[arg(long, env = "BUZZ_ACP_GUEST_ROUTE_URL")]
+    pub guest_route_url: Option<String>,
+
+    /// Owner-authored persona text registered for hosted guest turns.
+    #[arg(long, env = "BUZZ_ACP_GUEST_INSTRUCTIONS")]
+    pub guest_instructions: Option<String>,
 
     /// Comma-separated 64-char hex pubkeys for allowlist mode.
     /// Owner pubkey is always implicitly included.
@@ -587,6 +600,15 @@ pub struct Config {
     pub permission_mode: PermissionMode,
     /// Inbound author gate mode.
     pub respond_to: RespondTo,
+    /// Where non-owner turns run (hosted route or locally).
+    pub guest_turns: crate::trust::GuestTurns,
+    /// Hosted guest-turn route base URL.
+    pub guest_route_url: Option<String>,
+    /// Community id sent to the guest route (`BUZZ_COMMUNITY_ID`, else the
+    /// canonical relay host).
+    pub community_id: String,
+    /// Owner-authored persona text for hosted guest turns.
+    pub guest_instructions: Option<String>,
     /// Validated allowlist of pubkey hex strings (used when respond_to == Allowlist).
     pub respond_to_allowlist: HashSet<String>,
     /// Allowed `respond_to` modes. Empty = all modes allowed.
@@ -799,6 +821,23 @@ pub(crate) fn default_agent_env(command: &str) -> &'static [(&'static str, &'sta
 /// be parsed, avoiding accidental sandbox widening for malformed configs.
 ///
 /// Handles `ws://`, `wss://`, `http://`, and `https://` schemes.
+/// Community id for the guest route: `BUZZ_COMMUNITY_ID`, else the host of
+/// `BUZZ_CANONICAL_RELAY_URL`, else the host of `relay_url`.
+pub(crate) fn community_id_for(relay_url: &str) -> String {
+    if let Some(id) = std::env::var("BUZZ_COMMUNITY_ID")
+        .ok()
+        .filter(|id| !id.trim().is_empty())
+    {
+        return id.trim().to_string();
+    }
+    std::env::var("BUZZ_CANONICAL_RELAY_URL")
+        .ok()
+        .and_then(|url| Url::parse(&url).ok())
+        .or_else(|| Url::parse(relay_url).ok())
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
 pub fn codex_network_env(agent_command: &str, relay_url: &str) -> Option<(String, String)> {
     match normalize_agent_command_identity(agent_command).as_str() {
         "codex" | "codex-acp" => {}
@@ -1083,7 +1122,30 @@ impl Config {
             )));
         }
 
-        let respond_to_allowlist = if args.respond_to == RespondTo::Allowlist {
+        let guest_route_url = args
+            .guest_route_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_string);
+        let guest_turns = args.guest_turns.unwrap_or(if guest_route_url.is_some() {
+            crate::trust::GuestTurns::Hosted
+        } else {
+            crate::trust::GuestTurns::Local
+        });
+        let respond_to = args.respond_to.clone().unwrap_or(match guest_turns {
+            crate::trust::GuestTurns::Hosted => RespondTo::Anyone,
+            crate::trust::GuestTurns::Local => RespondTo::OwnerOnly,
+        });
+        if guest_turns == crate::trust::GuestTurns::Hosted && args.allowlist_in_dms {
+            tracing::warn!(
+                "BUZZ_ACP_ALLOWLIST_IN_DMS is legacy and ignored when guest turns are hosted: \
+                 non-owner DMs go to the hosted route"
+            );
+        }
+        let community_id = community_id_for(&args.relay_url);
+
+        let respond_to_allowlist = if respond_to == RespondTo::Allowlist {
             let raw = args.respond_to_allowlist.unwrap_or_default();
             let has_file =
                 std::env::var_os(crate::respond_allowlist_file::RESPOND_TO_ALLOWLIST_FILE_ENV)
@@ -1107,7 +1169,7 @@ impl Config {
             HashSet::new()
         };
 
-        if args.allowlist_in_dms && args.respond_to != RespondTo::Allowlist {
+        if args.allowlist_in_dms && respond_to != RespondTo::Allowlist {
             tracing::warn!("--allowlist-in-dms is ignored when --respond-to is not 'allowlist'");
         }
 
@@ -1123,11 +1185,11 @@ impl Config {
                 })?;
             }
             let allowed_modes: Vec<String> = raw.iter().map(|s| s.trim().to_string()).collect();
-            if !allowed_modes.is_empty() && !allowed_modes.contains(&args.respond_to.to_string()) {
+            if !allowed_modes.is_empty() && !allowed_modes.contains(&respond_to.to_string()) {
                 return Err(ConfigError::ConfigFile(format!(
                     "respond_to '{}' is not permitted on this deployment \
                      (BUZZ_ACP_ALLOWED_RESPOND_TO={})",
-                    args.respond_to,
+                    respond_to,
                     raw.join(",")
                 )));
             }
@@ -1212,7 +1274,13 @@ impl Config {
                 .as_deref()
                 .and_then(sanitize_session_title),
             permission_mode: args.permission_mode,
-            respond_to: args.respond_to,
+            respond_to,
+            guest_turns,
+            guest_route_url,
+            community_id,
+            guest_instructions: args
+                .guest_instructions
+                .filter(|text| !text.trim().is_empty()),
             respond_to_allowlist,
             allowed_respond_to,
             allowlist_in_dms: args.allowlist_in_dms,
@@ -1605,6 +1673,10 @@ mod tests {
             respond_to_allowlist: HashSet::new(),
             allowed_respond_to: Vec::new(),
             allowlist_in_dms: false,
+            guest_turns: crate::trust::GuestTurns::Local,
+            guest_route_url: None,
+            community_id: String::new(),
+            guest_instructions: None,
             persona_env_vars: vec![],
             has_generated_codex_config: false,
             relay_observer: false,

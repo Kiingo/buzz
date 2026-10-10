@@ -79,6 +79,26 @@ pub(crate) fn contains(author: &str) -> bool {
     state.keys.contains(author)
 }
 
+/// Every key currently listed in the allowlist file (empty when no file is
+/// configured). Used to keep a registered access policy in sync.
+pub(crate) fn snapshot() -> Vec<String> {
+    let Some(path) = std::env::var_os(RESPOND_TO_ALLOWLIST_FILE_ENV) else {
+        return Vec::new();
+    };
+    let state = STATE.get_or_init(|| {
+        Mutex::new(Loaded {
+            keys: HashSet::new(),
+            checked_at: None,
+        })
+    });
+    let mut state = match state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    refresh(&mut state, Path::new(&path), Instant::now());
+    state.keys.iter().cloned().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

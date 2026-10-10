@@ -68,6 +68,16 @@ pub(crate) fn projected_access_with_policy(
     }
 }
 
+/// Guest-turn route baked into internal builds (`BUZZ_BUILD_GUEST_ROUTE_URL`),
+/// or set for development through `BUZZ_DESKTOP_GUEST_ROUTE_URL`.
+pub(crate) fn guest_route_url() -> Option<String> {
+    std::env::var("BUZZ_DESKTOP_GUEST_ROUTE_URL")
+        .ok()
+        .or_else(|| option_env!("BUZZ_DESKTOP_BUILD_GUEST_ROUTE_URL").map(str::to_string))
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+}
+
 /// Build the inbound-author access environment for a launched agent. The
 /// explicit policy input keeps owner-only access enforcement testable without
 /// weakening the production caller's compile-time decision.
@@ -86,6 +96,14 @@ pub(crate) fn build_respond_to_env_with_policy(
 
     let mut set = vec![("BUZZ_ACP_RESPOND_TO", respond_to.as_str().to_string())];
     let mut remove = Vec::new();
+    // A desktop agent never runs a turn for anyone but its owner and the
+    // owner's own agents: every other request goes to the hosted guest route
+    // (or, with no route configured, gets a short refusal).
+    set.push(("BUZZ_ACP_GUEST_TURNS", "hosted".to_string()));
+    match guest_route_url() {
+        Some(url) => set.push(("BUZZ_ACP_GUEST_ROUTE_URL", url)),
+        None => remove.push("BUZZ_ACP_GUEST_ROUTE_URL"),
+    }
     if enforced_owner_only {
         set.push((
             "BUZZ_ACP_ALLOWED_RESPOND_TO",
@@ -130,6 +148,19 @@ mod tests {
         record.respond_to = RespondTo::Anyone;
         record.respond_to_allowlist = vec!["a".repeat(64)];
         record
+    }
+
+    #[test]
+    fn local_spawn_always_pins_hosted_guest_turns() {
+        for enforced in [true, false] {
+            let (set, _) = build_respond_to_env_with_policy(
+                &record(BackendKind::Local),
+                Some("owner"),
+                enforced,
+            )
+            .unwrap();
+            assert!(set.contains(&("BUZZ_ACP_GUEST_TURNS", "hosted".to_string())));
+        }
     }
 
     #[test]

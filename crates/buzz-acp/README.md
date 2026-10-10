@@ -137,9 +137,12 @@ Controls which authors' events the harness forwards to the agent. Events from di
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--respond-to` | `BUZZ_ACP_RESPOND_TO` | `owner-only` | Author gate mode: `owner-only`, `allowlist`, `anyone`, `nobody`. |
+| `--respond-to` | `BUZZ_ACP_RESPOND_TO` | `owner-only` (`anyone` when guest turns are hosted) | Author gate mode: `owner-only`, `allowlist`, `anyone`, `nobody`. In hosted guest-turn mode every non-owner event is routed and the route applies this policy. |
+| `--guest-turns` | `BUZZ_ACP_GUEST_TURNS` | `hosted` if a guest route URL is set, else `local` | `hosted`: events from anyone other than the owner and same-owner agents never reach the local agent; they go to the guest route (or get a short refusal when no route is reachable). `local`: legacy, for runtimes that are themselves the hosted guest runtime. |
+| `--guest-route-url` | `BUZZ_ACP_GUEST_ROUTE_URL` | — | Base URL of the hosted guest-turn route (HTTPS or loopback HTTP). Requests are NIP-98 signed by the agent key. |
+| `--guest-instructions` | `BUZZ_ACP_GUEST_INSTRUCTIONS` | — | Owner-authored persona text registered for hosted guest turns. |
 | `--respond-to-allowlist` | `BUZZ_ACP_RESPOND_TO_ALLOWLIST` | — | Comma-separated 64-char hex pubkeys (required when mode is `allowlist`). Owner is always implicitly included. |
-| `--allowlist-in-dms` | `BUZZ_ACP_ALLOWLIST_IN_DMS` | `false` | Opt-in, `allowlist` mode only: also admit allowlisted authors inside DMs, but only when **every** DM participant (relay kind:39002 roster) is this agent, the owner / a same-owner sibling, or allowlisted. Unresolvable rosters are denied. Off by default: DMs admit only the owner and siblings. |
+| `--allowlist-in-dms` | `BUZZ_ACP_ALLOWLIST_IN_DMS` | `false` | Opt-in, `allowlist` mode only: also admit allowlisted authors inside DMs, but only when **every** DM participant (relay kind:39002 roster) is this agent, the owner / a same-owner sibling, or allowlisted. Unresolvable rosters are denied. Off by default: DMs admit only the owner and siblings. Legacy: ignored when guest turns are hosted (non-owner DMs are routed). |
 
 **Modes:**
 

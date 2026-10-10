@@ -2695,10 +2695,11 @@ pub async fn run_prompt_task(
                 .is_some_and(|info| info.channel_type == "dm");
             let reply_to = crate::turn_context::default_reply_to(b, is_dm, profile_lookup.as_ref());
             let owner_hex = ctx.agent_owner_pubkey.as_ref().map(|owner| owner.to_hex());
-            _turn_context = Some(agent.acp.turn_context().publish(
+            _turn_context = Some(agent.acp.turn_context().publish_with_trigger(
                 b.channel_id,
                 reply_to.as_deref(),
                 &crate::turn_context::trigger_pubkeys(b),
+                b.events.last().map(|trigger| &trigger.event),
             ));
             crate::queue::format_prompt(
                 b,

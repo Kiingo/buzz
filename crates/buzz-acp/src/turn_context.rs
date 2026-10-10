@@ -134,11 +134,27 @@ impl TurnContextFile {
     }
 
     /// Publish this turn's context; it is removed when the guard drops.
+    #[cfg(test)]
     pub(crate) fn publish(
         &self,
         channel_id: Uuid,
         reply_to: Option<&str>,
         trigger_pubkeys: &[String],
+    ) -> TurnContextGuard {
+        self.publish_with_trigger(channel_id, reply_to, trigger_pubkeys, None)
+    }
+
+    /// Publish this turn's context, including the provenance of the event that
+    /// triggered it (`trigger_event_id`, `trigger_author`,
+    /// `trigger_provenance_tags`). `buzz messages send` uses that to sign
+    /// `buzz-relay` tags onto a message that carries the request to someone
+    /// else. Removed when the guard drops.
+    pub(crate) fn publish_with_trigger(
+        &self,
+        channel_id: Uuid,
+        reply_to: Option<&str>,
+        trigger_pubkeys: &[String],
+        trigger: Option<&nostr::Event>,
     ) -> TurnContextGuard {
         let Some(inner) = self.inner.clone() else {
             return TurnContextGuard {
@@ -151,6 +167,15 @@ impl TurnContextFile {
             "reply_to": reply_to,
             "turn_id": Uuid::new_v4().to_string(),
             "trigger_pubkeys": trigger_pubkeys,
+            "trigger_event_id": trigger.map(|event| event.id.to_hex()),
+            "trigger_author": trigger.map(|event| event.pubkey.to_hex()),
+            "trigger_provenance_tags": trigger
+                .map(|event| {
+                    let tags: Vec<Vec<String>> =
+                        event.tags.iter().map(|tag| tag.as_slice().to_vec()).collect();
+                    buzz_sdk::agent_relay::provenance_tags(&tags)
+                })
+                .unwrap_or_default(),
         })
         .to_string();
         let mut generation = lock(&inner.generation);
@@ -302,6 +327,34 @@ mod tests {
         assert_eq!(
             trigger_pubkeys(&flush),
             vec![a.public_key().to_hex(), b.public_key().to_hex()]
+        );
+    }
+
+    #[test]
+    fn trigger_provenance_is_exported_for_relay_tags() {
+        let file = TurnContextFile::new();
+        let path = file.path().unwrap().to_path_buf();
+        let owner = Keys::generate();
+        let origin = "a".repeat(64);
+        let trigger = EventBuilder::new(Kind::Custom(9), "ask jess's agent")
+            .tags([
+                Tag::parse(["buzz-relay", &origin, &"b".repeat(64), "1"]).unwrap(),
+                Tag::parse(["buzz-root-budget", &origin, "5"]).unwrap(),
+                Tag::parse(["t", "unrelated"]).unwrap(),
+            ])
+            .sign_with_keys(&owner)
+            .unwrap();
+        let _guard = file.publish_with_trigger(Uuid::new_v4(), None, &[], Some(&trigger));
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(written["trigger_event_id"], trigger.id.to_hex());
+        assert_eq!(written["trigger_author"], owner.public_key().to_hex());
+        assert_eq!(
+            written["trigger_provenance_tags"],
+            serde_json::json!([
+                ["buzz-relay", origin, "b".repeat(64), "1"],
+                ["buzz-root-budget", origin, "5"]
+            ])
         );
     }
 

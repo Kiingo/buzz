@@ -18,12 +18,19 @@ fn main() {
     println!("cargo:rerun-if-env-changed=BUZZ_BUILD_RELAY_RECONNECT_CMD");
     println!("cargo:rerun-if-env-changed=BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY");
     println!("cargo:rerun-if-env-changed=BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY");
+    println!("cargo:rerun-if-env-changed=BUZZ_BUILD_GUEST_ROUTE_URL");
     println!("cargo:rustc-check-cfg=cfg(buzz_updater_enabled)");
 
     // Explicit owner-only agent-access capability. Release packaging sets this
     // presence-only marker; OSS/custom builds leave agent access configurable.
     if std::env::var("BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY").is_ok() {
         println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_AGENT_ACCESS_OWNER_ONLY=1");
+    }
+
+    // Hosted guest-turn route for desktop agents. OSS builds leave it unset;
+    // their agents refuse non-owner requests instead of answering locally.
+    if let Ok(route) = std::env::var("BUZZ_BUILD_GUEST_ROUTE_URL") {
+        println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_GUEST_ROUTE_URL={route}");
     }
 
     if let Ok(relay_url) = std::env::var("BUZZ_RELAY_URL") {
