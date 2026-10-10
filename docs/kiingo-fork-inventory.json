@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 109,
-    "modifiedUpstreamFiles": 161,
-    "changedUpstreamProductionSourceLines": 8324,
-    "upstreamProductionSourceDiffHunks": 897,
+    "modifiedUpstreamProductionSourceFiles": 113,
+    "modifiedUpstreamFiles": 165,
+    "changedUpstreamProductionSourceLines": 8627,
+    "upstreamProductionSourceDiffHunks": 935,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -644,7 +644,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz reliability maintainers",
-      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised; and keep relay-signed kind:40099 system events (dm_created) out of the Home inbox DM context, which has no system-row renderer and showed their JSON as chat; and export each agent turn's reply destination (BUZZ_TURN_CONTEXT_FILE) so `buzz messages send` in the turn's channel replies in the triggering thread by default, with --top-level to opt out; and refuse further chat sends to the turn's channel after the agent @mentions someone other than itself and the turn's triggering members (a floor handoff recorded beside the turn file), unless --after-handoff is passed, so an agent cannot ask a question and post the conclusion in the same turn; parallel sends in one turn serialize the handoff check, send, and marker write on an advisory lock file in the turn directory; and carry a saved agent definition's access (who can send instructions) to its deployed instances still on the definition's previous access, through the instance update command so the running agent restarts on the new gate, and let the access people picker add a pasted npub or hex key whatever the profile search returns, with the member picker's search page size.",
+      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised; and keep relay-signed kind:40099 system events (dm_created) out of the Home inbox DM context, which has no system-row renderer and showed their JSON as chat; and export each agent turn's reply destination (BUZZ_TURN_CONTEXT_FILE) so `buzz messages send` in the turn's channel replies in the triggering thread by default, with --top-level to opt out; and refuse further chat sends to the turn's channel after the agent @mentions someone other than itself and the turn's triggering members (a floor handoff recorded beside the turn file), unless --after-handoff is passed, so an agent cannot ask a question and post the conclusion in the same turn; parallel sends in one turn serialize the handoff check, send, and marker write on an advisory lock file in the turn directory; and carry a saved agent definition's access (who can send instructions) to its deployed instances still on the definition's previous access, through the instance update command so the running agent restarts on the new gate, and let the access people picker add a pasted npub or hex key whatever the profile search returns, with the member picker's search page size; and keep Home inbox thread context failures per message (reuse ancestors already in the channel window, retry a failed context fetch once, render an inline placeholder for a deleted or unreadable root/ancestor and a quiet retry note for replies) instead of a page-level error banner, and refresh channel rosters on every live kind:40099 membership row (joined/left/removed/added) for all member channels, not only the open channel screen, with the members sidebar revalidating a cached roster on open.",
       "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
       "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
       "paths": [
@@ -671,8 +671,18 @@
         "desktop/src/features/agents/lib/respondToAllowlist.ts",
         "desktop/src/features/agents/ui/RespondToField.tsx",
         "desktop/src/features/agents/ui/respondToFieldContract.test.mjs",
+        "desktop/src/features/channels/membershipSystemEvents.test.mjs",
+        "desktop/src/features/channels/membershipSystemEvents.ts",
+        "desktop/src/features/channels/rosterFreshness.ts",
+        "desktop/src/features/channels/ui/MembersSidebar.tsx",
+        "desktop/src/features/channels/useLiveChannelUpdates.ts",
+        "desktop/src/features/home/lib/inboxThreadContextLoader.test.mjs",
+        "desktop/src/features/home/lib/inboxThreadContextLoader.ts",
         "desktop/src/features/home/lib/inboxViewHelpers.test.mjs",
         "desktop/src/features/home/lib/inboxViewHelpers.ts",
+        "desktop/src/features/home/ui/InboxContextNotices.test.mjs",
+        "desktop/src/features/home/ui/InboxContextNotices.tsx",
+        "desktop/src/features/home/ui/InboxDetailPane.tsx",
         "desktop/src/features/home/useInboxThreadContext.ts",
         "desktop/src/shared/api/relayClientSession.ts",
         "desktop/tests/e2e/messaging.spec.ts"
