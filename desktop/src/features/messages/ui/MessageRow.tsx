@@ -60,6 +60,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { getAgentAddressMentionPubkeys } from "@/features/messages/lib/agentAddressMention.mjs";
 import { getVisibleAgentAddressPubkeys } from "@/features/messages/lib/getVisibleAgentAddressPubkeys";
 import { MessageAgentAddressPrefix } from "./MessageAgentAddressPrefix";
+import { GuestReplyMarker } from "@/features/guest-access/ui/GuestReplyMarker";
 
 const DiffMessage = React.lazy(() => import("./DiffMessage"));
 const DiffMessageExpanded = React.lazy(() => import("./DiffMessageExpanded"));
@@ -276,7 +277,6 @@ export const MessageRow = React.memo(
           values[name] = pubkey;
         }
       }
-
       return Object.keys(values).length > 0 ? values : undefined;
     }, [isKnownAgentPubkey, mentionPubkeysByName]);
     const addressedAgentPubkeys = React.useMemo(() => {
@@ -681,6 +681,7 @@ export const MessageRow = React.memo(
       <>
         <SentFromThreadLine channelId={channelId} tags={message.tags} />
         {renderBody()}
+        <GuestReplyMarker createdAt={message.createdAt} tags={message.tags} />
         {continuationMetadataNode}
         <MessageReactions
           messageId={message.id}

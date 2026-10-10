@@ -34,6 +34,10 @@ export const KIND_JOB_ERROR = 43006;
 export const KIND_FORUM_POST = 45001;
 export const KIND_FORUM_COMMENT = 45003;
 export const KIND_APPROVAL_REQUEST = 46010;
+// Agent guest access owner notifications (approval requested/resolved, alert).
+export const KIND_GUEST_APPROVAL_REQUEST = 46040;
+export const KIND_GUEST_APPROVAL_RESOLVED = 46041;
+export const KIND_GUEST_ALERT = 46042;
 export const KIND_MEMBER_ADDED_NOTIFICATION = 44100;
 export const KIND_MEMBER_REMOVED_NOTIFICATION = 44101;
 export const KIND_TYPING_INDICATOR = 20002;
