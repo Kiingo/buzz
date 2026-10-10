@@ -1008,31 +1008,17 @@ async fn sibling_loops_hit_the_pair_limit_and_guest_relays_are_crossings() {
         .collect();
     assert!(tagged.contains(&hex(&world.owner)));
     tokio::time::sleep(Duration::from_secs(8)).await;
-    // Count sibling events that triggered a local turn: each is answered
-    // with "ACK TOKEN-sibN" (batched events share one answer).
-    let answers = world.agent_messages().await;
-    let reached = (0..9)
-        .filter(|i| {
-            answers
-                .iter()
-                .any(|e| e.content == format!("ACK TOKEN-sib{i}"))
-        })
-        .count();
+    // Trigger events render as "Content: ..." blocks; thread history
+    // (which legitimately shows sibling posts) does not.
     let prompts = world.agent_prompts();
     let triggered = (0..9)
-        // Trigger events render as "Content: ..." blocks; thread history
-        // (which legitimately shows sibling posts) does not.
         .filter(|i| prompts.contains(&format!("Content: @Atlas TOKEN-sib{i} ")))
         .count();
-    assert!(
-        reached <= crate_pair_limit(),
-        "{reached} sibling turns answered"
+    assert_eq!(
+        triggered,
+        crate_pair_limit(),
+        "exactly the per-thread limit of sibling events reach the agent"
     );
-    assert!(
-        triggered <= crate_pair_limit(),
-        "{triggered} sibling events reached the agent"
-    );
-    assert!(reached >= 1, "sibling turns are local");
     assert!(
         world.route.turn_with("TOKEN-sib0").is_none(),
         "siblings are not routed"
