@@ -245,7 +245,9 @@ impl GuestRuntime {
                 Err("echo")
             } else if author_is_agent && guards.pending_reference(&key, now).is_some() {
                 Err("approval_pending")
-            } else if guards.is_duplicate(&key, now) {
+            } else if author_is_agent && guards.is_duplicate(&key, now) {
+                // People re-asking are deduplicated server-side, which can
+                // answer "already asked"; a silent local drop would not.
                 Err("duplicate")
             } else if author_is_agent
                 && !guards.spend_root(

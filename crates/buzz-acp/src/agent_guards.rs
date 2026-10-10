@@ -11,8 +11,9 @@
 //! - **Per-root budget.** A thread root may trigger at most
 //!   [`ROOT_TURN_BUDGET`] agent-authored turns a day here, and an event whose
 //!   `buzz-root-budget` tag says the chain is spent is refused.
-//! - **Dedup.** The same normalized request from the same effective requester
-//!   to this agent within [`DEDUP_WINDOW`] is not handled twice.
+//! - **Dedup.** The same normalized request from an agent, for the same
+//!   effective requester, to this agent within [`DEDUP_WINDOW`] is not handled
+//!   twice. (People are deduplicated by the hosted route, which can reply.)
 //! - **Echo suppression.** An agent message that quotes this agent's own
 //!   recent output is not treated as a new instruction.
 //! - **Approval-pending requests.** A request held for owner approval is never
