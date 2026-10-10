@@ -790,15 +790,30 @@ pub async fn cmd_send_message(
             )
             .map_err(|e| CliError::Other(format!("build_forum_comment failed: {e}")))?
         }
-        None | Some(9) => buzz_sdk::build_message(
-            channel_uuid,
-            &final_content,
-            thread_ref.as_ref(),
-            &mention_refs,
-            p.broadcast,
-            &media_tags,
-        )
-        .map_err(|e| CliError::Other(format!("build_message failed: {e}")))?,
+        None | Some(9) => {
+            // Carrying the turn's request to someone else: sign provenance.
+            let relay_tags = match &turn {
+                Some(turn) => turn.relay_tags(
+                    &client.keys().public_key().to_hex(),
+                    &handoff_candidates,
+                    thread_ref
+                        .as_ref()
+                        .map(|t| t.root_event_id.to_hex())
+                        .as_deref(),
+                )?,
+                None => Vec::new(),
+            };
+            buzz_sdk::build_message_with_extra_tags(
+                channel_uuid,
+                &final_content,
+                thread_ref.as_ref(),
+                &mention_refs,
+                p.broadcast,
+                &media_tags,
+                &relay_tags,
+            )
+            .map_err(|e| CliError::Other(format!("build_message failed: {e}")))?
+        }
         Some(k) => {
             return Err(CliError::Usage(format!(
                 "--kind {k} is not supported (use 9, 45001, or 45003)"

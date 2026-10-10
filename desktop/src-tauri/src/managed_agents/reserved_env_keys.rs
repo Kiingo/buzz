@@ -53,6 +53,10 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     "BUZZ_ACP_RESPOND_TO_ALLOWLIST",
     "BUZZ_ACP_ALLOWED_RESPOND_TO",
     "BUZZ_ACP_AGENT_OWNER",
+    // Guest-turn routing: a user override could run other people's requests
+    // in the owner's local session, or send them to another route.
+    "BUZZ_ACP_GUEST_TURNS",
+    "BUZZ_ACP_GUEST_ROUTE_URL",
     // Stable agent identity used for git attribution and private-conversation
     // provenance must come from the managed-agent record, not user overrides.
     "BUZZ_ACP_DISPLAY_NAME",

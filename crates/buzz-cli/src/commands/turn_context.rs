@@ -20,6 +20,13 @@
 //!   marker is written, so two sends cannot both pass the check before either
 //!   records a handoff. The OS drops the lock if the holder exits.
 //!
+//! - **Provenance.** A message that `@mention`s someone beyond the turn's
+//!   triggering members carries the request onward, so it gets signed
+//!   `buzz-relay` tags naming the triggering event (and, from the second hop,
+//!   the previous hop) plus the chain's `buzz-root-budget`. A send that would
+//!   exceed the relay hop limit is refused. The harness exports the trigger's
+//!   id, author and provenance tags in the turn file for this.
+//!
 //! Another channel or a missing file (no turn in progress) is unaffected.
 
 use std::path::{Path, PathBuf};
@@ -50,6 +57,9 @@ pub(crate) struct TurnContext {
     reply_to: Option<String>,
     turn_id: Option<String>,
     trigger_pubkeys: Vec<String>,
+    trigger_event_id: Option<String>,
+    trigger_author: Option<String>,
+    trigger_provenance_tags: Vec<Vec<String>>,
 }
 
 impl TurnContext {
@@ -89,11 +99,26 @@ impl TurnContext {
                     .collect()
             })
             .unwrap_or_default();
+        let hex_field = |name: &str| {
+            context
+                .get(name)
+                .and_then(|v| v.as_str())
+                .map(str::to_ascii_lowercase)
+                .filter(|v| is_hex64(v))
+        };
+        let trigger_provenance_tags = context
+            .get("trigger_provenance_tags")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
         Some(Self {
             dir: path.parent()?.to_path_buf(),
             reply_to,
             turn_id,
             trigger_pubkeys,
+            trigger_event_id: hex_field("trigger_event_id"),
+            trigger_author: hex_field("trigger_author"),
+            trigger_provenance_tags,
         })
     }
 
@@ -148,6 +173,47 @@ impl TurnContext {
                     )));
                 }
                 Err(fs4::TryLockError::Error(_)) => return Ok(None),
+            }
+        }
+    }
+
+    /// Provenance tags for a send that mentions `mentions`: empty unless the
+    /// message addresses someone beyond the sender and the turn's triggering
+    /// members, in which case it relays the trigger's request onward.
+    /// Refuses a send that would exceed the relay hop limit.
+    pub(crate) fn relay_tags(
+        &self,
+        self_pubkey: &str,
+        mentions: &[String],
+        thread_root: Option<&str>,
+    ) -> Result<Vec<Vec<String>>, CliError> {
+        if handoff_recipients(mentions, self_pubkey, &self.trigger_pubkeys).is_empty() {
+            return Ok(Vec::new());
+        }
+        let (Some(id), Some(author)) = (&self.trigger_event_id, &self.trigger_author) else {
+            return Ok(Vec::new());
+        };
+        match buzz_sdk::agent_relay::outgoing_relay_tags_for(
+            id,
+            author,
+            &self.trigger_provenance_tags,
+            thread_root,
+        ) {
+            Ok(tags) => Ok(tags),
+            Err(buzz_sdk::agent_relay::RelayTagError::HopLimitExceeded) => {
+                Err(CliError::Usage(format!(
+                    "not sent: this request has already been relayed through {} agents, the \
+                     limit. Do not pull in another agent; answer from what you have or tell \
+                     the requester to ask that agent's owner directly.",
+                    buzz_sdk::agent_relay::HOP_LIMIT
+                )))
+            }
+            // A malformed trigger claim: relay as a fresh chain from this turn.
+            Err(_) => {
+                Ok(
+                    buzz_sdk::agent_relay::outgoing_relay_tags_for(id, author, &[], thread_root)
+                        .unwrap_or_default(),
+                )
             }
         }
     }
@@ -325,6 +391,83 @@ mod tests {
     const ME: &str = "1111111111111111111111111111111111111111111111111111111111111111";
     const TRIGGER: &str = "2222222222222222222222222222222222222222222222222222222222222222";
     const JUNIPER: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+
+    fn relay_turn(turn: &Turn, channel: Uuid, provenance: serde_json::Value) -> TurnContext {
+        let body = serde_json::json!({
+            "channel_id": channel.to_string(),
+            "reply_to": null,
+            "turn_id": Uuid::new_v4().to_string(),
+            "trigger_pubkeys": [TRIGGER],
+            "trigger_event_id": "e".repeat(64),
+            "trigger_author": TRIGGER,
+            "trigger_provenance_tags": provenance,
+        })
+        .to_string();
+        std::fs::write(&turn.path, &body).unwrap();
+        TurnContext::parse(&turn.path, &body, channel).unwrap()
+    }
+
+    #[test]
+    fn answering_the_requester_adds_no_relay_tags() {
+        let turn = Turn::new();
+        let channel = Uuid::new_v4();
+        let ctx = relay_turn(&turn, channel, serde_json::json!([]));
+        assert!(ctx
+            .relay_tags(ME, &[TRIGGER.into()], None)
+            .unwrap()
+            .is_empty());
+        assert!(ctx.relay_tags(ME, &[], None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn addressing_someone_else_relays_the_trigger() {
+        let turn = Turn::new();
+        let channel = Uuid::new_v4();
+        let ctx = relay_turn(&turn, channel, serde_json::json!([]));
+        let tags = ctx.relay_tags(ME, &[JUNIPER.into()], None).unwrap();
+        assert_eq!(
+            tags[0],
+            vec![
+                "buzz-relay".to_string(),
+                "e".repeat(64),
+                TRIGGER.into(),
+                "1".into()
+            ]
+        );
+        assert_eq!(tags[1][0], "buzz-root-budget");
+    }
+
+    #[test]
+    fn second_hop_records_previous_and_third_is_refused() {
+        let turn = Turn::new();
+        let channel = Uuid::new_v4();
+        let origin = "a".repeat(64);
+        let ctx = relay_turn(
+            &turn,
+            channel,
+            serde_json::json!([["buzz-relay", origin, "b".repeat(64), "1"]]),
+        );
+        let tags = ctx.relay_tags(ME, &[JUNIPER.into()], None).unwrap();
+        assert_eq!(tags[0][3], "2");
+        assert_eq!(
+            tags[1],
+            vec![
+                "buzz-relay-prev".to_string(),
+                "e".repeat(64),
+                TRIGGER.into()
+            ]
+        );
+        let ctx = relay_turn(
+            &turn,
+            channel,
+            serde_json::json!([
+                ["buzz-relay", origin, "b".repeat(64), "2"],
+                ["buzz-relay-prev", "c".repeat(64), "d".repeat(64)]
+            ]),
+        );
+        let refused = ctx.relay_tags(ME, &[JUNIPER.into()], None).unwrap_err();
+        assert!(refused.to_string().contains("limit"), "{refused}");
+    }
 
     #[test]
     fn same_channel_defaults_to_the_turn_thread() {

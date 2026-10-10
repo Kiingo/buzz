@@ -24,6 +24,7 @@ use uuid::Uuid;
 use crate::prompt_project::PromptProjectInfo;
 
 use crate::config::DedupMode;
+use crate::trust::TrustLane;
 
 /// Maximum events queued per channel before oldest events are dropped.
 const MAX_PENDING_PER_CHANNEL: usize = 500;
@@ -179,6 +180,9 @@ pub struct EventQueue {
     /// arrivals from a different conversation must wait for their own turn
     /// instead of being steered into this one.
     in_flight_keys: HashMap<Uuid, ConversationKey>,
+    /// Trust lane of each queued non-owner event (event id hex). Events not
+    /// listed are in the owner lane. See [`ConversationKey`].
+    lanes: HashMap<String, (TrustLane, Instant)>,
 }
 
 impl EventQueue {
@@ -201,6 +205,7 @@ impl EventQueue {
             withheld_native_steer: HashMap::new(),
             in_flight_deadline: Duration::from_secs(DEFAULT_IN_FLIGHT_DEADLINE_SECS),
             in_flight_keys: HashMap::new(),
+            lanes: HashMap::new(),
         }
     }
 
@@ -239,6 +244,21 @@ impl EventQueue {
     /// silently discarded (debug-logged).
     ///
     /// Returns `true` if the event was accepted, `false` if dropped.
+    /// Push an event in `lane`. A non-owner lane keeps the event out of
+    /// owner turns: it never batches with, or is steered into, a turn from
+    /// another lane.
+    pub(crate) fn push_with_lane(&mut self, event: QueuedEvent, lane: TrustLane) -> bool {
+        if lane != TrustLane::Owner {
+            let now = Instant::now();
+            if self.lanes.len() >= MAX_TRACKED_LANES {
+                self.lanes
+                    .retain(|_, (_, at)| now.duration_since(*at) < LANE_RETENTION);
+            }
+            self.lanes.insert(event.event.id.to_hex(), (lane, now));
+        }
+        self.push(event)
+    }
+
     pub fn push(&mut self, event: QueuedEvent) -> bool {
         if matches!(self.dedup_mode, DedupMode::Drop)
             && self.in_flight_channels.contains(&event.channel_id)
@@ -337,9 +357,10 @@ impl EventQueue {
             .cancelled_batches
             .get(&channel_id)
             .and_then(|cancelled| cancelled.last())
-            .map(|event| conversation_key(&event.event));
+            .map(|event| key_in(&self.lanes, &event.event));
+        let lanes = &self.lanes;
         let queue = self.queues.entry(channel_id).or_default();
-        let picked = pick_batch_indices(queue, resume_key.as_ref());
+        let picked = pick_batch_indices(queue, resume_key.as_ref(), lanes);
         if picked.is_empty() {
             // Only other conversations are queued: resume the cancelled turn
             // alone and leave them for their own turns.
@@ -375,7 +396,7 @@ impl EventQueue {
         self.in_flight_batch_sizes.insert(channel_id, events.len());
         if let Some(last) = events.last() {
             self.in_flight_keys
-                .insert(channel_id, conversation_key(&last.event));
+                .insert(channel_id, key_in(&self.lanes, &last.event));
         }
 
         // Merge any cancelled events stored by requeue_as_cancelled().
@@ -409,7 +430,7 @@ impl EventQueue {
         self.in_flight_batch_sizes.insert(id, cancelled.len());
         if let Some(last) = cancelled.last() {
             self.in_flight_keys
-                .insert(id, conversation_key(&last.event));
+                .insert(id, key_in(&self.lanes, &last.event));
         }
         FlushBatch {
             channel_id: id,
@@ -427,7 +448,7 @@ impl EventQueue {
     pub fn joins_in_flight_turn(&self, channel_id: Uuid, event: &Event) -> bool {
         self.in_flight_keys
             .get(&channel_id)
-            .is_none_or(|key| *key == conversation_key(event))
+            .is_none_or(|key| *key == key_in(&self.lanes, event))
     }
 
     /// Retain only one trigger for a structured-input adapter. Return all other
@@ -967,20 +988,38 @@ impl Default for EventQueue {
 /// only one of them. Events therefore batch together only when they share a
 /// key — replies in the same thread, or one author's burst of top-level posts
 /// (which the agent answers together under the latest one, as before).
+///
+/// The key also carries the event's [`TrustLane`]: a non-owner's reply in an
+/// owner's thread is a different conversation from the owner's, so it never
+/// joins the owner's turn and gets its own answer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum ConversationKey {
-    /// A reply inside a thread, keyed by the thread root event id.
-    Thread(String),
-    /// A top-level post, keyed by its author's pubkey.
-    TopLevel(String),
+    /// A reply inside a thread, keyed by the thread root event id and lane.
+    Thread(String, TrustLane),
+    /// A top-level post, keyed by its author's pubkey and lane.
+    TopLevel(String, TrustLane),
 }
 
-/// The [`ConversationKey`] of `event`.
-pub(crate) fn conversation_key(event: &Event) -> ConversationKey {
+/// Tracked non-owner lanes before stale entries are pruned.
+const MAX_TRACKED_LANES: usize = 4096;
+/// Lanes older than this are pruned once the map is full.
+const LANE_RETENTION: Duration = Duration::from_secs(60 * 60);
+
+/// The [`ConversationKey`] of `event` in `lane`.
+pub(crate) fn conversation_key(event: &Event, lane: TrustLane) -> ConversationKey {
     match parse_thread_tags(event).root_event_id {
-        Some(root) => ConversationKey::Thread(root),
-        None => ConversationKey::TopLevel(event.pubkey.to_hex()),
+        Some(root) => ConversationKey::Thread(root, lane),
+        None => ConversationKey::TopLevel(event.pubkey.to_hex(), lane),
     }
+}
+
+/// The [`ConversationKey`] of `event`, with its lane looked up in `lanes`.
+fn key_in(lanes: &HashMap<String, (TrustLane, Instant)>, event: &Event) -> ConversationKey {
+    let lane = lanes
+        .get(&event.id.to_hex())
+        .map(|(lane, _)| lane.clone())
+        .unwrap_or_default();
+    conversation_key(event, lane)
 }
 
 fn is_control_event(event: &Event) -> bool {
@@ -998,6 +1037,7 @@ fn is_control_event(event: &Event) -> bool {
 fn pick_batch_indices(
     queue: &VecDeque<QueuedEvent>,
     resume_key: Option<&ConversationKey>,
+    lanes: &HashMap<String, (TrustLane, Instant)>,
 ) -> Vec<usize> {
     let Some(head) = queue.front() else {
         return Vec::new();
@@ -1007,13 +1047,13 @@ fn pick_batch_indices(
     }
     let key = resume_key
         .cloned()
-        .unwrap_or_else(|| conversation_key(&head.event));
+        .unwrap_or_else(|| key_in(lanes, &head.event));
     let mut picked = Vec::new();
     for (index, queued) in queue.iter().enumerate() {
         if is_control_event(&queued.event) || picked.len() == MAX_BATCH_EVENTS {
             break;
         }
-        if conversation_key(&queued.event) == key {
+        if key_in(lanes, &queued.event) == key {
             picked.push(index);
         }
     }
@@ -1280,9 +1320,14 @@ pub(crate) fn format_event_block(
     // Marked from the signed author key, never from what a message claims, so
     // the agent can tell its owner's own requests from everyone else's.
     let owner_mark = if owner_pubkey.is_some_and(|owner| owner.eq_ignore_ascii_case(&hex)) {
-        " [your owner]"
+        " [your owner]".to_string()
     } else {
-        ""
+        crate::trust::guest_marker_for(&be.event, owner_pubkey, |pk| {
+            resolve_prompt_label(pk, profile_lookup)
+                .unwrap_or_else(|| pk.chars().take(12).collect())
+        })
+        .map(|marker| format!(" {marker}"))
+        .unwrap_or_default()
     };
     let npub = be.event.pubkey.to_bech32().unwrap_or_else(|_| hex.clone());
 
@@ -3764,6 +3809,63 @@ mod tests {
         assert_eq!(contents(&batch), ["first", "second"]);
         let later = queued_from(ch, &Keys::generate(), "third", Some(&root)).event;
         assert!(q.joins_in_flight_turn(ch, &later));
+    }
+
+    /// A guest's reply in the owner's thread is a separate conversation: it
+    /// never batches into, or is steered into, the owner's turn.
+    #[test]
+    fn guest_reply_in_owner_thread_never_joins_owner_turn() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let root = "a".repeat(64);
+        let (owner, guest) = (Keys::generate(), Keys::generate());
+        let guest_lane = TrustLane::Guest(guest.public_key().to_hex());
+        q.push_with_lane(
+            queued_from(ch, &owner, "owner ask", Some(&root)),
+            TrustLane::Owner,
+        );
+        q.push_with_lane(
+            queued_from(ch, &guest, "guest ask", Some(&root)),
+            guest_lane.clone(),
+        );
+        q.push_with_lane(
+            queued_from(ch, &owner, "owner follow-up", Some(&root)),
+            TrustLane::Owner,
+        );
+
+        let first = q.flush_next().expect("owner turn");
+        assert_eq!(contents(&first), ["owner ask", "owner follow-up"]);
+        let guest_event = q.queues[&ch][0].event.clone();
+        assert!(!q.joins_in_flight_turn(ch, &guest_event));
+        let owner_more = queued_from(ch, &owner, "owner steer", Some(&root));
+        let owner_more_event = owner_more.event.clone();
+        q.push_with_lane(owner_more, TrustLane::Owner);
+        assert!(
+            q.joins_in_flight_turn(ch, &owner_more_event),
+            "owner thread replies still steer into the owner's turn"
+        );
+        q.mark_complete(ch);
+        let second = q.flush_next().expect("next turn");
+        assert_eq!(contents(&second), ["guest ask"]);
+    }
+
+    #[test]
+    fn two_guests_in_one_thread_get_separate_turns() {
+        let mut q = EventQueue::new(DedupMode::Queue);
+        let ch = Uuid::new_v4();
+        let root = "a".repeat(64);
+        let (a, b) = (Keys::generate(), Keys::generate());
+        q.push_with_lane(
+            queued_from(ch, &a, "from a", Some(&root)),
+            TrustLane::Guest(a.public_key().to_hex()),
+        );
+        q.push_with_lane(
+            queued_from(ch, &b, "from b", Some(&root)),
+            TrustLane::Guest(b.public_key().to_hex()),
+        );
+        assert_eq!(contents(&q.flush_next().expect("a")), ["from a"]);
+        q.mark_complete(ch);
+        assert_eq!(contents(&q.flush_next().expect("b")), ["from b"]);
     }
 
     #[test]

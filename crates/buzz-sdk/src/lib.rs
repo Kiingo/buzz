@@ -13,6 +13,7 @@
 //! No keys are held here. No network calls are made.
 
 pub mod agent_invocation;
+pub mod agent_relay;
 pub mod agent_status;
 pub mod broker;
 pub mod builders;

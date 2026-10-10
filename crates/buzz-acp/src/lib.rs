@@ -1,10 +1,13 @@
 #![deny(unsafe_code)]
 
 mod acp;
+mod agent_guards;
 mod config;
 mod dm_participants;
 mod engram_fetch;
 mod filter;
+mod guest_route;
+mod guest_runtime;
 mod local_publication;
 mod observer;
 mod pool;
@@ -12,11 +15,13 @@ mod pool_lifecycle;
 mod profile_publication;
 mod prompt_framing;
 mod prompt_project;
+mod provenance;
 mod queue;
 mod relay;
 mod respond_allowlist_file;
 mod runtime_failure_status;
 mod setup_mode;
+mod trust;
 mod turn_context;
 mod unpublished_reply;
 mod usage;
@@ -1191,6 +1196,7 @@ fn handle_relay_observer_control_event(
     observer: Option<&observer::ObserverHandle>,
     owner_pubkey_hex: &str,
     event_publisher: RelayEventPublisher,
+    guest_runtime: &guest_runtime::GuestRuntime,
 ) {
     // Defense-in-depth: verify signature even though the relay already checked.
     if let Err(e) = buzz_core::verify_event(&event) {
@@ -1241,6 +1247,9 @@ fn handle_relay_observer_control_event(
         }
         Some("switch_model") => {
             handle_switch_model_control(&payload, pool, observer);
+        }
+        Some(decision @ ("approve_guest_reply" | "deny_guest_reply")) => {
+            guest_runtime.handle_approval_control(decision, &payload);
         }
         Some("publish_project_owner_announcements") => {
             handle_publish_project_owner_announcements_control(
@@ -2348,6 +2357,25 @@ async fn tokio_main() -> Result<()> {
         relay_url: config.relay_url.clone(),
     });
 
+    let guest_runtime = Arc::new(guest_runtime::GuestRuntime::new(
+        guest_runtime::GuestRuntimeConfig {
+            mode: config.guest_turns,
+            route_url: config.guest_route_url.clone(),
+            community_id: config.community_id.clone(),
+            relay_url: config.relay_url.clone(),
+            respond_to: config.respond_to.clone(),
+            static_allowlist: config.respond_to_allowlist.clone(),
+            guest_instructions: config.guest_instructions.clone(),
+        },
+        relay.rest_client(),
+        config.keys.clone(),
+        startup_owner.clone(),
+        observer.clone(),
+    ));
+    let guest_runtime_tasks = guest_runtime.spawn_background();
+    guest_runtime::install_context_filter(&guest_runtime);
+    tracing::info!(guest_turns = %config.guest_turns, "guest turn routing configured");
+
     if !config.memory_enabled {
         tracing::info!(
             target: "engram::core",
@@ -2757,6 +2785,7 @@ async fn tokio_main() -> Result<()> {
                                     observer.as_ref(),
                                     owner_hex,
                                     relay.event_publisher(),
+                                    &guest_runtime,
                                 );
                             } else {
                                 tracing::warn!("observer control frame received but no owner resolved — dropping");
@@ -2897,6 +2926,11 @@ async fn tokio_main() -> Result<()> {
                                 continue;
                             }
 
+                            if buzz_event.event.pubkey.to_hex() == pubkey_hex
+                                && kind_u32 == KIND_STREAM_MESSAGE
+                            {
+                                guest_runtime.record_own_output(&buzz_event.event.content);
+                            }
                             if config.ignore_self && should_ignore_self_event(&buzz_event.event, &pubkey_hex) {
                                 tracing::debug!(channel_id = %buzz_event.channel_id, "dropping self-authored event");
                                 continue;
@@ -3030,6 +3064,7 @@ async fn tokio_main() -> Result<()> {
                             // exercised by non-owner authors inside DMs.
                             let is_dm =
                                 is_dm_channel(buzz_event.channel_id, &ctx.channel_info).await;
+                            let gate_decision: trust::GateDecision;
                             {
                                 let author = buzz_event.event.pubkey.to_hex();
                                 let dm_gate = dm_participant_resolver.as_ref().filter(|_| is_dm).map(
@@ -3049,7 +3084,35 @@ async fn tokio_main() -> Result<()> {
                                     &ctx.rest_client,
                                 )
                                 .await;
-                                if !allowed {
+                                gate_decision = if !allowed
+                                    && guest_runtime.mode() == trust::GuestTurns::Local
+                                {
+                                    trust::GateDecision::Drop
+                                } else {
+                                    let owner_or_sibling =
+                                        is_owner_or_sibling(&author, &owner_cache, &ctx.rest_client)
+                                            .await;
+                                    let tier = guest_runtime
+                                        .classify(&buzz_event.event, owner_or_sibling)
+                                        .await;
+                                    if is_invocation && !tier.is_owner_equivalent() {
+                                        // Structured wakes are never routed:
+                                        // local only under the legacy gate.
+                                        if allowed && guest_runtime.mode() == trust::GuestTurns::Local {
+                                            trust::GateDecision::Local(tier)
+                                        } else {
+                                            trust::GateDecision::Drop
+                                        }
+                                    } else {
+                                        trust::decide(
+                                            guest_runtime.mode(),
+                                            &config.respond_to,
+                                            tier,
+                                            allowed,
+                                        )
+                                    }
+                                };
+                                if gate_decision == trust::GateDecision::Drop {
                                     tracing::debug!(
                                         channel_id = %buzz_event.channel_id,
                                         author = %buzz_event.event.pubkey.to_hex(),
@@ -3110,6 +3173,50 @@ async fn tokio_main() -> Result<()> {
                                     continue;
                                 }
                             };
+                            // Crossings never reach the local agent: guard,
+                            // then hand them to the hosted guest route. Agent
+                            // guards also apply to sibling (local) turns.
+                            let lane = match gate_decision {
+                                trust::GateDecision::Local(ref tier)
+                                | trust::GateDecision::Route(ref tier) => {
+                                    let verdict = guest_runtime.check_guards(&guest_runtime::GuardInput {
+                                        event: &buzz_event.event,
+                                        channel_id: buzz_event.channel_id,
+                                        tier,
+                                    });
+                                    let request_key = match verdict {
+                                        guest_runtime::GuardVerdict::Proceed { request_key } => request_key,
+                                        guest_runtime::GuardVerdict::Drop { guard } => {
+                                            if guard == "pair_rate_limit_notice" {
+                                                guest_runtime.spawn_pair_limit_notice(
+                                                    &buzz_event.event,
+                                                    buzz_event.channel_id,
+                                                    tier,
+                                                );
+                                            }
+                                            continue;
+                                        }
+                                    };
+                                    if let trust::GateDecision::Route(ref tier) = gate_decision {
+                                        let channel_name = ctx
+                                            .channel_info
+                                            .resolve_channel_metadata(buzz_event.channel_id)
+                                            .await
+                                            .map(|info| info.name);
+                                        guest_runtime.route(
+                                            buzz_event.event,
+                                            buzz_event.channel_id,
+                                            is_dm,
+                                            channel_name,
+                                            tier.clone(),
+                                            request_key,
+                                        );
+                                        continue;
+                                    }
+                                    tier.lane()
+                                }
+                                trust::GateDecision::Drop => continue,
+                            };
                             // Capture author pubkey before queue.push() moves
                             // buzz_event.event (needed for mode gate below).
                             let author_hex = buzz_event.event.pubkey.to_hex();
@@ -3126,12 +3233,15 @@ async fn tokio_main() -> Result<()> {
                             // backed payload) so the cost is negligible.
                             let event_for_steer = buzz_event.event.clone();
                             let prompt_tag_for_steer = prompt_tag.clone();
-                            let accepted = queue.push(QueuedEvent {
-                                channel_id: buzz_event.channel_id,
-                                event: buzz_event.event,
-                                received_at: std::time::Instant::now(),
-                                prompt_tag,
-                            });
+                            let accepted = queue.push_with_lane(
+                                QueuedEvent {
+                                    channel_id: buzz_event.channel_id,
+                                    event: buzz_event.event,
+                                    received_at: std::time::Instant::now(),
+                                    prompt_tag,
+                                },
+                                lane,
+                            );
                             // 👀 — immediate "seen" reaction, only if the event
                             // was actually queued (not dropped by DedupMode::Drop).
                             // Generation sequencing prevents this asynchronous
@@ -3762,6 +3872,9 @@ async fn tokio_main() -> Result<()> {
     }
 
     if let Some(handle) = relay_observer_publisher_task.take() {
+        handle.abort();
+    }
+    for handle in guest_runtime_tasks {
         handle.abort();
     }
 
@@ -7587,6 +7700,10 @@ mod build_mcp_servers_tests {
             respond_to_allowlist: std::collections::HashSet::new(),
             allowed_respond_to: vec![],
             allowlist_in_dms: false,
+            guest_turns: crate::trust::GuestTurns::Local,
+            guest_route_url: None,
+            community_id: String::new(),
+            guest_instructions: None,
             persona_env_vars: vec![],
             has_generated_codex_config: false,
             relay_observer: false,
@@ -7830,6 +7947,10 @@ mod error_outcome_emission_tests {
             respond_to_allowlist: HashSet::new(),
             allowed_respond_to: vec![],
             allowlist_in_dms: false,
+            guest_turns: crate::trust::GuestTurns::Local,
+            guest_route_url: None,
+            community_id: String::new(),
+            guest_instructions: None,
             persona_env_vars: vec![],
             has_generated_codex_config: false,
             relay_observer: false,
