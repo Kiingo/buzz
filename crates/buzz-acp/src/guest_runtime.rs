@@ -41,6 +41,10 @@ use crate::queue::parse_thread_tags;
 use crate::relay::RestClient;
 use crate::trust::{tier_from_parts, GuestTurns, ProfileDirectory, TrustTier};
 
+/// Tag on harness-authored notices (refusals, hop-limit and pair-limit
+/// notices), so they are never mistaken for a turn's own reply.
+pub(crate) const HARNESS_NOTICE_TAG: &str = "buzz-harness-notice";
+
 /// Thread events sent as context with a routed turn (contract cap).
 const CONTEXT_EVENTS: usize = 20;
 /// Audience pubkeys sent with a routed turn; `audience_total` carries the
@@ -664,9 +668,17 @@ impl GuestRuntime {
             parent_event_id: trigger.id,
         };
         let refs: Vec<&str> = people.iter().map(String::as_str).collect();
-        let built = buzz_sdk::build_message(channel_id, text, Some(&thread_ref), &refs, false, &[])
-            .map_err(|e| e.to_string())
-            .and_then(|b| b.sign_with_keys(&self.keys).map_err(|e| e.to_string()));
+        let built = buzz_sdk::build_message_with_extra_tags(
+            channel_id,
+            text,
+            Some(&thread_ref),
+            &refs,
+            false,
+            &[],
+            &[vec![HARNESS_NOTICE_TAG.to_string(), "guest".to_string()]],
+        )
+        .map_err(|e| e.to_string())
+        .and_then(|b| b.sign_with_keys(&self.keys).map_err(|e| e.to_string()));
         match built {
             Ok(notice) => {
                 match tokio::time::timeout(NOTICE_TIMEOUT, self.rest.submit_event(&notice)).await {

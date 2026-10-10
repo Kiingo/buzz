@@ -124,7 +124,23 @@ pub(crate) fn published_filter(
         )
         .since(Timestamp::from(since))
         .until(Timestamp::from(until))
-        .limit(1)
+        .limit(50)
+}
+
+/// Whether a published message is harness output for someone else (a hosted
+/// guest-turn answer or a harness notice) rather than this turn's reply.
+fn is_harness_output(event: &serde_json::Value) -> bool {
+    event
+        .get("tags")
+        .and_then(|tags| tags.as_array())
+        .is_some_and(|tags| {
+            tags.iter().any(|tag| {
+                matches!(
+                    tag.get(0).and_then(|name| name.as_str()),
+                    Some("buzz-guest-turn") | Some(crate::guest_runtime::HARNESS_NOTICE_TAG)
+                )
+            })
+        })
 }
 
 /// What [`deliver`] did with a fallback candidate.
@@ -166,7 +182,9 @@ pub(crate) async fn deliver(
     );
     match tokio::time::timeout(RELAY_TIMEOUT, rest.query(&[filter])).await {
         Ok(Ok(events)) => match events.as_array() {
-            Some(events) if events.is_empty() => {}
+            // Guest answers and harness notices published while the turn ran
+            // are not this turn's reply.
+            Some(events) if events.iter().all(is_harness_output) => {}
             Some(_) => {
                 tracing::debug!(
                     target: "pool::reply_fallback",
@@ -399,7 +417,7 @@ mod tests {
         assert_eq!(json["#h"], serde_json::json!([channel.to_string()]));
         assert_eq!(json["since"], 100);
         assert_eq!(json["until"], 200);
-        assert_eq!(json["limit"], 1);
+        assert_eq!(json["limit"], 50);
         let mut kinds: Vec<u64> = json["kinds"]
             .as_array()
             .unwrap()
@@ -466,6 +484,17 @@ mod tests {
         assert_eq!(seen.len(), 2, "{seen:?}");
         assert!(seen[0].starts_with("POST /query"));
         assert!(seen[1].starts_with("POST /events"));
+    }
+
+    #[tokio::test]
+    async fn guest_answers_and_harness_notices_do_not_count_as_the_reply() {
+        let others = serde_json::json!([
+            {"id": "a", "tags": [["h", "c"], ["buzz-guest-turn", "turn-1"]]},
+            {"id": "b", "tags": [["h", "c"], ["buzz-harness-notice", "guest"]]}
+        ]);
+        let (rest, seen) = mock_relay(others).await;
+        assert_eq!(deliver(&rest, reply(), 100, 200).await, Delivery::Posted);
+        assert!(seen.lock().unwrap()[1].starts_with("POST /events"));
     }
 
     #[tokio::test]
