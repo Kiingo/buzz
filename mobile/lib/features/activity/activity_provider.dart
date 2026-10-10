@@ -9,6 +9,7 @@ import '../channels/channel_management_provider.dart';
 import '../channels/channels_provider.dart';
 import 'dm_resurface.dart';
 import 'feed_item.dart';
+import 'guest_notifications.dart';
 import 'inbox_item.dart';
 
 typedef DmResurfaceAction = Future<String> Function(List<String> pubkeys);
@@ -47,6 +48,9 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
     46010,
     46011,
     46012,
+    guestApprovalRequestedKind,
+    guestApprovalResolvedKind,
+    guestAlertKind,
   ];
 
   void Function()? _unsubscribeAddressed;
@@ -479,6 +483,14 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
         },
         limit: 20,
       ),
+      // Agent guest-access approval requests, resolutions and alerts.
+      NostrFilter(
+        kinds: guestNotificationKinds,
+        tags: {
+          '#p': [myPk],
+        },
+        limit: 50,
+      ),
       // Agent job lifecycle events addressed to me.
       NostrFilter(
         kinds: const [43001, 43002, 43003, 43004, 43005, 43006],
@@ -534,6 +546,10 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
       'needs_action',
     );
     add(
+      await _trustedGuestNotifications(session, events, myPk),
+      'needs_action',
+    );
+    add(
       events.where(
         (event) =>
             mentionKinds.contains(event.kind) &&
@@ -579,6 +595,36 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
         for (final i in items)
           if (i.category == 'agent_activity') i,
       ],
+    );
+  }
+
+  /// Guest-access notifications from the owner's own agents only: each
+  /// author's kind:0 must carry a NIP-OA tag that verifies to the owner.
+  Future<List<NostrEvent>> _trustedGuestNotifications(
+    RelaySessionNotifier session,
+    List<NostrEvent> events,
+    String myPk,
+  ) async {
+    final authors = {
+      for (final event in events)
+        if (guestNotificationKinds.contains(event.kind))
+          event.pubkey.toLowerCase(),
+    };
+    if (authors.isEmpty) return const [];
+    final profiles = await _queryWithWebSocketFallback(session, [
+      NostrFilter(
+        kinds: const [0],
+        authors: authors.toList(),
+        limit: authors.length * 2,
+      ),
+    ]);
+    return visibleGuestNotifications(
+      events: events,
+      trustedAuthors: trustedGuestNotifiers(
+        profiles: profiles,
+        ownerPubkey: myPk,
+      ),
+      ownerPubkey: myPk,
     );
   }
 

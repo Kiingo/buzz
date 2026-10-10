@@ -29,6 +29,9 @@ class BuzzPushLeaseDescriptor {
   final int maxEndpointLength;
   final int maxStringLength;
 
+  /// Event kinds the relay advertises as push-eligible (NIP-11 `push_kinds`).
+  final List<int> pushKinds;
+
   const BuzzPushLeaseDescriptor({
     required this.origin,
     required this.executorKeyId,
@@ -39,6 +42,7 @@ class BuzzPushLeaseDescriptor {
     required this.maxPlaintextLength,
     required this.maxEndpointLength,
     required this.maxStringLength,
+    this.pushKinds = const [],
   });
 
   factory BuzzPushLeaseDescriptor.fromRelayInformation(
@@ -247,6 +251,7 @@ class BuzzPushLeaseDescriptor {
       maxPlaintextLength: limitation['max_plaintext_len'] as int,
       maxEndpointLength: limitation['max_endpoint_len'] as int,
       maxStringLength: maxStringLength,
+      pushKinds: List.unmodifiable(pushKinds),
     );
   }
 }

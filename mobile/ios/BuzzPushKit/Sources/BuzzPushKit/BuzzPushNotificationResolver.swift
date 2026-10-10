@@ -432,7 +432,8 @@ public final class BuzzPushNotificationResolver: BuzzPushNotificationResolving {
   ) -> VerifiedNostrEvent? {
     guard let mine = community.pubkey?.lowercased() else { return nil }
     return events.filter {
-      $0.pubkey.lowercased() != mine && [9, 40002, 45001, 45003].contains($0.kind)
+      $0.pubkey.lowercased() != mine
+        && [9, 40002, 45001, 45003, 46040, 46042].contains($0.kind)
     }.sorted {
       $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt > $1.createdAt
     }.first

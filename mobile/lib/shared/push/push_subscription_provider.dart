@@ -8,6 +8,7 @@ import '../../features/channels/channels_provider.dart';
 import '../community/community.dart';
 import '../community/community_provider.dart';
 import '../relay/relay_provider.dart';
+import 'push_relay_capability_provider.dart';
 import 'push_subscription.dart';
 
 /// Keeps the persisted desired lease and the App Group snapshot aligned with
@@ -17,6 +18,9 @@ final pushSubscriptionSyncProvider = Provider<void>((ref) {
   final active = ref.watch(activeCommunityProvider).value;
   final channels = ref.watch(channelsProvider).value;
   final mutes = ref.watch(channelMutesProvider);
+  final advertisedPushKinds =
+      ref.watch(currentRelayPushDescriptorProvider).value?.pushKinds ??
+      const <int>[];
   if (active == null ||
       !active.pushNotificationsEnabled ||
       channels == null ||
@@ -31,6 +35,7 @@ final pushSubscriptionSyncProvider = Provider<void>((ref) {
       for (final entry in mutes.store.channels.entries)
         if (entry.value.muted) entry.key,
     ],
+    advertisedPushKinds: advertisedPushKinds,
   );
   if (subscriptions == null) return;
   unawaited(
@@ -44,6 +49,7 @@ List<BuzzPushSubscription>? desiredBuzzPushSubscriptions({
   required Community community,
   required Iterable<Channel> channels,
   required Iterable<String> mutedChannelIds,
+  Iterable<int> advertisedPushKinds = const [],
 }) {
   final pubkey = community.pubkey ?? pubkeyFromNsec(community.nsec);
   if (pubkey == null || pubkey.isEmpty) return null;
@@ -58,5 +64,6 @@ List<BuzzPushSubscription>? desiredBuzzPushSubscriptions({
         if (channel.isDm && channel.isMember && !channel.isArchived) channel.id,
     ],
     mutedChannelIds: mutedChannelIds,
+    advertisedPushKinds: advertisedPushKinds,
   );
 }
