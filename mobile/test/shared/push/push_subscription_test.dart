@@ -71,6 +71,39 @@ void main() {
     expect(recovered.generationCursor, 6);
   });
 
+  test(
+    'adds owner guest notifications only when the relay advertises them',
+    () {
+      final without = buildDesiredBuzzPushSubscriptions(myPubkey: me);
+      expect(without.single.filter.kinds, buzzPushSelfDirectedKinds);
+
+      final partial = buildDesiredBuzzPushSubscriptions(
+        myPubkey: me,
+        advertisedPushKinds: [...buzzPushEligibleKinds, 46040],
+      );
+      expect(partial.single.filter.kinds, [
+        ...buzzPushSelfDirectedKinds,
+        46040,
+      ]);
+
+      final full = buildDesiredBuzzPushSubscriptions(
+        myPubkey: me,
+        advertisedPushKinds: [...buzzPushEligibleKinds, 46040, 46041, 46042],
+      );
+      expect(full.single.filter.kinds, [
+        ...buzzPushSelfDirectedKinds,
+        46040,
+        46042,
+      ]);
+      expect(full.single.filter.pTags, [me]);
+      // The persisted form round-trips with the added kinds.
+      final decoded = BuzzPushSubscription.fromJson(
+        jsonDecode(jsonEncode(full.single.toJson())) as Map<String, dynamic>,
+      );
+      expect(decoded.filter.kinds, full.single.filter.kinds);
+    },
+  );
+
   test('builds aligned self and unmuted channel subscriptions', () {
     final subscriptions = buildDesiredBuzzPushSubscriptions(
       myPubkey: me.toUpperCase(),

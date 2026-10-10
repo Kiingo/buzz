@@ -247,7 +247,7 @@ void main() {
     // Cold start: channels still loading, so the first fetch has no DM ids.
     await container.read(activityProvider.future);
     expect(session.dmQueries, isEmpty);
-    expect(session.queryFilterCounts, [3]);
+    expect(session.queryFilterCounts, [4]);
 
     // Channel list resolves with a DM → Activity must rebuild and query it.
     channels.resolve([_dmChannel('dm1')]);
@@ -256,7 +256,7 @@ void main() {
 
     expect(session.dmQueries, hasLength(1));
     expect(session.dmQueries.single, ['dm1']);
-    expect(session.queryFilterCounts, [3, 4]);
+    expect(session.queryFilterCounts, [4, 5]);
   });
 
   test('does not query DMs when the resolved channel list has none', () async {
@@ -299,7 +299,7 @@ void main() {
     await container.read(channelsProvider.future);
     final feed = await container.read(activityProvider.future);
 
-    expect(session.queryFilterCounts, [3]);
+    expect(session.queryFilterCounts, [4]);
     expect(session.mentionFetchCount, 1);
     expect(feed.mentions.map((item) => item.id), ['fallback-mention']);
   });
