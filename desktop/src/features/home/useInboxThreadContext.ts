@@ -5,6 +5,7 @@ import {
   isInboxThreadContextEvent,
 } from "@/features/home/lib/inboxViewHelpers";
 import { relayEventFromFeedItem } from "@/features/home/lib/inbox";
+import { loadInboxThreadContext } from "@/features/home/lib/inboxThreadContextLoader";
 import { fetchStructuralAuxForMessages } from "@/features/messages/lib/auxBackfill";
 import { getThreadReference } from "@/features/messages/lib/threading";
 import { relayClient } from "@/shared/api/relayClient";
@@ -15,7 +16,16 @@ import { HOME_MENTION_EVENT_KINDS } from "@/shared/constants/kinds";
 
 type InboxThreadContextResult = {
   events: RelayEvent[];
-  hasLoadError: boolean;
+  /**
+   * Root/ancestor ids that could not be loaded and are absent from `events`
+   * (deleted or no longer readable). Rendered as inline placeholders, never as
+   * a page-level error.
+   */
+  unavailableEventIds: string[];
+  /** Replies (or, for DMs, the conversation window) failed to load. */
+  hasRepliesLoadError: boolean;
+  /** Re-run the context load after a failure. */
+  retry: () => void;
   isLoading: boolean;
   /** Edits/deletions referencing context messages, fetched by `#e`. */
   structuralEvents: RelayEvent[];
@@ -28,7 +38,7 @@ type InboxThreadContextResult = {
 };
 
 const THREAD_CONTEXT_LIMIT = 100;
-const MAX_ANCESTOR_HOPS = 50;
+const EMPTY_IDS: string[] = [];
 
 function dedupeEvents(events: RelayEvent[]): RelayEvent[] {
   const eventsById = new Map<string, RelayEvent>();
@@ -50,10 +60,15 @@ export function useInboxThreadContext(
     fullChannel?: boolean;
     hasChannelLoadError?: boolean;
     isChannelLoading?: boolean;
+    /** Refetch the channel window (the DM context source) on retry. */
+    refetchChannel?: () => unknown;
   } = {},
 ): InboxThreadContextResult {
   const [fetchedEvents, setFetchedEvents] = React.useState<RelayEvent[]>([]);
-  const [hasLoadError, setHasLoadError] = React.useState(false);
+  const [unavailableEventIds, setUnavailableEventIds] = React.useState<
+    string[]
+  >([]);
+  const [hasRepliesLoadError, setHasRepliesLoadError] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
 
   const selectedEvent = React.useMemo(
@@ -70,129 +85,89 @@ export function useInboxThreadContext(
   const selectedChannelId = item?.channelId ?? null;
   const fullChannel = options.fullChannel === true;
 
+  // The effect reads the channel window through a ref: it is a lookup source
+  // for ancestors, not a reason to refetch context on every live message.
+  const channelMessagesRef = React.useRef(channelMessages);
+  React.useEffect(() => {
+    channelMessagesRef.current = channelMessages;
+  }, [channelMessages]);
+  const [reloadToken, setReloadToken] = React.useState(0);
+  const { hasChannelLoadError, refetchChannel } = options;
+  const retry = React.useCallback(() => {
+    setReloadToken((token) => token + 1);
+    if (hasChannelLoadError) {
+      void refetchChannel?.();
+    }
+  }, [hasChannelLoadError, refetchChannel]);
+
   React.useEffect(() => {
     let isCancelled = false;
+    void reloadToken;
 
     if (fullChannel || !selectedEvent || !selectedThreadRootId) {
       setFetchedEvents([]);
-      setHasLoadError(false);
+      setUnavailableEventIds([]);
+      setHasRepliesLoadError(false);
       setIsLoading(false);
       return () => {
         isCancelled = true;
       };
     }
 
-    async function loadContext() {
-      const targetEvent = selectedEvent;
-      const threadRootId = selectedThreadRootId;
-      if (!targetEvent || !threadRootId) {
-        return;
-      }
+    const targetEvent = selectedEvent;
+    const threadRootId = selectedThreadRootId;
+    const selection = {
+      selectedChannelId,
+      selectedEventId: targetEvent.id,
+      selectedParentId,
+      selectedThreadRootId: threadRootId,
+    };
 
-      setIsLoading(true);
-      setHasLoadError(false);
+    setIsLoading(true);
+    setHasRepliesLoadError(false);
+    setUnavailableEventIds([]);
 
-      try {
-        const selection = {
-          selectedChannelId,
-          selectedEventId: targetEvent.id,
-          selectedParentId,
-          selectedThreadRootId: threadRootId,
-        };
-        const ancestorEventsPromise = (async () => {
-          const eventsById = new Map<string, RelayEvent>();
-          let failed = false;
-
-          const fetchEvent = async (eventId: string) => {
-            if (eventId === targetEvent.id || eventsById.has(eventId)) {
-              return eventsById.get(eventId) ?? targetEvent;
-            }
-
-            try {
-              const event = await getEventById(eventId);
-              eventsById.set(event.id, event);
-              return event;
-            } catch {
-              failed = true;
-              return null;
-            }
-          };
-
-          if (threadRootId !== targetEvent.id) {
-            await fetchEvent(threadRootId);
-          }
-
-          let ancestorId = selectedParentId;
-          const seen = new Set<string>([targetEvent.id]);
-          let hops = 0;
-          while (
-            ancestorId &&
-            !seen.has(ancestorId) &&
-            hops < MAX_ANCESTOR_HOPS
-          ) {
-            seen.add(ancestorId);
-            const ancestor = await fetchEvent(ancestorId);
-            if (!ancestor || ancestorId === threadRootId) {
-              break;
-            }
-            ancestorId = getThreadReference(ancestor.tags).parentId;
-            hops += 1;
-          }
-
-          return { events: [...eventsById.values()], failed };
-        })();
-
-        const descendantEventsPromise =
-          selectedChannelId && threadRootId
-            ? relayClient
-                .fetchEvents({
-                  "#e": [threadRootId],
-                  "#h": [selectedChannelId],
-                  kinds: [...HOME_MENTION_EVENT_KINDS],
-                  limit: THREAD_CONTEXT_LIMIT,
-                })
-                .then((events) => ({ events, failed: false }))
-                .catch((error) => {
-                  console.error(
-                    "Failed to hydrate Inbox thread context",
-                    selectedChannelId,
-                    threadRootId,
-                    error,
-                  );
-                  return { events: [] as RelayEvent[], failed: true };
-                })
-            : Promise.resolve({ events: [] as RelayEvent[], failed: false });
-        const [ancestorResult, descendantResult] = await Promise.all([
-          ancestorEventsPromise,
-          descendantEventsPromise,
-        ]);
-
+    void loadInboxThreadContext({
+      channelId: selectedChannelId,
+      fetchEventById: getEventById,
+      fetchReplies: (channelId, rootId) =>
+        relayClient.fetchEvents({
+          "#e": [rootId],
+          "#h": [channelId],
+          kinds: [...HOME_MENTION_EVENT_KINDS],
+          limit: THREAD_CONTEXT_LIMIT,
+        }),
+      lookupLocalEvent: (eventId) =>
+        channelMessagesRef.current?.find((event) => event.id === eventId),
+      parentId: selectedParentId,
+      targetEvent,
+      threadRootId,
+    })
+      .then((result) => {
         if (isCancelled) {
           return;
         }
-
-        setHasLoadError(ancestorResult.failed || descendantResult.failed);
+        setUnavailableEventIds(result.unavailableEventIds);
+        setHasRepliesLoadError(result.repliesFailed);
         setFetchedEvents(
           dedupeEvents(
-            [...ancestorResult.events, ...descendantResult.events].filter(
-              (event): event is RelayEvent =>
-                event !== null && isInboxThreadContextEvent(event, selection),
+            result.events.filter((event) =>
+              isInboxThreadContextEvent(event, selection),
             ),
           ),
         );
-      } catch (error) {
+      })
+      .catch((error) => {
         if (!isCancelled) {
           console.error("Failed to load Inbox message context", error);
-          setHasLoadError(true);
+          setHasRepliesLoadError(true);
         }
-      } finally {
+      })
+      .finally(() => {
         if (!isCancelled) {
           setIsLoading(false);
         }
-      }
-    }
-
-    void loadContext();
+      });
 
     return () => {
       isCancelled = true;
@@ -203,6 +178,7 @@ export function useInboxThreadContext(
     selectedParentId,
     selectedThreadRootId,
     fullChannel,
+    reloadToken,
   ]);
 
   const events = React.useMemo(() => {
@@ -249,6 +225,15 @@ export function useInboxThreadContext(
     selectedParentId,
     selectedThreadRootId,
   ]);
+
+  const visibleUnavailableEventIds = React.useMemo(() => {
+    if (fullChannel || unavailableEventIds.length === 0) {
+      return EMPTY_IDS;
+    }
+    const presentIds = new Set(events.map((event) => event.id));
+    const missing = unavailableEventIds.filter((id) => !presentIds.has(id));
+    return missing.length === 0 ? EMPTY_IDS : missing;
+  }, [events, fullChannel, unavailableEventIds]);
 
   // Auxiliary events carry only an `#e` reference, so they may be absent from
   // both the selected feed item and the channel-window cache. Hydrate them by
@@ -363,9 +348,11 @@ export function useInboxThreadContext(
 
   return {
     events,
-    hasLoadError: fullChannel
+    unavailableEventIds: visibleUnavailableEventIds,
+    hasRepliesLoadError: fullChannel
       ? options.hasChannelLoadError === true
-      : hasLoadError,
+      : hasRepliesLoadError,
+    retry,
     isLoading: fullChannel ? options.isChannelLoading === true : isLoading,
     structuralEvents,
     refreshStructuralEvents,

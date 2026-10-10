@@ -78,8 +78,11 @@ import {
   KIND_AGENT_STATUS,
   KIND_CHANNEL_THREAD_SUMMARY,
   KIND_STREAM_MESSAGE,
-  KIND_SYSTEM_MESSAGE,
 } from "@/shared/constants/kinds";
+import {
+  invalidateChannelMembershipQueries,
+  isMembershipSystemEvent,
+} from "@/features/channels/membershipSystemEvents";
 
 type MessageQueryContext = {
   optimisticId: string;
@@ -373,25 +376,12 @@ export function useChannelSubscription(channel: Channel | null) {
       projectChannelWindowMessages(queryClient, channelId);
     }
 
-    if (event.kind === KIND_SYSTEM_MESSAGE) {
-      try {
-        const payload = JSON.parse(event.content) as { type?: string };
-        if (
-          payload.type === "member_joined" ||
-          payload.type === "member_left" ||
-          payload.type === "member_removed"
-        ) {
-          void queryClient.invalidateQueries({
-            queryKey: ["channels", channelId, "members"],
-          });
-          void queryClient.invalidateQueries({
-            queryKey: ["channels"],
-            exact: true,
-          });
-        }
-      } catch {
-        // Non-JSON system message — ignore.
-      }
+    if (isMembershipSystemEvent(event)) {
+      invalidateChannelMembershipQueries(queryClient, channelId);
+      void queryClient.invalidateQueries({
+        queryKey: ["channels"],
+        exact: true,
+      });
     }
   });
 

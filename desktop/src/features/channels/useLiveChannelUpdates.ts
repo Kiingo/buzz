@@ -3,6 +3,10 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { channelsQueryKey } from "@/features/channels/hooks";
 import { updateChannelLastMessageAt } from "@/features/channels/lib/channelRecency";
+import {
+  invalidateChannelMembershipQueries,
+  isMembershipSystemEvent,
+} from "@/features/channels/membershipSystemEvents";
 import { mergeTimelineCacheMessages } from "@/features/messages/hooks";
 import { channelMessagesKey } from "@/features/messages/lib/messageQueryKeys";
 import {
@@ -240,6 +244,17 @@ export function useLiveChannelUpdates(
         invalidateChannelsDebounced();
       }
       return;
+    }
+
+    // Roster changes (join/leave/remove/add) must reach every surface that
+    // shows the member list or count — the Home inbox header, the members
+    // sidebar, mention pickers — not only the channel screen's own
+    // subscription. Without this, a member leaving a channel the viewer is
+    // not actively viewing left "Members · N" stale until the 5-minute roster
+    // freshness window lapsed.
+    if (isMembershipSystemEvent(event)) {
+      invalidateChannelMembershipQueries(queryClient, channelId);
+      invalidateChannelsDebounced();
     }
 
     const isDmChannel = dmChannelMap.has(channelId);

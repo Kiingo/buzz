@@ -19,6 +19,7 @@ import { isOtherSetupAgent } from "@/features/agents/lib/otherSetupAgent";
 import { useIsArchivedPredicate } from "@/features/identity-archive/hooks";
 import { useClassifiedMembers } from "@/features/channels/lib/useClassifiedMembers";
 import { formatMemberName } from "@/features/channels/lib/memberUtils";
+import { revalidateCachedChannelRoster } from "@/features/channels/rosterFreshness";
 import {
   canAddChannelMembers,
   PRIVATE_CHANNEL_ADD_DENIED_MESSAGE,
@@ -154,6 +155,12 @@ export function MembersSidebar({
   >(() => new Set());
   const identityQuery = useIdentityQuery();
   const membersQuery = useChannelMembersQuery(channelId, open);
+  // Every open shows the current roster, not one cached before a leave/remove.
+  React.useEffect(() => {
+    if (open && channelId) {
+      revalidateCachedChannelRoster(queryClient, channelId);
+    }
+  }, [channelId, open, queryClient]);
   const channelsQuery = useChannelsQuery({ enabled: open });
   const addMembersMutation = useAddChannelMembersMutation(channelId);
   const changeRoleMutation = useMutation({

@@ -303,6 +303,7 @@ export function HomeView({
         threadContextFeedItem?.channelType === "dm",
       hasChannelLoadError: channelMessagesQuery.isError,
       isChannelLoading: channelMessagesQuery.isPending,
+      refetchChannel: channelMessagesQuery.refetch,
     },
   );
   const { editMessage, isEditingMessage } = useInboxEditMessage(
@@ -795,8 +796,10 @@ export function HomeView({
               isEditingMessage={isEditingMessage}
               isSendingReply={isSendingReply}
               isSinglePanelView={isSinglePanelDetailView}
-              hasThreadContextLoadError={threadContext.hasLoadError}
+              hasThreadRepliesLoadError={threadContext.hasRepliesLoadError}
               isThreadContextLoading={threadContext.isLoading}
+              onRetryThreadContext={threadContext.retry}
+              unavailableContextEventIds={threadContext.unavailableEventIds}
               item={selectedItem}
               latchedDefaultParentId={latchedDefaultParentId}
               messages={contextMessages}
