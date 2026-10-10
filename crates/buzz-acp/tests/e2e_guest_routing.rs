@@ -271,7 +271,7 @@ impl MockRoute {
     /// Start a route that answers every queued turn with
     /// `GUEST-ANSWER <token>` in the trigger's thread, and holds turns whose
     /// text contains `HOLD` for approval.
-    async fn start(agent_pubkey: String) -> Self {
+    async fn start(agent_pubkey: String, owner_pubkey: String) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         let state = Arc::new(Mutex::new(RouteState::default()));
@@ -282,6 +282,7 @@ impl MockRoute {
                 let state = shared.clone();
                 let base = base.clone();
                 let agent = agent_pubkey.clone();
+                let owner = owner_pubkey.clone();
                 tokio::spawn(async move {
                     let Some((method, path, headers, body)) = read_http(&mut socket).await else {
                         return;
@@ -309,6 +310,17 @@ impl MockRoute {
                             let content = trigger["content"].as_str().unwrap_or("").to_string();
                             s.turns.push(value.clone());
                             if content.contains("HOLD") {
+                                // The owner is told through a 46040 the agent signs.
+                                s.outbox.push(json!({
+                                    "publication_id": format!("pub-{n}"),
+                                    "guest_turn_id": turn_id,
+                                    "kind": "notice",
+                                    "event_kind": 46040,
+                                    "channel_id": value["channel_id"],
+                                    "content": "Someone asked your agent something that needs your approval.",
+                                    "tags": [["p", owner], ["buzz-guest-approval", format!("ap-{n}")], ["agent", agent]],
+                                    "mentions": [],
+                                }));
                                 json!({"guest_turn_id": turn_id, "state": "approval_required", "tier": 2})
                             } else {
                                 let token = content
@@ -484,7 +496,7 @@ impl World {
             );
         }
 
-        let route = MockRoute::start(hex(&agent)).await;
+        let route = MockRoute::start(hex(&agent), hex(&owner)).await;
         let agent_log = dir.join("agent-prompts.jsonl");
         let harness_log = std::fs::File::create(dir.join("buzz-acp.log")).unwrap();
         let harness = Command::new(bin("buzz-acp"))
@@ -1147,6 +1159,53 @@ async fn approval_pending_agent_requests_are_not_resubmitted() {
         })
         .await;
     tokio::time::sleep(Duration::from_secs(2)).await;
+    // The owner's approval notification was signed by the agent, published,
+    // acked, and is readable only by the owner.
+    world
+        .wait_until("46040 acked", Duration::from_secs(30), || {
+            world
+                .route
+                .state
+                .lock()
+                .unwrap()
+                .acks
+                .iter()
+                .any(|a| a["body"]["event"]["kind"] == json!(46040))
+        })
+        .await;
+    let ack = world
+        .route
+        .state
+        .lock()
+        .unwrap()
+        .acks
+        .iter()
+        .find(|a| a["body"]["event"]["kind"] == json!(46040))
+        .cloned()
+        .unwrap();
+    let signed: Event = serde_json::from_value(ack["body"]["event"].clone()).unwrap();
+    assert_eq!(signed.pubkey, world.agent.public_key());
+    assert!(tag_values(&signed, "h").is_empty() && tag_values(&signed, "e").is_empty());
+    assert_eq!(
+        tag_values(&signed, "p"),
+        vec![vec!["p".to_string(), hex(&world.owner)]]
+    );
+    let mine = query(
+        &world.owner,
+        json!({"kinds": [46040], "#p": [hex(&world.owner)]}),
+    )
+    .await;
+    assert!(
+        mine.iter().any(|e| e.id == signed.id),
+        "owner reads the notification"
+    );
+    let theirs = query(
+        &world.teammate,
+        json!({"kinds": [46040], "#p": [hex(&world.owner)]}),
+    )
+    .await;
+    assert!(theirs.is_empty());
+
     // Same request again (different event): dropped locally.
     send("@Atlas TOKEN-hold1 HOLD please share calendar details");
     tokio::time::sleep(Duration::from_secs(5)).await;
