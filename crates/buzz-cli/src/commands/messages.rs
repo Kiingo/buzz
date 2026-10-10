@@ -821,6 +821,49 @@ pub async fn cmd_send_message(
         }
     };
 
+    // Hosted guest-turn mode: a message whose audience includes anyone beyond
+    // the owner and the owner's agents is a crossing and is classified first.
+    if let Some((turn, route)) = turn
+        .as_ref()
+        .and_then(|turn| turn.guest_route().map(|route| (turn, route)))
+    {
+        let addressed = turn
+            .addressed_beyond_requesters(&client.keys().public_key().to_hex(), &handoff_candidates);
+        let draft = super::outbound_classify::Draft {
+            channel_id: &p.channel_id,
+            text: &final_content,
+            addressed: &addressed,
+            reply_to_event_id: p.reply_to.clone(),
+            thread_root_event_id: thread_ref.as_ref().map(|t| t.root_event_id.to_hex()),
+            idempotency_key: super::outbound_classify::idempotency_key(
+                turn.turn_id(),
+                &p.channel_id,
+                &final_content,
+            ),
+        };
+        match super::outbound_classify::check(client, route, &draft).await? {
+            super::outbound_classify::Outcome::Publish => {}
+            super::outbound_classify::Outcome::Held { approval_id } => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "published": false,
+                        "held_for_owner": true,
+                        "approval_id": approval_id,
+                        "message": "held for your owner's review; if approved, this exact text is posted for you. Do not resend it.",
+                    })
+                );
+                return Ok(());
+            }
+            super::outbound_classify::Outcome::Dropped => {
+                return Err(CliError::Usage(
+                    "not sent: the crossing check blocked this message and your owner has been alerted"
+                        .into(),
+                ));
+            }
+        }
+    }
+
     let event = client.sign_event(builder)?;
     let emitted_mentions = event_mention_pubkeys(&event);
     let event_id = event.id.to_hex();

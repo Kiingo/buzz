@@ -78,6 +78,103 @@ pub(crate) fn install_context_filter(runtime: &Arc<GuestRuntime>) {
     }
 }
 
+/// Route details for the per-turn context file, so `buzz messages send` can
+/// classify an owner turn's outbound crossing (contracts §4.2). `None`
+/// outside hosted mode or without a route.
+pub(crate) fn turn_route_info(is_dm: bool) -> Option<Value> {
+    let runtime = HOSTED_CONTEXT_FILTER.get()?;
+    let client = runtime.client.as_ref()?;
+    let classifier_mode = runtime
+        .registration
+        .read()
+        .ok()
+        .and_then(|r| r.as_ref().and_then(|r| r.classifier_mode.clone()));
+    Some(json!({
+        "url": client.base_url(),
+        "community_id": client.community_id(),
+        "owner": runtime.owner_pubkey,
+        "agent": runtime.agent_pubkey,
+        "channel_type": if is_dm { "dm" } else { "channel" },
+        "classifier_mode": classifier_mode,
+    }))
+}
+
+/// Whether a harness fallback reply may be published. Outside hosted mode,
+/// or when the channel's audience is only the owner and the owner's agents,
+/// always `true`. Otherwise the route's `/classify` decides; if it cannot be
+/// reached the reply is published unless the classifier is enforcing.
+pub(crate) async fn fallback_may_publish(reply: &crate::unpublished_reply::FallbackReply) -> bool {
+    let Some(runtime) = HOSTED_CONTEXT_FILTER.get().cloned() else {
+        return true;
+    };
+    let Some(client) = runtime.client.clone() else {
+        return true;
+    };
+    let roster: Vec<String> = runtime
+        .roster
+        .participants(reply.channel_id, &runtime.agent_pubkey)
+        .await
+        .map(|members| members.into_iter().collect())
+        .unwrap_or_default();
+    let verdicts = futures_util::future::join_all(
+        roster
+            .iter()
+            .map(|member| runtime.is_owner_equivalent_author(member)),
+    )
+    .await;
+    if verdicts.iter().all(|owner_equivalent| *owner_equivalent) {
+        return true;
+    }
+    let enforcing = runtime
+        .registration
+        .read()
+        .ok()
+        .and_then(|r| r.as_ref().and_then(|r| r.classifier_mode.clone()))
+        .as_deref()
+        == Some("enforce");
+    let mut audience = roster;
+    audience.sort();
+    let body = json!({
+        "check": "outbound",
+        "crossing": "owner_turn_to_shared_audience",
+        "community_id": client.community_id(),
+        "channel_id": reply.channel_id.to_string(),
+        "channel_type": "channel",
+        "text": reply.content,
+        "requester_pubkeys": runtime.owner_pubkey.iter().collect::<Vec<_>>(),
+        "audience_pubkeys": audience,
+        "thread_messages": [],
+        "idempotency_key": format!(
+            "fallback-{}",
+            hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+                format!("{}:{}", reply.channel_id, reply.content).as_bytes()
+            ))
+        ),
+        "reply_to_event_id": reply.thread.map(|(_, parent)| parent.to_hex()),
+        "thread_root_event_id": reply.thread.map(|(root, _)| root.to_hex()),
+    });
+    match client.classify(&body).await {
+        Ok(response) => {
+            let action = response
+                .get("required_action")
+                .and_then(Value::as_str)
+                .unwrap_or("publish")
+                .to_string();
+            runtime.emit(
+                "guest_outbound_classified",
+                Some(reply.channel_id),
+                json!({"source": "reply_fallback", "requiredAction": action,
+                       "approvalId": response.get("approval_id")}),
+            );
+            action == "publish"
+        }
+        Err(error) => {
+            tracing::warn!(%error, "outbound classify unavailable for fallback reply");
+            !enforcing
+        }
+    }
+}
+
 /// Whether hosted-mode context filtering is installed.
 pub(crate) fn context_filter_active() -> bool {
     HOSTED_CONTEXT_FILTER.get().is_some()

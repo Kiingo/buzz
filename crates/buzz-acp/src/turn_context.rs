@@ -141,7 +141,7 @@ impl TurnContextFile {
         reply_to: Option<&str>,
         trigger_pubkeys: &[String],
     ) -> TurnContextGuard {
-        self.publish_with_trigger(channel_id, reply_to, trigger_pubkeys, None)
+        self.publish_with_trigger(channel_id, reply_to, trigger_pubkeys, None, None)
     }
 
     /// Publish this turn's context, including the provenance of the event that
@@ -155,6 +155,7 @@ impl TurnContextFile {
         reply_to: Option<&str>,
         trigger_pubkeys: &[String],
         trigger: Option<&nostr::Event>,
+        guest_route: Option<serde_json::Value>,
     ) -> TurnContextGuard {
         let Some(inner) = self.inner.clone() else {
             return TurnContextGuard {
@@ -176,6 +177,7 @@ impl TurnContextFile {
                     buzz_sdk::agent_relay::provenance_tags(&tags)
                 })
                 .unwrap_or_default(),
+            "guest_route": guest_route,
         })
         .to_string();
         let mut generation = lock(&inner.generation);
@@ -344,7 +346,7 @@ mod tests {
             ])
             .sign_with_keys(&owner)
             .unwrap();
-        let _guard = file.publish_with_trigger(Uuid::new_v4(), None, &[], Some(&trigger));
+        let _guard = file.publish_with_trigger(Uuid::new_v4(), None, &[], Some(&trigger), None);
         let written: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(written["trigger_event_id"], trigger.id.to_hex());

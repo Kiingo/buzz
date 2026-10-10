@@ -60,6 +60,7 @@ pub(crate) struct TurnContext {
     trigger_event_id: Option<String>,
     trigger_author: Option<String>,
     trigger_provenance_tags: Vec<Vec<String>>,
+    guest_route: Option<super::outbound_classify::GuestRoute>,
 }
 
 impl TurnContext {
@@ -119,6 +120,9 @@ impl TurnContext {
             trigger_event_id: hex_field("trigger_event_id"),
             trigger_author: hex_field("trigger_author"),
             trigger_provenance_tags,
+            guest_route: context
+                .get("guest_route")
+                .and_then(super::outbound_classify::GuestRoute::from_json),
         })
     }
 
@@ -216,6 +220,26 @@ impl TurnContext {
                 )
             }
         }
+    }
+
+    /// The hosted guest route, when this turn runs in hosted guest-turn mode.
+    pub(crate) fn guest_route(&self) -> Option<&super::outbound_classify::GuestRoute> {
+        self.guest_route.as_ref()
+    }
+
+    /// This turn's id (empty when the harness did not supply one).
+    pub(crate) fn turn_id(&self) -> &str {
+        self.turn_id.as_deref().unwrap_or_default()
+    }
+
+    /// The deliberately mentioned pubkeys beyond the sender and the turn's
+    /// triggering members.
+    pub(crate) fn addressed_beyond_requesters(
+        &self,
+        self_pubkey: &str,
+        mentions: &[String],
+    ) -> Vec<String> {
+        handoff_recipients(mentions, self_pubkey, &self.trigger_pubkeys)
     }
 
     /// Refuse a send after this turn handed the floor to someone else.

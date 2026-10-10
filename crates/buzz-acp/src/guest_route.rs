@@ -213,6 +213,11 @@ impl GuestRouteClient {
         })
     }
 
+    /// Base URL (no trailing slash).
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     /// Community id sent with every request.
     pub(crate) fn community_id(&self) -> &str {
         &self.community_id
@@ -311,6 +316,11 @@ impl GuestRouteClient {
         request: &RegisterRequest,
     ) -> Result<RegisterResponse, RouteError> {
         self.post("/agents/register", request).await
+    }
+
+    /// `POST /classify` (contracts §4.2).
+    pub(crate) async fn classify(&self, body: &Value) -> Result<Value, RouteError> {
+        self.post("/classify", body).await
     }
 
     /// `POST /turns`.

@@ -2700,6 +2700,7 @@ pub async fn run_prompt_task(
                 reply_to.as_deref(),
                 &crate::turn_context::trigger_pubkeys(b),
                 b.events.last().map(|trigger| &trigger.event),
+                crate::guest_runtime::turn_route_info(is_dm),
             ));
             crate::queue::format_prompt(
                 b,
