@@ -16,6 +16,8 @@ import type {
 } from "@/features/home/lib/inbox";
 import { getProjectInboxReference } from "@/features/home/lib/projectInbox";
 import { ProjectInboxDetail } from "@/features/home/ui/ProjectInboxDetail";
+import { isGuestApprovalFeedItem } from "@/features/guest-access/lib/store";
+import { GuestApprovalInboxDetail } from "@/features/guest-access/ui/GuestApprovalInboxDetail";
 import {
   InboxRepliesLoadNotice,
   InboxUnavailableContextRow,
@@ -153,6 +155,11 @@ type InboxDetailPaneProps = {
 
 /** Routes Inbox selections to their canonical message or Buzz Git detail. */
 export function InboxDetailPane(props: InboxDetailPaneProps) {
+  if (props.item && isGuestApprovalFeedItem(props.item.item)) {
+    return (
+      <GuestApprovalInboxDetail item={props.item.item} onBack={props.onBack} />
+    );
+  }
   if (props.item && getProjectInboxReference(props.item.item)) {
     return (
       <ProjectInboxDetail

@@ -31,7 +31,7 @@ export function enrichFeedItemChannel(
 function feedNotificationSource(item: FeedItem) {
   if (item.channelType === "dm") return "dm" as const;
   if (item.category === "mention") return "mention" as const;
-  if (item.kind === 46010) return "approval" as const;
+  if (item.kind === 46010 || item.kind === 46040) return "approval" as const;
   return "needs_action" as const;
 }
 

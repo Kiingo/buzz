@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { mergeGuestApprovalFeed } from "@/features/guest-access/lib/store";
 import { getHomeFeed } from "@/shared/api/tauri";
 import { useRelayConnection } from "@/shared/api/useRelayConnection";
 import { useFocusedRefetchInterval } from "@/shared/lib/useDocumentVisible";
@@ -28,7 +29,7 @@ export function useHomeFeedQuery() {
       getHomeFeed({
         limit: 50,
         types: "mentions,needs_action,activity,agent_activity",
-      }),
+      }).then((feed) => mergeGuestApprovalFeed(feed)),
     gcTime: 5 * 60 * 1_000,
     // Pause background polling on degraded/stalled/disconnected connections.
     // The relay can't serve the request anyway, and the spurious failures
