@@ -63,6 +63,65 @@ const POLICY_CHECK: Duration = Duration::from_secs(60);
 const PUBLISHED_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const NOTICE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Placeholder shown to the local session in place of a crossing's text.
+pub(crate) const WITHHELD_PLACEHOLDER: &str =
+    "[message from someone other than your owner; handled by the guest route and not shown here]";
+
+/// The hosted-mode runtime, installed once at startup so prompt assembly can
+/// withhold crossing text from the local session's conversation context.
+static HOSTED_CONTEXT_FILTER: std::sync::OnceLock<Arc<GuestRuntime>> = std::sync::OnceLock::new();
+
+/// Install `runtime` as the context filter (hosted mode only).
+pub(crate) fn install_context_filter(runtime: &Arc<GuestRuntime>) {
+    if runtime.mode() == GuestTurns::Hosted {
+        let _ = HOSTED_CONTEXT_FILTER.set(Arc::clone(runtime));
+    }
+}
+
+/// Whether hosted-mode context filtering is installed.
+pub(crate) fn context_filter_active() -> bool {
+    HOSTED_CONTEXT_FILTER.get().is_some()
+}
+
+/// Whether a message JSON object (from the relay) is harness output for a
+/// guest: a hosted answer or a harness notice.
+pub(crate) fn is_guest_output_json(obj: &Value) -> bool {
+    obj.get("tags")
+        .and_then(Value::as_array)
+        .is_some_and(|tags| {
+            tags.iter().any(|tag| {
+                matches!(
+                    tag.get(0).and_then(Value::as_str),
+                    Some(agent_relay::GUEST_TAG)
+                        | Some(agent_relay::GUEST_TURN_TAG)
+                        | Some(HARNESS_NOTICE_TAG)
+                )
+            })
+        })
+}
+
+/// In hosted mode, withhold every crossing's text from conversation context
+/// handed to the local session: only the owner, this agent and verified
+/// same-owner agents are shown; everyone else (and this agent's own output
+/// for guests, already replaced by the caller) becomes
+/// [`WITHHELD_PLACEHOLDER`]. A no-op in local mode.
+pub(crate) async fn filter_context(
+    context: Option<crate::queue::ConversationContext>,
+) -> Option<crate::queue::ConversationContext> {
+    let runtime = HOSTED_CONTEXT_FILTER.get()?.clone();
+    let mut context = context?;
+    let messages = match &mut context {
+        crate::queue::ConversationContext::Thread { messages, .. }
+        | crate::queue::ConversationContext::Dm { messages, .. } => messages,
+    };
+    for message in messages.iter_mut() {
+        if !runtime.is_owner_equivalent_author(&message.pubkey).await {
+            message.content = WITHHELD_PLACEHOLDER.to_string();
+        }
+    }
+    Some(context)
+}
+
 /// Static configuration for a [`GuestRuntime`].
 pub(crate) struct GuestRuntimeConfig {
     pub(crate) mode: GuestTurns,
@@ -170,6 +229,29 @@ impl GuestRuntime {
     /// Where non-owner turns run.
     pub(crate) fn mode(&self) -> GuestTurns {
         self.mode
+    }
+
+    /// The owner, this agent, or an agent attested by the same owner.
+    pub(crate) async fn is_owner_equivalent_author(&self, pubkey: &str) -> bool {
+        let pubkey = pubkey.to_ascii_lowercase();
+        if pubkey == self.agent_pubkey {
+            return true;
+        }
+        let Some(owner) = self.owner_pubkey.as_deref() else {
+            return false;
+        };
+        if pubkey == owner {
+            return true;
+        }
+        if !is_hex64(&pubkey) {
+            return false;
+        }
+        self.profiles
+            .lookup(&pubkey, &self.rest)
+            .await
+            .attested_owner
+            .as_deref()
+            .is_some_and(|attested| attested.eq_ignore_ascii_case(owner))
     }
 
     fn emit(&self, kind: &str, channel_id: Option<Uuid>, payload: Value) {

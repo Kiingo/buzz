@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -757,10 +757,7 @@ async fn non_owner_dm_is_routed() {
         None,
         &["dms", "open", "--pubkey", &hex(&world.agent)],
     );
-    let dm = opened["channel_id"]
-        .as_str()
-        .expect("dm channel")
-        .to_string();
+    let dm = opened["dm_id"].as_str().expect("dm channel").to_string();
     let agent = hex(&world.agent);
     cli(
         &world.teammate,
@@ -1011,13 +1008,29 @@ async fn sibling_loops_hit_the_pair_limit_and_guest_relays_are_crossings() {
         .collect();
     assert!(tagged.contains(&hex(&world.owner)));
     tokio::time::sleep(Duration::from_secs(8)).await;
-    let prompts = world.agent_prompts();
+    // Count sibling events that triggered a local turn: each is answered
+    // with "ACK TOKEN-sibN" (batched events share one answer).
+    let answers = world.agent_messages().await;
     let reached = (0..9)
-        .filter(|i| prompts.contains(&format!("TOKEN-sib{i} ")))
+        .filter(|i| {
+            answers
+                .iter()
+                .any(|e| e.content == format!("ACK TOKEN-sib{i}"))
+        })
+        .count();
+    let prompts = world.agent_prompts();
+    let triggered = (0..9)
+        // Trigger events render as "Content: ..." blocks; thread history
+        // (which legitimately shows sibling posts) does not.
+        .filter(|i| prompts.contains(&format!("Content: @Atlas TOKEN-sib{i} ")))
         .count();
     assert!(
         reached <= crate_pair_limit(),
-        "{reached} sibling turns reached the agent"
+        "{reached} sibling turns answered"
+    );
+    assert!(
+        triggered <= crate_pair_limit(),
+        "{triggered} sibling events reached the agent"
     );
     assert!(reached >= 1, "sibling turns are local");
     assert!(

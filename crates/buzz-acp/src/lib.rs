@@ -2373,6 +2373,7 @@ async fn tokio_main() -> Result<()> {
         observer.clone(),
     ));
     let guest_runtime_tasks = guest_runtime.spawn_background();
+    guest_runtime::install_context_filter(&guest_runtime);
     tracing::info!(guest_turns = %config.guest_turns, "guest turn routing configured");
 
     if !config.memory_enabled {

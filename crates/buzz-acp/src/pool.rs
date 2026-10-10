@@ -3736,7 +3736,7 @@ async fn fetch_conversation_context(
     let last_event = batch.events.last()?;
     let tags = crate::queue::parse_thread_tags(&last_event.event);
     if let Some(root_id) = tags.root_event_id {
-        return fetch_thread_context(
+        let context = fetch_thread_context(
             batch.channel_id,
             &root_id,
             limit,
@@ -3744,11 +3744,17 @@ async fn fetch_conversation_context(
             &ctx.rest_client,
         )
         .await;
+        return crate::guest_runtime::filter_context(context.clone())
+            .await
+            .or(context);
     }
 
     // DM non-reply: fetch recent conversation history.
     if is_dm {
-        return fetch_dm_context(batch.channel_id, limit, &ctx.rest_client).await;
+        let context = fetch_dm_context(batch.channel_id, limit, &ctx.rest_client).await;
+        return crate::guest_runtime::filter_context(context.clone())
+            .await
+            .or(context);
     }
 
     None
@@ -4236,6 +4242,15 @@ fn json_to_context_message(obj: &serde_json::Value) -> Option<ContextMessage> {
         })
         .unwrap_or_else(|| "unknown".to_string());
 
+    // This agent's own output for a guest is the guest's conversation, not
+    // the owner's: never shown to the local session in hosted mode.
+    let content = if crate::guest_runtime::is_guest_output_json(obj)
+        && crate::guest_runtime::context_filter_active()
+    {
+        crate::guest_runtime::WITHHELD_PLACEHOLDER
+    } else {
+        content
+    };
     Some(ContextMessage {
         event_id,
         pubkey: pubkey.to_string(),
