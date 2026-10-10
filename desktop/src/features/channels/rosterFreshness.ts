@@ -43,3 +43,28 @@ export async function invalidateChannelMembersRosters(
     });
   }
 }
+
+/**
+ * Revalidate a cached roster when a roster surface (the members sidebar)
+ * opens. The long freshness window would otherwise serve a cached roster that
+ * missed a change no live path observed (e.g. the relay subscription was
+ * reconnecting when a member left). Cached rows still render immediately; the
+ * refetch replaces them in the background. A roster that has never loaded, or
+ * is already loading, is left to its own initial fetch so opening never issues
+ * a duplicate request.
+ */
+export function revalidateCachedChannelRoster(
+  queryClient: Pick<
+    ReturnType<typeof useQueryClient>,
+    "getQueryState" | "invalidateQueries"
+  >,
+  channelId: string,
+): boolean {
+  const queryKey = channelMembersQueryKey(channelId);
+  const state = queryClient.getQueryState(queryKey);
+  if (!state || state.dataUpdatedAt === 0 || state.fetchStatus === "fetching") {
+    return false;
+  }
+  void queryClient.invalidateQueries({ queryKey });
+  return true;
+}

@@ -16,6 +16,10 @@ import type {
 } from "@/features/home/lib/inbox";
 import { getProjectInboxReference } from "@/features/home/lib/projectInbox";
 import { ProjectInboxDetail } from "@/features/home/ui/ProjectInboxDetail";
+import {
+  InboxRepliesLoadNotice,
+  InboxUnavailableContextRow,
+} from "@/features/home/ui/InboxContextNotices";
 import { ChannelMembersBar } from "@/features/channels/ui/ChannelMembersBar";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { formatInboxTypeLabel } from "@/features/home/lib/inbox";
@@ -71,6 +75,7 @@ const MembersSidebar = React.lazy(async () => {
 
 const EMPTY_CONTEXT_MESSAGES: InboxContextMessage[] = [];
 const EMPTY_REPLIES: InboxReply[] = [];
+const EMPTY_UNAVAILABLE_IDS: string[] = [];
 
 type InboxDetailPaneProps = {
   agentPubkeys?: ReadonlySet<string>;
@@ -83,8 +88,12 @@ type InboxDetailPaneProps = {
   isSendingReply?: boolean;
   editTargetId: string | null;
   isSinglePanelView?: boolean;
-  hasThreadContextLoadError?: boolean;
+  /** Thread replies could not be loaded; shows a quiet retry notice. */
+  hasThreadRepliesLoadError?: boolean;
   isThreadContextLoading?: boolean;
+  /** Root/ancestor ids that could not be loaded; rendered as placeholders. */
+  unavailableContextEventIds?: string[];
+  onRetryThreadContext?: () => void;
   item: InboxItem | null;
   messages?: InboxContextMessage[];
   profiles?: Record<string, UserProfileSummary>;
@@ -173,8 +182,10 @@ function InboxMessageDetailPane({
   isEditingMessage = false,
   isSendingReply = false,
   isSinglePanelView = false,
-  hasThreadContextLoadError = false,
+  hasThreadRepliesLoadError = false,
   isThreadContextLoading = false,
+  unavailableContextEventIds = EMPTY_UNAVAILABLE_IDS,
+  onRetryThreadContext,
   item,
   messages = EMPTY_CONTEXT_MESSAGES,
   profiles,
@@ -703,15 +714,9 @@ function InboxMessageDetailPane({
                 <span>Loading surrounding context...</span>
               </div>
             ) : null}
-            {hasThreadContextLoadError ? (
-              <div
-                className="mx-4 mb-2 flex items-center gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                data-testid="home-inbox-context-error"
-              >
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>Some message context could not be loaded.</span>
-              </div>
-            ) : null}
+            {unavailableContextEventIds.map((eventId) => (
+              <InboxUnavailableContextRow eventId={eventId} key={eventId} />
+            ))}
             {displayMessages.map((message, index) => {
               const hasUnreadBoundary = message.id === unreadBoundaryEventId;
               const isAfterSeparator = index === 1 || hasUnreadBoundary;
@@ -774,6 +779,9 @@ function InboxMessageDetailPane({
                 />
               );
             })}
+            {hasThreadRepliesLoadError && !isThreadContextLoading ? (
+              <InboxRepliesLoadNotice onRetry={onRetryThreadContext} />
+            ) : null}
           </div>
         </div>
 
