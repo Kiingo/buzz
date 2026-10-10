@@ -10,6 +10,8 @@ pub mod mem;
 pub mod messages;
 pub mod moderation;
 pub mod notes;
+/// Outbound crossing check for owner-turn sends in hosted guest-turn mode.
+pub(crate) mod outbound_classify;
 pub mod pack;
 pub mod patches;
 pub mod pr;

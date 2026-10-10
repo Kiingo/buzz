@@ -23,6 +23,7 @@ LOG = os.environ.get("FAKE_AGENT_LOG")
 DELAY = float(os.environ.get("FAKE_AGENT_DELAY", "2"))
 TOKEN = re.compile(r"TOKEN-[A-Za-z0-9]+")
 ASK = re.compile(r"ASK-AGENT:([0-9a-f]{64})")
+MARK = re.compile(r"CLASSIFY-[A-Z]+")
 CHANNEL = re.compile(r"Channel: .*?\(#([0-9a-f-]{36})\)")
 EVENT_ID = re.compile(r"Event ID: ([0-9a-f]{64})")
 
@@ -61,7 +62,8 @@ def handle_prompt(msg_id, params):
             "--channel",
             channels[-1],
             "--content",
-            "Question for you about " + (tokens[-1] if tokens else "this"),
+            "Question for you about " + (tokens[-1] if tokens else "this")
+            + "".join(" " + m for m in MARK.findall(text)[-1:]),
             "--mention",
             asks[-1],
         ]

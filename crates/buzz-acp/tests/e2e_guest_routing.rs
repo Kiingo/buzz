@@ -179,6 +179,7 @@ struct RouteState {
     turns: Vec<Value>,
     outbox: Vec<Value>,
     acks: Vec<Value>,
+    classified: Vec<Value>,
     bad_auth: Vec<String>,
 }
 
@@ -342,6 +343,19 @@ impl MockRoute {
                                     "mentions": [requester],
                                 }));
                                 json!({"guest_turn_id": turn_id, "state": "queued", "tier": 1})
+                            }
+                        } else if route.starts_with("/classify") {
+                            let text = value["text"].as_str().unwrap_or("").to_string();
+                            s.classified.push(value.clone());
+                            if text.contains("CLASSIFY-HOLD") {
+                                json!({"decision_id": "d", "mode": "enforce", "route": "approve",
+                                       "required_action": "hold_for_owner", "approval_id": "ap-1"})
+                            } else if text.contains("CLASSIFY-DROP") {
+                                json!({"decision_id": "d", "mode": "enforce", "route": "block",
+                                       "required_action": "drop", "approval_id": null})
+                            } else {
+                                json!({"decision_id": "d", "mode": "shadow", "route": "proceed",
+                                       "required_action": "publish", "approval_id": null})
                             }
                         } else if route.starts_with("/outbox?") {
                             let acked: Vec<String> = s
@@ -1260,4 +1274,89 @@ async fn guest_approval_notifications_are_private_to_the_owner() {
         body.get("accepted") == Some(&json!(false)) || body.get("error").is_some(),
         "malformed notification rejected: {body}"
     );
+}
+
+/// Owner-turn sends to a shared audience are classified: publish, hold for
+/// the owner, or drop, and the crossing kind is reported.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a live relay (BUZZ_E2E_RELAY_URL)"]
+async fn owner_turn_crossings_are_classified_and_held_or_dropped() {
+    let world = World::new("classify").await;
+    let classified = |world: &World| world.route.state.lock().unwrap().classified.clone();
+    let ask = |target: &Keys, token: &str, mark: &str| {
+        format!("@Atlas {token} ASK-AGENT:{} {mark}", hex(target))
+    };
+    let to_teammate = world.post(
+        &world.owner,
+        None,
+        &ask(&world.teammate, "TOKEN-c1", ""),
+        None,
+    );
+    world
+        .wait_for_agent_message("published crossing", |e| {
+            e.content.starts_with("Question for you about TOKEN-c1")
+        })
+        .await;
+    world.post(
+        &world.owner,
+        None,
+        &ask(&world.jess_agent, "TOKEN-c2", "CLASSIFY-HOLD"),
+        None,
+    );
+    world.post(
+        &world.owner,
+        None,
+        &ask(&world.teammate, "TOKEN-c3", "CLASSIFY-DROP"),
+        None,
+    );
+    world
+        .wait_until("three sends classified", Duration::from_secs(60), || {
+            ["TOKEN-c1", "TOKEN-c2", "TOKEN-c3"].iter().all(|t| {
+                classified(&world).iter().any(|c| {
+                    c["text"]
+                        .as_str()
+                        .is_some_and(|x| x.contains(&format!("about {t}")))
+                })
+            })
+        })
+        .await;
+    let by = |t: &str| {
+        classified(&world)
+            .into_iter()
+            .find(|c| {
+                c["text"]
+                    .as_str()
+                    .is_some_and(|x| x.contains(&format!("about {t}")))
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        by("TOKEN-c1")["crossing"],
+        json!("owner_turn_to_shared_audience")
+    );
+    assert_eq!(by("TOKEN-c1")["reply_to_event_id"], json!(to_teammate));
+    assert_eq!(
+        by("TOKEN-c2")["crossing"],
+        json!("agent_to_other_owner_agent")
+    );
+    assert_eq!(
+        by("TOKEN-c1")["requester_pubkeys"],
+        json!([hex(&world.owner)])
+    );
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let posted = world.agent_messages().await;
+    assert!(
+        !posted.iter().any(|e| e.content.contains("about TOKEN-c2")),
+        "held draft not sent"
+    );
+    assert!(
+        !posted.iter().any(|e| e.content.contains("about TOKEN-c3")),
+        "dropped draft not sent"
+    );
+    let log = world.agent_prompts();
+    assert!(
+        log.contains("held_for_owner"),
+        "agent told the draft is held"
+    );
+    world.assert_no_bad_auth();
 }

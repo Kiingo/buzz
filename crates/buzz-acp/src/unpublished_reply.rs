@@ -217,6 +217,12 @@ pub(crate) async fn deliver(
         }
     }
 
+    // Hosted guest-turn mode: a fallback reply to a shared audience is an
+    // outbound crossing, classified like an agent's own send.
+    if !crate::guest_runtime::fallback_may_publish(&reply).await {
+        return Delivery::Skipped;
+    }
+
     let thread_ref = reply
         .thread
         .map(|(root_event_id, parent_event_id)| buzz_sdk::ThreadRef {
