@@ -911,6 +911,11 @@ impl GuestRuntime {
             _ => return false,
         }
         published.insert(item.publication_id.clone(), (Instant::now(), event.clone()));
+        // Output for a held turn means the owner decided (or the hold ended):
+        // stop treating its request as pending, even if no control frame came.
+        if let Some(turn) = &item.guest_turn_id {
+            self.guards().resolve_pending(turn);
+        }
         self.emit_publication(&item, channel_id, Some(&event), "published");
         if let Err(error) = client.ack(&item.publication_id, &event).await {
             tracing::warn!(%error, publication_id = %item.publication_id, "outbox ack failed");
