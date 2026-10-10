@@ -139,7 +139,13 @@ pub const AUTHOR_ONLY_KINDS: &[u32] = &[
 ///
 /// Used by `filter_can_match_result_gated_kinds` to force the per-event
 /// fallback path in COUNT rather than the fast SQL `count_events()`.
-pub const RESULT_GATED_KINDS: &[u32] = &[KIND_DM_VISIBILITY, KIND_AGENT_TURN_METRIC];
+pub const RESULT_GATED_KINDS: &[u32] = &[
+    KIND_DM_VISIBILITY,
+    KIND_AGENT_TURN_METRIC,
+    KIND_AGENT_GUEST_APPROVAL_REQUESTED,
+    KIND_AGENT_GUEST_APPROVAL_RESOLVED,
+    KIND_AGENT_GUEST_ALERT,
+];
 
 /// Kinds whose stored events have `#p`-bound read access — readable only by
 /// subscribers whose pubkey appears in the event's `#p` tag.
@@ -167,6 +173,11 @@ pub const P_GATED_KINDS: &[u32] = &[
     // readable by any unauthenticated or non-owner party, including via `ids`
     // filters — see NIP-AM §Relay Behavior.
     KIND_AGENT_TURN_METRIC,
+    // Agent guest access notifications are addressed to one owner; their
+    // existence reveals who is asking that owner's agents for what.
+    KIND_AGENT_GUEST_APPROVAL_REQUESTED,
+    KIND_AGENT_GUEST_APPROVAL_RESOLVED,
+    KIND_AGENT_GUEST_ALERT,
 ];
 
 /// NIP-AP: Agent Persona (parameterized replaceable, owner-authored).
@@ -590,6 +601,29 @@ pub const KIND_WORKFLOW_APPROVAL_GRANTED: u32 = 46011;
 /// A pending workflow approval was denied.
 pub const KIND_WORKFLOW_APPROVAL_DENIED: u32 = 46012;
 
+// Agent guest access notifications (46040–46042). Stored, global (no `h`),
+// addressed to one owner by a single `p` tag and readable only by that owner
+// (see [`P_GATED_KINDS`] and [`RESULT_GATED_KINDS`]). Content is a
+// non-sensitive one-liner; details live behind the owner-authenticated API.
+/// Someone asked an owner's agent something that needs the owner's approval.
+/// Tags: `p` (owner), `buzz-guest-approval` (approval id), `agent`.
+pub const KIND_AGENT_GUEST_APPROVAL_REQUESTED: u32 = 46040;
+/// A guest approval was resolved. Tags as 46040 plus `status`.
+pub const KIND_AGENT_GUEST_APPROVAL_RESOLVED: u32 = 46041;
+/// A guest-access alert (high-severity block, suspension, digest ready).
+/// Tags: `p` (owner), `buzz-guest-alert` (alert id), `severity`, `agent`.
+pub const KIND_AGENT_GUEST_ALERT: u32 = 46042;
+
+/// Returns `true` for the agent guest access notification kinds (46040–46042).
+pub const fn is_agent_guest_notification_kind(kind: u32) -> bool {
+    matches!(
+        kind,
+        KIND_AGENT_GUEST_APPROVAL_REQUESTED
+            | KIND_AGENT_GUEST_APPROVAL_RESOLVED
+            | KIND_AGENT_GUEST_ALERT
+    )
+}
+
 // User groups (47000–47999)
 
 // System / admin custom range (48000–48999)
@@ -757,6 +791,9 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_WORKFLOW_APPROVAL_REQUESTED,
     KIND_WORKFLOW_APPROVAL_GRANTED,
     KIND_WORKFLOW_APPROVAL_DENIED,
+    KIND_AGENT_GUEST_APPROVAL_REQUESTED,
+    KIND_AGENT_GUEST_APPROVAL_RESOLVED,
+    KIND_AGENT_GUEST_ALERT,
     KIND_AUDIT_ENTRY,
     KIND_HUDDLE_STARTED,
     KIND_HUDDLE_PARTICIPANT_JOINED,
