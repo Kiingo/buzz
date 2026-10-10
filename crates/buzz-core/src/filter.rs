@@ -11,10 +11,11 @@ pub fn filters_match(filters: &[Filter], event: &StoredEvent) -> bool {
     filters.iter().any(|f| filter_match_one(f, event))
 }
 
-/// Result-level read authorization for relay-signed events whose content is
-/// private to a single viewer. Currently gates `KIND_DM_VISIBILITY` and
-/// `KIND_AGENT_TURN_METRIC`: the reader MUST equal the event's `#p` tag
-/// (owner). Returns `true` for every other kind.
+/// Result-level read authorization for events private to a single viewer:
+/// every kind in [`crate::kind::RESULT_GATED_KINDS`] (`KIND_DM_VISIBILITY`,
+/// `KIND_AGENT_TURN_METRIC`, the agent guest notifications 46040–46042). The
+/// reader MUST equal the event's `#p` tag (owner). Returns `true` for every
+/// other kind.
 ///
 /// This guards every delivery surface — WS historical pull (`req.rs`), HTTP
 /// bridge (`bridge.rs`), and live fan-out (`event.rs`) — so a query that
@@ -22,7 +23,7 @@ pub fn filters_match(filters: &[Filter], event: &StoredEvent) -> bool {
 /// a known event id) still cannot read another user's private event.
 pub fn reader_authorized_for_event(event: &nostr::Event, reader_pubkey_hex: &str) -> bool {
     let kind = crate::kind::event_kind_u32(event);
-    if kind != crate::kind::KIND_DM_VISIBILITY && kind != crate::kind::KIND_AGENT_TURN_METRIC {
+    if !crate::kind::RESULT_GATED_KINDS.contains(&kind) {
         return true;
     }
     let p = nostr::SingleLetterTag::lowercase(nostr::Alphabet::P);
@@ -285,6 +286,26 @@ mod tests {
             .sign_with_keys(&relay)
             .expect("sign");
         assert!(reader_authorized_for_event(&note, other));
+    }
+
+    #[test]
+    fn reader_authorized_for_event_gates_guest_notifications_by_p() {
+        let notifier = Keys::generate();
+        let owner = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        for kind in [
+            crate::kind::KIND_AGENT_GUEST_APPROVAL_REQUESTED,
+            crate::kind::KIND_AGENT_GUEST_APPROVAL_RESOLVED,
+            crate::kind::KIND_AGENT_GUEST_ALERT,
+        ] {
+            let event = EventBuilder::new(Kind::Custom(kind as u16), "x")
+                .tags([Tag::parse(["p", owner]).unwrap()])
+                .sign_with_keys(&notifier)
+                .expect("sign");
+            assert!(reader_authorized_for_event(&event, owner), "{kind}");
+            assert!(!reader_authorized_for_event(&event, other), "{kind}");
+            assert!(crate::kind::P_GATED_KINDS.contains(&kind));
+        }
     }
 
     #[test]

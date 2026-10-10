@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use sha2::Digest as _;
 
-/// Message kinds that can produce a mobile Activity-inbox notification.
-/// Generic Nostr notes and non-message workflow/agent events are deliberately
-/// excluded from the dogfood MVP.
-pub(crate) const PUSH_KINDS: &[u64] = &[9, 40_002, 45_001, 45_003];
+/// Kinds that can produce a mobile notification: chat messages, plus the
+/// owner-addressed agent guest approval request (46040) and alert (46042).
+/// Generic Nostr notes and workflow events are deliberately excluded.
+pub(crate) const PUSH_KINDS: &[u64] = &[9, 40_002, 45_001, 45_003, 46_040, 46_042];
 
 /// NIP-PL addressable push-lease event kind.
 pub const KIND_PUSH_LEASE: u32 = 30_350;
@@ -687,7 +687,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join(", ");
         let predicate = format!("NEW.kind IN ({kinds})");
-        let migration = include_str!("../../../../migrations/0040_push_message_kinds.sql");
+        let migration =
+            include_str!("../../../../migrations/0045_push_guest_notification_kinds.sql");
         assert!(
             migration.contains(&predicate),
             "migration trigger must use PUSH_KINDS exactly: {predicate}"

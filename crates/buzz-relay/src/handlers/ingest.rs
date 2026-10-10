@@ -568,6 +568,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_DM_OPEN | KIND_DM_ADD_MEMBER | KIND_DM_HIDE => Ok(Scope::MessagesWrite),
         KIND_WORKFLOW_DEF | KIND_WORKFLOW_TRIGGER => Ok(Scope::MessagesWrite),
         KIND_APPROVAL_GRANT | KIND_APPROVAL_DENY => Ok(Scope::MessagesWrite),
+        // Agent guest access notifications (46040–46042), owner-addressed.
+        k if buzz_core::kind::is_agent_guest_notification_kind(k) => Ok(Scope::MessagesWrite),
         _ => Err("restricted: unknown event kind"),
     }
 }
@@ -723,6 +725,10 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             | KIND_AGENT_TURN_METRIC
             // NIP-PL leases are author-owned, addressable global state.
             | super::push_lease::KIND_PUSH_LEASE
+            // Agent guest access notifications are owner-addressed and global.
+            | buzz_core::kind::KIND_AGENT_GUEST_APPROVAL_REQUESTED
+            | buzz_core::kind::KIND_AGENT_GUEST_APPROVAL_RESOLVED
+            | buzz_core::kind::KIND_AGENT_GUEST_ALERT
     )
 }
 
@@ -2483,6 +2489,11 @@ async fn ingest_event_inner(
         channel_id = None;
     }
 
+    if buzz_core::kind::is_agent_guest_notification_kind(kind_u32) {
+        super::guest_notification::validate(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    }
+
     if requires_h_channel_scope(kind_u32) && channel_id.is_none() {
         return Err(IngestError::Rejected(
             "invalid: channel-scoped events must include an h tag".into(),
@@ -4022,6 +4033,24 @@ mod tests {
                 required_scope_for_kind(kind, &dummy).ok(),
                 Some(Scope::UsersWrite),
                 "kind {kind} should require UsersWrite scope"
+            );
+        }
+    }
+
+    #[test]
+    fn guest_notifications_are_global_only_and_in_scope_allowlist() {
+        let dummy = make_dummy_event();
+        for kind in [
+            buzz_core::kind::KIND_AGENT_GUEST_APPROVAL_REQUESTED,
+            buzz_core::kind::KIND_AGENT_GUEST_APPROVAL_RESOLVED,
+            buzz_core::kind::KIND_AGENT_GUEST_ALERT,
+        ] {
+            assert!(is_global_only_kind(kind), "{kind}");
+            assert!(!requires_h_channel_scope(kind), "{kind}");
+            assert_eq!(
+                required_scope_for_kind(kind, &dummy).ok(),
+                Some(Scope::MessagesWrite),
+                "{kind}"
             );
         }
     }
