@@ -2071,6 +2071,10 @@ async fn tokio_main() -> Result<()> {
         .init();
 
     let mut config = Config::from_cli().map_err(|e| anyhow::anyhow!("configuration error: {e}"))?;
+    // Agent subprocesses (and the `buzz` CLI they run) inherit the resolved
+    // mode, so hosted-mode reads quarantine crossing text even when the mode
+    // was inferred from a route URL rather than set explicitly.
+    std::env::set_var("BUZZ_ACP_GUEST_TURNS", config.guest_turns.to_string());
 
     // ── Setup-mode early branch ───────────────────────────────────────────────
     //

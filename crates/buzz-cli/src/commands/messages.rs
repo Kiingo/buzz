@@ -385,6 +385,7 @@ pub async fn cmd_get_messages(
     let resp = client.query(&filter).await?;
     let mut events: Vec<serde_json::Value> = serde_json::from_str(&resp).unwrap_or_default();
     events.sort_by_key(|e| e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0));
+    super::hosted_quarantine::apply(client, &mut events).await;
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
     Ok(())
@@ -455,6 +456,7 @@ pub async fn cmd_get_thread(
             .and_then(|value| value.as_u64())
             .unwrap_or(0)
     });
+    super::hosted_quarantine::apply(client, &mut events).await;
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
     Ok(())
@@ -502,6 +504,7 @@ pub async fn cmd_search(
             std::cmp::Reverse(e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0))
         });
     }
+    super::hosted_quarantine::apply(client, &mut events).await;
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
     Ok(())
@@ -1153,7 +1156,9 @@ pub async fn dispatch(
             before,
             since,
             kinds,
+            show_untrusted,
         } => {
+            super::hosted_quarantine::set_show_untrusted(show_untrusted);
             cmd_get_messages(
                 client,
                 &channel,
@@ -1171,7 +1176,9 @@ pub async fn dispatch(
             link,
             limit,
             depth_limit,
+            show_untrusted,
         } => {
+            super::hosted_quarantine::set_show_untrusted(show_untrusted);
             let (channel, event, expected_root) =
                 match link {
                     Some(link) => {
@@ -1214,7 +1221,9 @@ pub async fn dispatch(
             author,
             since,
             limit,
+            show_untrusted,
         } => {
+            super::hosted_quarantine::set_show_untrusted(show_untrusted);
             cmd_search(
                 client,
                 query.as_deref(),

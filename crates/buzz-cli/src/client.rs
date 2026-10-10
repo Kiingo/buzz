@@ -1340,6 +1340,9 @@ pub fn normalize_events(events: &[serde_json::Value]) -> String {
             if let Some(sig) = e.get("sig").and_then(|v| v.as_str()) {
                 event["sig"] = serde_json::json!(sig);
             }
+            if e.get("quarantined").and_then(|v| v.as_bool()) == Some(true) {
+                event["quarantined"] = serde_json::json!(true);
+            }
             event
         })
         .collect();

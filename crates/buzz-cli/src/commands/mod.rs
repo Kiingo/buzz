@@ -5,6 +5,8 @@ pub mod channels;
 pub mod dms;
 pub mod emoji;
 pub mod feed;
+/// Quarantine of crossing text in hosted-mode reads.
+pub(crate) mod hosted_quarantine;
 pub mod issues;
 pub mod mem;
 pub mod messages;
