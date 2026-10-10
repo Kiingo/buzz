@@ -875,6 +875,51 @@ async fn other_owner_agents_are_routed_with_verified_or_flagged_chains() {
     );
     publish_as(&world.jess_agent, &forged).await;
 
+    // Hop 2: a second agent of Jess's relays Juniper's message onward.
+    let kestrel = Keys::generate();
+    let kestrel_tag = auth_tag(&world.jess, &kestrel);
+    cli(
+        &kestrel,
+        Some(&kestrel_tag),
+        &["users", "set-profile", "--name", "Kestrel E2E"],
+    );
+    cli(
+        &world.owner,
+        None,
+        &[
+            "channels",
+            "add-member",
+            "--channel",
+            &world.channel,
+            "--pubkey",
+            &hex(&kestrel),
+            "--role",
+            "bot",
+        ],
+    );
+    let mut hop2_tags =
+        buzz_sdk::agent_relay::outgoing_relay_tags(&hop1, Some(&origin.id)).unwrap();
+    hop2_tags.push(vec![
+        "e".into(),
+        origin.id.to_hex(),
+        "".into(),
+        "root".into(),
+    ]);
+    hop2_tags.push(vec![
+        "e".into(),
+        hop1.id.to_hex(),
+        "".into(),
+        "reply".into(),
+    ]);
+    hop2_tags.push(vec!["p".into(), agent.clone()]);
+    let hop2 = chat(
+        &kestrel,
+        &world.channel,
+        "@Atlas TOKEN-hop2 and the venue?",
+        hop2_tags,
+    );
+    publish_as(&kestrel, &hop2).await;
+
     // Too deep: hop 3.
     let deep_tags = vec![
         vec![
@@ -901,7 +946,7 @@ async fn other_owner_agents_are_routed_with_verified_or_flagged_chains() {
 
     world
         .wait_until("three agent turns routed", Duration::from_secs(45), || {
-            ["TOKEN-hop1", "TOKEN-forged", "TOKEN-deep"]
+            ["TOKEN-hop1", "TOKEN-hop2", "TOKEN-forged", "TOKEN-deep"]
                 .iter()
                 .all(|t| world.route.turn_with(t).is_some())
         })
@@ -916,6 +961,25 @@ async fn other_owner_agents_are_routed_with_verified_or_flagged_chains() {
     assert!(hop1_turn["author_profile_event"]["tags"]
         .as_array()
         .is_some_and(|tags| tags.iter().any(|t| t[0] == json!("auth"))));
+    // Hop-2 style chains carry each agent hop's kind:0; this hop-1 chain's
+    // only hop is a person, so it carries just the origin event.
+    assert_eq!(
+        hop1_turn["relay_chain_events"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let hop2_turn = world.route.turn_with("TOKEN-hop2").unwrap();
+    assert_eq!(hop2_turn["relay_chain_status"], json!("verified"));
+    let chain_ids: Vec<Value> = hop2_turn["relay_chain_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].clone())
+        .collect();
+    assert_eq!(chain_ids[0], json!(origin.id.to_hex()));
+    assert_eq!(chain_ids[1], json!(hop1.id.to_hex()));
+    let hop_profile = &hop2_turn["relay_chain_events"][2];
+    assert_eq!(hop_profile["kind"], json!(0), "agent hop profile included");
+    assert_eq!(hop_profile["pubkey"], json!(hex(&world.jess_agent)));
     let forged_turn = world.route.turn_with("TOKEN-forged").unwrap();
     assert_eq!(forged_turn["relay_chain_status"], json!("unverifiable"));
     assert_eq!(forged_turn["relay_chain_events"], json!([]));

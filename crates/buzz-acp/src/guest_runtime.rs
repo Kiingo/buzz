@@ -557,7 +557,7 @@ impl GuestRuntime {
             thread_root_event_id: thread_root,
             context_events,
             relay_chain_events: if chain.status == ChainStatus::Verified {
-                chain.events.clone()
+                self.chain_with_hop_profiles(&chain.events).await
             } else {
                 Vec::new()
             },
@@ -633,6 +633,32 @@ impl GuestRuntime {
                 }
             }
         }
+    }
+
+    /// The verified chain events, origin first, followed by the signed kind:0
+    /// profile of every agent hop (the route needs each agent's NIP-OA
+    /// attestation; a hop without one counts as unknown).
+    async fn chain_with_hop_profiles(&self, events: &[Event]) -> Vec<Event> {
+        let mut out = events.to_vec();
+        let mut seen: HashSet<String> = HashSet::new();
+        for event in events {
+            let author = event.pubkey.to_hex();
+            if !seen.insert(author.clone()) {
+                continue;
+            }
+            let profile = self.profiles.lookup(&author, &self.rest).await;
+            if !profile.is_agent() {
+                continue;
+            }
+            if let Some(parsed) = profile
+                .event
+                .clone()
+                .and_then(|value| serde_json::from_value::<Event>(value).ok())
+            {
+                out.push(parsed);
+            }
+        }
+        out
     }
 
     async fn submit_with_retry(
