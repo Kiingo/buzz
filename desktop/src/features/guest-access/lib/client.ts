@@ -58,6 +58,8 @@ export function describeGuestAccessError(code: string): string {
       return "This Buzz identity is already linked to another account.";
     case "user_already_bound":
       return "Your account is already linked to a different Buzz identity.";
+    case "granted_sources_invalid":
+      return "Choose which of the requested sources to share, then approve again.";
     case "grantee_not_linked":
       return "That person hasn't linked their account yet, so a grant can't be created.";
     case "nip98_replayed":
@@ -198,6 +200,8 @@ export const guestAccessApi = {
       decision: ApprovalDecision;
       editedText?: string;
       grant?: { scope: GrantScope; days?: number } | null;
+      /** Owner-data requests only (contracts §5.2.1); sent with `approve`. */
+      grantedSources?: string[] | null;
       idempotencyKey?: string;
     },
   ) => {
@@ -210,6 +214,9 @@ export const guestAccessApi = {
           ? { edited_text: input.editedText ?? "" }
           : {}),
         ...(input.grant ? { grant: input.grant } : {}),
+        ...(input.decision === "approve" && input.grantedSources
+          ? { granted_sources: input.grantedSources }
+          : {}),
         idempotency_key:
           input.idempotencyKey ?? idempotencyKey(`desktop-decision`),
       },
@@ -221,6 +228,15 @@ export const guestAccessApi = {
         typeof result?.publication_id === "string"
           ? result.publication_id
           : null,
+      rerunGuestTurnId:
+        typeof result?.rerun_guest_turn_id === "string"
+          ? result.rerun_guest_turn_id
+          : null,
+      grantedSources: Array.isArray(result?.granted_sources)
+        ? (result.granted_sources as unknown[]).filter(
+            (value): value is string => typeof value === "string",
+          )
+        : null,
     };
   },
 

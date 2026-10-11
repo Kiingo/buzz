@@ -11,6 +11,8 @@ export type DecisionInput = {
   decision: ApprovalDecision;
   editedText?: string;
   grant?: { scope: GrantScope; days?: number } | null;
+  /** Owner-data requests: the sources released to the re-run (§5.2.1). */
+  grantedSources?: string[] | null;
 };
 
 type Deps = {
@@ -30,18 +32,23 @@ export async function submitApprovalDecision(
   input: DecisionInput,
   idempotencyKey: string,
   deps: Deps,
-): Promise<{ alreadyDecided: boolean }> {
+): Promise<{ alreadyDecided: boolean; rerunGuestTurnId: string | null }> {
   let alreadyDecided = false;
+  let rerunGuestTurnId: string | null = null;
   try {
-    await deps.decide(approval.approvalId, {
+    const result = await deps.decide(approval.approvalId, {
       decision: input.decision,
       editedText: input.editedText,
       grant:
         input.decision === "approve" || input.decision === "approve_edited"
           ? (input.grant ?? null)
           : null,
+      ...(input.decision === "approve" && input.grantedSources
+        ? { grantedSources: input.grantedSources }
+        : {}),
       idempotencyKey,
     });
+    rerunGuestTurnId = result?.rerunGuestTurnId ?? null;
   } catch (error) {
     const routeError = toGuestAccessError(error);
     if (routeError.code !== "approval_already_decided") throw routeError;
@@ -61,7 +68,7 @@ export async function submitApprovalDecision(
         console.debug("Guest approval control frame not delivered", error);
       });
   }
-  return { alreadyDecided };
+  return { alreadyDecided, rerunGuestTurnId };
 }
 
 const defaultDeps: Deps = {

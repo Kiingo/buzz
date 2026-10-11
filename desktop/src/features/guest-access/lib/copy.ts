@@ -41,6 +41,10 @@ const REASON_CODES: Record<string, string> = {
     "The answer uses information only you can see, and no grant covers it.",
   inbound_classifier: "The safety check flagged the question.",
   outbound_classifier: "The safety check flagged the drafted answer.",
+  owner_data_requested:
+    "Answering needs information only you can see. Nothing is shared unless you approve.",
+  owner_promise_guard:
+    "Your agent offered to ask you, so this request was opened for you to decide.",
   classifier_unavailable:
     "The safety check was unavailable, so this was held to be safe.",
 };
@@ -60,6 +64,9 @@ const DATA_SOURCES: Record<string, string> = {
   hubspot: "HubSpot",
   shareable: "Items you marked shareable",
   owner_mailbox: "Your mailbox",
+  calendar_events: "Calendar events",
+  outlook_mailbox: "Outlook mailbox",
+  kiingo_files: "Kiingo files",
 };
 
 /** Owner-facing label for a data source the guest turn read. */

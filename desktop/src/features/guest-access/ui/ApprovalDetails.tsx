@@ -9,7 +9,7 @@ import {
   requesterLabel,
   scorePercent,
 } from "../lib/copy";
-import type { GuestApproval } from "../lib/wire";
+import { isOwnerDataRequest, type GuestApproval } from "../lib/wire";
 
 function Row({
   label,
@@ -48,7 +48,12 @@ export function ApprovalDetails({
   const agent = approval.agent.displayName ?? "Your agent";
   const ownerOnly = new Set(approval.ownerOnlySources);
   const reasons = approval.reasonCodes.map(approvalReason);
-  const flags = approval.classifier.categories;
+  // The owner-data reason already says the answer needs the owner's data;
+  // don't repeat the matching classifier category.
+  const flags = approval.classifier.categories.filter(
+    (category) =>
+      !(isOwnerDataRequest(approval) && category === "needs_owner_data"),
+  );
   const scores = Object.entries(approval.classifier.topScores)
     .filter(([, score]) => score >= 0.4)
     .sort((a, b) => b[1] - a[1]);
@@ -115,7 +120,9 @@ export function ApprovalDetails({
       {showDraft ? (
         <section>
           <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Reply that will be sent, exactly as written
+            {isOwnerDataRequest(approval)
+              ? "What they were told while you decide"
+              : "Reply that will be sent, exactly as written"}
           </h4>
           <pre
             className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border/70 bg-background px-3 py-2 font-sans text-sm text-foreground"
@@ -132,7 +139,9 @@ export function ApprovalDetails({
         </h4>
         {approval.dataSources.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No private data was read.
+            {isOwnerDataRequest(approval)
+              ? "Nothing private has been read yet."
+              : "No private data was read."}
           </p>
         ) : (
           <ul

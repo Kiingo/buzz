@@ -129,3 +129,43 @@ test("owner settings routes use the documented paths and bodies", async () => {
   });
   assert.deepEqual(calls[6].body, { enabled: false });
 });
+
+test("approve sends granted_sources and reads the re-run response", async () => {
+  const calls = capture({
+    approval: { approval_id: "a1" },
+    grant: null,
+    publication_id: null,
+    rerun_guest_turn_id: "rerun-7",
+    granted_sources: ["calendar_events"],
+  });
+  const result = await guestAccessApi.decide("a1", {
+    decision: "approve",
+    grantedSources: ["calendar_events"],
+    idempotencyKey: "key-12345678",
+  });
+  assert.deepEqual(calls[0].body, {
+    decision: "approve",
+    granted_sources: ["calendar_events"],
+    idempotency_key: "key-12345678",
+  });
+  assert.equal(result.rerunGuestTurnId, "rerun-7");
+  assert.deepEqual(result.grantedSources, ["calendar_events"]);
+  assert.equal(result.publicationId, null);
+});
+
+test("granted_sources is never sent with deny or approve_edited", async () => {
+  const calls = capture({});
+  await guestAccessApi.decide("a1", {
+    decision: "approve_edited",
+    editedText: "My reply",
+    grantedSources: ["kiingo_files"],
+    idempotencyKey: "key-12345678",
+  });
+  await guestAccessApi.decide("a1", {
+    decision: "deny",
+    grantedSources: ["kiingo_files"],
+    idempotencyKey: "key-12345678",
+  });
+  assert.equal("granted_sources" in calls[0].body, false);
+  assert.equal("granted_sources" in calls[1].body, false);
+});

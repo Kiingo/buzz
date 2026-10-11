@@ -6,7 +6,11 @@ import { Button } from "@/shared/ui/button";
 import { Textarea } from "@/shared/ui/textarea";
 
 import { requesterLabel } from "../lib/copy";
-import type { GuestApproval } from "../lib/wire";
+import {
+  isOwnerDataRequest,
+  releasableSources,
+  type GuestApproval,
+} from "../lib/wire";
 import {
   useApprovalDecision,
   type DecisionInput,
@@ -18,6 +22,10 @@ import {
   grantForChoice,
   type GrantChoice,
 } from "./GrantScopePicker";
+import {
+  SourcesToSharePicker,
+  initialSharedSources,
+} from "./SourcesToSharePicker";
 
 const STATE_TEXT: Record<string, string> = {
   approved: "Approved. The reply has been sent.",
@@ -31,6 +39,10 @@ const STATE_TEXT: Record<string, string> = {
  * exact text, a grant scope, and Approve / Edit then approve / Deny / Deny and
  * block person. No new model turn runs after approval; the text shown (or the
  * edited text) is what gets published.
+ *
+ * Owner-data requests (contracts §5.2.1) differ: the draft is only the hold
+ * message, approving releases the chosen sources to one re-run of the guest
+ * turn, and "Edit then approve" means writing the reply yourself.
  */
 export function GuestApprovalReview({
   approval,
@@ -40,8 +52,18 @@ export function GuestApprovalReview({
   onDone?: () => void;
 }) {
   const decision = useApprovalDecision(approval);
+  const ownerData = isOwnerDataRequest(approval);
+  const releasable = React.useMemo(
+    () => releasableSources(approval),
+    [approval],
+  );
+  const [sharedSources, setSharedSources] = React.useState<string[]>(() =>
+    initialSharedSources(releasable.sources, releasable.mustChoose),
+  );
   const [editing, setEditing] = React.useState(false);
-  const [editedText, setEditedText] = React.useState(approval.draftText ?? "");
+  const [editedText, setEditedText] = React.useState(
+    ownerData ? "" : (approval.draftText ?? ""),
+  );
   const [grant, setGrant] = React.useState<GrantChoice>({
     scope: "once",
     days: DEFAULT_GRANT_DAYS,
@@ -55,7 +77,10 @@ export function GuestApprovalReview({
       <div className="space-y-3">
         <ApprovalDetails approval={approval} />
         <p className="text-sm text-muted-foreground" role="status">
-          {STATE_TEXT[approval.state] ?? "This request is no longer pending."}
+          {approval.state === "approved" && isOwnerDataRequest(approval)
+            ? "Approved. Your agent answered using only what you shared."
+            : (STATE_TEXT[approval.state] ??
+              "This request is no longer pending.")}
         </p>
       </div>
     );
@@ -73,7 +98,13 @@ export function GuestApprovalReview({
   };
 
   const trimmedEdit = editedText.trim();
-  const editChanged = trimmedEdit !== (approval.draftText ?? "").trim();
+  // For owner-data requests the draft is the hold message, so the owner's
+  // text is always a new reply and never falls back to a plain approve.
+  const editChanged =
+    ownerData || trimmedEdit !== (approval.draftText ?? "").trim();
+  const agentName = approval.agent.displayName ?? "your agent";
+  const approveDisabled =
+    decision.isPending || (ownerData && sharedSources.length === 0);
 
   return (
     <div className="space-y-4" data-testid="guest-approval-review">
@@ -85,7 +116,9 @@ export function GuestApprovalReview({
             className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground"
             htmlFor={`guest-approval-edit-${approval.approvalId}`}
           >
-            Edit the reply. This exact text will be sent.
+            {ownerData
+              ? `Write the reply yourself. This exact text will be sent, and ${agentName} won't look anything up.`
+              : "Edit the reply. This exact text will be sent."}
           </label>
           <Textarea
             className="min-h-32 text-sm"
@@ -96,6 +129,17 @@ export function GuestApprovalReview({
             value={editedText}
           />
         </section>
+      ) : null}
+
+      {ownerData && !editing ? (
+        <SourcesToSharePicker
+          agentName={agentName}
+          disabled={decision.isPending}
+          mustChoose={releasable.mustChoose}
+          onChange={setSharedSources}
+          selected={sharedSources}
+          sources={releasable.sources}
+        />
       ) : null}
 
       <GrantScopePicker
@@ -205,7 +249,11 @@ export function GuestApprovalReview({
                 size="sm"
                 type="button"
               >
-                {decision.isPending ? "Sending…" : "Approve edited reply"}
+                {decision.isPending
+                  ? "Sending…"
+                  : ownerData
+                    ? "Send my reply"
+                    : "Approve edited reply"}
               </Button>
             </>
           ) : (
@@ -218,21 +266,26 @@ export function GuestApprovalReview({
                 type="button"
                 variant="outline"
               >
-                Edit then approve
+                {ownerData ? "Write the reply myself" : "Edit then approve"}
               </Button>
               <Button
                 data-testid="guest-approval-approve"
-                disabled={decision.isPending}
+                disabled={approveDisabled}
                 onClick={() =>
                   void run({
                     decision: "approve",
                     grant: grantForChoice(grant),
+                    ...(ownerData ? { grantedSources: sharedSources } : {}),
                   })
                 }
                 size="sm"
                 type="button"
               >
-                {decision.isPending ? "Sending…" : "Approve"}
+                {decision.isPending
+                  ? "Sending…"
+                  : ownerData
+                    ? `Share and let ${agentName} answer`
+                    : "Approve"}
               </Button>
             </>
           )}

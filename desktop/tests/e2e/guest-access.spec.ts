@@ -21,7 +21,10 @@ type RouteCall = { method: string; path: string; body: unknown };
 
 const NOW_ISO = "2026-10-10T09:30:00.000Z";
 
-function fixtures(linked: boolean) {
+function fixtures(
+  linked: boolean,
+  approvalOverrides: Record<string, unknown> = {},
+) {
   return {
     linked,
     approval: {
@@ -63,6 +66,7 @@ function fixtures(linked: boolean) {
       expires_at: "2026-10-11T09:30:00.000Z",
       decided_at: null,
       approval_url: "https://example.test/approvals/x",
+      ...approvalOverrides,
     },
     agents: [
       {
@@ -157,93 +161,103 @@ function fixtures(linked: boolean) {
   };
 }
 
-async function installGuestRoute(page: Page, linked = true) {
-  await page.addInitScript((data) => {
-    const calls: Array<{ method: string; path: string; body: unknown }> = [];
-    const state = { pending: true, linked: data.linked };
-    (
-      window as unknown as { __GUEST_ROUTE_CALLS__: unknown }
-    ).__GUEST_ROUTE_CALLS__ = calls;
-    const route = (method: string, path: string, body: unknown) => {
-      calls.push({ method, path, body });
-      const bare = path.split("?")[0];
-      if (bare === "/identity/status") {
-        return state.linked
-          ? {
-              linked: true,
-              display_name: "Tyler",
-              link_url: "https://example.test/link",
-            }
-          : { linked: false, link_url: "https://example.test/link" };
-      }
-      if (bare === "/identity/link") {
-        state.linked = true;
-        return { linked: true, display_name: "Tyler" };
-      }
-      if (bare === "/owner/approvals") {
-        return { items: state.pending ? [data.approval] : [] };
-      }
-      if (bare.startsWith("/owner/approvals/") && bare.endsWith("/decision")) {
-        state.pending = false;
-        return {
-          approval: { ...data.approval, state: "approved" },
-          grant: null,
-        };
-      }
-      if (bare.startsWith("/owner/approvals/")) return data.approval;
-      if (bare === "/owner/agents") return { agents: data.agents };
-      if (bare === "/owner/grants") return { items: data.grants };
-      if (bare === "/owner/blocks") return { items: [] };
-      if (bare === "/owner/access-log")
-        return { items: data.log, next_cursor: null };
-      if (bare === "/owner/shareables")
-        return method === "GET"
-          ? { items: data.shareables }
-          : { shareable_id: "s-2" };
-      if (bare === "/owner/suggestions") return { items: data.suggestions };
-      if (bare === "/owner/digest") return data.digest;
-      return { ok: true };
-    };
-    const wrap =
-      (invoke: (...args: unknown[]) => Promise<unknown>) =>
+async function installGuestRoute(
+  page: Page,
+  linked = true,
+  approvalOverrides: Record<string, unknown> = {},
+) {
+  await page.addInitScript(
+    (data) => {
+      const calls: Array<{ method: string; path: string; body: unknown }> = [];
+      const state = { pending: true, linked: data.linked };
       (
-        command: unknown,
-        args: Record<string, unknown> = {},
-        ...rest: unknown[]
-      ) => {
-        if (command === "guest_access_config") {
-          return Promise.resolve({
-            routeUrl: "https://guest.example.test/v1",
-            communityId: "localhost",
-          });
+        window as unknown as { __GUEST_ROUTE_CALLS__: unknown }
+      ).__GUEST_ROUTE_CALLS__ = calls;
+      const route = (method: string, path: string, body: unknown) => {
+        calls.push({ method, path, body });
+        const bare = path.split("?")[0];
+        if (bare === "/identity/status") {
+          return state.linked
+            ? {
+                linked: true,
+                display_name: "Tyler",
+                link_url: "https://example.test/link",
+              }
+            : { linked: false, link_url: "https://example.test/link" };
         }
-        if (command === "guest_access_profile_owner") {
-          return Promise.resolve(null);
+        if (bare === "/identity/link") {
+          state.linked = true;
+          return { linked: true, display_name: "Tyler" };
         }
-        if (command === "guest_access_request") {
-          return Promise.resolve(
-            route(
-              args.method as string,
-              args.path as string,
-              args.body ?? null,
-            ),
-          );
+        if (bare === "/owner/approvals") {
+          return { items: state.pending ? [data.approval] : [] };
         }
-        return invoke(command, args, ...rest);
+        if (
+          bare.startsWith("/owner/approvals/") &&
+          bare.endsWith("/decision")
+        ) {
+          state.pending = false;
+          return {
+            approval: { ...data.approval, state: "approved" },
+            grant: null,
+          };
+        }
+        if (bare.startsWith("/owner/approvals/")) return data.approval;
+        if (bare === "/owner/agents") return { agents: data.agents };
+        if (bare === "/owner/grants") return { items: data.grants };
+        if (bare === "/owner/blocks") return { items: [] };
+        if (bare === "/owner/access-log")
+          return { items: data.log, next_cursor: null };
+        if (bare === "/owner/shareables")
+          return method === "GET"
+            ? { items: data.shareables }
+            : { shareable_id: "s-2" };
+        if (bare === "/owner/suggestions") return { items: data.suggestions };
+        if (bare === "/owner/digest") return data.digest;
+        return { ok: true };
       };
-    let wrapped: unknown;
-    const internals: Record<string, unknown> = {};
-    Object.defineProperty(internals, "invoke", {
-      configurable: true,
-      get: () => wrapped,
-      set: (value) => {
-        wrapped = wrap(value as (...args: unknown[]) => Promise<unknown>);
-      },
-    });
-    (
-      window as unknown as { __TAURI_INTERNALS__: unknown }
-    ).__TAURI_INTERNALS__ = internals;
-  }, fixtures(linked));
+      const wrap =
+        (invoke: (...args: unknown[]) => Promise<unknown>) =>
+        (
+          command: unknown,
+          args: Record<string, unknown> = {},
+          ...rest: unknown[]
+        ) => {
+          if (command === "guest_access_config") {
+            return Promise.resolve({
+              routeUrl: "https://guest.example.test/v1",
+              communityId: "localhost",
+            });
+          }
+          if (command === "guest_access_profile_owner") {
+            return Promise.resolve(null);
+          }
+          if (command === "guest_access_request") {
+            return Promise.resolve(
+              route(
+                args.method as string,
+                args.path as string,
+                args.body ?? null,
+              ),
+            );
+          }
+          return invoke(command, args, ...rest);
+        };
+      let wrapped: unknown;
+      const internals: Record<string, unknown> = {};
+      Object.defineProperty(internals, "invoke", {
+        configurable: true,
+        get: () => wrapped,
+        set: (value) => {
+          wrapped = wrap(value as (...args: unknown[]) => Promise<unknown>);
+        },
+      });
+      (
+        window as unknown as { __TAURI_INTERNALS__: unknown }
+      ).__TAURI_INTERNALS__ = internals;
+    },
+    fixtures(linked, approvalOverrides),
+  );
 }
 
 async function routeCalls(page: Page): Promise<RouteCall[]> {
@@ -508,4 +522,51 @@ test("people asking see hosted guest reply markers", async ({ page }) => {
   ).toHaveCount(1);
   await waitForAnimations(page);
   await page.screenshot({ path: `${SHOTS}/11-guest-markers-resolved.png` });
+});
+
+test("an owner-data request asks what to share, then sends exactly that", async ({
+  page,
+}) => {
+  await installGuestRoute(page, true, {
+    question_text:
+      "What meetings does Ross have tomorrow, and what is each one about?",
+    draft_text: "I've asked Ross; I'll reply here when Ross answers.",
+    data_sources: [],
+    owner_only_sources: [],
+    reason_codes: ["owner_data_requested"],
+    requested_sources: [],
+    requestable_sources: ["calendar_events", "outlook_mailbox", "kiingo_files"],
+  });
+  await installMockBridge(page, { managedAgents: [managedAgent] });
+  await page.goto("/");
+  await page
+    .getByTestId(`home-inbox-item-guest-approval-${APPROVAL_ID}`)
+    .click();
+
+  const review = page.getByTestId("guest-approval-review");
+  await expect(review).toContainText("What they were told while you decide");
+  await expect(review).toContainText("Choose what to share");
+  const approve = page.getByTestId("guest-approval-approve");
+  await expect(approve).toBeDisabled();
+  await expect(approve).toHaveText("Share and let Atlas answer");
+
+  await page.getByTestId("guest-share-source-calendar_events").click();
+  await expect(approve).toBeEnabled();
+  await waitForAnimations(page);
+  await page
+    .getByTestId("guest-approval-inbox-detail")
+    .screenshot({ path: `${SHOTS}/12-owner-data-choose-sources.png` });
+
+  await approve.click();
+  await expect
+    .poll(async () =>
+      (await routeCalls(page)).find((call) => call.path.endsWith("/decision")),
+    )
+    .toMatchObject({
+      body: { decision: "approve", granted_sources: ["calendar_events"] },
+    });
+  const decision = (await routeCalls(page)).find((call) =>
+    call.path.endsWith("/decision"),
+  );
+  expect(decision?.body).not.toHaveProperty("grant");
 });

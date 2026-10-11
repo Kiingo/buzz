@@ -147,3 +147,49 @@ test("parses grants, access log, suggestions, agents, digest and identity", () =
     linkUrl: "u",
   });
 });
+
+test("owner-data requests expose requested and requestable sources", async () => {
+  const { isOwnerDataRequest, releasableSources } = await import("./wire.ts");
+  const named = parseApproval({
+    approval_id: "a",
+    reason_codes: ["owner_data_requested"],
+    requested_sources: ["calendar_events"],
+    requestable_sources: ["calendar_events", "outlook_mailbox", "kiingo_files"],
+  });
+  assert.equal(isOwnerDataRequest(named), true);
+  assert.deepEqual(named.requestedSources, ["calendar_events"]);
+  assert.deepEqual(releasableSources(named), {
+    sources: ["calendar_events"],
+    mustChoose: false,
+  });
+
+  const unnamed = parseApproval({
+    approval_id: "b",
+    reason_codes: ["owner_data_requested", "owner_promise_guard"],
+    requested_sources: [],
+    requestable_sources: ["calendar_events", "kiingo_files"],
+  });
+  assert.deepEqual(releasableSources(unnamed), {
+    sources: ["calendar_events", "kiingo_files"],
+    mustChoose: true,
+  });
+
+  // Before the server ships v1.7 the fields are absent: tolerated as null,
+  // with the contract's requestable set as the picker fallback.
+  const legacy = parseApproval({
+    approval_id: "c",
+    reason_codes: ["owner_data_requested"],
+  });
+  assert.equal(legacy.requestedSources, null);
+  assert.equal(legacy.requestableSources, null);
+  assert.deepEqual(releasableSources(legacy), {
+    sources: ["calendar_events", "outlook_mailbox", "kiingo_files"],
+    mustChoose: true,
+  });
+
+  const ordinary = parseApproval({
+    approval_id: "d",
+    reason_codes: ["owner_only_data"],
+  });
+  assert.equal(isOwnerDataRequest(ordinary), false);
+});
