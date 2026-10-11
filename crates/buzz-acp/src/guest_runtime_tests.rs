@@ -566,6 +566,16 @@ async fn owner_notifications_and_malformed_items_never_block_the_outbox() {
                 "tags": [["p", owner], ["buzz-guest-approval", "ap-1"], ["agent", agent.public_key().to_hex()]],
                 "mentions": [],
                 "expires_at": null
+            },
+            {
+                // Same shape with the channel_id key omitted entirely.
+                "publication_id": "pub-owner-2",
+                "kind": "owner_notification",
+                "event_kind": 46041,
+                "content": "",
+                "tags": [["p", owner], ["buzz-guest-approval", "ap-1"], ["agent", agent.public_key().to_hex()], ["status", "approved"]],
+                "mentions": [],
+                "expires_at": null
             }
         ],
         "next_cursor": "c9"
@@ -574,6 +584,7 @@ async fn owner_notifications_and_malformed_items_never_block_the_outbox() {
     let tasks = runtime.spawn_background();
     mock.wait_for("/route/outbox/pub-hold/ack", 1).await;
     mock.wait_for("/route/outbox/pub-owner/ack", 1).await;
+    mock.wait_for("/route/outbox/pub-owner-2/ack", 1).await;
     mock.wait_for("/route/outbox/pub-bad/fail", 1).await;
     let published: Vec<Event> = mock
         .seen("/events")
@@ -588,11 +599,11 @@ async fn owner_notifications_and_malformed_items_never_block_the_outbox() {
     assert!(published
         .iter()
         .any(|e| e.content.starts_with("I've asked my owner")));
-    // Polls never depend on a server cursor.
+    // Polls never depend on a server cursor, and opt in to owner notifications.
     assert!(mock
         .seen("/route/outbox?")
         .iter()
-        .all(|s| !s.path.contains("after=")));
+        .all(|s| !s.path.contains("after=") && s.path.contains("features=owner_notification")));
     for task in tasks {
         task.abort();
     }
