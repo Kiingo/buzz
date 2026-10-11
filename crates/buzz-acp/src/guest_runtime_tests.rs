@@ -29,6 +29,10 @@ struct MockState {
     turn_response: Option<Value>,
     /// Replaces the default single-item first outbox page when set.
     outbox_page: Option<Value>,
+    /// Answer `GET /outbox` with 403 until the agent has registered.
+    outbox_requires_registration: bool,
+    /// Signed kind:0 returned for kind-0 queries (lets registration run).
+    profile_event: Option<Value>,
 }
 
 struct Mock {
@@ -135,7 +139,15 @@ async fn mock() -> Mock {
                         raw_body: raw_body.clone(),
                     });
                     if path.starts_with("/query") {
-                        Some(json!([]))
+                        let wants_profile = body
+                            .as_array()
+                            .and_then(|filters| filters.first())
+                            .and_then(|f| f.get("kinds"))
+                            .is_some_and(|kinds| kinds == &json!([0]));
+                        match (&state.profile_event, wants_profile) {
+                            (Some(profile), true) => Some(json!([profile])),
+                            _ => Some(json!([])),
+                        }
                     } else if path.starts_with("/events") {
                         Some(json!({"accepted": true, "message": ""}))
                     } else if path.starts_with("/route/agents/register") {
@@ -146,6 +158,14 @@ async fn mock() -> Mock {
                         Some(state.turn_response.clone().unwrap_or_else(
                             || json!({"guest_turn_id": "turn-1", "state": "queued", "tier": 0}),
                         ))
+                    } else if path.starts_with("/route/outbox?")
+                        && state.outbox_requires_registration
+                        && !state
+                            .seen
+                            .iter()
+                            .any(|s| s.path.starts_with("/route/agents/register"))
+                    {
+                        Some(json!({"error": "guest_endpoint_not_registered", "status": 403}))
                     } else if path.starts_with("/route/outbox?") {
                         if state.outbox_served {
                             None
@@ -183,8 +203,13 @@ async fn mock() -> Mock {
                         json!({"items": [], "next_cursor": "c1"}).to_string()
                     }
                 };
+                let status_line = if body.contains("\"status\":403") {
+                    "403 Forbidden"
+                } else {
+                    "200 OK"
+                };
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     body.len(),
                     body
                 );
@@ -593,4 +618,38 @@ fn only_one_process_drains_an_agent_outbox() {
     );
     let _ = std::fs::remove_file(drain_lock_path(&key));
     let _ = std::fs::remove_file(drain_lock_path(&other));
+}
+
+/// The drain runs at startup with no turn in flight, and a registration wakes
+/// it at once: items queued while the agent was offline publish right after it
+/// registers, not after the 60 s re-registration wait a 403 would cause.
+#[tokio::test]
+async fn startup_drain_publishes_queued_items_without_any_turn() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let profile = EventBuilder::new(Kind::Metadata, json!({"name": "Atlas"}).to_string())
+        .sign_with_keys(&agent)
+        .unwrap();
+    {
+        let mut state = mock.state.lock().unwrap();
+        state.outbox_requires_registration = true;
+        state.profile_event = Some(serde_json::to_value(&profile).unwrap());
+    }
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let started = std::time::Instant::now();
+    let tasks = runtime.spawn_background();
+    mock.wait_for("/route/outbox/pub-1/ack", 1).await;
+    assert!(
+        started.elapsed() < REGISTER_RETRY / 2,
+        "drained {:?} after start; must not wait for the re-registration retry",
+        started.elapsed()
+    );
+    assert!(mock.seen("/route/turns").is_empty(), "no turn was needed");
+    assert!(
+        !mock.seen("/route/agents/register").is_empty(),
+        "registered before draining"
+    );
+    for task in tasks {
+        task.abort();
+    }
 }
