@@ -18,6 +18,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+/// Outbox item types this harness can publish, sent on every poll.
+pub(crate) const OUTBOX_FEATURES: &str = "owner_notification";
+
 /// Server-side long-poll cap from the contract.
 pub(crate) const OUTBOX_WAIT_MS: u64 = 25_000;
 
@@ -362,6 +365,9 @@ impl GuestRouteClient {
             }
             query.append_pair("limit", &limit.to_string());
             query.append_pair("wait_ms", &wait_ms.to_string());
+            // Opt in to owner notifications (event_kind 46040–46042): the route
+            // withholds them from harnesses that cannot publish them.
+            query.append_pair("features", OUTBOX_FEATURES);
             format!("/outbox?{}", query.finish())
         };
         let value = self

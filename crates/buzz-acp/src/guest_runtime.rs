@@ -1003,6 +1003,9 @@ impl GuestRuntime {
                             if let Ok(mut registration) = self.registration.write() {
                                 *registration = Some(response);
                             }
+                            // Drain at once: anything queued while this
+                            // agent was offline publishes on registration.
+                            self.outbox_wake.notify_one();
                             REGISTER_REFRESH
                         }
                         Err(error) => {
@@ -1059,6 +1062,7 @@ impl GuestRuntime {
                 }
             }
         };
+        tracing::info!(agent = %self.agent_pubkey, "guest outbox drain active");
         self.emit("guest_outbox_drain", None, json!({ "state": "active" }));
         let mut published: HashMap<String, (Instant, Event)> = HashMap::new();
         let mut deferred: HashMap<String, (Instant, Duration)> = HashMap::new();
@@ -1136,7 +1140,11 @@ impl GuestRuntime {
                         jittered(backoff)
                     };
                     backoff = (backoff * 2).min(Duration::from_secs(60));
-                    tokio::time::sleep(wait).await;
+                    // A registration (or routed turn) wakes the drain early.
+                    tokio::select! {
+                        _ = tokio::time::sleep(wait) => {}
+                        _ = self.outbox_wake.notified() => {}
+                    }
                 }
             }
         }
@@ -1231,8 +1239,17 @@ impl GuestRuntime {
             self.guards().resolve_pending(turn);
         }
         self.emit_publication(&item, channel_id, Some(&event), "published");
-        if let Err(error) = client.ack(&item.publication_id, &event).await {
-            tracing::warn!(%error, publication_id = %item.publication_id, "outbox ack failed");
+        match client.ack(&item.publication_id, &event).await {
+            Ok(()) => tracing::info!(
+                publication_id = %item.publication_id,
+                kind = %item.kind,
+                event_kind = item.event_kind.unwrap_or(buzz_core::kind::KIND_STREAM_MESSAGE),
+                event_id = %event.id,
+                "guest outbox item published and acked"
+            ),
+            Err(error) => {
+                tracing::warn!(%error, publication_id = %item.publication_id, "outbox ack failed")
+            }
         }
         true
     }
