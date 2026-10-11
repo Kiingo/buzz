@@ -33,6 +33,8 @@ struct MockState {
     outbox_requires_registration: bool,
     /// Signed kind:0 returned for kind-0 queries (lets registration run).
     profile_event: Option<Value>,
+    /// Hold every outbox poll open for a minute without answering.
+    outbox_hang: bool,
     /// Outbox polls currently being served, and the most seen at once.
     outbox_in_flight: usize,
     outbox_max_in_flight: usize,
@@ -205,6 +207,9 @@ async fn mock() -> Mock {
                         Some(json!({"ok": true}))
                     }
                 };
+                if is_outbox_poll && state.lock().unwrap().outbox_hang {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
                 let body = match response {
                     Some(body) => body.to_string(),
                     None => {
@@ -714,6 +719,44 @@ async fn wakes_never_add_a_concurrent_poll_and_auth_events_are_unique() {
             seen.path
         );
     }
+    for task in tasks {
+        task.abort();
+    }
+}
+
+/// Production 2026-10-11 (kiingo.5): a guest turn's `/turns` was routed 68 s
+/// late while the outbox long-poll hung on a dead connection. Routing must
+/// never wait on the outbox: with every outbox poll hanging, a crossing is
+/// still submitted at once.
+#[tokio::test]
+async fn hanging_outbox_poll_never_delays_routing() {
+    let mock = mock().await;
+    mock.state.lock().unwrap().outbox_hang = true;
+    let agent = Keys::generate();
+    let guest = Keys::generate();
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let tasks = runtime.spawn_background();
+    // Wait until a long-poll is in flight (and hanging).
+    for _ in 0..100 {
+        if mock.state.lock().unwrap().outbox_in_flight > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        mock.state.lock().unwrap().outbox_in_flight > 0,
+        "poll in flight"
+    );
+    let event = guest_message(&guest, &agent, "are you around?");
+    let tier = runtime.classify(&event, false).await;
+    let started = std::time::Instant::now();
+    runtime.route(event, Uuid::nil(), false, None, tier, None);
+    mock.wait_for("/route/turns", 1).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "routing waited {:?} behind the outbox",
+        started.elapsed()
+    );
     for task in tasks {
         task.abort();
     }

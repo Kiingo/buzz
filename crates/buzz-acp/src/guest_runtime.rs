@@ -53,8 +53,8 @@ const AUDIENCE_CAP: usize = 500;
 /// One harness notice per key per this window.
 const NOTICE_COOLDOWN: Duration = Duration::from_secs(60 * 60);
 const SUBMIT_DELAYS: [Duration; 3] = [
-    Duration::from_secs(1),
-    Duration::from_secs(4),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
     Duration::from_secs(15),
 ];
 const REGISTER_REFRESH: Duration = Duration::from_secs(6 * 60 * 60);
@@ -565,6 +565,14 @@ impl GuestRuntime {
         tier: TrustTier,
         request_key: Option<String>,
     ) {
+        tracing::info!(
+            event_id = %event.id,
+            channel_id = %channel_id,
+            author = %event.pubkey,
+            trust = tier.label(),
+            is_dm,
+            "crossing received; routing to the hosted guest route"
+        );
         let runtime = Arc::clone(self);
         tokio::spawn(async move {
             runtime
@@ -763,17 +771,45 @@ impl GuestRuntime {
         client: &GuestRouteClient,
         request: &TurnRequest,
     ) -> Result<TurnResponse, RouteError> {
+        // The body is serialized identically on every attempt, and the route
+        // dedups on (agent, trigger event id) with a payload hash, so a retry
+        // returns the original turn. A request that never left (connect
+        // failure) is retried at once; after a timeout or 5xx the route may
+        // still be creating the turn row, so wait before retrying.
+        let started = Instant::now();
         let mut attempt = 0;
+        let mut immediate_used = false;
         loop {
             match client.submit_turn(request).await {
-                Ok(response) => return Ok(response),
+                Ok(response) => {
+                    if attempt > 0 {
+                        tracing::info!(
+                            attempts = attempt + 1,
+                            elapsed_ms = started.elapsed().as_millis() as u64,
+                            "guest turn submitted after retry"
+                        );
+                    }
+                    return Ok(response);
+                }
                 Err(error) if error.is_retryable() && attempt < SUBMIT_DELAYS.len() => {
-                    let delay = error
-                        .retry_after_ms
-                        .map(Duration::from_millis)
-                        .unwrap_or(SUBMIT_DELAYS[attempt])
-                        .min(Duration::from_secs(30));
+                    let delay = if error.never_sent && !immediate_used {
+                        immediate_used = true;
+                        Duration::ZERO
+                    } else {
+                        error
+                            .retry_after_ms
+                            .map(Duration::from_millis)
+                            .unwrap_or(SUBMIT_DELAYS[attempt])
+                            .min(Duration::from_secs(30))
+                    };
                     attempt += 1;
+                    tracing::warn!(
+                        %error,
+                        attempt,
+                        retry_in_ms = delay.as_millis() as u64,
+                        trigger = %request.trigger_event.id,
+                        "guest turn submit failed; retrying"
+                    );
                     tokio::time::sleep(delay).await;
                 }
                 Err(error) => return Err(error),
