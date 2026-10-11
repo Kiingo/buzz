@@ -247,6 +247,11 @@ impl GuestRouteClient {
         let mut tags = vec![
             Tag::parse(["u", url]).map_err(RouteError::transport)?,
             Tag::parse(["method", method]).map_err(RouteError::transport)?,
+            // Unique per request: two requests for the same URL in the same
+            // second must not produce the same event id (single-use on the
+            // route's replay table).
+            Tag::parse(["nonce", &uuid::Uuid::new_v4().to_string()])
+                .map_err(RouteError::transport)?,
         ];
         if let Some(body) = body {
             let hash = hex::encode(Sha256::digest(body));
@@ -456,6 +461,24 @@ mod tests {
         assert_eq!(tag("u").as_deref(), Some("https://example.test/v1/turns"));
         assert_eq!(tag("method").as_deref(), Some("POST"));
         assert_eq!(tag("payload"), Some(hex::encode(Sha256::digest(b"{}"))));
+    }
+
+    #[test]
+    fn identical_requests_get_distinct_auth_events() {
+        let client = GuestRouteClient::new("https://example.test/v1", Keys::generate(), "c".into())
+            .expect("client");
+        let decode = |header: String| -> Event {
+            let json = base64::engine::general_purpose::STANDARD
+                .decode(header.strip_prefix("Nostr ").expect("prefix"))
+                .expect("b64");
+            serde_json::from_slice(&json).expect("event")
+        };
+        let url =
+            "https://example.test/v1/outbox?limit=50&wait_ms=25000&features=owner_notification";
+        let a = decode(client.nip98("GET", url, None).expect("a"));
+        let b = decode(client.nip98("GET", url, None).expect("b"));
+        assert_ne!(a.id, b.id, "a replayed id would be rejected");
+        assert!(a.tags.iter().any(|t| t.as_slice()[0] == "nonce"));
     }
 
     #[test]

@@ -33,6 +33,9 @@ struct MockState {
     outbox_requires_registration: bool,
     /// Signed kind:0 returned for kind-0 queries (lets registration run).
     profile_event: Option<Value>,
+    /// Outbox polls currently being served, and the most seen at once.
+    outbox_in_flight: usize,
+    outbox_max_in_flight: usize,
 }
 
 struct Mock {
@@ -129,6 +132,13 @@ async fn mock() -> Mock {
                     return;
                 };
                 let body: Value = serde_json::from_slice(&raw_body).unwrap_or(Value::Null);
+                let is_outbox_poll = path.starts_with("/route/outbox?");
+                if is_outbox_poll {
+                    let mut state = state.lock().unwrap();
+                    state.outbox_in_flight += 1;
+                    state.outbox_max_in_flight =
+                        state.outbox_max_in_flight.max(state.outbox_in_flight);
+                }
                 let response = {
                     let mut state = state.lock().unwrap();
                     state.seen.push(Seen {
@@ -214,6 +224,9 @@ async fn mock() -> Mock {
                     body
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
+                if is_outbox_poll {
+                    state.lock().unwrap().outbox_in_flight -= 1;
+                }
             });
         }
     });
@@ -660,6 +673,47 @@ async fn startup_drain_publishes_queued_items_without_any_turn() {
         !mock.seen("/route/agents/register").is_empty(),
         "registered before draining"
     );
+    for task in tasks {
+        task.abort();
+    }
+}
+
+/// Production 2026-10-11 (kiingo.5): a registration wake cancelled the
+/// in-flight long-poll and re-sent an identical GET in the same second; the
+/// route rejected the duplicate NIP-98 event as a replay. Wakes must never
+/// add a concurrent poll, and every request must carry a distinct auth event.
+#[tokio::test]
+async fn wakes_never_add_a_concurrent_poll_and_auth_events_are_unique() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let tasks = runtime.spawn_background();
+    mock.wait_for("/route/outbox/pub-1/ack", 1).await;
+    // Hammer the wake while empty long-polls (200 ms each in the mock) run.
+    for _ in 0..30 {
+        runtime.outbox_wake.notify_one();
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    let polls = mock.seen("/route/outbox?");
+    assert!(polls.len() >= 2, "drain kept polling: {}", polls.len());
+    assert_eq!(
+        mock.state.lock().unwrap().outbox_max_in_flight,
+        1,
+        "at most one outbox request per agent key"
+    );
+    let mut ids = std::collections::HashSet::new();
+    for seen in mock.seen("/route/") {
+        let header = seen.auth.as_deref().expect("auth");
+        let json = base64::engine::general_purpose::STANDARD
+            .decode(header.strip_prefix("Nostr ").expect("scheme"))
+            .expect("b64");
+        let event: Event = serde_json::from_slice(&json).expect("event");
+        assert!(
+            ids.insert(event.id),
+            "duplicate NIP-98 event id for {}",
+            seen.path
+        );
+    }
     for task in tasks {
         task.abort();
     }

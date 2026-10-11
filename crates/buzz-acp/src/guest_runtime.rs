@@ -1069,10 +1069,15 @@ impl GuestRuntime {
         let mut backoff = Duration::from_secs(1);
         let mut consecutive_errors: u32 = 0;
         loop {
-            let page = tokio::select! {
-                page = client.poll_outbox(None, OUTBOX_PAGE_LIMIT, OUTBOX_WAIT_MS) => page,
-                _ = self.outbox_wake.notified() => continue,
-            };
+            // Never cancel an in-flight long-poll for a wake: the route's
+            // long-poll already returns within about a second of an item
+            // becoming ready, and a cancelled request followed by a new one
+            // would be two requests for one key. Wakes only cut sleeps short
+            // (error backoff, deferral waits); a wake that arrives during a
+            // poll is kept as a permit and ends the next sleep at once.
+            let page = client
+                .poll_outbox(None, OUTBOX_PAGE_LIMIT, OUTBOX_WAIT_MS)
+                .await;
             match page {
                 Ok(page) => {
                     if consecutive_errors > 0 {
