@@ -17,7 +17,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+/// Per-request timeout on the control lane (register, `/turns`, classify).
+pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+/// Timeout for outbox acks and fails.
+const OUTBOX_ACK_TIMEOUT: Duration = Duration::from_secs(15);
+/// Slack added to the long-poll wait for the outbox request timeout.
+const OUTBOX_POLL_SLACK: Duration = Duration::from_secs(20);
+/// Connect (TCP + TLS) timeout on both lanes.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Idle pooled outbox connections are dropped well before typical NAT and
+/// load-balancer idle timeouts, so a long-poll never reuses a dead socket.
+const OUTBOX_POOL_IDLE: Duration = Duration::from_secs(20);
+/// TCP keepalive probes on both lanes, so a silently dropped connection fails
+/// instead of hanging until the request timeout.
+const TCP_KEEPALIVE: Duration = Duration::from_secs(15);
 /// Outbox item types this harness can publish, sent on every poll.
 pub(crate) const OUTBOX_FEATURES: &str = "owner_notification";
 
@@ -34,6 +47,9 @@ pub(crate) struct RouteError {
     pub(crate) code: String,
     /// Server retry hint.
     pub(crate) retry_after_ms: Option<u64>,
+    /// The connection never opened, so the request never reached the route
+    /// and an immediate retry cannot duplicate anything.
+    pub(crate) never_sent: bool,
 }
 
 impl RouteError {
@@ -42,6 +58,27 @@ impl RouteError {
             status: None,
             code: format!("transport: {error}"),
             retry_after_ms: None,
+            never_sent: false,
+        }
+    }
+
+    fn from_reqwest(error: reqwest::Error) -> Self {
+        let never_sent = error.is_connect();
+        let timed_out = error.is_timeout();
+        Self {
+            status: None,
+            code: format!(
+                "transport{}: {error}",
+                if never_sent {
+                    " (connect)"
+                } else if timed_out {
+                    " (timeout)"
+                } else {
+                    ""
+                }
+            ),
+            retry_after_ms: None,
+            never_sent,
         }
     }
 
@@ -191,9 +228,22 @@ pub(crate) fn parse_outbox_item(raw: Value) -> Result<OutboxItem, (Option<String
         .map_err(|e| (id, format!("malformed outbox item: {e}")))
 }
 
+/// Which HTTP client a call uses. The lanes never share connections, so a
+/// stalled outbox long-poll cannot delay routing a crossing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lane {
+    Control,
+    Outbox,
+}
+
 /// NIP-98 authenticated client for the guest route.
 pub(crate) struct GuestRouteClient {
-    http: reqwest::Client,
+    /// Register, `/turns`, classify: short timeouts, no idle connection
+    /// reuse (each call opens a fresh connection), never shared with the
+    /// outbox long-poll.
+    control: reqwest::Client,
+    /// Outbox long-poll, acks and fails.
+    outbox: reqwest::Client,
     base_url: String,
     keys: Keys,
     community_id: String,
@@ -221,12 +271,24 @@ impl GuestRouteClient {
         if !acceptable_base_url(base_url) {
             return None;
         }
-        let http = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT + Duration::from_millis(OUTBOX_WAIT_MS))
+        let control = reqwest::Client::builder()
+            .timeout(CONTROL_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .tcp_keepalive(TCP_KEEPALIVE)
+            .pool_max_idle_per_host(0)
+            .build()
+            .ok()?;
+        let outbox = reqwest::Client::builder()
+            .timeout(Duration::from_millis(OUTBOX_WAIT_MS) + OUTBOX_POLL_SLACK)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .tcp_keepalive(TCP_KEEPALIVE)
+            .pool_idle_timeout(OUTBOX_POOL_IDLE)
+            .pool_max_idle_per_host(1)
             .build()
             .ok()?;
         Some(Self {
-            http,
+            control,
+            outbox,
             base_url: base_url.trim_end_matches('/').to_string(),
             keys,
             community_id,
@@ -270,6 +332,7 @@ impl GuestRouteClient {
 
     async fn call(
         &self,
+        lane: Lane,
         method: reqwest::Method,
         path: &str,
         body: Option<Vec<u8>>,
@@ -277,8 +340,11 @@ impl GuestRouteClient {
     ) -> Result<Value, RouteError> {
         let url = format!("{}{}", self.base_url, path);
         let auth = self.nip98(method.as_str(), &url, body.as_deref())?;
-        let mut request = self
-            .http
+        let http = match lane {
+            Lane::Control => &self.control,
+            Lane::Outbox => &self.outbox,
+        };
+        let mut request = http
             .request(method, &url)
             .timeout(timeout)
             .header("Authorization", auth)
@@ -288,7 +354,7 @@ impl GuestRouteClient {
                 .header("Content-Type", "application/json")
                 .body(body);
         }
-        let response = request.send().await.map_err(RouteError::transport)?;
+        let response = request.send().await.map_err(RouteError::from_reqwest)?;
         let status = response.status();
         let retry_after_header = response
             .headers()
@@ -296,7 +362,7 @@ impl GuestRouteClient {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok())
             .map(|secs| secs * 1000);
-        let text = response.text().await.map_err(RouteError::transport)?;
+        let text = response.text().await.map_err(RouteError::from_reqwest)?;
         let value: Value = if text.trim().is_empty() {
             Value::Null
         } else {
@@ -316,22 +382,29 @@ impl GuestRouteClient {
                 .get("retry_after_ms")
                 .and_then(Value::as_u64)
                 .or(retry_after_header),
+            never_sent: false,
         })
     }
 
     async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(
         &self,
+        lane: Lane,
         path: &str,
         body: &T,
     ) -> Result<R, RouteError> {
         let bytes = serde_json::to_vec(body).map_err(RouteError::transport)?;
+        let timeout = match lane {
+            Lane::Control => CONTROL_TIMEOUT,
+            Lane::Outbox => OUTBOX_ACK_TIMEOUT,
+        };
         let value = self
-            .call(reqwest::Method::POST, path, Some(bytes), REQUEST_TIMEOUT)
+            .call(lane, reqwest::Method::POST, path, Some(bytes), timeout)
             .await?;
         serde_json::from_value(value).map_err(|e| RouteError {
             status: None,
             code: format!("unexpected response: {e}"),
             retry_after_ms: None,
+            never_sent: false,
         })
     }
 
@@ -340,12 +413,12 @@ impl GuestRouteClient {
         &self,
         request: &RegisterRequest,
     ) -> Result<RegisterResponse, RouteError> {
-        self.post("/agents/register", request).await
+        self.post(Lane::Control, "/agents/register", request).await
     }
 
     /// `POST /classify` (contracts §4.2).
     pub(crate) async fn classify(&self, body: &Value) -> Result<Value, RouteError> {
-        self.post("/classify", body).await
+        self.post(Lane::Control, "/classify", body).await
     }
 
     /// `POST /turns`.
@@ -353,7 +426,7 @@ impl GuestRouteClient {
         &self,
         request: &TurnRequest,
     ) -> Result<TurnResponse, RouteError> {
-        self.post("/turns", request).await
+        self.post(Lane::Control, "/turns", request).await
     }
 
     /// `GET /outbox`, long-polling up to `wait_ms`.
@@ -377,16 +450,18 @@ impl GuestRouteClient {
         };
         let value = self
             .call(
+                Lane::Outbox,
                 reqwest::Method::GET,
                 &path,
                 None,
-                REQUEST_TIMEOUT + Duration::from_millis(wait_ms),
+                Duration::from_millis(wait_ms) + OUTBOX_POLL_SLACK,
             )
             .await?;
         serde_json::from_value(value).map_err(|e| RouteError {
             status: None,
             code: format!("unexpected outbox page: {e}"),
             retry_after_ms: None,
+            never_sent: false,
         })
     }
 
@@ -394,7 +469,7 @@ impl GuestRouteClient {
     pub(crate) async fn ack(&self, publication_id: &str, event: &Event) -> Result<(), RouteError> {
         let path = format!("/outbox/{}/ack", url_segment(publication_id));
         let _: Value = self
-            .post(&path, &serde_json::json!({ "event": event }))
+            .post(Lane::Outbox, &path, &serde_json::json!({ "event": event }))
             .await?;
         Ok(())
     }
@@ -409,6 +484,7 @@ impl GuestRouteClient {
         let path = format!("/outbox/{}/fail", url_segment(publication_id));
         let _: Value = self
             .post(
+                Lane::Outbox,
                 &path,
                 &serde_json::json!({ "reason": reason, "detail": detail }),
             )
@@ -487,6 +563,7 @@ mod tests {
             status,
             code: String::new(),
             retry_after_ms: None,
+            never_sent: false,
         };
         assert!(err(None).is_retryable());
         assert!(err(Some(503)).is_retryable());
