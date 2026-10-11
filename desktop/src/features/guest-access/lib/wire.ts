@@ -56,6 +56,13 @@ export type GuestApproval = {
   questionKind: string | null;
   classifier: GuestClassifier;
   reasonCodes: string[];
+  /**
+   * Owner-data requests (contracts §5.2.1): exactly what approval releases,
+   * or `[]` when the owner must choose from `requestableSources`. Both are
+   * `null` for every other approval.
+   */
+  requestedSources: string[] | null;
+  requestableSources: string[] | null;
   channel: {
     id: string | null;
     type: "channel" | "dm" | null;
@@ -259,6 +266,12 @@ export function parseApproval(value: unknown): GuestApproval | null {
     questionKind: str(raw.question_kind),
     classifier: classifier(raw.classifier),
     reasonCodes: strings(raw.reason_codes),
+    requestedSources: Array.isArray(raw.requested_sources)
+      ? strings(raw.requested_sources)
+      : null,
+    requestableSources: Array.isArray(raw.requestable_sources)
+      ? strings(raw.requestable_sources)
+      : null,
     channel: {
       id: str(channel.id),
       type: channelType,
@@ -273,6 +286,36 @@ export function parseApproval(value: unknown): GuestApproval | null {
     decidedAt: str(raw.decided_at),
     approvalUrl: str(raw.approval_url),
   };
+}
+
+/** Sources the owner may pick from when an owner-data request names none. */
+export const DEFAULT_REQUESTABLE_SOURCES = [
+  "calendar_events",
+  "outlook_mailbox",
+  "kiingo_files",
+] as const;
+
+/**
+ * Whether this approval asks the owner to release private data to a
+ * re-run of the guest turn (contracts §5.2.1), rather than to publish a
+ * held draft.
+ */
+export function isOwnerDataRequest(approval: GuestApproval): boolean {
+  return approval.reasonCodes.includes("owner_data_requested");
+}
+
+/** The sources the owner can release for an owner-data request. */
+export function releasableSources(approval: GuestApproval): {
+  sources: string[];
+  mustChoose: boolean;
+} {
+  const requested = approval.requestedSources ?? [];
+  if (requested.length > 0) return { sources: requested, mustChoose: false };
+  const requestable =
+    approval.requestableSources && approval.requestableSources.length > 0
+      ? approval.requestableSources
+      : [...DEFAULT_REQUESTABLE_SOURCES];
+  return { sources: requestable, mustChoose: true };
 }
 
 export function parseApprovalList(value: unknown): GuestApproval[] {

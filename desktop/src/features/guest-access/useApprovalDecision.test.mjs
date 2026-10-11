@@ -40,7 +40,7 @@ test("approve records the decision first, then sends the control frame", async (
     "key-1",
     d,
   );
-  assert.deepEqual(result, { alreadyDecided: false });
+  assert.deepEqual(result, { alreadyDecided: false, rerunGuestTurnId: null });
   assert.deepEqual(
     log.map((entry) => entry[0]),
     ["decide", "resolved", "control"],
@@ -95,7 +95,7 @@ test("already decided elsewhere clears local state without a control frame", asy
     "key-4",
     d,
   );
-  assert.deepEqual(result, { alreadyDecided: true });
+  assert.deepEqual(result, { alreadyDecided: true, rerunGuestTurnId: null });
   assert.deepEqual(log, [["resolved", "ap-1"]]);
 });
 
@@ -111,9 +111,59 @@ test("a failed control frame does not fail the decision", async () => {
     "key-5",
     d,
   );
-  assert.deepEqual(result, { alreadyDecided: false });
+  assert.deepEqual(result, { alreadyDecided: false, rerunGuestTurnId: null });
   assert.deepEqual(
     log.map((entry) => entry[0]),
     ["decide", "resolved"],
   );
+});
+
+const ownerDataApproval = parseApproval({
+  approval_id: "ap-2",
+  guest_turn_id: "gt-2",
+  agent: { pubkey: AGENT, display_name: "Atlas" },
+  requester: { pubkey: "c".repeat(64), linked: true },
+  draft_text: "I've asked Ross; I'll reply here when Ross answers.",
+  reason_codes: ["owner_data_requested"],
+  requested_sources: ["calendar_events", "outlook_mailbox"],
+  requestable_sources: ["calendar_events", "outlook_mailbox", "kiingo_files"],
+  state: "pending",
+});
+
+test("owner-data approve sends the narrowed sources and returns the re-run id", async () => {
+  const { log, deps: d } = deps({
+    decide: async (id, input) => {
+      log.push(["decide", id, input]);
+      return { rerunGuestTurnId: "rerun-1" };
+    },
+  });
+  const result = await submitApprovalDecision(
+    ownerDataApproval,
+    { decision: "approve", grantedSources: ["calendar_events"] },
+    "key-6",
+    d,
+  );
+  assert.deepEqual(result, {
+    alreadyDecided: false,
+    rerunGuestTurnId: "rerun-1",
+  });
+  assert.deepEqual(log[0][2].grantedSources, ["calendar_events"]);
+  assert.equal(log[2][2].type, "approve_guest_reply");
+});
+
+test("granted sources are never sent with a deny or an edited reply", async () => {
+  for (const decision of ["deny", "deny_and_block", "approve_edited"]) {
+    const { log, deps: d } = deps();
+    await submitApprovalDecision(
+      ownerDataApproval,
+      {
+        decision,
+        editedText: "My own reply",
+        grantedSources: ["kiingo_files"],
+      },
+      `key-${decision}`,
+      d,
+    );
+    assert.equal("grantedSources" in log[0][2], false, decision);
+  }
 });
