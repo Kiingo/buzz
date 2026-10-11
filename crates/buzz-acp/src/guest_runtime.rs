@@ -1036,40 +1036,105 @@ impl GuestRuntime {
         }
     }
 
+    /// Continuously drain this agent's outbox, independent of turns.
+    ///
+    /// - One drainer per agent key: an advisory lock file keyed by the agent
+    ///   pubkey; a second process on the same key stands by and takes over
+    ///   when the first exits.
+    /// - Every poll asks for all `ready` items (no cursor). Acked items leave
+    ///   `ready`, so nothing is skipped when the route commits an item with a
+    ///   lower sequence after a higher one.
+    /// - Items are parsed one by one; a malformed item is failed back to the
+    ///   route and never blocks the others.
+    /// - A transiently failing item is deferred with its own backoff, so a
+    ///   stuck item cannot turn the long-poll into a hot loop.
     async fn outbox_loop(self: Arc<Self>, client: Arc<GuestRouteClient>) {
-        let mut cursor: Option<String> = None;
+        let _drain_lock = loop {
+            match acquire_drain_lock(&self.agent_pubkey) {
+                Ok(lock) => break lock,
+                Err(reason) => {
+                    tracing::info!(%reason, "another process drains this agent's outbox; standing by");
+                    self.emit("guest_outbox_drain", None, json!({ "state": "standby" }));
+                    tokio::time::sleep(DRAIN_LOCK_RETRY).await;
+                }
+            }
+        };
+        self.emit("guest_outbox_drain", None, json!({ "state": "active" }));
         let mut published: HashMap<String, (Instant, Event)> = HashMap::new();
+        let mut deferred: HashMap<String, (Instant, Duration)> = HashMap::new();
         let mut backoff = Duration::from_secs(1);
+        let mut consecutive_errors: u32 = 0;
         loop {
             let page = tokio::select! {
-                page = client.poll_outbox(cursor.as_deref(), 20, OUTBOX_WAIT_MS) => page,
+                page = client.poll_outbox(None, OUTBOX_PAGE_LIMIT, OUTBOX_WAIT_MS) => page,
                 _ = self.outbox_wake.notified() => continue,
             };
             match page {
                 Ok(page) => {
+                    if consecutive_errors > 0 {
+                        tracing::info!(consecutive_errors, "guest outbox reachable again");
+                    }
+                    consecutive_errors = 0;
                     backoff = Duration::from_secs(1);
+                    let now = Instant::now();
                     published.retain(|_, (at, _)| at.elapsed() < PUBLISHED_TTL);
-                    let mut all_settled = true;
-                    for item in page.items {
-                        if !self.publish_item(&client, item, &mut published).await {
-                            all_settled = false;
+                    deferred.retain(|_, (until, _)| *until > now - DEFER_FORGET);
+                    let mut handled_any = false;
+                    let mut next_due: Option<Instant> = None;
+                    for raw in page.items {
+                        let item = match crate::guest_route::parse_outbox_item(raw) {
+                            Ok(item) => item,
+                            Err((id, reason)) => {
+                                tracing::warn!(%reason, "failing malformed outbox item");
+                                if let Some(id) = id {
+                                    let _ = client.fail(&id, "other", Some(&reason)).await;
+                                }
+                                handled_any = true;
+                                continue;
+                            }
+                        };
+                        if let Some((until, _)) = deferred.get(&item.publication_id) {
+                            if *until > now {
+                                next_due = Some(next_due.map_or(*until, |due| due.min(*until)));
+                                continue;
+                            }
+                        }
+                        handled_any = true;
+                        let id = item.publication_id.clone();
+                        if self.publish_item(&client, item, &mut published).await {
+                            deferred.remove(&id);
+                        } else {
+                            let delay =
+                                deferred.get(&id).map_or(Duration::from_secs(2), |(_, d)| {
+                                    (*d * 2).min(MAX_ITEM_DEFER)
+                                });
+                            deferred.insert(id, (Instant::now() + delay, delay));
                         }
                     }
-                    if all_settled {
-                        if let Some(next) = page.next_cursor {
-                            cursor = Some(next);
+                    if !handled_any {
+                        if let Some(due) = next_due {
+                            // Everything ready is deferred: wait for the
+                            // earliest retry (or a wake) instead of spinning.
+                            let wait = due
+                                .saturating_duration_since(Instant::now())
+                                .max(Duration::from_millis(250));
+                            tokio::select! {
+                                _ = tokio::time::sleep(wait) => {}
+                                _ = self.outbox_wake.notified() => {}
+                            }
                         }
-                    } else {
-                        tokio::time::sleep(backoff).await;
                     }
                 }
                 Err(error) => {
+                    consecutive_errors = consecutive_errors.saturating_add(1);
+                    if consecutive_errors == 1 || consecutive_errors.is_power_of_two() {
+                        tracing::warn!(%error, consecutive_errors, "guest outbox poll failed; retrying");
+                    }
                     let wait = if error.status == Some(403) {
                         REGISTER_RETRY
                     } else {
-                        backoff
+                        jittered(backoff)
                     };
-                    tracing::debug!(%error, "guest outbox poll failed");
                     backoff = (backoff * 2).min(Duration::from_secs(60));
                     tokio::time::sleep(wait).await;
                 }
@@ -1091,6 +1156,17 @@ impl GuestRuntime {
         }
         if outbox_item_expired(&item, chrono::Utc::now()) {
             let _ = client.fail(&item.publication_id, "expired", None).await;
+            return true;
+        }
+        if let Err(reason) = owner_notification_addressed_correctly(
+            &item,
+            self.owner_pubkey.as_deref(),
+            &self.agent_pubkey,
+        ) {
+            tracing::warn!(%reason, publication_id = %item.publication_id, "refusing outbox owner notification");
+            let _ = client
+                .fail(&item.publication_id, "other", Some(&reason))
+                .await;
             return true;
         }
         let mut agents: HashSet<String> = HashSet::new();
@@ -1116,7 +1192,10 @@ impl GuestRuntime {
                 return true;
             }
         };
-        let channel_id = Uuid::parse_str(&item.channel_id).ok();
+        let channel_id = item
+            .channel_id
+            .as_deref()
+            .and_then(|c| Uuid::parse_str(c).ok());
         match tokio::time::timeout(NOTICE_TIMEOUT, self.rest.submit_event(&event)).await {
             Ok(Ok(response))
                 if response.get("accepted").and_then(Value::as_bool) != Some(false) => {}
@@ -1204,7 +1283,11 @@ pub(crate) fn build_outbox_event(
         }
         other => return Err(format!("unsupported outbox event kind {other}")),
     }
-    let channel_id = Uuid::parse_str(&item.channel_id).map_err(|e| format!("channel id: {e}"))?;
+    let channel_id = item
+        .channel_id
+        .as_deref()
+        .ok_or_else(|| "chat item without a channel id".to_string())
+        .and_then(|c| Uuid::parse_str(c).map_err(|e| format!("channel id: {e}")))?;
     let parse = |id: &str| EventId::from_hex(id).map_err(|e| format!("event id: {e}"));
     let thread_ref = match (&item.reply_to_event_id, &item.thread_root_event_id) {
         (Some(parent), root) => {
@@ -1252,6 +1335,80 @@ pub(crate) fn build_outbox_event(
     .map_err(|e| e.to_string())
 }
 
+/// An owner notification (46040–46042) may only go to this agent's own owner
+/// and must name this agent; chat items pass through.
+pub(crate) fn owner_notification_addressed_correctly(
+    item: &OutboxItem,
+    owner: Option<&str>,
+    agent: &str,
+) -> Result<(), String> {
+    let kind = item
+        .event_kind
+        .unwrap_or(buzz_core::kind::KIND_STREAM_MESSAGE);
+    if !OWNER_NOTIFICATION_KINDS.contains(&kind) {
+        return Ok(());
+    }
+    let values = |name: &str| -> Vec<String> {
+        item.tags
+            .iter()
+            .filter(|t| t.first().is_some_and(|n| n == name))
+            .filter_map(|t| t.get(1).map(|v| v.to_ascii_lowercase()))
+            .collect()
+    };
+    let Some(owner) = owner else {
+        return Err("no owner configured for an owner notification".into());
+    };
+    if values("p") != [owner.to_ascii_lowercase()] {
+        return Err("owner notification is not addressed to this agent's owner".into());
+    }
+    if values("agent") != [agent.to_ascii_lowercase()] {
+        return Err("owner notification does not name this agent".into());
+    }
+    Ok(())
+}
+
+/// Items per outbox poll (the route caps at 50).
+const OUTBOX_PAGE_LIMIT: u32 = 50;
+/// Longest per-item retry delay for a transiently failing publication.
+const MAX_ITEM_DEFER: Duration = Duration::from_secs(5 * 60);
+/// Forget deferrals this long after they elapse.
+const DEFER_FORGET: Duration = Duration::from_secs(60 * 60);
+/// How often a standby process retries the drain lock.
+const DRAIN_LOCK_RETRY: Duration = Duration::from_secs(30);
+
+/// `base` plus up to 50% random jitter.
+fn jittered(base: Duration) -> Duration {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    base + base.mul_f64(f64::from(nanos % 1000) / 2000.0)
+}
+
+/// Path of the per-agent outbox drain lock.
+pub(crate) fn drain_lock_path(agent_pubkey: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("buzz-acp-outbox-{agent_pubkey}.lock"))
+}
+
+/// Take the exclusive drain lock for `agent_pubkey`; held while the returned
+/// file stays open (released automatically when the process exits).
+pub(crate) fn acquire_drain_lock(agent_pubkey: &str) -> Result<std::fs::File, String> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(drain_lock_path(agent_pubkey))
+        .map_err(|e| e.to_string())?;
+    // Called through the trait: std's inherent `File::try_lock` is newer than
+    // this crate's MSRV.
+    match fs4::FileExt::try_lock(&file) {
+        Ok(()) => Ok(file),
+        Err(fs4::TryLockError::WouldBlock) => Err("lock held by another process".into()),
+        Err(fs4::TryLockError::Error(e)) => Err(e.to_string()),
+    }
+}
+
 /// Owner notification kinds the outbox may ask the agent to sign
 /// (agent guest approval requested / resolved / alert).
 const OWNER_NOTIFICATION_KINDS: std::ops::RangeInclusive<u32> = 46_040..=46_042;
@@ -1289,7 +1446,7 @@ mod tests {
         let owner = "f".repeat(64);
         let notification = OutboxItem {
             event_kind: Some(46040),
-            channel_id: String::new(),
+            channel_id: None,
             reply_to_event_id: None,
             content: "Jess asked Atlas something that needs your approval.".into(),
             tags: vec![
@@ -1316,12 +1473,54 @@ mod tests {
         assert!(build_outbox_event(&odd, &HashSet::new(), &keys).is_err());
     }
 
+    #[test]
+    fn owner_notifications_only_go_to_this_agents_owner() {
+        let owner = "f".repeat(64);
+        let agent = "a".repeat(64);
+        let notification = |p: &str, a: &str| OutboxItem {
+            event_kind: Some(46040),
+            channel_id: None,
+            tags: vec![
+                vec!["p".into(), p.into()],
+                vec!["buzz-guest-approval".into(), "ap-1".into()],
+                vec!["agent".into(), a.into()],
+            ],
+            ..item()
+        };
+        assert!(owner_notification_addressed_correctly(
+            &notification(&owner, &agent),
+            Some(&owner),
+            &agent
+        )
+        .is_ok());
+        assert!(owner_notification_addressed_correctly(
+            &notification(&"e".repeat(64), &agent),
+            Some(&owner),
+            &agent
+        )
+        .is_err());
+        assert!(owner_notification_addressed_correctly(
+            &notification(&owner, &"b".repeat(64)),
+            Some(&owner),
+            &agent
+        )
+        .is_err());
+        assert!(owner_notification_addressed_correctly(
+            &notification(&owner, &agent),
+            None,
+            &agent
+        )
+        .is_err());
+        // Chat items are not owner notifications.
+        assert!(owner_notification_addressed_correctly(&item(), None, &agent).is_ok());
+    }
+
     fn item() -> OutboxItem {
         OutboxItem {
             publication_id: "pub-1".into(),
             guest_turn_id: Some("turn-1".into()),
             kind: "answer".into(),
-            channel_id: Uuid::nil().to_string(),
+            channel_id: Some(Uuid::nil().to_string()),
             reply_to_event_id: Some("a".repeat(64)),
             thread_root_event_id: None,
             content: "Exact text, untouched.  \n".into(),
@@ -1379,7 +1578,7 @@ mod tests {
     #[test]
     fn bad_items_are_rejected_not_guessed() {
         let mut bad = item();
-        bad.channel_id = "nope".into();
+        bad.channel_id = Some("nope".into());
         assert!(build_outbox_event(&bad, &HashSet::new(), &Keys::generate()).is_err());
         let mut bad = item();
         bad.reply_to_event_id = Some("zz".into());

@@ -54,6 +54,9 @@ sha2 = { workspace = true }
 base64 = "0.22"
 hex = { workspace = true }
 
+# Per-agent outbox drain lock (advisory file lock)
+fs4 = { version = "1", features = ["sync"] }
+
 # Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
