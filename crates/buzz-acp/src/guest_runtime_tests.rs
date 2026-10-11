@@ -27,6 +27,8 @@ struct MockState {
     seen: Vec<Seen>,
     outbox_served: bool,
     turn_response: Option<Value>,
+    /// Replaces the default single-item first outbox page when set.
+    outbox_page: Option<Value>,
 }
 
 struct Mock {
@@ -149,21 +151,25 @@ async fn mock() -> Mock {
                             None
                         } else {
                             state.outbox_served = true;
-                            Some(json!({
-                                "items": [{
-                                    "publication_id": "pub-1",
-                                    "guest_turn_id": "turn-1",
-                                    "kind": "answer",
-                                    "channel_id": Uuid::nil().to_string(),
-                                    "reply_to_event_id": "a".repeat(64),
-                                    "thread_root_event_id": null,
-                                    "content": "Ross is free after 3pm.",
-                                    "tags": [["buzz-guest", "b".repeat(64)], ["buzz-guest-turn", "turn-1"]],
-                                    "mentions": ["b".repeat(64)],
-                                    "expires_at": null
-                                }],
-                                "next_cursor": "c1"
-                            }))
+                            if let Some(page) = state.outbox_page.clone() {
+                                Some(page)
+                            } else {
+                                Some(json!({
+                                    "items": [{
+                                        "publication_id": "pub-1",
+                                        "guest_turn_id": "turn-1",
+                                        "kind": "answer",
+                                        "channel_id": Uuid::nil().to_string(),
+                                        "reply_to_event_id": "a".repeat(64),
+                                        "thread_root_event_id": null,
+                                        "content": "Ross is free after 3pm.",
+                                        "tags": [["buzz-guest", "b".repeat(64)], ["buzz-guest-turn", "turn-1"]],
+                                        "mentions": ["b".repeat(64)],
+                                        "expires_at": null
+                                    }],
+                                    "next_cursor": "c1"
+                                }))
+                            }
                         }
                     } else {
                         Some(json!({"ok": true}))
@@ -493,4 +499,98 @@ async fn publishing_a_held_turns_output_clears_its_pending_state() {
     for task in tasks {
         task.abort();
     }
+}
+
+/// Production 2026-10-10: the route sends owner notifications with
+/// `"channel_id": null`. That used to fail the whole page, so nothing,
+/// including the chat hold notice beside it, was ever published. Every
+/// well-formed item must publish and ack; a malformed one is failed back.
+#[tokio::test]
+async fn owner_notifications_and_malformed_items_never_block_the_outbox() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let owner = OWNER.to_string();
+    mock.state.lock().unwrap().outbox_page = Some(json!({
+        "items": [
+            {
+                "publication_id": "pub-hold",
+                "guest_turn_id": "turn-h",
+                "kind": "hold_notice",
+                "event_kind": 9,
+                "channel_id": Uuid::nil().to_string(),
+                "reply_to_event_id": "a".repeat(64),
+                "thread_root_event_id": null,
+                "content": "I've asked my owner; I'll reply here when they answer.",
+                "tags": [["buzz-guest", "b".repeat(64)], ["buzz-guest-turn", "turn-h"]],
+                "mentions": ["b".repeat(64)],
+                "expires_at": null
+            },
+            {
+                "publication_id": "pub-bad",
+                "kind": "notice"
+            },
+            {
+                "publication_id": "pub-owner",
+                "guest_turn_id": "turn-h",
+                "kind": "owner_notification",
+                "event_kind": 46040,
+                "channel_id": null,
+                "reply_to_event_id": null,
+                "thread_root_event_id": null,
+                "content": "Someone asked your agent something that needs your approval.",
+                "tags": [["p", owner], ["buzz-guest-approval", "ap-1"], ["agent", agent.public_key().to_hex()]],
+                "mentions": [],
+                "expires_at": null
+            }
+        ],
+        "next_cursor": "c9"
+    }));
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let tasks = runtime.spawn_background();
+    mock.wait_for("/route/outbox/pub-hold/ack", 1).await;
+    mock.wait_for("/route/outbox/pub-owner/ack", 1).await;
+    mock.wait_for("/route/outbox/pub-bad/fail", 1).await;
+    let published: Vec<Event> = mock
+        .seen("/events")
+        .iter()
+        .map(|s| serde_json::from_value(s.body.clone()).expect("event"))
+        .collect();
+    let notification = published
+        .iter()
+        .find(|e| e.kind.as_u16() == 46040)
+        .expect("owner notification published");
+    assert!(notification.tags.iter().all(|t| t.as_slice()[0] != "h"));
+    assert!(published
+        .iter()
+        .any(|e| e.content.starts_with("I've asked my owner")));
+    // Polls never depend on a server cursor.
+    assert!(mock
+        .seen("/route/outbox?")
+        .iter()
+        .all(|s| !s.path.contains("after=")));
+    for task in tasks {
+        task.abort();
+    }
+}
+
+#[test]
+fn only_one_process_drains_an_agent_outbox() {
+    let key = Keys::generate().public_key().to_hex();
+    let first = acquire_drain_lock(&key).expect("first drainer");
+    assert!(
+        acquire_drain_lock(&key).is_err(),
+        "second drainer must stand by"
+    );
+    let other = Keys::generate().public_key().to_hex();
+    assert!(
+        acquire_drain_lock(&other).is_ok(),
+        "other agents are independent"
+    );
+    drop(first);
+    assert!(
+        acquire_drain_lock(&key).is_ok(),
+        "lock is released with the holder"
+    );
+    let _ = std::fs::remove_file(drain_lock_path(&key));
+    let _ = std::fs::remove_file(drain_lock_path(&other));
 }

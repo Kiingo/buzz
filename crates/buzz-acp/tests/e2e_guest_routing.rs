@@ -317,7 +317,8 @@ impl MockRoute {
                                     "guest_turn_id": turn_id,
                                     "kind": "notice",
                                     "event_kind": 46040,
-                                    "channel_id": value["channel_id"],
+                                    // As in production: owner notifications have no channel.
+                                    "channel_id": null,
                                     "content": "Someone asked your agent something that needs your approval.",
                                     "tags": [["p", owner], ["buzz-guest-approval", format!("ap-{n}")], ["agent", agent]],
                                     "mentions": [],

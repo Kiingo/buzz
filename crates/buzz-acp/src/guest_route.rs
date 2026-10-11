@@ -148,7 +148,9 @@ pub(crate) struct OutboxItem {
     pub(crate) guest_turn_id: Option<String>,
     #[serde(default)]
     pub(crate) kind: String,
-    pub(crate) channel_id: String,
+    /// Channel for chat items; `null` for owner notifications (46040–46042).
+    #[serde(default)]
+    pub(crate) channel_id: Option<String>,
     #[serde(default)]
     pub(crate) reply_to_event_id: Option<String>,
     #[serde(default)]
@@ -169,10 +171,21 @@ pub(crate) struct OutboxItem {
 /// `GET /outbox` response.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct OutboxPage {
+    /// Raw items, parsed one at a time so a single malformed item can never
+    /// block the rest of the outbox (see [`parse_outbox_item`]).
     #[serde(default)]
-    pub(crate) items: Vec<OutboxItem>,
-    #[serde(default)]
-    pub(crate) next_cursor: Option<String>,
+    pub(crate) items: Vec<Value>,
+}
+
+/// Parse one raw outbox item. `Err` carries the publication id (when the
+/// item has one) and the reason, so the caller can fail it back to the route.
+pub(crate) fn parse_outbox_item(raw: Value) -> Result<OutboxItem, (Option<String>, String)> {
+    let id = raw
+        .get("publication_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    serde_json::from_value::<OutboxItem>(raw)
+        .map_err(|e| (id, format!("malformed outbox item: {e}")))
 }
 
 /// NIP-98 authenticated client for the guest route.
