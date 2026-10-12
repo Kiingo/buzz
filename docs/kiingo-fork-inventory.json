@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 135,
-    "modifiedUpstreamFiles": 197,
+    "modifiedUpstreamFiles": 198,
     "changedUpstreamProductionSourceLines": 9428,
     "upstreamProductionSourceDiffHunks": 1034,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -714,6 +714,7 @@
       "paths": [
         "crates/buzz-acp/src/agent_guards.rs",
         "crates/buzz-acp/src/dm_addressing.rs",
+        "deny.toml",
         "crates/buzz-acp/src/guest_route.rs",
         "crates/buzz-acp/src/guest_runtime.rs",
         "crates/buzz-acp/src/guest_runtime_tests.rs",
