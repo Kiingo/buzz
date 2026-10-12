@@ -5,9 +5,9 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 135,
-    "modifiedUpstreamFiles": 197,
-    "changedUpstreamProductionSourceLines": 9330,
-    "upstreamProductionSourceDiffHunks": 1030,
+    "modifiedUpstreamFiles": 198,
+    "changedUpstreamProductionSourceLines": 9428,
+    "upstreamProductionSourceDiffHunks": 1034,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -708,11 +708,13 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
-      "purpose": "Cross-owner agent access, harness side: the inbound author gate returns a trust tier (owner, same-owner sibling, guest, other owner's agent) decided from signed data; an optional hosted guest-turn mode (BUZZ_ACP_GUEST_TURNS=hosted, BUZZ_ACP_GUEST_ROUTE_URL) hands every non-owner event, with its thread context, verified relay chain, author profile and audience, to a NIP-98-authenticated guest route instead of the local agent session, publishes the route's outbox verbatim and acknowledges it, and registers the endpoint; the queue's conversation key carries a trust lane so a non-owner event never batches into or steers an owner turn; signed agent-to-agent provenance tags (buzz-relay, buzz-relay-prev, buzz-root-budget, buzz-guest) with per-hop verification and a hop limit of 2, written by `buzz messages send` from the turn's trigger; harness-enforced loop guards (per-pair rate limit, per-root budget, request dedup, echo suppression, no re-asking while approval is pending, no agent p-tags in guest output); a [guest: <name> via <agent>] prompt marker; in hosted mode, crossing text is withheld from the local session's thread/DM history and guest output never suppresses an owner turn's reply fallback; a live-relay E2E suite; owner-turn sends (and the harness reply fallback) to a shared audience or another owner's agent are classified with the guest route's /classify and published, held for the owner, or dropped; in hosted mode `buzz messages get/thread/search` and `feed` withhold (or, with --show-untrusted, fence as untrusted data) messages from anyone but the owner, this agent and same-owner agents, and all guest output; the guest outbox is drained from startup and right after each registration, continuously, by one process per agent key (advisory lock) with at most one request in flight and a unique NIP-98 nonce per request, on its own HTTP client so routing (/turns, register, classify, on a short-timeout no-reuse control client) never waits on it, cursor-free, item by item (malformed items failed back, transient failures deferred per item), with owner notifications accepted only for this agent's own owner; owner-signed approve/deny guest-reply control frames; and the desktop pinning hosted guest turns (reserved env) with a build-time guest route URL.",
+      "purpose": "Cross-owner agent access, harness side: the inbound author gate returns a trust tier (owner, same-owner sibling, guest, other owner's agent) decided from signed data; an optional hosted guest-turn mode (BUZZ_ACP_GUEST_TURNS=hosted, BUZZ_ACP_GUEST_ROUTE_URL) hands every non-owner event, with its thread context, verified relay chain, author profile and audience, to a NIP-98-authenticated guest route instead of the local agent session, publishes the route's outbox verbatim and acknowledges it, and registers the endpoint; the queue's conversation key carries a trust lane so a non-owner event never batches into or steers an owner turn; signed agent-to-agent provenance tags (buzz-relay, buzz-relay-prev, buzz-root-budget, buzz-guest) with per-hop verification and a hop limit of 2, written by `buzz messages send` from the turn's trigger; harness-enforced loop guards (per-pair rate limit, per-root budget, request dedup, echo suppression, no re-asking while approval is pending, no agent p-tags in guest output); a [guest: <name> via <agent>] prompt marker; a DM is addressed to every participant (known DMs subscribe without the #p filter and match without the mention requirement; `buzz messages send` p-tags every other DM member, as the desktop does); in hosted mode, crossing text is withheld from the local session's thread/DM history and guest output never suppresses an owner turn's reply fallback; a live-relay E2E suite; owner-turn sends (and the harness reply fallback) to a shared audience or another owner's agent are classified with the guest route's /classify and published, held for the owner, or dropped; in hosted mode `buzz messages get/thread/search` and `feed` withhold (or, with --show-untrusted, fence as untrusted data) messages from anyone but the owner, this agent and same-owner agents, and all guest output; the guest outbox is drained from startup and right after each registration, continuously, by one process per agent key (advisory lock) with at most one request in flight and a unique NIP-98 nonce per request, on its own HTTP client so routing (/turns, register, classify, on a short-timeout no-reuse control client) never waits on it, cursor-free, item by item (malformed items failed back, transient failures deferred per item), with owner notifications accepted only for this agent's own owner; owner-signed approve/deny guest-reply control frames; and the desktop pinning hosted guest turns (reserved env) with a build-time guest route URL.",
       "upstreamStatus": "Generic mechanism (no deployment-specific endpoints); not yet proposed upstream.",
       "removalCondition": "Remove when block/buzz ships an equivalent trust-tiered gate with an out-of-process guest runtime and agent-to-agent provenance.",
       "paths": [
         "crates/buzz-acp/src/agent_guards.rs",
+        "crates/buzz-acp/src/dm_addressing.rs",
+        "deny.toml",
         "crates/buzz-acp/src/guest_route.rs",
         "crates/buzz-acp/src/guest_runtime.rs",
         "crates/buzz-acp/src/guest_runtime_tests.rs",
@@ -722,6 +724,7 @@
         "crates/buzz-acp/tests/fixtures/fake_acp_agent.py",
         "crates/buzz-cli/src/client.rs",
         "crates/buzz-cli/src/commands/feed.rs",
+        "crates/buzz-cli/src/commands/dm_mentions.rs",
         "crates/buzz-cli/src/commands/hosted_quarantine.rs",
         "crates/buzz-cli/src/commands/outbound_classify.rs",
         "crates/buzz-sdk/src/agent_relay.rs",

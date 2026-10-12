@@ -6,6 +6,11 @@ ignore = [
     # paste 1.0.15 — unmaintained. Transitive dep: mesh-llm → iroh → netlink-* → paste.
     # No safe upgrade available; tracked for upstream (iroh/netlink) replacement.
     { id = "RUSTSEC-2024-0436", reason = "transitive dep via mesh-llm → iroh → netlink; no upstream fix available" },
+    # unsafe-libyaml 0.2.11 — unmaintained (not a vulnerability). Pulled in by the
+    # deprecated serde_yaml, used by buzz-agent, buzz-persona, buzz-relay,
+    # buzz-workflow and kube-client. Remove once those move to a maintained YAML
+    # crate (serde_yaml's successors) and kube-client follows.
+    { id = "RUSTSEC-2024-0449", reason = "transitive via deprecated serde_yaml (first-party crates + kube-client); unmaintained notice, no vulnerability; migration tracked" },
     # quick-xml < 0.41: quadratic runtime on duplicate-attribute check (0194) and
     # unbounded namespace-declaration allocation in NsReader (0195). Both DoS-class,
     # requiring attacker-controlled XML. Our two locked versions only parse trusted

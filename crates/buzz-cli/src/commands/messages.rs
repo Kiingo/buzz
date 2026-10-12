@@ -312,6 +312,11 @@ async fn fetch_events(
 /// Filters and canonicalizes via `nostr::PublicKey::from_hex` — matching
 /// MCP's typed-Nostr behavior so both surfaces accept exactly the same
 /// pubkeys. Pure helper, split out for testing.
+/// Member pubkeys (lowercase hex) from a kind:39002 roster event.
+pub(crate) fn member_pubkeys_of(event: &serde_json::Value) -> Vec<String> {
+    parse_member_pubkeys(event)
+}
+
 fn parse_member_pubkeys(event: &serde_json::Value) -> Vec<String> {
     let Some(tags) = event.get("tags").and_then(|t| t.as_array()) else {
         return vec![];
@@ -771,6 +776,21 @@ pub async fn cmd_send_message(
         &member_pubkeys,
     ) {
         mention_pubkeys.push(author);
+    }
+    // A DM addresses every other participant (as the desktop app tags it).
+    // Not deliberate mentions: added after the handoff/provenance candidates.
+    if matches!(p.kind, None | Some(9)) {
+        for participant in super::dm_mentions::other_dm_participants(
+            client,
+            &p.channel_id,
+            &client.keys().public_key().to_hex(),
+        )
+        .await
+        {
+            if !mention_pubkeys.contains(&participant) {
+                mention_pubkeys.push(participant);
+            }
+        }
     }
 
     let mention_refs: Vec<&str> = mention_pubkeys.iter().map(String::as_str).collect();

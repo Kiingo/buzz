@@ -2,6 +2,8 @@ pub mod agents;
 pub mod channel_event_sequence;
 pub mod channel_templates;
 pub mod channels;
+/// Implicit p-tags for every other DM participant on sends.
+pub(crate) mod dm_mentions;
 pub mod dms;
 pub mod emoji;
 pub mod feed;

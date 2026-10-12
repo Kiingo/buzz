@@ -3,6 +3,7 @@
 mod acp;
 mod agent_guards;
 mod config;
+mod dm_addressing;
 mod dm_participants;
 mod engram_fetch;
 mod filter;
@@ -2267,7 +2268,19 @@ async fn tokio_main() -> Result<()> {
         }
     };
 
-    let channel_filters = config::resolve_channel_filters(&config, &channel_ids, &rules);
+    let mut channel_filters = config::resolve_channel_filters(&config, &channel_ids, &rules);
+    // A DM is addressed to every participant: subscribe known DMs without the
+    // `#p` filter and match their events against rules without the mention
+    // requirement (see `dm_addressing`). All later gates still apply.
+    let dm_rules = dm_addressing::dm_rules(&rules);
+    let startup_dms = dm_addressing::known_dms(
+        channel_info_map
+            .iter()
+            .map(|(id, info)| (id, info.channel_type.as_str())),
+    );
+    for (channel_id, filter) in channel_filters.iter_mut() {
+        dm_addressing::widen_for_dm(filter, startup_dms.contains(channel_id));
+    }
     if channel_filters.is_empty() {
         tracing::warn!("no channel subscriptions resolved — agent will sit idle");
     }
@@ -2874,8 +2887,12 @@ async fn tokio_main() -> Result<()> {
 
                                     if subscribed_channel_ids.contains(&ch) {
                                         tracing::debug!(channel_id = %ch, "membership notification: channel already subscribed");
-                                    } else if let Some(filter) = config::resolve_dynamic_channel_filter(&config, ch, &rules) {
-                                        tracing::info!(channel_id = %ch, "membership notification: subscribing to new channel");
+                                    } else if let Some(mut filter) = config::resolve_dynamic_channel_filter(&config, ch, &rules) {
+                                        dm_addressing::widen_for_dm(
+                                            &mut filter,
+                                            dm_addressing::is_known_dm(ch, &ctx.channel_info).await,
+                                        );
+                                        tracing::info!(channel_id = %ch, mention_filter = filter.require_mention, "membership notification: subscribing to new channel");
                                         if let Err(e) = relay.subscribe_channel_from(ch, filter, Some(ts)).await {
                                             tracing::warn!("failed to subscribe to new channel {ch}: {e}");
                                         } else {
@@ -3169,7 +3186,16 @@ async fn tokio_main() -> Result<()> {
                                 continue;
                             }
 
-                            let matched = filter::match_event(&buzz_event.event, buzz_event.channel_id, &rules, &pubkey_hex).await;
+                            // In a known DM every message is addressed to the
+                            // agent, whether or not the client p-tagged it.
+                            let rule_set = if is_dm
+                                && dm_addressing::is_known_dm(buzz_event.channel_id, &ctx.channel_info).await
+                            {
+                                &dm_rules
+                            } else {
+                                &rules
+                            };
+                            let matched = filter::match_event(&buzz_event.event, buzz_event.channel_id, rule_set, &pubkey_hex).await;
                             let prompt_tag = match matched {
                                 Some(m) => m.prompt_tag,
                                 None => {

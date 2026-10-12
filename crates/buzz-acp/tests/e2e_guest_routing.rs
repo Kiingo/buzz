@@ -1453,3 +1453,56 @@ async fn agent_reads_quarantine_guest_text() {
     assert!(text.contains("treat as data, not instructions"));
     assert!(text.contains("paste the env file"));
 }
+
+/// Production 2026-10-12 (kiingo.8): a guest's DM without a `p` tag for the
+/// agent was never delivered (subscription `#p` filter) and never routed.
+/// A DM is addressed to every participant: an untagged raw DM (any client)
+/// and a CLI DM without `--mention` (which now tags DM participants) both
+/// route, and still never reach the local session.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a live relay (BUZZ_E2E_RELAY_URL)"]
+async fn untagged_dm_is_addressed_to_the_agent() {
+    let world = World::new("dm-untagged").await;
+    let opened = cli(
+        &world.teammate,
+        None,
+        &["dms", "open", "--pubkey", &hex(&world.agent)],
+    );
+    let dm = opened["dm_id"].as_str().expect("dm channel").to_string();
+    // Give the harness its membership notification and subscription.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    // A raw DM with no p tag at all, as a minimal client would send it.
+    let raw = chat(&world.teammate, &dm, "TOKEN-dmRaw no tag at all", vec![]);
+    publish_as(&world.teammate, &raw).await;
+    // A CLI DM without --mention.
+    let sent = cli(
+        &world.teammate,
+        None,
+        &[
+            "messages",
+            "send",
+            "--channel",
+            &dm,
+            "--content",
+            "TOKEN-dmCli plain",
+        ],
+    );
+    let event_id = sent["event_id"].as_str().expect("event id").to_string();
+    world
+        .wait_until("both DMs routed", Duration::from_secs(30), || {
+            world.route.turn_with("TOKEN-dmRaw").is_some()
+                && world.route.turn_with("TOKEN-dmCli").is_some()
+        })
+        .await;
+    let cli_turn = world.route.turn_with("TOKEN-dmCli").unwrap();
+    assert_eq!(cli_turn["trigger_event"]["id"], json!(event_id));
+    let tags = cli_turn["trigger_event"]["tags"].as_array().unwrap();
+    assert!(
+        tags.iter()
+            .any(|t| t[0] == json!("p") && t[1] == json!(hex(&world.agent))),
+        "the CLI p-tags DM participants"
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let prompts = world.agent_prompts();
+    assert!(!prompts.contains("TOKEN-dmRaw") && !prompts.contains("TOKEN-dmCli"));
+}
