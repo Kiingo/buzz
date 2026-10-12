@@ -1054,7 +1054,12 @@ async fn handle_agent_observer_event(
     let is_owner = if session_owner_match {
         true
     } else {
-        match state.observer_owner_cache.get(&cache_key) {
+        let cached = state
+            .pubsub
+            .transport_continuity()
+            .then(|| state.observer_owner_cache.get(&cache_key))
+            .flatten();
+        match cached {
             Some(cached) => cached,
             None => {
                 let result = state

@@ -40,11 +40,14 @@ pub mod rate_limiter;
 pub mod subscriber;
 /// Community-scoped Redis event topics.
 pub mod topic;
+mod transport;
+mod writer;
 /// Typing indicator tracking in Redis.
 pub use error::PubSubError;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use buzz_core::TenantContext;
@@ -55,7 +58,10 @@ use crate::cache_invalidation::{
     cache_invalidation_channel, CacheInvalidation, ScopedCacheInvalidation,
 };
 use crate::conn_control::{conn_control_channel, ConnControl, ScopedConnControl};
+mod delivery;
 pub use crate::topic::{channel_key, global_key, EventTopic, EventTopicKey};
+
+type SecurityRequalification = Arc<dyn Fn() + Send + Sync>;
 
 /// A Nostr event received on a scoped Redis event topic, broadcast to local subscribers.
 #[derive(Debug, Clone)]
@@ -110,6 +116,8 @@ pub struct PubSubManager {
     broadcast_tx: broadcast::Sender<ChannelEvent>,
     cache_invalidation_tx: broadcast::Sender<ScopedCacheInvalidation>,
     conn_control_tx: broadcast::Sender<ScopedConnControl>,
+    continuity: Arc<AtomicBool>,
+    security_requalification: Arc<RwLock<Option<SecurityRequalification>>>,
 }
 
 impl PubSubManager {
@@ -123,6 +131,8 @@ impl PubSubManager {
         config: PubSubConfig,
         pool: deadpool_redis::Pool,
     ) -> Result<Self, PubSubError> {
+        metrics::counter!("buzz_redis_primary_refresh_total").increment(0);
+        metrics::counter!("buzz_redis_write_failures_total").increment(0);
         let (broadcast_tx, _) = broadcast::channel(4096);
         let (cache_invalidation_tx, _) = broadcast::channel(4096);
         let (conn_control_tx, _) = broadcast::channel(4096);
@@ -138,6 +148,8 @@ impl PubSubManager {
             broadcast_tx,
             cache_invalidation_tx,
             conn_control_tx,
+            continuity: Arc::new(AtomicBool::new(false)),
+            security_requalification: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -146,14 +158,25 @@ impl PubSubManager {
     /// Runs forever — spawn this in a background task. The loop reconnects
     /// with exponential backoff on Redis disconnect (1s → 2s → 4s → … → 30s).
     pub async fn run_subscriber(self: Arc<Self>) {
+        self.run_delivery().await;
+    }
+
+    async fn run_delivery(&self) {
         let Some(subscription_rx) = self.subscription_rx.lock().await.take() else {
-            tracing::error!("Redis pub/sub subscriber already started");
+            // Startup retains the public entry points for all three categories;
+            // whichever starts first owns their single ordered transport cursor.
             return;
         };
 
-        subscriber::run_subscriber(
+        delivery::run(
             self.redis_url.clone(),
-            self.broadcast_tx.clone(),
+            delivery::Destinations {
+                events: self.broadcast_tx.clone(),
+                cache: self.cache_invalidation_tx.clone(),
+                control: self.conn_control_tx.clone(),
+                continuity: self.continuity.clone(),
+                requalify: self.security_requalification.clone(),
+            },
             self.desired_topics.clone(),
             subscription_rx,
         )
@@ -163,21 +186,28 @@ impl PubSubManager {
     /// Starts the cache-invalidation subscriber loop with automatic
     /// reconnection. Runs forever — spawn this in a background task.
     pub async fn run_cache_invalidation_subscriber(self: Arc<Self>) {
-        cache_invalidation::run_cache_invalidation_subscriber(
-            self.redis_url.clone(),
-            self.cache_invalidation_tx.clone(),
-        )
-        .await;
+        self.run_delivery().await;
     }
 
     /// Starts the connection-control subscriber loop with automatic
     /// reconnection. Runs forever — spawn this in a background task.
     pub async fn run_conn_control_subscriber(self: Arc<Self>) {
-        conn_control::run_conn_control_subscriber(
-            self.redis_url.clone(),
-            self.conn_control_tx.clone(),
-        )
-        .await;
+        self.run_delivery().await;
+    }
+
+    /// Whether the known serving cursor is still covered by retained transport
+    /// history. A lost epoch/history never silently resets to today's tail.
+    pub fn transport_continuity(&self) -> bool {
+        self.continuity.load(Ordering::Acquire)
+    }
+
+    /// Install the relay's synchronous cache drop before a reader reconnects.
+    /// It must drop derived security state only, without publishing or writing.
+    pub fn set_security_requalification(&self, callback: impl Fn() + Send + Sync + 'static) {
+        *self
+            .security_requalification
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(callback));
     }
 
     /// Returns a new broadcast receiver for locally-published channel events.
@@ -274,14 +304,8 @@ impl PubSubManager {
         ctx: &TenantContext,
         invalidation: &CacheInvalidation,
     ) -> Result<i64, PubSubError> {
-        let mut conn = self.pool.get().await?;
         let payload = serde_json::to_string(invalidation)?;
-        let subscriber_count: i64 = redis::cmd("PUBLISH")
-            .arg(cache_invalidation_channel(ctx))
-            .arg(&payload)
-            .query_async(&mut conn)
-            .await?;
-        Ok(subscriber_count)
+        transport::publish(&self.pool, &cache_invalidation_channel(ctx), &payload).await
     }
 
     /// Publish a connection-control command to all pods. Used for live ban
@@ -294,14 +318,8 @@ impl PubSubManager {
         ctx: &TenantContext,
         command: &ConnControl,
     ) -> Result<i64, PubSubError> {
-        let mut conn = self.pool.get().await?;
         let payload = serde_json::to_string(command)?;
-        let subscriber_count: i64 = redis::cmd("PUBLISH")
-            .arg(conn_control_channel(ctx))
-            .arg(&payload)
-            .query_async(&mut conn)
-            .await?;
-        Ok(subscriber_count)
+        transport::publish(&self.pool, &conn_control_channel(ctx), &payload).await
     }
 
     /// Publish an event to the Redis channel. Returns subscriber count.
@@ -364,6 +382,37 @@ impl PubSubManager {
     ) -> Result<HashMap<String, String>, PubSubError> {
         presence::get_presence_bulk(&self.pool, ctx, pubkeys).await
     }
+}
+
+/// Publish a deletion-fenced community disconnect through the shared transport.
+pub async fn publish_deletion_disconnect(
+    pool: &deadpool_redis::Pool,
+    community: buzz_core::CommunityId,
+) -> Result<(), PubSubError> {
+    let channel = format!("buzz:{community}:conn-control");
+    transport::publish(pool, &channel, r#"{"op":"DisconnectCommunity"}"#).await?;
+    Ok(())
+}
+
+/// Erase temporary user payloads for a deletion-fenced community. A bounded
+/// lifecycle tombstone retains only its routing ID and exact DisconnectCommunity
+/// constant, under the existing deletion audit/control purpose; it preserves the
+/// live disconnect command without retaining user, ACL, channel or event data.
+/// Accounting IDs/sizes remain bounded until prefix reclamation, without payload.
+pub async fn erase_community_transport(
+    pool: &deadpool_redis::Pool,
+    community: buzz_core::CommunityId,
+) -> Result<u64, PubSubError> {
+    transport::community_records(pool, community, true).await
+}
+
+/// Count retained user-payload records for the deletion owner's absence proof.
+/// The documented typed lifecycle tombstone is audit/control metadata.
+pub async fn community_transport_records(
+    pool: &deadpool_redis::Pool,
+    community: buzz_core::CommunityId,
+) -> Result<u64, PubSubError> {
+    transport::community_records(pool, community, false).await
 }
 
 #[cfg(test)]

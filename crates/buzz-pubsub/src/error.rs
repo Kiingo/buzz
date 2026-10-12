@@ -26,6 +26,10 @@ pub enum PubSubError {
     /// A Redis channel key could not be parsed as a valid channel ID.
     #[error("Invalid channel key: {0}")]
     InvalidChannelKey(String),
+
+    /// A subscriber's exact transport cursor is outside retained history.
+    #[error("Redis transport continuity cannot be proved from retained history")]
+    ReplayGap,
 }
 
 impl From<tokio::sync::broadcast::error::RecvError> for PubSubError {

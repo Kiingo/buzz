@@ -31,15 +31,14 @@ pub async fn set_presence(
     pubkey: &PublicKey,
     status: &str,
 ) -> Result<(), PubSubError> {
-    let mut conn = pool.get().await?;
     let key = presence_key(ctx, pubkey);
-    redis::cmd("SET")
+    let mut command = redis::cmd("SET");
+    command
         .arg(&key)
         .arg(status)
         .arg("EX")
-        .arg(PRESENCE_TTL_SECS)
-        .query_async::<()>(&mut conn)
-        .await?;
+        .arg(PRESENCE_TTL_SECS);
+    crate::writer::write::<()>(pool, &command).await?;
     Ok(())
 }
 
@@ -49,12 +48,10 @@ pub async fn clear_presence(
     ctx: &TenantContext,
     pubkey: &PublicKey,
 ) -> Result<(), PubSubError> {
-    let mut conn = pool.get().await?;
     let key = presence_key(ctx, pubkey);
-    redis::cmd("DEL")
-        .arg(&key)
-        .query_async::<()>(&mut conn)
-        .await?;
+    let mut command = redis::cmd("DEL");
+    command.arg(&key);
+    crate::writer::write::<()>(pool, &command).await?;
     Ok(())
 }
 

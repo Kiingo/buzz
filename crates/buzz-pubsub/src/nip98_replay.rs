@@ -47,38 +47,24 @@ impl Nip98ReplayGuard for RedisNip98ReplayGuard {
             // implausibly long.
             let ttl = ttl_secs.clamp(DEFAULT_REPLAY_TTL_SECS, MAX_REPLAY_TTL_SECS);
 
-            let mut conn = self.pool.get().await.map_err(|e| {
-                // Structured field for ops; the user-facing AuthError stays a
-                // bounded category string.
-                tracing::warn!(
-                    scope = %scope,
-                    error = %e,
-                    "nip98 replay: redis pool acquire failed — caller MUST fail closed"
-                );
-                AuthError::Internal(format!("Redis pool: {e}"))
-            })?;
-
             let key = nip98_replay_key_for_scope(scope, event_id);
 
             // SET key 1 NX EX <ttl>. redis-rs typed return: Some("OK") on first
             // claim, None on existing key. Any other value would be a Redis-side
             // bug; treat it as internal error.
-            let result: Option<String> = redis::cmd("SET")
-                .arg(&key)
-                .arg("1")
-                .arg("NX")
-                .arg("EX")
-                .arg(ttl)
-                .query_async(&mut *conn)
-                .await
-                .map_err(|e| {
-                    tracing::warn!(
-                        scope = %scope,
-                        error = %e,
-                        "nip98 replay: redis SET NX EX failed — caller MUST fail closed"
-                    );
-                    AuthError::Internal(format!("Redis SET NX EX: {e}"))
-                })?;
+            let mut command = redis::cmd("SET");
+            command.arg(&key).arg("1").arg("NX").arg("EX").arg(ttl);
+            let result: Option<String> =
+                crate::writer::write(&self.pool, &command)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(
+                            scope = %scope,
+                            error = %e,
+                            "nip98 replay: redis SET NX EX failed — caller MUST fail closed"
+                        );
+                        AuthError::Internal(format!("Redis SET NX EX: {e}"))
+                    })?;
 
             match result.as_deref() {
                 Some("OK") => Ok(true),
