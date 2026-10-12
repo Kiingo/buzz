@@ -6,7 +6,7 @@
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 144,
     "modifiedUpstreamFiles": 229,
-    "changedUpstreamProductionSourceLines": 9858,
+    "changedUpstreamProductionSourceLines": 9859,
     "upstreamProductionSourceDiffHunks": 1083,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
@@ -925,6 +925,24 @@
         "modifiedUpstreamFiles": 229,
         "modifiedUpstreamProductionSourceFiles": 144,
         "changedUpstreamProductionSourceLines": 9858,
+        "upstreamProductionSourceDiffHunks": 1083
+      }
+    },
+    {
+      "id": "M-3560-original-pool-primary-resolution",
+      "acceptedProtocolSource": "1b97b8bc5da274f28a8d11710edd664e9222eddd",
+      "reason": "Exact single additional upstream-source line binding the existing pool configuration for bounded definite-READONLY primary resolution. The writer is already a classified generic added path. No new path exception, numeric slack or forbidden business-logic allowance.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 144,
+        "modifiedUpstreamFiles": 229,
+        "changedUpstreamProductionSourceLines": 9858,
+        "upstreamProductionSourceDiffHunks": 1083,
+        "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
+      },
+      "qualifiedComposition": {
+        "modifiedUpstreamProductionSourceFiles": 144,
+        "modifiedUpstreamFiles": 229,
+        "changedUpstreamProductionSourceLines": 9859,
         "upstreamProductionSourceDiffHunks": 1083
       }
     }

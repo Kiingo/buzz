@@ -131,6 +131,7 @@ impl PubSubManager {
         config: PubSubConfig,
         pool: deadpool_redis::Pool,
     ) -> Result<Self, PubSubError> {
+        writer::register(&pool, &config.redis_url);
         metrics::counter!("buzz_redis_primary_refresh_total").increment(0);
         metrics::counter!("buzz_redis_write_failures_total").increment(0);
         let (broadcast_tx, _) = broadcast::channel(4096);
