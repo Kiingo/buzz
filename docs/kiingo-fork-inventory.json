@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 134,
-    "modifiedUpstreamFiles": 196,
-    "changedUpstreamProductionSourceLines": 9416,
-    "upstreamProductionSourceDiffHunks": 1031,
+    "modifiedUpstreamProductionSourceFiles": 135,
+    "modifiedUpstreamFiles": 197,
+    "changedUpstreamProductionSourceLines": 9428,
+    "upstreamProductionSourceDiffHunks": 1034,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -814,6 +814,18 @@
         "mobile/test/features/activity/guest_notifications_test.dart",
         "mobile/test/shared/push/dev_push_lease_test.dart",
         "mobile/test/shared/push/push_subscription_test.dart"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "purpose": "In-app updater freshness: a background check parks a downloaded update as ready and stops checking, so Restart to update could install an already-superseded release (kiingo.5 installed kiingo.6 while the feed served kiingo.8). Before installing, re-check the feed; if it serves a different version, download that and install it instead, otherwise (or when the feed is unreachable) install the parked download.",
+      "upstreamStatus": "Generic updater fix; candidate for upstream.",
+      "removalCondition": "Remove when block/buzz re-checks the feed before installing a parked update.",
+      "paths": [
+        "desktop/src/features/settings/hooks/updaterFreshness.test.mjs",
+        "desktop/src/features/settings/hooks/updaterFreshness.ts",
+        "desktop/src/features/settings/hooks/use-updater.ts"
       ]
     }
   ]
