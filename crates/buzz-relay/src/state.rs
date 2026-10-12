@@ -1011,6 +1011,11 @@ impl AppState {
         channel_id: Uuid,
         pubkey: &[u8],
     ) -> Result<bool, buzz_db::DbError> {
+        if !self.pubsub.transport_continuity() {
+            // A reader reconnect or known replay gap cannot inherit cached
+            // authorization. Keep serving from the authoritative tenant DB.
+            return self.db.is_member(community_id, channel_id, pubkey).await;
+        }
         let key = (community_id, channel_id, pubkey.to_vec());
         if let Some(cached) = self.membership_cache.get(&key) {
             metrics::counter!("buzz_membership_cache_hits_total").increment(1);
@@ -1272,6 +1277,12 @@ impl AppState {
         community_id: CommunityId,
         pubkey: &[u8],
     ) -> Result<Vec<Uuid>, buzz_db::DbError> {
+        if !self.pubsub.transport_continuity() {
+            return self
+                .db
+                .get_accessible_channel_ids(community_id, pubkey)
+                .await;
+        }
         let key = (community_id, pubkey.to_vec());
         if let Some(cached) = self.accessible_channels_cache.get(&key) {
             metrics::counter!("buzz_accessible_channels_cache_hits_total").increment(1);
@@ -1308,6 +1319,16 @@ impl AppState {
         channel_id: Uuid,
         prefetched: Option<&buzz_db::channel::ChannelRecord>,
     ) -> Result<String, buzz_db::DbError> {
+        if !self.pubsub.transport_continuity() {
+            return match prefetched {
+                Some(row) => Ok(row.visibility.clone()),
+                None => Ok(self
+                    .db
+                    .get_channel(community_id, channel_id)
+                    .await?
+                    .visibility),
+            };
+        }
         if let Some(cached) = self
             .channel_visibility_cache
             .get(&(community_id, channel_id))

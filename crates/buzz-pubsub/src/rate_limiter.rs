@@ -15,7 +15,6 @@ use buzz_auth::{
 };
 use buzz_core::TenantContext;
 use nostr::PublicKey;
-use redis::Script;
 
 /// Atomically INCR the key, set EXPIRE on first call, and return (count, ttl).
 ///
@@ -42,16 +41,13 @@ async fn run_rate_limit(
     window_secs: u64,
     limit: u64,
 ) -> Result<RateLimitResult, AuthError> {
-    let mut conn = pool
-        .get()
-        .await
-        .map_err(|e| AuthError::Internal(format!("Redis pool: {e}")))?;
-
-    let script = Script::new(RATE_LIMIT_SCRIPT);
-    let (count, ttl): (u64, i64) = script
-        .key(key)
-        .arg(window_secs as i64)
-        .invoke_async(&mut *conn)
+    let mut command = redis::cmd("EVAL");
+    command
+        .arg(RATE_LIMIT_SCRIPT)
+        .arg(1)
+        .arg(key)
+        .arg(window_secs as i64);
+    let (count, ttl): (u64, i64) = crate::writer::write(pool, &command)
         .await
         .map_err(|e| AuthError::Internal(format!("Redis rate limit script: {e}")))?;
 
@@ -59,10 +55,9 @@ async fn run_rate_limit(
     // prior crash between INCR and EXPIRE. Repair it now.
     let reset_in_secs = if ttl < 0 {
         tracing::warn!(key = %key, "rate limit key has no TTL — repairing");
-        let _: () = redis::cmd("EXPIRE")
-            .arg(key)
-            .arg(window_secs as i64)
-            .query_async(&mut *conn)
+        let mut repair = redis::cmd("EXPIRE");
+        repair.arg(key).arg(window_secs as i64);
+        let _: () = crate::writer::write(pool, &repair)
             .await
             .map_err(|e| AuthError::Internal(format!("Redis EXPIRE repair: {e}")))?;
         // After repair, the window resets to the full duration.

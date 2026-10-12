@@ -1446,13 +1446,7 @@ async fn publish_disconnect_community(
     pool: &deadpool_redis::Pool,
     community: buzz_core::CommunityId,
 ) -> Result<()> {
-    let mut connection = pool.get().await?;
-    let channel = format!("buzz:{community}:conn-control");
-    let _: u64 = redis::cmd("PUBLISH")
-        .arg(channel)
-        .arg(r#"{"op":"DisconnectCommunity"}"#)
-        .query_async(&mut *connection)
-        .await?;
+    buzz_pubsub::publish_deletion_disconnect(pool, community).await?;
     Ok(())
 }
 
@@ -1460,10 +1454,11 @@ async fn purge_redis_namespace(
     pool: &deadpool_redis::Pool,
     community: buzz_core::CommunityId,
 ) -> Result<u64> {
+    let erased_transport = buzz_pubsub::erase_community_transport(pool, community).await?;
     let mut connection = pool.get().await?;
     let pattern = format!("buzz:{community}:*");
     let mut cursor = 0u64;
-    let mut deleted = 0u64;
+    let mut deleted = erased_transport;
     loop {
         let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
             .arg(cursor)
@@ -1520,6 +1515,11 @@ async fn verify_redis_absence(
     pool: &deadpool_redis::Pool,
     community: buzz_core::CommunityId,
 ) -> Result<()> {
+    if buzz_pubsub::community_transport_records(pool, community).await? != 0 {
+        return Err(transient(
+            "Redis transport retains target community user payloads",
+        ));
+    }
     let mut connection = pool.get().await?;
     let pattern = format!("buzz:{community}:*");
     // SCAN is weakly consistent. Two complete empty passes ensure a cursor

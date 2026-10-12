@@ -467,6 +467,16 @@ async fn main() -> anyhow::Result<()> {
         git_store,
     );
     let state = Arc::new(app_state);
+    let security_state = Arc::downgrade(&state);
+    state.pubsub.set_security_requalification(move || {
+        if let Some(state) = security_state.upgrade() {
+            state.membership_cache.invalidate_all();
+            state.accessible_channels_cache.invalidate_all();
+            state.channel_visibility_cache.invalidate_all();
+            state.observer_owner_cache.invalidate_all();
+            state.author_type_cache.invalidate_all();
+        }
+    });
 
     // Inter-relay mesh (BUZZ_MESH seam). `boot_mesh` returns None when the
     // kill switch is off — nothing is bound, published, or spawned, so the

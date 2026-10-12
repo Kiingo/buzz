@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 135,
-    "modifiedUpstreamFiles": 198,
-    "changedUpstreamProductionSourceLines": 9428,
-    "upstreamProductionSourceDiffHunks": 1034,
+    "modifiedUpstreamProductionSourceFiles": 144,
+    "modifiedUpstreamFiles": 229,
+    "changedUpstreamProductionSourceLines": 9858,
+    "upstreamProductionSourceDiffHunks": 1083,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -152,7 +152,9 @@
         "crates/buzz-azure-storage/src/lib.rs"
       ],
       "contract": "Storage-backend-neutral media behavior with Azure adaptation outside the upstream switch.",
-      "focusedTests": ["cargo test -p buzz-azure-storage --locked"]
+      "focusedTests": [
+        "cargo test -p buzz-azure-storage --locked"
+      ]
     },
     {
       "hook": "crates/buzz-relay/src/api/git/store.rs",
@@ -161,7 +163,9 @@
         "crates/buzz-azure-storage/src/lib.rs"
       ],
       "contract": "Storage-backend-neutral Git object semantics with Azure result translation isolated.",
-      "focusedTests": ["cargo test -p buzz-relay git_store --locked"]
+      "focusedTests": [
+        "cargo test -p buzz-relay git_store --locked"
+      ]
     },
     {
       "hook": "desktop/src-tauri/src/deep_link.rs",
@@ -230,9 +234,13 @@
     },
     {
       "hook": "crates/buzz-db/src/store/event.rs",
-      "implementations": ["crates/buzz-db/src/store/managed_publication.rs"],
+      "implementations": [
+        "crates/buzz-db/src/store/managed_publication.rs"
+      ],
       "contract": "Exact issuer trust, scope, receipt and publication fences enforced in the event insertion transaction. Explicit Stop and contribution insertion serialize without rewriting historical contributions or weakening ordinary moderation deletion.",
-      "focusedTests": ["crates/buzz-db/src/store/managed_publication/tests.rs"]
+      "focusedTests": [
+        "crates/buzz-db/src/store/managed_publication/tests.rs"
+      ]
     },
     {
       "hook": "crates/buzz-relay/src/api/bridge.rs",
@@ -266,9 +274,13 @@
     },
     {
       "hook": "crates/buzz-admin/src/main.rs",
-      "implementations": ["crates/buzz-admin/src/runtime_issuers.rs"],
+      "implementations": [
+        "crates/buzz-admin/src/runtime_issuers.rs"
+      ],
       "contract": "Operator-only immutable verification-key provisioning within the explicitly configured relay community; events cannot provision their own authority.",
-      "focusedTests": ["crates/buzz-db/src/store/managed_publication/tests.rs"]
+      "focusedTests": [
+        "crates/buzz-db/src/store/managed_publication/tests.rs"
+      ]
     },
     {
       "hook": "crates/buzz-sdk/src/lib.rs",
@@ -289,13 +301,19 @@
         "desktop/src/features/messages/ui/AgentStatusRow.tsx"
       ],
       "contract": "Strict signer-attributed, plain-text system status inside its own thread, excluded from root chat and conversational unread activity; ordinary chat and moderation rendering remain separate.",
-      "focusedTests": ["desktop/src/features/messages/lib/agentStatus.test.mjs"]
+      "focusedTests": [
+        "desktop/src/features/messages/lib/agentStatus.test.mjs"
+      ]
     },
     {
       "hook": "mobile/lib/features/channels/timeline_message.dart",
-      "implementations": ["mobile/lib/features/channels/agent_status_row.dart"],
+      "implementations": [
+        "mobile/lib/features/channels/agent_status_row.dart"
+      ],
       "contract": "The same operational event boundary rendered as thread-scoped system status without answer/edit/delete affordances or a semantic finish decision.",
-      "focusedTests": ["mobile/test/features/channels/agent_status_test.dart"]
+      "focusedTests": [
+        "mobile/test/features/channels/agent_status_test.dart"
+      ]
     }
   ],
   "deltas": [
@@ -305,7 +323,9 @@
       "purpose": "Keep the development and integration object-store dependency on MinIO's public multi-architecture registry after the former Docker Hub image paths stopped serving anonymous pulls.",
       "upstreamStatus": "Generic dependency-registry correction discovered by hosted integration CI; not submitted upstream.",
       "removalCondition": "Remove when block/buzz uses an equivalent available MinIO registry or replaces this development dependency.",
-      "paths": ["docker-compose.yml"]
+      "paths": [
+        "docker-compose.yml"
+      ]
     },
     {
       "classification": "retain-generic",
@@ -363,7 +383,9 @@
       "purpose": "Canonical direct-message inventory from existing kind:39000 metadata with exact participant scoping.",
       "upstreamStatus": "submitted as block/buzz PR #7030",
       "removalCondition": "Remove when block/buzz lists direct messages from canonical kind:39000 metadata with equivalent participant scoping.",
-      "paths": ["crates/buzz-cli/src/commands/dms.rs"]
+      "paths": [
+        "crates/buzz-cli/src/commands/dms.rs"
+      ]
     },
     {
       "classification": "retain-generic",
@@ -828,6 +850,83 @@
         "desktop/src/features/settings/hooks/updaterFreshness.ts",
         "desktop/src/features/settings/hooks/use-updater.ts"
       ]
+    },
+    {
+      "id": "kiingo-spot-only-static-ci",
+      "classification": "move-to-kiingo",
+      "purpose": "Kiingo organization policy for isolated public Linux/Windows Azure Spot build/static/publication profiles, test-free fork CI and normal static hooks; upstream owners keep their existing behavior. Required Windows MSVC workspace/Tauri compile and ARM image output remain. Default Apple compilation uses existing exact-source Kiingo native platform owners under the documented exception.",
+      "upstreamStatus": "Organization-specific workflow policy; not proposed upstream.",
+      "removalCondition": "Remove when equivalent externally owned Kiingo source/build/publication workflows preserve the same outputs and immutable source/profile custody.",
+      "paths": [
+        ".github/kiingo-spot-ci.json",
+        ".github/workflows/auto-tag-on-release-pr-merge.yml",
+        ".github/workflows/benchmark-harbor.yml",
+        ".github/workflows/desktop-release-cache-proof.yml",
+        ".github/workflows/desktop-release-candidate.yml",
+        ".github/workflows/helm-chart.yml",
+        ".github/workflows/linux-canary.yml",
+        ".github/workflows/macos-intel-canary.yml",
+        ".github/workflows/mesh-lifecycle.yml",
+        ".github/workflows/mobile-release-candidate.yml",
+        ".github/workflows/promote-oss-desktop-release.yml",
+        ".github/workflows/push-gateway-helm-chart.yml",
+        ".github/workflows/release.yml",
+        ".github/workflows/signed-macos-canary.yml",
+        ".github/workflows/sprig-image.yml",
+        ".github/workflows/sprig.yml",
+        ".github/workflows/staging-dev-relay-image.yml",
+        ".github/workflows/windows-canary.yml",
+        "AGENTS.md",
+        "lefthook.yml",
+        "scripts/check-branch-skew.sh",
+        "scripts/kiingo-hook-files.sh",
+        "scripts/kiingo-static-hook.sh"
+      ]
+    },
+    {
+      "id": "bounded-redis-online-transport-continuity",
+      "classification": "retain-generic",
+      "purpose": "Provider-neutral bounded ordered Redis transport history and adjacent legacy compatibility for qualified online primary handover; exact replay cursors/TTL hints, durable loss/unbuffered custody, live serving after coverage loss, fresh security-cache qualification, nonce-safe definite-READONLY-only client refresh and a typed constant community deletion-control tombstone. Existing Cargo.lock and relay event/main/state inventory rows carry the integration points.",
+      "upstreamStatus": "Generic continuity mechanism; not yet proposed upstream.",
+      "removalCondition": "Remove when upstream provides equivalent lossless qualified online Redis handover and deletion/privacy/client compatibility.",
+      "paths": [
+        "crates/buzz-deletion/Cargo.toml",
+        "crates/buzz-deletion/src/lib.rs",
+        "crates/buzz-pubsub/Cargo.toml",
+        "crates/buzz-pubsub/src/delivery.rs",
+        "crates/buzz-pubsub/src/error.rs",
+        "crates/buzz-pubsub/src/lib.rs",
+        "crates/buzz-pubsub/src/nip98_replay.rs",
+        "crates/buzz-pubsub/src/presence.rs",
+        "crates/buzz-pubsub/src/publisher.rs",
+        "crates/buzz-pubsub/src/rate_limiter.rs",
+        "crates/buzz-pubsub/src/subscriber.rs",
+        "crates/buzz-pubsub/src/transport.rs",
+        "crates/buzz-pubsub/src/writer.rs",
+        "crates/buzz-relay/src/router.rs"
+      ]
+    }
+  ],
+  "budgetAmendments": [
+    {
+      "id": "M-3560-qualified-online-cost-cutover",
+      "baseline": "c003cf40eea136b76d3eb0b20a3b3dab291aacc9",
+      "acceptedPolicySource": "67960a89740ca0601d88f5a88f28f5d813393910",
+      "reason": "Exact source footprint of the independently reviewed Spot policy and online Redis continuity prerequisite. No slack, wildcard path or checker exception added; forbidden business-logic budget remains zero.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 135,
+        "modifiedUpstreamFiles": 198,
+        "changedUpstreamProductionSourceLines": 9428,
+        "upstreamProductionSourceDiffHunks": 1034,
+        "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
+      },
+      "acceptedPolicyModifiedUpstreamFiles": 218,
+      "qualifiedComposition": {
+        "modifiedUpstreamFiles": 229,
+        "modifiedUpstreamProductionSourceFiles": 144,
+        "changedUpstreamProductionSourceLines": 9858,
+        "upstreamProductionSourceDiffHunks": 1083
+      }
     }
   ]
 }

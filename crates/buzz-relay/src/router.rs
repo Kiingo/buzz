@@ -432,8 +432,13 @@ async fn readiness_handler(State(state): State<Arc<AppState>>) -> impl IntoRespo
             .await
             .unwrap_or((false, false, false));
 
+    let transport_ok = state.pubsub.transport_continuity();
     if pg_ok && redis_ok && deletion_catalog_ok {
-        (StatusCode::OK, Json(json!({"status": "ready"}))).into_response()
+        (
+            StatusCode::OK,
+            Json(json!({"status": "ready", "transport_continuity": transport_ok})),
+        )
+            .into_response()
     } else {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -441,6 +446,7 @@ async fn readiness_handler(State(state): State<Arc<AppState>>) -> impl IntoRespo
                 "status": "not_ready",
                 "postgres": pg_ok,
                 "redis": redis_ok,
+                "transport": transport_ok,
                 "deletion_catalog": deletion_catalog_ok
             })),
         )
