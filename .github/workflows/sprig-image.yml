@@ -41,7 +41,7 @@ on:
 
 concurrency:
   group: sprig-image-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.repository != 'Kiingo/buzz' && (github.ref_type == 'branch' && github.event_name == 'pull_request') }}
 
 permissions: {}
 
@@ -53,7 +53,7 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.platform }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || format('["{0}"]', matrix.runner)) }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -76,6 +76,12 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Register public ARM image emulation
+        if: github.repository == 'Kiingo/buzz'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
@@ -146,7 +152,7 @@ jobs:
   merge:
     name: Merge multi-arch manifest
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-24.04"]') }}
     needs: build
     timeout-minutes: 15
     permissions:
@@ -162,6 +168,12 @@ jobs:
           path: /tmp/digests
           pattern: sprig-digest-*
           merge-multiple: true
+
+      - name: Register public ARM image emulation
+        if: github.repository == 'Kiingo/buzz'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0

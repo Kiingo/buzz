@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "profile": "buzz-public",
+  "repository": "Kiingo/buzz",
+  "repositoryId": 1316451877,
+  "ciTests": false,
+  "spotOnly": true,
+  "runnerLabels": [
+    "self-hosted",
+    "linux",
+    "x64",
+    "kiingo-azure",
+    "untrusted-test",
+    "d4ads-v6",
+    "docker",
+    "kiingo-buzz-public"
+  ],
+  "windowsProfile": "buzz-public-windows",
+  "windowsRunnerLabels": [
+    "self-hosted",
+    "windows",
+    "x64",
+    "kiingo-azure",
+    "untrusted-test",
+    "d4ads-v6",
+    "kiingo-buzz-public-windows"
+  ]
+}

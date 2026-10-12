@@ -15,7 +15,7 @@ concurrency:
 jobs:
   rehearse:
     if: github.repository == 'Kiingo/buzz'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     steps:
       - name: Checkout reviewed fork
@@ -50,26 +50,30 @@ jobs:
           retention-days: 14
 
       - name: Run deterministic rehearsal and boundary tests
-        if: steps.rehearsal.outcome == 'success'
+        if: ${{ github.repository != 'Kiingo/buzz' && (steps.rehearsal.outcome == 'success') }}
         run: |
           node --test scripts/rehearse-upstream-sync.test.mjs
           node scripts/check-kiingo-fork-boundary.mjs
 
+      - name: Check the fork source boundary
+        if: github.repository == 'Kiingo/buzz' && steps.rehearsal.outcome == 'success'
+        run: node scripts/check-kiingo-fork-boundary.mjs
+
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
-        if: steps.rehearsal.outcome == 'success'
+        if: github.repository != 'Kiingo/buzz' && steps.rehearsal.outcome == 'success'
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        if: steps.rehearsal.outcome == 'success'
+        if: github.repository != 'Kiingo/buzz' && steps.rehearsal.outcome == 'success'
         with:
           node-version: 24.14.1
           cache: pnpm
 
       - name: Install exact dependencies for focused desktop contracts
-        if: steps.rehearsal.outcome == 'success'
+        if: github.repository != 'Kiingo/buzz' && steps.rehearsal.outcome == 'success'
         run: pnpm install --frozen-lockfile
 
       - name: Validate generic provider, routing, and rendering seams
-        if: steps.rehearsal.outcome == 'success'
+        if: ${{ github.repository != 'Kiingo/buzz' && (steps.rehearsal.outcome == 'success') }}
         working-directory: desktop
         run: >-
           node --import ./test-loader.mjs --experimental-strip-types --test
@@ -80,7 +84,7 @@ jobs:
           src/features/huddle/lib/ttsLiveMessages.security.test.mjs
 
       - name: Validate durable progress lifecycle
-        if: steps.rehearsal.outcome == 'success'
+        if: ${{ github.repository != 'Kiingo/buzz' && (steps.rehearsal.outcome == 'success') }}
         run: cargo test -p buzz-acp local_publication --locked
 
       - name: Fail on merge conflict, inventory drift, or budget regression

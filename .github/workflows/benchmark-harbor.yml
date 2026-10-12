@@ -18,8 +18,9 @@ permissions:
 
 jobs:
   test:
+    if: ${{ github.repository != 'Kiingo/buzz' }}
     name: Python tests and lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -28,6 +29,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Test adapter
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         working-directory: benchmarks/harbor-buzz-orchestra
         run: |
           python -m pip install --disable-pip-version-check -e ".[dev]"
@@ -37,6 +39,7 @@ jobs:
           # they need the harness config passed explicitly to stay linted.
           ruff check --config pyproject.toml ../buzz-dataset
       - name: Test provisioner
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         working-directory: benchmarks/harbor-buzz-orchestra/testbed
         run: |
           python -m pip install --disable-pip-version-check -e ".[dev]"

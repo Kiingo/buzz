@@ -9,7 +9,12 @@ if [ "$branch" = "main" ] || [ "$branch" = "HEAD" ]; then
   exit 0
 fi
 
-git fetch --quiet origin main || true
+repository_origin="$(git remote get-url origin | tr '[:upper:]' '[:lower:]')"
+if [[ "${repository_origin}" =~ ^(https://github\.com/kiingo/buzz(\.git)?/?|git@github\.com:kiingo/buzz(\.git)?)$ ]]; then
+  git fetch --quiet --no-tags origin refs/heads/main:refs/remotes/origin/main
+else
+  git fetch --quiet origin main || true
+fi
 git rev-parse --verify --quiet origin/main >/dev/null || exit 0
 
 base=$(git merge-base HEAD origin/main)

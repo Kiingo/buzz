@@ -6,7 +6,7 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'pull_request') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,7 +16,7 @@ env:
 jobs:
   changes:
     name: Detect Changed Paths
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 2
     permissions:
       contents: read
@@ -74,30 +74,44 @@ jobs:
               - '.github/workflows/mobile-release-candidate.yml'
               - '.github/workflows/ci.yml'
       - name: Release workflow source contract
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: scripts/test-release-ref-contract.sh
       - name: Relay image eligibility contract
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: scripts/test-relay-image-eligibility-workflow.sh
       - name: Desktop release candidate contract
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: scripts/test-desktop-release-candidate.sh
       - name: OSS desktop promotion contract
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: |
           scripts/test-oss-desktop-promotion.sh
           scripts/test-oss-desktop-promotion-behavior.sh
       - name: Mobile release contract
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: |
           scripts/test-mobile-release-contract.sh
           scripts/test-mobile-release-candidate-publisher.sh
       - name: Mobile worktree identity contract
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: scripts/test-mobile-worktree-overrides.sh
       - name: Codex security review contract
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: just security-review-check
       - name: Rust cache contract
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: |
           scripts/test-rust-cache-contract.sh
           scripts/test-rust-cache-contract-regressions.sh
       - name: File size policy
-        run: just file-size-check
+        run: |
+          if [[ "$GITHUB_REPOSITORY" == 'Kiingo/buzz' ]]; then
+            scripts/kiingo-static-hook.sh file-size
+          else
+            just file-size-check
+          fi
       - name: File size ratchet unit tests
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: node --test scripts/check-file-sizes-core.test.mjs
       - name: Kiingo fork replay and footprint boundary
         if: github.repository == 'Kiingo/buzz'
@@ -108,7 +122,7 @@ jobs:
 
   rust-lint:
     name: Rust Lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     needs: [changes]
     if: github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.desktop-rust == 'true'
@@ -129,10 +143,10 @@ jobs:
 
   unit-tests:
     name: Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     needs: [changes]
-    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'push' || needs.changes.outputs.rust == 'true') }}
     permissions:
       contents: read
     steps:
@@ -148,11 +162,12 @@ jobs:
         with:
           tool: cargo-nextest@0.9.136
       - name: Unit tests
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: just test-unit
 
   desktop-core:
     name: Desktop Core
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 45
     needs: [changes]
     if: github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true'
@@ -214,6 +229,7 @@ jobs:
       - name: Desktop lint and format
         run: just desktop-check
       - name: Desktop unit tests
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: just desktop-test
       - name: Desktop build
         run: just desktop-build
@@ -226,10 +242,12 @@ jobs:
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
       - name: Desktop Tauri tests
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: just desktop-tauri-test
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
       - name: Desktop Tauri compiled-flag verification
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: just desktop-tauri-test-compiled-flags
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
@@ -251,10 +269,10 @@ jobs:
 
   desktop-smoke-e2e:
     name: Desktop Smoke E2E (${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     needs: [changes]
-    if: github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true'
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -317,10 +335,10 @@ jobs:
 
   desktop:
     name: Desktop
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     needs: [changes, desktop-core, desktop-smoke-e2e]
-    if: always() && (github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true')
+    if: ${{ github.repository != 'Kiingo/buzz' && (always() && (github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true')) }}
     permissions:
       contents: read
     steps:
@@ -338,10 +356,10 @@ jobs:
 
   desktop-e2e-relay:
     name: Desktop E2E Relay
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     needs: [changes]
-    if: github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true'
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true') }}
     permissions:
       contents: read
     env:
@@ -421,10 +439,10 @@ jobs:
 
   desktop-e2e-integration-shard:
     name: Desktop E2E Integration (${{ matrix.shard }}/2)
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [changes, desktop-e2e-relay]
-    if: github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true'
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -598,10 +616,10 @@ jobs:
 
   desktop-e2e-integration:
     name: Desktop E2E Integration
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     needs: [changes, desktop-e2e-integration-shard]
-    if: always() && (github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true')
+    if: ${{ github.repository != 'Kiingo/buzz' && (always() && (github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true')) }}
     permissions:
       contents: read
     steps:
@@ -615,10 +633,10 @@ jobs:
 
   backend-integration:
     name: Backend Integration (relay e2e)
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [changes, desktop-e2e-relay]
-    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'push' || needs.changes.outputs.rust == 'true') }}
     permissions:
       contents: read
     steps:
@@ -876,10 +894,10 @@ jobs:
 
   relay-e2e:
     name: Relay E2E
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [changes, desktop-e2e-relay]
-    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'push' || needs.changes.outputs.rust == 'true') }}
     permissions:
       contents: read
     steps:
@@ -900,6 +918,7 @@ jobs:
           chmod +x ./target/ci/buzz-relay ./target/ci/git-credential-nostr
           ./scripts/start-relay-for-tests.sh --no-build
       - name: Relay E2E tests
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: |
           cargo test -p buzz-test-client --test e2e_persona --test e2e_team_catalog --test e2e_nostr_interop --test e2e_project -- --ignored --nocapture
           cargo test -p buzz-test-client --test e2e_relay invite -- --ignored --nocapture
@@ -908,6 +927,7 @@ jobs:
           RELAY_URL: ws://localhost:3000
           GIT_CREDENTIAL_NOSTR_BIN: ${{ github.workspace }}/target/ci/git-credential-nostr
       - name: Media read-auth e2e
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         # Reads require kind:24242 `t=get` auth, so these binaries are the only
         # coverage that a real relay rejects bare reads and honours host- and
         # hash-scoped tokens. They were #[ignore]d and selected by no CI job, so
@@ -930,7 +950,7 @@ jobs:
 
   web:
     name: Web
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 15
     needs: [changes]
     if: github.event_name == 'push' || needs.changes.outputs.web == 'true'
@@ -965,7 +985,7 @@ jobs:
 
   mobile:
     name: Mobile
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     needs: [changes]
     if: github.event_name == 'push' || needs.changes.outputs.mobile == 'true'
@@ -1018,6 +1038,7 @@ jobs:
       - name: Analyze
         run: cd mobile && flutter analyze
       - name: Test
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: cd mobile && flutter test
       - name: Build Android debug APK
         run: just mobile-build-android
@@ -1027,7 +1048,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 10
     needs: [changes]
-    if: needs.changes.outputs.mobile == 'true'
+    if: ${{ github.repository != 'Kiingo/buzz' && (needs.changes.outputs.mobile == 'true') }}
     permissions:
       contents: read
     steps:
@@ -1037,10 +1058,11 @@ jobs:
       - name: Build release
         run: swift build -c release --package-path mobile/ios/BuzzPushKit
       - name: Test
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: swift test --package-path mobile/ios/BuzzPushKit
   security:
     name: Security
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [changes]
     if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
@@ -1054,7 +1076,7 @@ jobs:
 
   dead-token-guard:
     name: Dead Token Reference Guard
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1075,7 +1097,7 @@ jobs:
 
   server-cross-compile:
     name: Server Cross-Compile
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     needs: [changes]
     if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
@@ -1114,7 +1136,7 @@ jobs:
 
   windows-rust:
     name: Windows Rust (x86_64-pc-windows-msvc)
-    runs-on: windows-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","windows","x64","kiingo-azure","untrusted-test","d4ads-v6","kiingo-buzz-public-windows"]' || '["windows-latest"]') }}
     # Windows runners are slow and this compiles the workspace + Tauri crate
     # cold across four steps; budget generously.
     timeout-minutes: 45
@@ -1154,6 +1176,7 @@ jobs:
       - name: Check (workspace)
         run: cargo check --workspace --all-targets --target $env:TARGET
       - name: Test (buzz-dev-mcp)
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         # The Windows-only bash resolver lives in buzz-dev-mcp; its unit tests
         # only gate if this crate is tested ON Windows.
         # Serial: windows_resolver_tests mutate process-global env
@@ -1165,6 +1188,7 @@ jobs:
       # windows-latest runners have Git for Windows pre-installed; the unit tests
       # above exercise the MCP resolver itself. This step verifies the host env.
       - name: Smoke-test host Git Bash prereq (host env check)
+        if: github.repository != 'Kiingo/buzz'
         shell: bash
         run: |
           set -euo pipefail
@@ -1193,6 +1217,7 @@ jobs:
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
       - name: Test (Tauri crate)
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --target $env:TARGET
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
@@ -1202,7 +1227,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     needs: [changes]
-    if: github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true'
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'push' || needs.changes.outputs.desktop == 'true' || needs.changes.outputs.desktop-rust == 'true' || needs.changes.outputs.rust == 'true') }}
     permissions:
       contents: read
     steps:

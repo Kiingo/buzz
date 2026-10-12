@@ -38,15 +38,16 @@ on:
 
 concurrency:
   group: mesh-lifecycle-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'pull_request') }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   lifecycle-smoke:
+    if: ${{ github.repository != 'Kiingo/buzz' }}
     name: Relay-Driven Mesh Lifecycle Smoke
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 45
     permissions:
       contents: read
