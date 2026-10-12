@@ -45,7 +45,7 @@ pre-commit:
   commands:
     rust-fmt:
       glob: ["crates/**", "examples/countdown-bot/**"]
-      run: just fmt
+      run: scripts/kiingo-static-hook.sh rust-format
       stage_fixed: true
     desktop-tauri-fmt:
       glob: ["desktop/src-tauri/**"]
@@ -76,7 +76,8 @@ commit-msg:
       run: 'git interpret-trailers --if-exists doNothing --trailer "Signed-off-by: $(git var GIT_COMMITTER_IDENT | sed ''s/ [0-9]* [+-][0-9]*$//'')" --in-place {1}'
 
 pre-push:
-  parallel: true
+  # Serialize source refresh and compilation rather than contend on Git/Cargo.
+  parallel: false
   commands:
     branch-skew:
       run: ./scripts/check-branch-skew.sh
@@ -90,36 +91,26 @@ pre-push:
     file-size-check:
       # The ratchet computes its own merge-base diff, so path filtering here
       # would only duplicate policy and create another place for coverage drift.
-      run: just file-size-check
-    rust-tests:
-      files: git diff --name-only origin/main...HEAD
+      run: scripts/kiingo-static-hook.sh file-size
+    rust-checks:
+      files: scripts/kiingo-hook-files.sh
       glob: ["crates/**", "migrations/**", "schema/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "deny.toml", "scripts/run-tests.sh", "Justfile"]
-      run: just test-unit
-    desktop-check:
-      files: git diff --name-only origin/main...HEAD
+      run: scripts/kiingo-static-hook.sh rust
+    desktop-source:
+      files: scripts/kiingo-hook-files.sh
       glob: ["desktop/**", "pnpm-lock.yaml"]
       exclude: ["desktop/src-tauri/**"]
-      run: just desktop-check
-    desktop-typecheck:
-      files: git diff --name-only origin/main...HEAD
-      glob: ["desktop/**", "pnpm-lock.yaml"]
-      exclude: ["desktop/src-tauri/**"]
-      run: just desktop-typecheck
-    desktop-test:
-      files: git diff --name-only origin/main...HEAD
-      glob: ["desktop/**", "pnpm-lock.yaml"]
-      exclude: ["desktop/src-tauri/**"]
-      run: just desktop-test
+      run: scripts/kiingo-static-hook.sh desktop
     desktop-tauri-checks:
       # Keep local lint parity with Desktop Core CI for every path that can
       # affect the Tauri crate or its path dependencies. Run clippy and tests
       # serially so parallel pre-push hooks do not contend for Cargo's lock.
-      files: git diff --name-only origin/main...HEAD
+      files: scripts/kiingo-hook-files.sh
       glob: ["desktop/src-tauri/**", "crates/**", "migrations/**", "schema/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "deny.toml", "scripts/run-tests.sh", "Justfile"]
-      run: just desktop-tauri-clippy && just desktop-tauri-test
+      run: scripts/kiingo-static-hook.sh tauri
     mobile-checks:
       # Run analysis and tests serially so parallel pre-push hooks do not
       # contend for shared Flutter state (.dart_tool, shader bundle).
-      files: git diff --name-only origin/main...HEAD
+      files: scripts/kiingo-hook-files.sh
       glob: ["mobile/**"]
-      run: just mobile-check && just mobile-test
+      run: scripts/kiingo-static-hook.sh mobile

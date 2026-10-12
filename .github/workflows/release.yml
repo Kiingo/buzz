@@ -15,7 +15,7 @@ jobs:
   setup:
     name: Setup
     if: github.repository == 'block/buzz'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -51,7 +51,7 @@ jobs:
 
   release:
     name: Release
-    if: github.repository == 'block/buzz'
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.repository == 'block/buzz') }}
     runs-on: macos-latest
     needs: setup
     timeout-minutes: 60
@@ -264,7 +264,7 @@ jobs:
 
   release-macos-x64:
     name: Release macOS (Intel)
-    if: github.repository == 'block/buzz'
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.repository == 'block/buzz') }}
     runs-on: macos-latest
     needs: setup
     timeout-minutes: 60
@@ -426,7 +426,7 @@ jobs:
   release-linux:
     name: Release Linux
     if: github.repository == 'block/buzz'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     # Digest-pinned like the SHA-pinned actions below; Renovate keeps it fresh.
     container: ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
     needs: setup
@@ -653,6 +653,7 @@ jobs:
             ${{ steps.linux-artifacts.outputs.sig }}
 
   release-windows:
+    if: ${{ github.repository != 'Kiingo/buzz' }}
     name: Release Windows
     runs-on: windows-latest
     needs: setup
@@ -786,7 +787,7 @@ jobs:
       needs.release-linux.result == 'success' &&
       needs.release-windows.result == 'success' &&
       github.ref == format('refs/tags/desktop-v{0}', needs.setup.outputs.version)
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     needs: [setup, release, release-macos-x64, release-linux, release-windows]
     timeout-minutes: 10
     permissions:

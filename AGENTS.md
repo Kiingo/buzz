@@ -6,6 +6,24 @@ code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
+## Kiingo fork deployment policy
+
+For `Kiingo/buzz`, Ross's October 9, 2026 policy supersedes the upstream
+test-before-push and test-gated CI instructions below. Do not execute tests on a
+Mac, in CI, in lifecycle hooks or container builds, or on Regular/hosted capacity.
+Canary and soak execution are removed. Preserve test sources for independent
+post-deployment Azure Spot execution; tests never gate merge or deployment.
+Forward repairs follow current main; do not revert releases or freeze delivery.
+
+Normal hooks still run formatting, lint, compilation and source checks. Fork CI
+uses the closed `buzz-public` Azure Spot profile, with no private pool access,
+warm floor, Regular or hosted fallback. Jobs wait for Spot capacity. Existing
+build, package and publication owners retain their outputs. Production Buzz
+deployment remains the serialized `Kiingo/kiingo` Buzz Production owner, using
+an exact merged fork revision and immutable serving image evidence.
+
+---
+
 ## Product Contract
 
 Before planning or reviewing a non-trivial change:

@@ -55,7 +55,7 @@ env:
 jobs:
   lint-and-unittest:
     name: lint + unittest + render matrix
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     permissions:
       contents: read
     steps:
@@ -73,6 +73,7 @@ jobs:
           version: v3.16.4
 
       - name: Install helm-unittest plugin
+        if: github.repository != 'Kiingo/buzz'
         run: helm plugin install --version 0.8.2 https://github.com/helm-unittest/helm-unittest
 
       - name: Set up Python (for chart-testing)
@@ -87,15 +88,18 @@ jobs:
         run: helm dependency build deploy/charts/buzz
 
       - name: Push gateway chart lint + render guard
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: deploy/charts/buzz-push-gateway/tests/render.sh
 
       - name: ct lint
         run: ct lint --config ct.yaml --all
 
       - name: helm-unittest
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: helm unittest deploy/charts/buzz
 
       - name: helm template (render every fixture)
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: |
           set -euo pipefail
           for f in deploy/charts/buzz/ci/*-values.yaml deploy/charts/buzz/tests/fixtures/*-values.yaml; do
@@ -113,8 +117,8 @@ jobs:
     # `inputs.version == ''` excludes the chart-tag rescue dispatch (which
     # carries a version): that path only packages+publishes, it does not install.
     name: install on kind (gated)
-    if: github.event_name == 'workflow_dispatch' && inputs.version == ''
-    runs-on: ubuntu-latest
+    if: ${{ github.repository != 'Kiingo/buzz' && (github.event_name == 'workflow_dispatch' && inputs.version == '') }}
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     needs: lint-and-unittest
     permissions:
       contents: read
@@ -146,6 +150,7 @@ jobs:
         run: helm dependency build deploy/charts/buzz
 
       - name: ct install (quickstart profile)
+        if: ${{ github.repository != 'Kiingo/buzz' }}
         run: ct install --config ct.yaml --charts deploy/charts/buzz --helm-extra-args "--timeout 600s"
 
   publish:
@@ -158,7 +163,7 @@ jobs:
     if: >
       startsWith(github.ref, 'refs/tags/chart-v') ||
       (github.event_name == 'workflow_dispatch' && inputs.version != '')
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     needs: lint-and-unittest
     timeout-minutes: 15
     permissions:

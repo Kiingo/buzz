@@ -20,7 +20,7 @@ env:
   CHART_REPO: oci://ghcr.io/block/buzz/charts
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -30,11 +30,16 @@ jobs:
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with: { version: v3.16.4 }
       - run: deploy/charts/buzz-push-gateway/tests/render.sh
+        if: ${{ github.repository != 'Kiingo/buzz' }}
       - run: deploy/charts/buzz-push-gateway/tests/release-contract.sh
+        if: ${{ github.repository != 'Kiingo/buzz' }}
+      - name: Lint the published push gateway chart
+        if: github.repository == 'Kiingo/buzz'
+        run: helm lint deploy/charts/buzz-push-gateway
   publish:
     if: github.event_name != 'pull_request'
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     permissions:
       contents: read
       packages: write
