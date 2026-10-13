@@ -4,11 +4,10 @@ name: Docker image
 # Normal tags contain stripped binaries; matching debug-* tags contain the same
 # optimized binaries with line-table debug information for native profilers.
 #
-# Strategy: each architecture builds on its native runner (ubuntu-24.04 for
-# amd64, ubuntu-24.04-arm for arm64), pushes to GHCR by digest, then a final
-# job stitches the per-arch digests into a single multi-arch manifest.
-# This avoids QEMU emulation (~10× slower for Rust) at zero cost on free
-# GitHub-hosted runners.
+# Strategy: each architecture builds on its native runner, pushes to GHCR by
+# digest, then a final job stitches the per-arch digests into one manifest.
+# Kiingo/buzz uses separate x64 and ARM64 Azure Spot profiles with no hosted
+# fallback. Other repositories retain ubuntu-24.04 and ubuntu-24.04-arm.
 #
 # Versioning: the relay is versioned independently of the desktop app via
 # its own `relay-v*` tags (see `just release-relay`). Desktop `v*` tags and
@@ -86,7 +85,7 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.platform }})
-    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || format('["{0}"]', matrix.runner)) }}
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && (matrix.arch == 'arm64' && '["self-hosted","linux","arm64","kiingo-azure","untrusted-test","d4pds-v6","docker","kiingo-buzz-public-arm64"]' || '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]') || format('["{0}"]', matrix.runner)) }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -118,12 +117,6 @@ jobs:
         run: |
           VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#relay-v}}"
           scripts/verify-release-ref.sh relay-v "$VERSION"
-
-      - name: Register public ARM image emulation
-        if: github.repository == 'Kiingo/buzz'
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
@@ -367,12 +360,6 @@ jobs:
           pattern: digests-${{ matrix.variant }}-*
           merge-multiple: true
 
-      - name: Register public ARM image emulation
-        if: github.repository == 'Kiingo/buzz'
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
-        with:
-          platforms: arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
 
@@ -551,7 +538,7 @@ jobs:
 
   push-gateway-build:
     name: Build public push gateway (${{ matrix.platform }})
-    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || format('["{0}"]', matrix.runner)) }}
+    runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && (matrix.arch == 'arm64' && '["self-hosted","linux","arm64","kiingo-azure","untrusted-test","d4pds-v6","docker","kiingo-buzz-public-arm64"]' || '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]') || format('["{0}"]', matrix.runner)) }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -579,12 +566,6 @@ jobs:
         run: |
           VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#relay-v}}"
           scripts/verify-release-ref.sh relay-v "$VERSION"
-      - name: Register public ARM image emulation
-        if: github.repository == 'Kiingo/buzz'
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
-        with:
-          platforms: arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
         with:
@@ -652,12 +633,6 @@ jobs:
           path: /tmp/gateway-digests
           pattern: gateway-digests-*
           merge-multiple: true
-      - name: Register public ARM image emulation
-        if: github.repository == 'Kiingo/buzz'
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
-        with:
-          platforms: arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
       - name: Log in to GHCR

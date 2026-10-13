@@ -15,6 +15,17 @@
     "docker",
     "kiingo-buzz-public"
   ],
+  "arm64Profile": "buzz-public-arm64",
+  "arm64RunnerLabels": [
+    "self-hosted",
+    "linux",
+    "arm64",
+    "kiingo-azure",
+    "untrusted-test",
+    "d4pds-v6",
+    "docker",
+    "kiingo-buzz-public-arm64"
+  ],
   "windowsProfile": "buzz-public-windows",
   "windowsRunnerLabels": [
     "self-hosted",
