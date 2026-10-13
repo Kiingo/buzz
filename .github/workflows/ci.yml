@@ -1213,9 +1213,15 @@ jobs:
           git log -1 --format=%s | grep -qx smoke
           echo "Host bash resolved and functional; git commit round-trip passed"
       - name: Check (Tauri crate)
+        id: windows-tauri-check
         run: cargo check --manifest-path desktop/src-tauri/Cargo.toml --workspace --all-targets --target $env:TARGET
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      - name: Retain Windows native CMake failure categories
+        if: github.repository == 'Kiingo/buzz' && runner.os == 'Windows' && failure() && steps.windows-tauri-check.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 1
+        run: '& C:\KiingoRunner\externals\node24\bin\node.exe scripts/kiingo-windows-cmake-failure-custody.mjs'
       - name: Test (Tauri crate)
         if: ${{ github.repository != 'Kiingo/buzz' }}
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --target $env:TARGET
