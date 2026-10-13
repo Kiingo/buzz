@@ -39,6 +39,9 @@ export function providerConfigFieldVisible(
   property: ProviderConfigProperty,
   config: Record<string, string>,
 ): boolean {
+  // Provider bookkeeping (revisions, catalog versions) travels as a default
+  // without a field.
+  if (property["x-hidden"] === true) return false;
   if (
     property["x-hide-when-no-options"] === true &&
     providerConfigOptions(property, config)?.length === 0

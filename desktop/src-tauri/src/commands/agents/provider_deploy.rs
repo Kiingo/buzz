@@ -5,8 +5,8 @@ use tauri::AppHandle;
 use crate::{
     app_state::AppState,
     managed_agents::{
-        discover_provider_candidates, load_managed_agents, provider_deploy,
-        resolve_provider_binary, save_managed_agents, BackendKind,
+        discover_provider_candidates, load_managed_agents, provider_deploy_reporting,
+        resolve_provider_binary, save_managed_agents, BackendKind, ProviderDeployFailure,
     },
     util::now_iso,
 };
@@ -38,6 +38,27 @@ pub(crate) async fn deploy_to_provider(
     expected_relay_url: Option<&str>,
     expected_signer_pubkey: Option<&str>,
 ) -> Result<(), String> {
+    deploy_to_provider_reporting(
+        app,
+        state,
+        pubkey,
+        expected_relay_url,
+        expected_signer_pubkey,
+    )
+    .await
+    .map_err(|failure| failure.message)
+}
+
+/// [`deploy_to_provider`], keeping the provider's statement about remote state
+/// on failure. Every local failure before the provider answers reports remote
+/// state as unknown.
+pub(crate) async fn deploy_to_provider_reporting(
+    app: &AppHandle,
+    state: &AppState,
+    pubkey: &str,
+    expected_relay_url: Option<&str>,
+    expected_signer_pubkey: Option<&str>,
+) -> Result<(), ProviderDeployFailure> {
     let deploy_lock = {
         let mut locks = state
             .provider_deploy_locks
@@ -65,7 +86,9 @@ pub(crate) async fn deploy_to_provider(
             .ok_or_else(|| format!("agent {pubkey} not found"))?;
         let provider_id = match &record.backend {
             BackendKind::Provider { id, .. } => id.clone(),
-            BackendKind::Local => return Err(format!("agent {pubkey} is not provider-backed")),
+            BackendKind::Local => {
+                return Err(format!("agent {pubkey} is not provider-backed").into())
+            }
         };
         (provider_id, record.provider_binary_path.clone())
     };
@@ -108,10 +131,12 @@ pub(crate) async fn deploy_to_provider(
         let config = match &record.backend {
             BackendKind::Provider { id, config } if id == &provider_id => config.clone(),
             BackendKind::Provider { .. } => {
-                return Err("provider changed while deployment was being prepared".to_string())
+                return Err("provider changed while deployment was being prepared"
+                    .to_string()
+                    .into())
             }
             BackendKind::Local => {
-                return Err(format!("agent {pubkey} is no longer provider-backed"))
+                return Err(format!("agent {pubkey} is no longer provider-backed").into())
             }
         };
         crate::managed_agents::repair_provider_owned_record(record, owns_execution_profile);
@@ -127,7 +152,7 @@ pub(crate) async fn deploy_to_provider(
     let deployed_agent_json = agent_json.clone();
     let config_clone = config.clone();
     let deploy_result = tokio::task::spawn_blocking(move || {
-        provider_deploy(
+        provider_deploy_reporting(
             &bin_path,
             &agent_json,
             &config_clone,
@@ -148,9 +173,17 @@ pub(crate) async fn deploy_to_provider(
         .find(|r| r.pubkey == pubkey)
         .ok_or_else(|| format!("agent {pubkey} not found"))?;
 
-    let result = apply_deploy_result(rec, deploy_result, &deployed_agent_json);
+    let remote_absent = matches!(&deploy_result, Err(failure) if failure.remote_absent);
+    let result = apply_deploy_result(
+        rec,
+        deploy_result.map_err(|failure| failure.message),
+        &deployed_agent_json,
+    );
     save_managed_agents(app, &records)?;
-    result
+    result.map_err(|message| ProviderDeployFailure {
+        message,
+        remote_absent,
+    })
 }
 
 /// Assert a caller-captured tenant scope against the payload that will

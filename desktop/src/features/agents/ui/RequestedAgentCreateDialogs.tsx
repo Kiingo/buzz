@@ -37,11 +37,7 @@ export function RequestedAgentCreateDialogs() {
     <>
       {isOpen ? (
         <AgentDialog
-          definitionError={
-            personas.createPersonaMutation.error instanceof Error
-              ? personas.createPersonaMutation.error
-              : null
-          }
+          definitionError={personas.createDialogError}
           isDefinitionPending={personas.isPending}
           mode="definition"
           onOpenChange={(open) => {

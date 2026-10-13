@@ -28,6 +28,7 @@ mod personas;
 mod process_lifecycle;
 pub(crate) mod provider_delete;
 mod provider_execution_profile;
+pub(crate) mod provider_preflight;
 pub(crate) mod readiness;
 pub(crate) mod reconcile;
 mod relay_mesh;

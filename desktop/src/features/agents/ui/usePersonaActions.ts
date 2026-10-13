@@ -65,6 +65,13 @@ import {
   type BackendIntent,
 } from "../lib/instanceInputForDefinition";
 import { buildProviderOwnedInstanceInput } from "../lib/providerOwnedInstanceInput";
+import { rollbackFailedProviderCreate } from "../lib/providerCreateApi";
+import {
+  failedRemoteCreateMessage,
+  pendingCleanupMessage,
+  rollbackFailedRemoteCreate,
+  type PendingCreateCleanup,
+} from "../lib/rollbackFailedRemoteCreate";
 
 type PersonaFeedbackSurface = "catalog" | "library";
 
@@ -128,6 +135,23 @@ export function usePersonaActions() {
   const createdAgentAttachment = useCreatedAgentChannelAttachment();
   const [isPersonaSubmitPending, setIsPersonaSubmitPending] =
     React.useState(false);
+  // A failed remote create the dialog must explain and, if needed, finish
+  // cleaning up before the next attempt creates anything new.
+  const [createStartError, setCreateStartError] = React.useState<string | null>(
+    null,
+  );
+  const pendingCreateCleanupRef = React.useRef<PendingCreateCleanup | null>(
+    null,
+  );
+  const createDialogError = React.useMemo(
+    () =>
+      createStartError
+        ? new Error(createStartError)
+        : createPersonaMutation.error instanceof Error
+          ? createPersonaMutation.error
+          : null,
+    [createStartError, createPersonaMutation.error],
+  );
 
   const personas = personasQuery.data ?? [];
   const publications = catalogQuery.data ?? [];
@@ -185,8 +209,27 @@ export function usePersonaActions() {
     }
 
     clearFeedback("library");
+    setCreateStartError(null);
     setIsPersonaSubmitPending(true);
+    const rollbackSteps = {
+      rollbackAgent: rollbackFailedProviderCreate,
+      deleteDefinition: async (id: string) => {
+        await deletePersonaMutation.mutateAsync(id);
+      },
+    };
     try {
+      const pendingCleanup = pendingCreateCleanupRef.current;
+      if (pendingCleanup && !("id" in input)) {
+        const retried = await rollbackFailedRemoteCreate(
+          pendingCleanup,
+          rollbackSteps,
+        );
+        pendingCreateCleanupRef.current = retried.remaining;
+        if (!retried.clean) {
+          setCreateStartError(pendingCleanupMessage(retried));
+          return false;
+        }
+      }
       if ("id" in input) {
         // "Save and publish" promises the community catalog sees this edit, so
         // it must use the command that awaits the relay. A plain save only
@@ -254,6 +297,23 @@ export function usePersonaActions() {
 
         try {
           const created = await createAgentMutation.mutateAsync(agentInput);
+          // A remote agent that did not start is undone rather than kept, so
+          // the owner never inherits a half-created agent to clean up.
+          if (startIntent && created.spawnError) {
+            const rollback = await rollbackFailedRemoteCreate(
+              { agentPubkey: created.agent.pubkey, definitionId: persona.id },
+              rollbackSteps,
+            );
+            pendingCreateCleanupRef.current = rollback.remaining;
+            setCreateStartError(
+              failedRemoteCreateMessage(
+                persona.displayName,
+                created.spawnError,
+                rollback,
+              ),
+            );
+            return false;
+          }
           await createdAgentAttachment.presentCreatedAgent(
             created,
             targetChannel,
@@ -269,6 +329,22 @@ export function usePersonaActions() {
             );
           }
         } catch (error) {
+          if (startIntent) {
+            // No agent record exists, so only the definition needs undoing.
+            const rollback = await rollbackFailedRemoteCreate(
+              { agentPubkey: null, definitionId: persona.id },
+              rollbackSteps,
+            );
+            pendingCreateCleanupRef.current = rollback.remaining;
+            setCreateStartError(
+              failedRemoteCreateMessage(
+                persona.displayName,
+                error instanceof Error ? error.message : String(error),
+                rollback,
+              ),
+            );
+            return false;
+          }
           setPersonaErrorMessage(
             error instanceof Error
               ? `${persona.displayName} was created, but the agent instance could not be created: ${error.message}`
@@ -432,6 +508,7 @@ export function usePersonaActions() {
 
   function prepareCreate() {
     clearFeedback("library");
+    setCreateStartError(null);
     setShouldLoadAcpRuntimes(true);
   }
 
@@ -574,6 +651,8 @@ export function usePersonaActions() {
     catalogQuery,
     acpRuntimesQuery,
     createPersonaMutation,
+    /** Error for the create dialog, including a failed remote start. */
+    createDialogError,
     updatePersonaMutation,
     updatePersonaAndPublishMutation,
     setPersonaActiveMutation,

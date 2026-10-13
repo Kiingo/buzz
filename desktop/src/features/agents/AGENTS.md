@@ -114,7 +114,12 @@ with a TypeScript lookup table or an id comparison in a component.
    user-controlled: provider, harness, and required-env changes must never
    open it automatically in defaults, create, or edit flows. In Create mode,
    `Run on` belongs in Advanced directly after **Who can send instructions**;
-   keep it out of the basic create fields. The defaults summary follows
+   keep it out of the basic create fields. The one exception is a build that
+   names a preferred destination (`VITE_BUZZ_PREFERRED_RUN_ON`) whose provider
+   is discovered: there **Where it runs** leads the create form, offers exactly
+   that destination and this computer, and defaults to the destination until
+   the user picks. App-driven draft changes (that default, probe results) never
+   mark the dialog dirty. The defaults summary follows
    preferred-harness changes saved while the dialog is open, and its configured
    state includes required credentials as well as provider/model values. If no
    available harness can resolve, Create starts in Customize and lets unavailable

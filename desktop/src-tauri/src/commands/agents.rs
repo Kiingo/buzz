@@ -318,7 +318,7 @@ pub(super) async fn start_local_agent_with_preflight(
     )
 }
 
-pub(crate) use provider_deploy::deploy_to_provider;
+pub(crate) use provider_deploy::{deploy_to_provider, deploy_to_provider_reporting};
 
 // Async so the blocking body (disk reads of agent/persona records, per-agent
 // process-liveness syscalls, and a possible save) runs on Tauri's worker pool
