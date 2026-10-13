@@ -81,6 +81,59 @@ const argumentPatterns = {
   enum_requested_value: /^Requested value[ \t]+["']/u,
   duplicate_key: /^[^\r\n]{0,24}\bsame key has already been added\./u,
 };
+// Values are classified against source literals in RAM. No environment-derived
+// path is passed to filesystem APIs, and no value or value hash is retained.
+const environmentRoles = {
+  user_profile: ["USERPROFILE", "C:\\KiingoRunner\\home", "C:\\Users\\gha"],
+  home: ["HOME", "C:\\KiingoRunner\\home", "C:\\Users\\gha"],
+  appdata: [
+    "APPDATA",
+    "C:\\KiingoRunner\\home\\AppData\\Roaming",
+    "C:\\Users\\gha\\AppData\\Roaming",
+  ],
+  localappdata: [
+    "LOCALAPPDATA",
+    "C:\\KiingoRunner\\home\\AppData\\Local",
+    "C:\\Users\\gha\\AppData\\Local",
+  ],
+  temp: [
+    "TEMP",
+    "C:\\KiingoRunner\\temp",
+    "C:\\Users\\gha\\AppData\\Local\\Temp",
+  ],
+  tmp: [
+    "TMP",
+    "C:\\KiingoRunner\\temp",
+    "C:\\Users\\gha\\AppData\\Local\\Temp",
+  ],
+  program_data: ["ProgramData", null, null, "C:\\ProgramData"],
+  program_files: ["ProgramFiles", null, null, "C:\\Program Files"],
+  program_files_x86: [
+    "ProgramFiles(x86)",
+    null,
+    null,
+    "C:\\Program Files (x86)",
+  ],
+  system_root: ["SystemRoot", null, null, "C:\\Windows"],
+  system_drive: ["SystemDrive", null, null, "C:"],
+  allusers_profile: ["ALLUSERSPROFILE", null, null, "C:\\ProgramData"],
+  home_drive: ["HOMEDRIVE", null, null, "C:"],
+  home_path: ["HOMEPATH", "\\KiingoRunner\\home", "\\Users\\gha"],
+};
+const fixedPathRoles = {
+  runner_home: ["KiingoRunner/home", false],
+  runner_temp: ["KiingoRunner/temp", false],
+  runner_roaming: ["KiingoRunner/home/AppData/Roaming", false],
+  runner_local: ["KiingoRunner/home/AppData/Local", false],
+  account_home: ["Users/gha", false],
+  account_roaming: ["Users/gha/AppData/Roaming", false],
+  account_local: ["Users/gha/AppData/Local", false],
+  account_temp: ["Users/gha/AppData/Local/Temp", false],
+  machine_data: ["ProgramData", false],
+  machine_root: ["Windows", false],
+  runner_hive: ["KiingoRunner/home/NTUSER.DAT", true],
+  account_hive: ["Users/gha/NTUSER.DAT", true],
+};
 const patterns = {
   msvc_toolset_unavailable: /MSB8020|MSB8003/gu,
   windows_sdk_unavailable: /MSB8036|MSB8037/gu,
@@ -117,7 +170,7 @@ const deadline = () => {
 };
 const receipt = {
   kind: "kiingo-windows-cmake-failure-custody",
-  schemaVersion: 3,
+  schemaVersion: 4,
   sourceSha: /^[a-f0-9]{40}$/u.test(process.env.GITHUB_SHA ?? "")
     ? process.env.GITHUB_SHA
     : null,
@@ -147,6 +200,11 @@ const receipt = {
   unrecognizedArgumentMessageCount: 0,
   taskSubtypeOutcome: "unknown",
   exceptionSubtypeOutcome: "unknown",
+  environmentRoleStates: {},
+  fixedPathRoleStates: {},
+  pathRoleOutcome: "unknown",
+  // Hive presence and path-role observations cannot establish profile loading.
+  profileLoaded: "unknown",
   rawOutputRetained: false,
   compilerQualified: false,
   operatorMutation: false,
@@ -197,6 +255,82 @@ function stable(records) {
     ) {
       throw new ReadRefusal("path_changed");
     }
+  }
+}
+function fixedPathState(relative, file) {
+  const parts = relative.split("/");
+  let current = "C:\\";
+  const records = [];
+  try {
+    for (const segment of ["", ...parts]) {
+      deadline();
+      if (segment) current = path.win32.join(current, segment);
+      let info;
+      try {
+        info = fs.lstatSync(current, { bigint: true });
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        stable(records);
+        return "missing";
+      }
+      const last = current === path.win32.join("C:\\", ...parts);
+      if (
+        info.isSymbolicLink() ||
+        (file && last ? !info.isFile() : !info.isDirectory()) ||
+        info.ino <= 0n ||
+        (file && last && info.nlink !== 1n) ||
+        normalize(fs.realpathSync.native(current)) !== normalize(current)
+      )
+        return "refused";
+      records.push({ location: current, info });
+    }
+    stable(records);
+    return "present";
+  } catch (error) {
+    if (error instanceof ReadRefusal) {
+      if (error.message === "deadline") throw error;
+      return "changed";
+    }
+    return "unknown";
+  }
+}
+function observePathRoles() {
+  if (!receipt.scopeQualified) return;
+  try {
+    for (const [role, [name, runner, account, machine]] of Object.entries(
+      environmentRoles,
+    )) {
+      deadline();
+      const value = process.env[name];
+      let state = "other";
+      if (value === undefined) state = "absent";
+      else if (value === "") state = "empty";
+      else if (
+        value.length > 1024 ||
+        value.trim() !== value ||
+        /[\u0000-\u001f"<>|?*]/u.test(value)
+      )
+        state = "invalid";
+      else if (runner && normalize(value) === normalize(runner))
+        state = "runner";
+      else if (account && normalize(value) === normalize(account))
+        state = "account";
+      else if (machine && normalize(value) === normalize(machine))
+        state = "machine";
+      receipt.environmentRoleStates[role] = state;
+    }
+    for (const [role, [relative, file]] of Object.entries(fixedPathRoles)) {
+      deadline();
+      receipt.fixedPathRoleStates[role] = fixedPathState(relative, file);
+    }
+    deadline();
+    receipt.pathRoleOutcome = Object.values(receipt.fixedPathRoleStates).every(
+      (state) => state === "present" || state === "missing",
+    )
+      ? "complete"
+      : "incomplete";
+  } catch {
+    receipt.pathRoleOutcome = "incomplete";
   }
 }
 function readLog(relative) {
@@ -408,6 +542,7 @@ receipt.argumentSubtypeOutcome = subtypeOutcome(
   receipt.argumentCategoryCounts,
   receipt.unrecognizedArgumentMessageCount,
 );
+observePathRoles();
 // The compile step already owns its exit/conclusion. Diagnostics never make a
 // failed compiler successful and cannot grant source/image/compiler custody.
 process.stdout.write(
