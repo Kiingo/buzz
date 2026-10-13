@@ -1169,6 +1169,82 @@ jobs:
       TARGET: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Initialize canonical public Windows job environment
+        if: github.repository == 'Kiingo/buzz' && runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            function Assert-FixedDirectory([string]$Path) {
+              $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+              if ($item -isnot [System.IO.DirectoryInfo] -or
+                  ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                  -not [string]::Equals($item.FullName, $Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw 'directory custody refused'
+              }
+            }
+            foreach ($path in @('C:\', 'C:\KiingoRunner', 'C:\KiingoRunner\home',
+                'C:\KiingoRunner\temp', 'C:\KiingoRunner\_work', 'C:\KiingoRunner\_work\_temp',
+                'C:\KiingoRunner\_work\_temp\_runner_file_commands', 'C:\KiingoRunner\_work\buzz',
+                'C:\KiingoRunner\_work\buzz\buzz', 'C:\ProgramData')) {
+              Assert-FixedDirectory $path
+            }
+            $unchanged = @{
+              USERPROFILE = 'C:\KiingoRunner\home'; HOME = 'C:\KiingoRunner\home'
+              TEMP = 'C:\KiingoRunner\temp'; TMP = 'C:\KiingoRunner\temp'
+              GITHUB_WORKSPACE = 'C:\KiingoRunner\_work\buzz\buzz'
+            }
+            foreach ($entry in $unchanged.GetEnumerator()) {
+              if (-not [string]::Equals([Environment]::GetEnvironmentVariable($entry.Key, 'Process'),
+                  $entry.Value, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw 'existing environment custody refused'
+              }
+            }
+            $environmentFile = [System.IO.Path]::GetFullPath($env:GITHUB_ENV)
+            $commandDirectory = 'C:\KiingoRunner\_work\_temp\_runner_file_commands'
+            if (-not [string]::Equals([System.IO.Path]::GetDirectoryName($environmentFile),
+                $commandDirectory, [System.StringComparison]::OrdinalIgnoreCase) -or
+                [System.IO.Path]::GetFileName($environmentFile) -cnotmatch '\Aset_env_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z') {
+              throw 'environment file custody refused'
+            }
+            $file = Get-Item -LiteralPath $environmentFile -Force -ErrorAction Stop
+            if ($file -isnot [System.IO.FileInfo] -or $file.Length -ne 0 -or
+                ($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+              throw 'environment file type refused'
+            }
+            foreach ($path in @('C:\KiingoRunner\home\AppData',
+                'C:\KiingoRunner\home\AppData\Local', 'C:\KiingoRunner\home\AppData\Roaming')) {
+              Assert-FixedDirectory ([System.IO.Path]::GetDirectoryName($path))
+              if (-not (Test-Path -LiteralPath $path)) {
+                [System.IO.Directory]::CreateDirectory($path) | Out-Null
+              }
+              Assert-FixedDirectory $path
+            }
+            $roles = [ordered]@{
+              APPDATA = 'C:\KiingoRunner\home\AppData\Roaming'
+              LOCALAPPDATA = 'C:\KiingoRunner\home\AppData\Local'
+              SystemDrive = 'C:'
+              ALLUSERSPROFILE = 'C:\ProgramData'
+              HOMEDRIVE = 'C:'
+              HOMEPATH = '\KiingoRunner\home'
+            }
+            Assert-FixedDirectory $commandDirectory
+            $stream = [System.IO.File]::Open($environmentFile, [System.IO.FileMode]::Open,
+              [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            try {
+              if ($stream.Length -ne 0) { throw 'environment file changed' }
+              $lines = foreach ($entry in $roles.GetEnumerator()) { "$($entry.Key)=$($entry.Value)" }
+              $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($lines -join "`n") + "`n")
+              $stream.Write($bytes, 0, $bytes.Length)
+              $stream.Flush()
+            } finally {
+              $stream.Dispose()
+            }
+            Write-Output 'Canonical Windows job environment initialized.'
+          } catch {
+            throw 'Canonical Windows job environment custody refused.'
+          }
       # MSVC needs windows.h (aws-lc-sys et al.), so this runs on a real Windows
       # runner — hermit, used by the Linux jobs, does not provide MSVC. The
       # toolchain (1.95.0 + clippy via profile = default) comes from the
