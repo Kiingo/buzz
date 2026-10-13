@@ -56,6 +56,31 @@ const exceptionAllowlist = new Set([
   "System.ComponentModel.Win32Exception",
   "System.Runtime.InteropServices.COMException",
 ]);
+// Public Microsoft reference identifiers; these do not identify the guest DLL.
+const stackFramePatterns = {
+  path_check_invalid_characters:
+    /^System\.IO\.Path\.CheckInvalidPathChars[ \t]*\(/u,
+  path_normalize: /^System\.IO\.Path\.NormalizePath[ \t]*\(/u,
+  path_get_full_path_internal:
+    /^System\.IO\.Path\.GetFullPathInternal[ \t]*\(/u,
+  path_get_full_path: /^System\.IO\.Path\.GetFullPath[ \t]*\(/u,
+  path_get_directory_name_internal:
+    /^System\.IO\.Path\.InternalGetDirectoryName[ \t]*\(/u,
+  enum_parse: /^System\.Enum\.Parse[ \t]*\(/u,
+  enum_try_parse: /^System\.Enum\.TryParseEnum[ \t]*\(/u,
+  dictionary_insert:
+    /^System\.Collections\.Generic\.Dictionary`2\.Insert[ \t]*\(/u,
+  dictionary_add: /^System\.Collections\.Generic\.Dictionary`2\.Add[ \t]*\(/u,
+  environment_get_variable:
+    /^System\.Environment\.GetEnvironmentVariable[ \t]*\(/u,
+};
+const argumentPatterns = {
+  path_empty: /^Empty path name\b/u,
+  path_illegal_form: /^The path is not of a legal form\./u,
+  path_illegal_characters: /^Illegal characters in path\./u,
+  enum_requested_value: /^Requested value[ \t]+["']/u,
+  duplicate_key: /^[^\r\n]{0,24}\bsame key has already been added\./u,
+};
 const patterns = {
   msvc_toolset_unavailable: /MSB8020|MSB8003/gu,
   windows_sdk_unavailable: /MSB8036|MSB8037/gu,
@@ -92,7 +117,7 @@ const deadline = () => {
 };
 const receipt = {
   kind: "kiingo-windows-cmake-failure-custody",
-  schemaVersion: 2,
+  schemaVersion: 3,
   sourceSha: /^[a-f0-9]{40}$/u.test(process.env.GITHUB_SHA ?? "")
     ? process.env.GITHUB_SHA
     : null,
@@ -114,8 +139,12 @@ const receipt = {
   unrecognizedCodeCount: 0,
   taskCounts: {},
   exceptionCounts: {},
+  stackFrameCounts: {},
+  argumentCategoryCounts: {},
   unrecognizedTaskCount: 0,
   unrecognizedExceptionCount: 0,
+  unrecognizedStackFrameCount: 0,
+  unrecognizedArgumentMessageCount: 0,
   taskSubtypeOutcome: "unknown",
   exceptionSubtypeOutcome: "unknown",
   rawOutputRetained: false,
@@ -259,6 +288,34 @@ function readLog(relative) {
           (receipt.exceptionCounts[exception] ?? 0) + 1;
       else receipt.unrecognizedExceptionCount += 1;
     }
+    for (const line of text.split(/\r?\n/u)) {
+      deadline();
+      const frameMarker = /\bat[ \t]+(?=[A-Za-z0-9_.$`+]+[ \t]*\()/u.exec(line);
+      if (frameMarker) {
+        const matches = Object.entries(stackFramePatterns).filter(
+          ([, pattern]) =>
+            pattern.test(line.slice(frameMarker.index + frameMarker[0].length)),
+        );
+        if (matches.length === 1) {
+          const name = matches[0][0];
+          receipt.stackFrameCounts[name] =
+            (receipt.stackFrameCounts[name] ?? 0) + 1;
+        } else receipt.unrecognizedStackFrameCount += 1;
+      }
+      const argumentMarker = /\bSystem\.ArgumentException:[ \t]*/u.exec(line);
+      if (argumentMarker) {
+        const matches = Object.entries(argumentPatterns).filter(([, pattern]) =>
+          pattern.test(
+            line.slice(argumentMarker.index + argumentMarker[0].length),
+          ),
+        );
+        if (matches.length === 1) {
+          const name = matches[0][0];
+          receipt.argumentCategoryCounts[name] =
+            (receipt.argumentCategoryCounts[name] ?? 0) + 1;
+        } else receipt.unrecognizedArgumentMessageCount += 1;
+      }
+    }
     receipt.filesRead += 1;
     receipt.bytesRead += buffer.length;
   } finally {
@@ -342,6 +399,14 @@ receipt.taskSubtypeOutcome = subtypeOutcome(
 receipt.exceptionSubtypeOutcome = subtypeOutcome(
   receipt.exceptionCounts,
   receipt.unrecognizedExceptionCount,
+);
+receipt.stackSubtypeOutcome = subtypeOutcome(
+  receipt.stackFrameCounts,
+  receipt.unrecognizedStackFrameCount,
+);
+receipt.argumentSubtypeOutcome = subtypeOutcome(
+  receipt.argumentCategoryCounts,
+  receipt.unrecognizedArgumentMessageCount,
 );
 // The compile step already owns its exit/conclusion. Diagnostics never make a
 // failed compiler successful and cannot grant source/image/compiler custody.
