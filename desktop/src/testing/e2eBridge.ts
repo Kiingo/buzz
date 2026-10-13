@@ -9,7 +9,7 @@ import {
   handleSaveCustomHarness,
   handleDeleteCustomHarness,
 } from "./e2eBridgeCustomHarnesses.ts";
-
+import { handleProviderCreateMockCommand } from "./e2eBridgeProviderCreate.ts";
 import type {
   ObservedUnreadProjection,
   ObservedUnreadResponse,
@@ -14579,7 +14579,7 @@ export function maybeInstallE2eTauriMocks() {
         return null;
       }
       default:
-        throw new Error(`Unsupported mocked Tauri command: ${command}`);
+        return handleProviderCreateMockCommand(command, payload, activeConfig);
     }
   };
   window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__ = (command, payload) =>

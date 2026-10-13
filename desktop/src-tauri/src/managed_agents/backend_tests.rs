@@ -379,7 +379,8 @@ fn provider_info_requires_the_complete_flat_wire_shape() {
         validate_provider_info(&complete).unwrap(),
         ProviderProtocolInfo {
             version: 1,
-            supports_confirmed_delete: false
+            supports_confirmed_delete: false,
+            supports_preflight: false
         }
     );
 
@@ -414,7 +415,8 @@ fn provider_info_accepts_only_the_narrow_protocol_v2_delete_capability() {
         validate_provider_info(&v2).unwrap(),
         ProviderProtocolInfo {
             version: 2,
-            supports_confirmed_delete: true
+            supports_confirmed_delete: true,
+            supports_preflight: false
         }
     );
 
@@ -424,7 +426,8 @@ fn provider_info_accepts_only_the_narrow_protocol_v2_delete_capability() {
         validate_provider_info(&no_delete).unwrap(),
         ProviderProtocolInfo {
             version: 2,
-            supports_confirmed_delete: false
+            supports_confirmed_delete: false,
+            supports_preflight: false
         }
     );
 
@@ -563,4 +566,121 @@ fn resolve_provider_binary_accepts_valid_id_format() {
             "expected 'not found' error, got: {e}"
         ),
     }
+}
+
+#[test]
+fn provider_info_accepts_preflight_alongside_delete_once_each() {
+    let base = |operations: serde_json::Value| {
+        serde_json::json!({
+            "ok": true, "name": "example", "version": "2.1.0",
+            "protocol_version": 2, "description": "Example provider",
+            "config_schema": {},
+            "capabilities": {"lifecycle_operations": operations}
+        })
+    };
+    assert_eq!(
+        validate_provider_info(&base(serde_json::json!(["delete", "preflight"]))).unwrap(),
+        ProviderProtocolInfo {
+            version: 2,
+            supports_confirmed_delete: true,
+            supports_preflight: true
+        }
+    );
+    assert_eq!(
+        validate_provider_info(&base(serde_json::json!(["preflight"]))).unwrap(),
+        ProviderProtocolInfo {
+            version: 2,
+            supports_confirmed_delete: false,
+            supports_preflight: true
+        }
+    );
+    assert!(validate_provider_info(&base(serde_json::json!(["preflight", "preflight"]))).is_err());
+    assert!(validate_provider_info(&base(serde_json::json!(["delete", "status"]))).is_err());
+}
+
+#[cfg(unix)]
+fn deploy_failure_provider(directory: &Path, deploy_response: &str) -> PathBuf {
+    let provider = directory.join("provider");
+    let body = format!(
+        r#"read request
+case "$request" in
+  *\"op\":\"info\"*) printf '%s\n' '{{"ok":true,"name":"test","version":"2.0.0","protocol_version":2,"description":"test provider","config_schema":{{}},"capabilities":{{"lifecycle_operations":["delete"]}}}}' ;;
+  *\"op\":\"deploy\"*) printf '%s\n' '{deploy_response}' ;;
+esac"#
+    );
+    write_test_provider(&provider, &body);
+    provider
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_deploy_reporting_keeps_only_an_explicit_absent_remote_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let absent = deploy_failure_provider(
+        directory.path(),
+        r#"{"ok":false,"error":"subscription missing","remote_state":"absent"}"#,
+    );
+    let failure = provider_deploy_reporting(
+        &absent,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        false,
+    )
+    .unwrap_err();
+    assert_eq!(
+        failure,
+        ProviderDeployFailure {
+            message: "subscription missing".to_string(),
+            remote_absent: true
+        }
+    );
+    // The legacy entry point still reports the plain message.
+    assert_eq!(
+        provider_deploy(
+            &absent,
+            &serde_json::json!({}),
+            &serde_json::json!({}),
+            false
+        )
+        .unwrap_err(),
+        "subscription missing"
+    );
+
+    for response in [
+        r#"{"ok":false,"error":"timeout talking to service"}"#,
+        r#"{"ok":false,"error":"x","remote_state":"present"}"#,
+        r#"{"ok":false,"error":"x","remote_state":true}"#,
+    ] {
+        let other = tempfile::tempdir().unwrap();
+        let provider = deploy_failure_provider(other.path(), response);
+        let failure = provider_deploy_reporting(
+            &provider,
+            &serde_json::json!({}),
+            &serde_json::json!({}),
+            false,
+        )
+        .unwrap_err();
+        assert!(!failure.remote_absent, "{response}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_deploy_reporting_redacts_secrets_from_failure_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let provider = deploy_failure_provider(
+        directory.path(),
+        r#"{"ok":false,"error":"bad nsec1must-not-cross","remote_state":"absent"}"#,
+    );
+    let failure = provider_deploy_reporting(
+        &provider,
+        &serde_json::json!({"private_key_nsec": "nsec1must-not-cross"}),
+        &serde_json::json!({}),
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        !failure.message.contains("nsec1must-not-cross"),
+        "{failure:?}"
+    );
 }

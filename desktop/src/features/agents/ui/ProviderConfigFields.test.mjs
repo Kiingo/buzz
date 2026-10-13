@@ -180,3 +180,22 @@ describe("providerSchemaUsesExtendedPresentation", () => {
     );
   });
 });
+
+describe("hidden provider bookkeeping fields", () => {
+  it("never renders x-hidden fields and resets them to their default", () => {
+    const entries = [
+      ["harness", { type: "string", enum: ["codex"] }],
+      ["profile_revision", { type: "integer", default: 1, "x-hidden": true }],
+    ];
+    assert.equal(providerConfigFieldVisible(entries[1][1], {}), false);
+    assert.deepEqual(
+      reconcileProviderConfig(
+        entries,
+        { profile_revision: "9" },
+        "harness",
+        "codex",
+      ),
+      { harness: "codex", profile_revision: "1" },
+    );
+  });
+});

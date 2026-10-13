@@ -21,11 +21,12 @@ import {
   type AgentDefinitionSubmitOptions,
 } from "./AgentDefinitionDialog";
 import { WhereToRunSection } from "./WhereToRunSection";
+import { canSubmitWhereToRun, resolveBackendIntent } from "./whereToRunIntent";
+import { usePreferredWhereToRunDraft } from "./usePreferredWhereToRunDraft";
 import {
-  canSubmitWhereToRun,
-  emptyWhereToRunDraft,
-  resolveBackendIntent,
-} from "./whereToRunIntent";
+  configuredPreferredRunOn,
+  preferredCreateDefaults,
+} from "../lib/preferredRunOn";
 import { providerOwnsExecutionProfile } from "./providerOwnedExecutionProfile";
 
 type AgentDialogCreateProps = {
@@ -135,11 +136,24 @@ function AgentCreateDialogRouter({
   onDirtyChange,
   onSubmitDefinition,
 }: AgentDialogCreateProps) {
-  const [runDraft, setRunDraft] = React.useState(emptyWhereToRunDraft);
-  const initialValues = React.useMemo(
-    () => providedInitialValues ?? createPersonaDialogState().initialValues,
-    [providedInitialValues],
+  const markDirty = React.useCallback(
+    () => onDirtyChange?.(true),
+    [onDirtyChange],
   );
+  const {
+    draft: runDraft,
+    setDraft: setRunDraft,
+    preferredActive,
+  } = usePreferredWhereToRunDraft(markDirty);
+  const initialValues = React.useMemo(() => {
+    if (providedInitialValues) return providedInitialValues;
+    const blank = createPersonaDialogState().initialValues;
+    // A build that leads with a preferred destination also prefills a name
+    // and instructions, so creating an agent needs no typing at all.
+    return configuredPreferredRunOn()
+      ? { ...blank, ...preferredCreateDefaults }
+      : blank;
+  }, [providedInitialValues]);
 
   const copy = createPersonaDialogState();
 
@@ -153,12 +167,10 @@ function AgentCreateDialogRouter({
           <WhereToRunSection
             draft={runDraft}
             isPending={isDefinitionPending}
-            onDraftChange={(nextDraft) => {
-              setRunDraft(nextDraft);
-              onDirtyChange?.(true);
-            }}
+            onDraftChange={setRunDraft}
           />
         }
+        createRunSectionFirst={preferredActive}
         createSubmitBlocked={!canSubmitWhereToRun(runDraft)}
         description={copy.description}
         embedded={embedded}

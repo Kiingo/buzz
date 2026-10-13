@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 144,
-    "modifiedUpstreamFiles": 229,
-    "changedUpstreamProductionSourceLines": 9859,
-    "upstreamProductionSourceDiffHunks": 1083,
+    "modifiedUpstreamProductionSourceFiles": 149,
+    "modifiedUpstreamFiles": 235,
+    "changedUpstreamProductionSourceLines": 10421,
+    "upstreamProductionSourceDiffHunks": 1146,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -905,6 +905,36 @@
         "crates/buzz-pubsub/src/transport.rs",
         "crates/buzz-pubsub/src/writer.rs",
         "crates/buzz-relay/src/router.rs"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "purpose": "Provider-neutral hosted-agent create flow. A build-time VITE_BUZZ_PREFERRED_RUN_ON names a bundled destination: when that provider is discovered, 'Where it runs' leads the create form with exactly that destination (default) or this computer, plain labels, prefilled name and instructions, and no untrusted-binary warning for the provider shipped inside the signed app bundle. Provider protocol v2 gains an optional read-only 'preflight' lifecycle operation (owner-signed kind-27236 proof) so the dialog can show owner readiness, a Connect action and a one-line notice, and block Create until ready. Deploy failures may carry remote_state 'absent'. A failed remote start is rolled back: confirmed delete when an agent id is known, otherwise one replay of the idempotent deploy to learn it; the local record and key are kept unless the provider confirmed deletion or absence.",
+      "upstreamStatus": "Generic provider protocol and create-flow improvements; candidate for upstream.",
+      "removalCondition": "Remove when block/buzz offers a build-preferred run destination, provider preflight, and confirmed rollback of failed remote creates.",
+      "paths": [
+        "desktop/src-tauri/src/commands/agent_provider_create.rs",
+        "desktop/src-tauri/src/managed_agents/provider_preflight.rs",
+        "desktop/src/features/agents/lib/preferredRunOn.test.mjs",
+        "desktop/src/features/agents/lib/preferredRunOn.ts",
+        "desktop/src/features/agents/lib/providerCreateApi.ts",
+        "desktop/src/features/agents/lib/rollbackFailedRemoteCreate.test.mjs",
+        "desktop/src/features/agents/lib/rollbackFailedRemoteCreate.ts",
+        "desktop/src/features/agents/ui/AdvancedFieldsToggle.tsx",
+        "desktop/src/features/agents/ui/AgentsView.tsx",
+        "desktop/src/features/agents/ui/ProviderPreflightStatus.tsx",
+        "desktop/src/features/agents/ui/RequestedAgentCreateDialogs.tsx",
+        "desktop/src/features/agents/ui/WhereToRunSection.tsx",
+        "desktop/src/features/agents/ui/providerPreflightState.test.mjs",
+        "desktop/src/features/agents/ui/providerPreflightState.ts",
+        "desktop/src/features/agents/ui/usePreferredWhereToRunDraft.ts",
+        "desktop/src/features/agents/ui/whereToRunIntent.test.mjs",
+        "desktop/src/features/agents/ui/whereToRunIntent.ts",
+        "desktop/src/features/agents/useAgentManagement.ts",
+        "desktop/src/testing/e2eBridgeProviderCreate.ts",
+        "desktop/tests/e2e/provider-owned/preferred-run-on-create-screenshots.spec.ts",
+        "docs/provider-preflight-and-create-rollback.md"
       ]
     }
   ],

@@ -13,6 +13,7 @@ import {
   useAcpRuntimesQuery,
   useCreateManagedAgentMutation,
   useCreatePersonaMutation,
+  useDeletePersonaMutation,
   useManagedAgentsQuery,
   usePersonasQuery,
   useUpdatePersonaMutation,
@@ -22,6 +23,12 @@ import {
   buildInstanceInputForDefinition,
   type BackendIntent,
 } from "./lib/instanceInputForDefinition";
+import { buildProviderOwnedInstanceInput } from "./lib/providerOwnedInstanceInput";
+import { rollbackFailedProviderCreate } from "./lib/providerCreateApi";
+import {
+  failedRemoteCreateMessage,
+  rollbackFailedRemoteCreate,
+} from "./lib/rollbackFailedRemoteCreate";
 import { useCreatedAgentChannelAttachment } from "./useCreatedAgentChannelAttachment";
 import { classifyAgentManagementOrigin } from "./agentManagementBuffer";
 import { useChannelsQuery } from "@/features/channels/hooks";
@@ -66,6 +73,7 @@ export function useAgentManagement() {
   const createPersonaMutation = useCreatePersonaMutation();
   const updatePersonaMutation = useUpdatePersonaMutation();
   const createAgentMutation = useCreateManagedAgentMutation();
+  const deletePersonaMutation = useDeletePersonaMutation();
   const [request, setRequest] = React.useState<AgentManagementRequest | null>(
     null,
   );
@@ -186,18 +194,24 @@ export function useAgentManagement() {
     setError(null);
     try {
       assertAgentCanActFromOrigin(request.request.channelId);
-      const runtimes = await availableRuntimesForStart(runtimesQuery);
+      // A remote start owns its own execution profile (as in the main create
+      // flow), so it needs no desktop runtime.
+      const remoteStart =
+        intent === "definition_start" ? (backendIntent ?? null) : null;
+      const runtimes = remoteStart
+        ? []
+        : await availableRuntimesForStart(runtimesQuery);
       const runtime = runtimes.find(
         (candidate) => candidate.id === input.runtime,
       );
-      if (!runtime) {
+      if (!runtime && !remoteStart) {
         throw new Error("Choose an available runtime for this agent.");
       }
 
       const avatarUrl = await resolveManagedAgentAvatarUrl(
         input.avatarUrl,
         undefined,
-        runtime.avatarUrl,
+        runtime?.avatarUrl,
       );
       const persona = await createPersonaMutation.mutateAsync({
         ...input,
@@ -205,15 +219,51 @@ export function useAgentManagement() {
       });
 
       if (intent === "definition_start") {
-        const created = await createAgentMutation.mutateAsync(
-          await buildInstanceInputForDefinition(
-            persona,
-            runtime,
-            undefined,
-            backendIntent ?? undefined,
-          ),
-        );
-        if (created.spawnError) throw new Error(created.spawnError);
+        let created: Awaited<
+          ReturnType<typeof createAgentMutation.mutateAsync>
+        > | null = null;
+        let startError: string | null = null;
+        try {
+          created = await createAgentMutation.mutateAsync(
+            remoteStart
+              ? await buildProviderOwnedInstanceInput(persona, remoteStart)
+              : await buildInstanceInputForDefinition(
+                  persona,
+                  runtime as NonNullable<typeof runtime>,
+                ),
+          );
+          startError = created.spawnError;
+        } catch (error) {
+          if (!remoteStart) throw error;
+          startError = error instanceof Error ? error.message : String(error);
+        }
+        if (startError && remoteStart) {
+          // Undo the half-created remote agent and its definition.
+          const rollback = await rollbackFailedRemoteCreate(
+            {
+              agentPubkey: created?.agent.pubkey ?? null,
+              definitionId: persona.id,
+            },
+            {
+              rollbackAgent: rollbackFailedProviderCreate,
+              deleteDefinition: async (id) => {
+                await deletePersonaMutation.mutateAsync(id);
+              },
+            },
+          );
+          throw new Error(
+            failedRemoteCreateMessage(
+              persona.displayName,
+              startError,
+              rollback,
+              {
+                retriesCleanup: false,
+              },
+            ),
+          );
+        }
+        if (startError) throw new Error(startError);
+        if (!created) throw new Error("The agent could not be created.");
         const targetChannel = (channelsQuery.data ?? []).find(
           (channel) => channel.id === request.request.channelId,
         );

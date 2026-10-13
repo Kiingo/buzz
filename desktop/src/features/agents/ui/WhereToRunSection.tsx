@@ -3,16 +3,34 @@ import * as React from "react";
 
 import { useBackendProvidersQuery } from "@/features/agents/hooks";
 import { probeBackendProvider } from "@/shared/api/tauri";
+import { isMacPlatform } from "@/shared/lib/platform";
+
+import {
+  configuredPreferredRunOn,
+  findPreferredProvider,
+  isBundledProviderPath,
+  providerRunOnLabel,
+  runOnOptions as buildRunOnOptions,
+} from "../lib/preferredRunOn";
 
 import { ProviderConfigFields } from "./ProviderConfigFields";
+import {
+  ProviderPreflightStatus,
+  useProviderPreflight,
+} from "./ProviderPreflightStatus";
 import { PersonaDropdownField } from "./PersonaDropdownField";
 import {
   applyProbeResult,
   emptyWhereToRunDraft,
   type WhereToRunDraft,
 } from "./whereToRunIntent";
+import type { WhereToRunDraftSource } from "./usePreferredWhereToRunDraft";
 
-/** Optional remote-backend selector. Buzz shared compute is an LLM provider, not a run destination. */
+/**
+ * Remote-backend selector. Buzz shared compute is an LLM provider, not a run
+ * destination. A build with a preferred destination (see `preferredRunOn`)
+ * offers exactly that destination and this computer, under "Where it runs".
+ */
 export function WhereToRunSection({
   draft,
   isPending,
@@ -20,19 +38,16 @@ export function WhereToRunSection({
 }: {
   draft: WhereToRunDraft;
   isPending: boolean;
-  onDraftChange: (next: WhereToRunDraft) => void;
+  onDraftChange: (
+    next: WhereToRunDraft,
+    source?: WhereToRunDraftSource,
+  ) => void;
 }) {
   const backendProviders = useBackendProvidersQuery().data ?? [];
   const [probeError, setProbeError] = React.useState<string | null>(null);
-  const runOnOptions = React.useMemo(
-    () => [
-      { label: "This computer", value: "local" },
-      ...backendProviders.map((provider) => ({
-        label: provider.id,
-        value: provider.id,
-      })),
-    ],
-    [backendProviders],
+  const preferredProvider = findPreferredProvider(
+    backendProviders,
+    configuredPreferredRunOn(),
   );
   const isProviderMode = draft.runOn !== "local";
   const selectedBackendProvider = React.useMemo(
@@ -40,6 +55,27 @@ export function WhereToRunSection({
       backendProviders.find((provider) => provider.id === draft.runOn) ?? null,
     [backendProviders, draft.runOn],
   );
+  const runOnOptions = buildRunOnOptions({
+    providers: backendProviders,
+    preferred: preferredProvider,
+    preferredProbe:
+      preferredProvider && draft.runOn === preferredProvider.id
+        ? draft.probedProvider
+        : null,
+    isMac: isMacPlatform(),
+  });
+  // The provider this build ships inside its own signed bundle is part of the
+  // app, so it gets a plain statement instead of the untrusted-binary warning.
+  const selectedIsShippedProvider = Boolean(
+    selectedBackendProvider &&
+      preferredProvider?.id === selectedBackendProvider.id &&
+      isBundledProviderPath(
+        selectedBackendProvider.binaryPath,
+        selectedBackendProvider.id,
+      ),
+  );
+
+  const preflight = useProviderPreflight(draft, onDraftChange);
 
   // Latest-state seam for probe resolution: an Effect Event always sees the
   // draft as it is *now*. Without this, the probe promise closes over the
@@ -47,7 +83,7 @@ export function WhereToRunSection({
   // gets thrown away when it resolves (a second, subtler Typewriter Eraser).
   const applyProbe = React.useEffectEvent(
     (result: Awaited<ReturnType<typeof probeBackendProvider>>) => {
-      onDraftChange(applyProbeResult(draft, result));
+      onDraftChange(applyProbeResult(draft, result), "app");
     },
   );
 
@@ -89,7 +125,7 @@ export function WhereToRunSection({
     <div className="space-y-4">
       <div className="space-y-1.5">
         <label className="text-sm font-medium" htmlFor="agent-run-on">
-          Run on
+          {preferredProvider ? "Where it runs" : "Run on"}
         </label>
         <PersonaDropdownField
           disabled={isPending}
@@ -108,21 +144,40 @@ export function WhereToRunSection({
 
       {isProviderMode && selectedBackendProvider ? (
         <div className="space-y-4">
-          <div className="flex gap-3 rounded-2xl border border-warning/30 bg-warning-bg px-4 py-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-            <p className="text-sm text-warning">
-              This provider at{" "}
-              <span className="font-mono font-medium">
-                {selectedBackendProvider.binaryPath}
-              </span>{" "}
-              will receive your agent&apos;s private key. Only use providers
-              from trusted sources.
+          {selectedIsShippedProvider ? (
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="agent-run-on-shipped-note"
+            >
+              {providerRunOnLabel(
+                selectedBackendProvider.id,
+                draft.probedProvider,
+              )}{" "}
+              is built into this app. It runs the agent for you and holds the
+              agent&apos;s key while it does.
             </p>
-          </div>
+          ) : (
+            <div className="flex gap-3 rounded-2xl border border-warning/30 bg-warning-bg px-4 py-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <p className="text-sm text-warning">
+                This provider at{" "}
+                <span className="font-mono font-medium">
+                  {selectedBackendProvider.binaryPath}
+                </span>{" "}
+                will receive your agent&apos;s private key. Only use providers
+                from trusted sources.
+              </p>
+            </div>
+          )}
           {probeError ? (
             <p className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              Could not probe provider: {probeError}
+              {selectedIsShippedProvider
+                ? `Couldn't reach ${providerRunOnLabel(selectedBackendProvider.id, null)}: ${probeError}. Choose ${runOnOptions[1]?.label ?? "This computer"} to run it here instead.`
+                : `Could not probe provider: ${probeError}`}
             </p>
+          ) : null}
+          {!probeError && !draft.probedProvider ? (
+            <p className="text-xs text-muted-foreground">Loading options…</p>
           ) : null}
           {draft.probedProvider?.config_schema ? (
             <ProviderConfigFields
@@ -133,6 +188,10 @@ export function WhereToRunSection({
               schema={draft.probedProvider.config_schema}
             />
           ) : null}
+          <ProviderPreflightStatus
+            draft={draft}
+            onRecheck={preflight.recheck}
+          />
         </div>
       ) : null}
     </div>

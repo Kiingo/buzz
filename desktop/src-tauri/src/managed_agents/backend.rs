@@ -18,6 +18,8 @@ const PROVIDER_PROTOCOL_V2: u64 = 2;
 pub(super) struct ProviderProtocolInfo {
     pub version: u64,
     pub supports_confirmed_delete: bool,
+    /// Protocol v2 `preflight`: a read-only owner readiness check before create.
+    pub supports_preflight: bool,
 }
 
 pub(super) fn validate_provider_info(
@@ -91,7 +93,7 @@ pub(super) fn validate_provider_info(
             "provider info response contains unknown field {field}"
         ));
     }
-    let supports_confirmed_delete = if version == PROVIDER_PROTOCOL_V2 {
+    let (supports_confirmed_delete, supports_preflight) = if version == PROVIDER_PROTOCOL_V2 {
         let capabilities = object
             .get("capabilities")
             .and_then(serde_json::Value::as_object)
@@ -105,22 +107,26 @@ pub(super) fn validate_provider_info(
             .get("lifecycle_operations")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| "provider lifecycle_operations must be an array".to_string())?;
-        if operations.len() > 1
-            || operations
-                .iter()
-                .any(|operation| operation.as_str() != Some("delete"))
-        {
-            return Err("provider advertises an unsupported lifecycle operation".to_string());
+        let mut advertised = std::collections::BTreeSet::new();
+        for operation in operations {
+            match operation.as_str() {
+                Some(name @ ("delete" | "preflight")) if advertised.insert(name) => {}
+                _ => {
+                    return Err("provider advertises an unsupported lifecycle operation".to_string())
+                }
+            }
         }
-        operations
-            .iter()
-            .any(|operation| operation.as_str() == Some("delete"))
+        (
+            advertised.contains("delete"),
+            advertised.contains("preflight"),
+        )
     } else {
-        false
+        (false, false)
     };
     Ok(ProviderProtocolInfo {
         version,
         supports_confirmed_delete,
+        supports_preflight,
     })
 }
 
@@ -170,6 +176,32 @@ pub fn invoke_provider(
     invoke_provider_serialized(binary, &request_bytes, timeout, &env_secret_refs)
 }
 
+/// Like [`invoke_provider`], but returns a well-formed `ok: false` response to
+/// the caller instead of an error, so it can read provider-authored failure
+/// fields such as deploy's `remote_state`. The `error` text is redacted.
+pub(crate) fn invoke_provider_allow_failure(
+    binary: &Path,
+    request: &serde_json::Value,
+    timeout: Duration,
+) -> Result<serde_json::Value, String> {
+    let env_secrets = env_secrets_from_request(request);
+    let env_secret_refs: Vec<&str> = env_secrets.iter().map(String::as_str).collect();
+    let request_bytes = format!(
+        "{}\n",
+        serde_json::to_string(request).map_err(|e| e.to_string())?
+    );
+    let mut response =
+        invoke_provider_serialized_raw(binary, &request_bytes, timeout, &env_secret_refs)?;
+    if response.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+        let redacted = redact_secrets_with(
+            response["error"].as_str().unwrap_or("unknown error"),
+            &env_secret_refs,
+        );
+        response["error"] = serde_json::Value::String(redacted);
+    }
+    Ok(response)
+}
+
 /// Invoke a provider with a caller-owned, zeroizing JSON buffer.
 ///
 /// Identity lifecycle extensions use this entry point so private material is
@@ -188,6 +220,21 @@ pub fn invoke_provider_sensitive(
 }
 
 fn invoke_provider_serialized(
+    binary: &Path,
+    request_bytes: &str,
+    timeout: Duration,
+    sensitive_values: &[&str],
+) -> Result<serde_json::Value, String> {
+    let response =
+        invoke_provider_serialized_raw(binary, request_bytes, timeout, sensitive_values)?;
+    if response.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+        let error = response["error"].as_str().unwrap_or("unknown error");
+        return Err(redact_secrets_with(error, sensitive_values));
+    }
+    Ok(response)
+}
+
+fn invoke_provider_serialized_raw(
     binary: &Path,
     request_bytes: &str,
     timeout: Duration,
@@ -387,11 +434,6 @@ fn invoke_provider_serialized(
                 )
             }
         })?;
-
-    if response.get("ok").and_then(|v| v.as_bool()) == Some(false) {
-        let error = response["error"].as_str().unwrap_or("unknown error");
-        return Err(redact_secrets_with(error, sensitive_values));
-    }
 
     Ok(response)
 }
@@ -627,14 +669,51 @@ pub fn probe_provider_info(binary: &Path) -> Result<serde_json::Value, String> {
     Ok(info)
 }
 
-/// Deploy through one immutable staged copy: negotiate protocol v1 before the
-/// secret-bearing request, then invoke deploy on those exact same bytes.
+/// [`provider_deploy_reporting`] with a plain error message.
+#[cfg(test)]
 pub fn provider_deploy(
     binary: &Path,
     agent: &serde_json::Value,
     provider_config: &serde_json::Value,
     expected_owns_execution_profile: bool,
 ) -> Result<String, String> {
+    provider_deploy_reporting(
+        binary,
+        agent,
+        provider_config,
+        expected_owns_execution_profile,
+    )
+    .map_err(|failure| failure.message)
+}
+
+/// A failed deploy, with what the provider said about remote state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderDeployFailure {
+    pub message: String,
+    /// The provider asserted `remote_state: "absent"`: no remote agent exists
+    /// for this agent identity. Any other outcome (no statement, a transport
+    /// failure, a timeout, a local error) leaves remote state unknown.
+    pub remote_absent: bool,
+}
+
+impl From<String> for ProviderDeployFailure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            remote_absent: false,
+        }
+    }
+}
+
+/// Deploy through one immutable staged copy: negotiate the protocol before
+/// the secret-bearing request, then invoke deploy on those exact same bytes.
+/// A failure keeps the provider's statement about remote state.
+pub fn provider_deploy_reporting(
+    binary: &Path,
+    agent: &serde_json::Value,
+    provider_config: &serde_json::Value,
+    expected_owns_execution_profile: bool,
+) -> Result<String, ProviderDeployFailure> {
     let (_directory, staged, _digest, _execution_guard) = stage_provider(binary)?;
     let info_request = serde_json::json!({
         "op": "info",
@@ -650,11 +729,20 @@ pub fn provider_deploy(
         "agent": agent,
         "provider_config": provider_config,
     });
-    let resp = invoke_provider(&staged, &request, Duration::from_secs(600))?;
+    let resp = invoke_provider_allow_failure(&staged, &request, Duration::from_secs(600))?;
+    if resp.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+        return Err(ProviderDeployFailure {
+            message: resp["error"]
+                .as_str()
+                .unwrap_or("unknown error")
+                .to_string(),
+            remote_absent: resp.get("remote_state").and_then(|v| v.as_str()) == Some("absent"),
+        });
+    }
     resp["agent_id"]
         .as_str()
         .map(String::from)
-        .ok_or_else(|| "deploy response missing agent_id".to_string())
+        .ok_or_else(|| "deploy response missing agent_id".to_string().into())
 }
 
 /// Validate provider_config: flat object, scalar values, no secret-like keys.

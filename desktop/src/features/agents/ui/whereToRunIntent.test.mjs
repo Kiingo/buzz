@@ -129,3 +129,46 @@ test("probe resolution preserves unrelated draft fields", () => {
     "kubernetes",
   );
 });
+
+test("a provider that advertises preflight blocks create until ready", () => {
+  const probed = {
+    ok: true,
+    capabilities: { lifecycle_operations: ["delete", "preflight"] },
+    config_schema: {
+      type: "object",
+      properties: { harness: { type: "string" } },
+      required: ["harness"],
+    },
+  };
+  const draft = {
+    ...emptyWhereToRunDraft,
+    runOn: "example",
+    probedProvider: probed,
+    providerConfig: { harness: "codex" },
+  };
+  assert.equal(canSubmitWhereToRun(draft), false);
+  const key = JSON.stringify(["example", [["harness", "codex"]]]);
+  const result = {
+    supported: true,
+    ready: true,
+    message: null,
+    actionLabel: null,
+    actionUrl: null,
+    notice: null,
+  };
+  assert.equal(
+    canSubmitWhereToRun({
+      ...draft,
+      preflight: { status: "done", key, result },
+    }),
+    true,
+  );
+  assert.equal(
+    canSubmitWhereToRun({
+      ...draft,
+      providerConfig: { harness: "claude-code" },
+      preflight: { status: "done", key, result },
+    }),
+    false,
+  );
+});

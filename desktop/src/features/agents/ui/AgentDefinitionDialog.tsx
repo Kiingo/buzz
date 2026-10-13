@@ -1,5 +1,4 @@
 import * as React from "react";
-import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import type {
@@ -10,6 +9,7 @@ import type {
 import { cn } from "@/shared/lib/cn";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
+import { AdvancedFieldsToggle } from "./AdvancedFieldsToggle";
 import { AgentCreationPreview } from "./AgentCreationPreview";
 import { PersonaDropdownField } from "./PersonaDropdownField";
 import type { EnvVarsValue } from "./EnvVarsEditor";
@@ -110,6 +110,8 @@ type AgentDefinitionDialogProps = {
   /** Publishes saved changes when the edited agent is shared in the catalog. */
   publishCatalogUpdatesOnSave?: boolean;
   createRunSection?: React.ReactNode;
+  /** Lead the create form with the run section instead of tucking it in Advanced. */
+  createRunSectionFirst?: boolean;
   /** Extra create-mode submit gate (e.g. incomplete provider config). */
   createSubmitBlocked?: boolean;
   /** A signed remote-provider schema owns harness/model/provider selection. */
@@ -136,6 +138,7 @@ export function AgentDefinitionDialog({
   onSubmit,
   publishCatalogUpdatesOnSave = false,
   createRunSection,
+  createRunSectionFirst = false,
   createSubmitBlocked = false,
   providerOwnsExecutionProfile = false,
 }: AgentDefinitionDialogProps) {
@@ -741,6 +744,7 @@ export function AgentDefinitionDialog({
       />
 
       <div className="space-y-5">
+        {isCreateMode && createRunSectionFirst ? createRunSection : null}
         <div className="space-y-1.5">
           <label
             className="text-sm font-medium text-foreground"
@@ -925,32 +929,16 @@ export function AgentDefinitionDialog({
         />
 
         <div className="space-y-3">
-          <button
-            aria-expanded={showAdvancedFields}
-            className="inline-flex h-9 items-center gap-1.5 text-sm font-medium text-foreground transition-colors hover:text-foreground/80 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-            onClick={() => setShowAdvancedFields((current) => !current)}
-            type="button"
-          >
-            <span>Advanced</span>
-            {(isCreateMode && createSubmitBlocked) ||
-            localModeGate.missingEnvKeys.some((key) =>
-              advancedRequiredEnvKeys.includes(key),
-            ) ? (
-              <span
-                aria-hidden="true"
-                className="rounded-full bg-destructive/10 px-2 py-0.5 text-xs text-destructive"
-                data-testid="persona-advanced-required-badge"
-              >
-                Required
-              </span>
-            ) : null}
-            <ChevronDown
-              className={cn(
-                "h-4 w-4 text-muted-foreground transition-transform duration-150 ease-out",
-                showAdvancedFields && "rotate-180",
-              )}
-            />
-          </button>
+          <AdvancedFieldsToggle
+            expanded={showAdvancedFields}
+            onToggle={() => setShowAdvancedFields((current) => !current)}
+            required={
+              (isCreateMode && createSubmitBlocked && !createRunSectionFirst) ||
+              localModeGate.missingEnvKeys.some((key) =>
+                advancedRequiredEnvKeys.includes(key),
+              )
+            }
+          />
           <AnimatePresence initial={false}>
             {showAdvancedFields ? (
               <motion.div
@@ -962,7 +950,11 @@ export function AgentDefinitionDialog({
                 transition={advancedFieldsTransition}
               >
                 <PersonaAdvancedFields
-                  afterRespondTo={isCreateMode ? createRunSection : undefined}
+                  afterRespondTo={
+                    isCreateMode && !createRunSectionFirst
+                      ? createRunSection
+                      : undefined
+                  }
                   behaviorDraft={behaviorDraft}
                   disabled={isPending}
                   envVars={envVars}

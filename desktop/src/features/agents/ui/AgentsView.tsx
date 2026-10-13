@@ -467,11 +467,7 @@ export function AgentsView() {
         <CommunityCatalogDialog
           createContent={({ onDirtyChange, onRequestClose }) => (
             <AgentDialog
-              definitionError={
-                personas.createPersonaMutation.error instanceof Error
-                  ? personas.createPersonaMutation.error
-                  : null
-              }
+              definitionError={personas.createDialogError}
               embedded
               isDefinitionPending={personas.isPending}
               mode="definition"

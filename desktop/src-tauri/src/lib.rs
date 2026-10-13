@@ -738,6 +738,8 @@ pub fn run() {
             update_managed_agent,
             discover_backend_providers,
             probe_backend_provider,
+            check_backend_provider_preflight,
+            rollback_failed_provider_create,
             persona_catalog::fetch_persona_catalog,
             team_catalog::fetch_team_catalog,
             unread_catch_up::unread_catch_up,
