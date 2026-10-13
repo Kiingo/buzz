@@ -158,7 +158,13 @@ async fn catch_up(
     desired: &DesiredTopics,
     cursor: &mut Cursor,
 ) -> Result<bool, PubSubError> {
+    // Keep this subscribed connection's latched state visible when the
+    // exporter expires idle gauges. Reconnect and reader failures still clear
+    // connected/caught_up through unavailable().
+    metrics::gauge!("buzz_transport_connected").set(1);
+    metrics::gauge!("buzz_transport_coverage_lost").set(if cursor.coverage_lost { 1 } else { 0 });
     if cursor.coverage_lost {
+        metrics::gauge!("buzz_transport_caught_up").set(0);
         // Preserve the last covered cursor/epoch for diagnostics. Do not call a
         // jump to today's tail recovered history, and do not strand live fans.
         return Ok(false);
