@@ -880,7 +880,8 @@
         "lefthook.yml",
         "scripts/check-branch-skew.sh",
         "scripts/kiingo-hook-files.sh",
-        "scripts/kiingo-static-hook.sh"
+        "scripts/kiingo-static-hook.sh",
+        "scripts/kiingo-windows-cmake-failure-custody.mjs"
       ]
     },
     {
