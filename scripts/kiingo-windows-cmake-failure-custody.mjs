@@ -30,6 +30,32 @@ const codeAllowlist = new Set([
   "C1900",
   "C1902",
 ]);
+// These public identifiers are fixed diagnostics, never values copied from a log.
+const taskAllowlist = new Set([
+  "SetEnv",
+  "CL",
+  "Link",
+  "ResolveAssemblyReference",
+  "ResolveSDKReference",
+  "GetReferenceAssemblyPaths",
+]);
+const exceptionAllowlist = new Set([
+  "System.NullReferenceException",
+  "System.ArgumentNullException",
+  "System.ArgumentException",
+  "System.InvalidOperationException",
+  "System.IO.FileNotFoundException",
+  "System.IO.DirectoryNotFoundException",
+  "System.IO.IOException",
+  "System.UnauthorizedAccessException",
+  "System.TypeLoadException",
+  "System.TypeInitializationException",
+  "System.DllNotFoundException",
+  "System.BadImageFormatException",
+  "System.Security.SecurityException",
+  "System.ComponentModel.Win32Exception",
+  "System.Runtime.InteropServices.COMException",
+]);
 const patterns = {
   msvc_toolset_unavailable: /MSB8020|MSB8003/gu,
   windows_sdk_unavailable: /MSB8036|MSB8037/gu,
@@ -66,7 +92,7 @@ const deadline = () => {
 };
 const receipt = {
   kind: "kiingo-windows-cmake-failure-custody",
-  schemaVersion: 1,
+  schemaVersion: 2,
   sourceSha: /^[a-f0-9]{40}$/u.test(process.env.GITHUB_SHA ?? "")
     ? process.env.GITHUB_SHA
     : null,
@@ -86,6 +112,12 @@ const receipt = {
   codeCounts: {},
   categoryCounts: {},
   unrecognizedCodeCount: 0,
+  taskCounts: {},
+  exceptionCounts: {},
+  unrecognizedTaskCount: 0,
+  unrecognizedExceptionCount: 0,
+  taskSubtypeOutcome: "unknown",
+  exceptionSubtypeOutcome: "unknown",
   rawOutputRetained: false,
   compilerQualified: false,
   operatorMutation: false,
@@ -206,6 +238,27 @@ function readLog(relative) {
       if (count)
         receipt.categoryCounts[name] =
           (receipt.categoryCounts[name] ?? 0) + count;
+    // Classify only the already bounded, identity-qualified ConfigureLog bytes.
+    // Unknown identifiers contribute a count; their text is never retained.
+    for (const match of text.matchAll(
+      /\bThe \\?["']([A-Za-z_][A-Za-z0-9_.]{0,99})\\?["'] task failed unexpectedly(?:\.|$)/gmu,
+    )) {
+      deadline();
+      const task = match[1];
+      if (taskAllowlist.has(task))
+        receipt.taskCounts[task] = (receipt.taskCounts[task] ?? 0) + 1;
+      else receipt.unrecognizedTaskCount += 1;
+    }
+    for (const match of text.matchAll(
+      /\b(System(?:\.[A-Za-z_][A-Za-z0-9_]{0,39}){0,4}\.[A-Za-z_][A-Za-z0-9_]{0,39}Exception)\b/gu,
+    )) {
+      deadline();
+      const exception = match[1];
+      if (exceptionAllowlist.has(exception))
+        receipt.exceptionCounts[exception] =
+          (receipt.exceptionCounts[exception] ?? 0) + 1;
+      else receipt.unrecognizedExceptionCount += 1;
+    }
     receipt.filesRead += 1;
     receipt.bytesRead += buffer.length;
   } finally {
@@ -277,6 +330,19 @@ try {
   receipt.readOutcome =
     error instanceof ReadRefusal ? error.message : "native_read_unavailable";
 }
+function subtypeOutcome(counts, unknownCount) {
+  if (!receipt.scanComplete) return "incomplete";
+  if (!Object.keys(counts).length) return "unknown";
+  return unknownCount ? "allowlisted_and_unknown" : "allowlisted_observed";
+}
+receipt.taskSubtypeOutcome = subtypeOutcome(
+  receipt.taskCounts,
+  receipt.unrecognizedTaskCount,
+);
+receipt.exceptionSubtypeOutcome = subtypeOutcome(
+  receipt.exceptionCounts,
+  receipt.unrecognizedExceptionCount,
+);
 // The compile step already owns its exit/conclusion. Diagnostics never make a
 // failed compiler successful and cannot grant source/image/compiler custody.
 process.stdout.write(
