@@ -172,3 +172,33 @@ test("a provider that advertises preflight blocks create until ready", () => {
     false,
   );
 });
+
+test("a shown model choice with no valid selection blocks create", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      model_mode: { type: "string", enum: ["auto", "track"], default: "auto" },
+      model_selector: {
+        type: "string",
+        default: "",
+        "x-visible-when": { field: "model_mode", not: "auto" },
+        "x-options-by-field": { field: "model_mode", options: { track: [] } },
+      },
+    },
+    required: ["model_mode"],
+  };
+  const draft = {
+    ...emptyWhereToRunDraft,
+    runOn: "example",
+    probedProvider: { ok: true, config_schema: schema },
+    providerConfig: { model_mode: "auto", model_selector: "" },
+  };
+  assert.equal(providerConfigComplete(draft), true);
+  assert.equal(
+    providerConfigComplete({
+      ...draft,
+      providerConfig: { model_mode: "track", model_selector: "" },
+    }),
+    false,
+  );
+});

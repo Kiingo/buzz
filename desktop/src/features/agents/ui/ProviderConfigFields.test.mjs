@@ -6,6 +6,7 @@ import { providerSchemaUsesExtendedPresentation } from "./ProviderConfigSchemaFi
 import {
   providerConfigFieldVisible,
   providerConfigOptions,
+  providerConfigUnmetChoices,
   reconcileProviderConfig,
 } from "./providerConfigSchema.ts";
 
@@ -196,6 +197,109 @@ describe("hidden provider bookkeeping fields", () => {
         "codex",
       ),
       { harness: "codex", profile_revision: "1" },
+    );
+  });
+});
+
+describe("conditional bounded choices", () => {
+  const catalogSchema = {
+    type: "object",
+    properties: {
+      harness: {
+        type: "string",
+        enum: ["codex", "claude-code"],
+        default: "codex",
+      },
+      model_mode: {
+        type: "string",
+        enum: ["auto", "track", "version"],
+        default: "auto",
+      },
+      model_selector: {
+        type: "string",
+        default: "",
+        "x-visible-when": { field: "model_mode", not: "auto" },
+        "x-options-by-field": {
+          field: "harness",
+          options: {
+            codex: [
+              {
+                label: "GPT-6.1 Sol",
+                value: "gpt-6.1-sol",
+                selector_kind: "version",
+              },
+            ],
+            "claude-code": [
+              { label: "Opus", value: "opus", selector_kind: "track" },
+              {
+                label: "Opus 5.5",
+                value: "claude-opus-5-5",
+                selector_kind: "version",
+              },
+            ],
+          },
+        },
+        "x-option-filter": {
+          field: "model_mode",
+          option_property: "selector_kind",
+        },
+      },
+    },
+  };
+
+  it("needs nothing while the dependent field is hidden", () => {
+    assert.deepEqual(
+      providerConfigUnmetChoices(catalogSchema, {
+        harness: "codex",
+        model_mode: "auto",
+        model_selector: "",
+      }),
+      [],
+    );
+  });
+
+  it("needs a choice once the dependent field is shown", () => {
+    assert.deepEqual(
+      providerConfigUnmetChoices(catalogSchema, {
+        harness: "claude-code",
+        model_mode: "track",
+        model_selector: "",
+      }),
+      ["model_selector"],
+    );
+    assert.deepEqual(
+      providerConfigUnmetChoices(catalogSchema, {
+        harness: "claude-code",
+        model_mode: "track",
+        model_selector: "opus",
+      }),
+      [],
+    );
+  });
+
+  it("an empty option list for the current combination can never be satisfied", () => {
+    const config = {
+      harness: "codex",
+      model_mode: "track",
+      model_selector: "",
+    };
+    assert.deepEqual(
+      providerConfigOptions(catalogSchema.properties.model_selector, config),
+      [],
+    );
+    assert.deepEqual(providerConfigUnmetChoices(catalogSchema, config), [
+      "model_selector",
+    ]);
+  });
+
+  it("a value that is not among the current options does not count", () => {
+    assert.deepEqual(
+      providerConfigUnmetChoices(catalogSchema, {
+        harness: "codex",
+        model_mode: "version",
+        model_selector: "opus",
+      }),
+      ["model_selector"],
     );
   });
 });

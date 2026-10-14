@@ -1,6 +1,7 @@
 import type { BackendIntent } from "../lib/instanceInputForDefinition";
 import type { BackendProviderProbeResult } from "@/shared/api/types";
 import { coerceConfigValues } from "./ProviderConfigFields";
+import { providerConfigUnmetChoices } from "./providerConfigSchema";
 import {
   idlePreflight,
   preflightAllowsSubmit,
@@ -61,8 +62,12 @@ export function providerConfigComplete(draft: WhereToRunDraft): boolean {
     | Record<string, unknown>
     | undefined;
   const required: string[] = (schema?.required as string[] | undefined) ?? [];
-  return required.every(
-    (key) => (draft.providerConfig[key] ?? "").trim().length > 0,
+  return (
+    required.every(
+      (key) => (draft.providerConfig[key] ?? "").trim().length > 0,
+    ) &&
+    (!schema ||
+      providerConfigUnmetChoices(schema, draft.providerConfig).length === 0)
   );
 }
 
