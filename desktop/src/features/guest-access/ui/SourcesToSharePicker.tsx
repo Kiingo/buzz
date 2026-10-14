@@ -2,12 +2,13 @@ import { Lock } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
 
-import { dataSourceLabel } from "../lib/copy";
+import { dataSourceDescription, dataSourceLabel } from "../lib/copy";
 
 /**
  * What an owner-data approval releases (contracts §5.2.1). When the request
  * named its sources, they start checked and the owner may only narrow the
- * list; when it named none, the owner must pick from the requestable set.
+ * list; when it named none, nothing starts checked and the owner must pick
+ * at least one from the requestable set. Each source says what it exposes.
  */
 export function SourcesToSharePicker({
   agentName,
@@ -44,7 +45,7 @@ export function SourcesToSharePicker({
         return (
           <label
             className={cn(
-              "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm",
+              "flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm",
               checked
                 ? "border-primary/50 bg-primary/5"
                 : "border-border/60 hover:bg-muted/40",
@@ -66,8 +67,23 @@ export function SourcesToSharePicker({
               type="checkbox"
               value={source}
             />
-            <Lock aria-hidden className="h-3.5 w-3.5 text-amber-500" />
-            <span className="text-foreground">{dataSourceLabel(source)}</span>
+            <Lock
+              aria-hidden
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500"
+            />
+            <span className="min-w-0">
+              <span className="block text-foreground">
+                {dataSourceLabel(source)}
+              </span>
+              {dataSourceDescription(source) ? (
+                <span
+                  className="block text-xs text-muted-foreground"
+                  data-testid={`guest-share-source-${source}-description`}
+                >
+                  {dataSourceDescription(source)}
+                </span>
+              ) : null}
+            </span>
           </label>
         );
       })}

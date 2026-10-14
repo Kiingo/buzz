@@ -758,7 +758,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
-      "purpose": "Owner and guest desktop UX for cross-owner agent access through a hosted guest route. Owner side: a native NIP-98 client for the route's owner and identity endpoints (no browser CORS; agent routes stay with the harness), trusted 46040-46042 owner notifications (accepted only from the owner's own agents, by local ownership or a verified NIP-OA profile) merged into the Inbox like workflow approvals, a pending-approvals poll as the system of record, an approval review dialog (exact draft, requester and link state, venue, data sources, plain-language classifier reasons, edit then approve, owner-data requests that release only the sources the owner picks to one re-run of the guest turn, deny, deny and block, grant scope) that records the decision first and then sends the approve/deny observer control frame, a prominent alert banner, a link-your-account prompt and profile card, and an agent settings Access dialog (policy, grants, requests, blocks, shared items, learned-grant suggestions, daily digest). Guest side: markers on hosted guest replies with pending, resolved and refusal states. Upstream files carry only mount points, inbox labels and a feed merge.",
+      "purpose": "Owner and guest desktop UX for cross-owner agent access through a hosted guest route. Owner side: a native NIP-98 client for the route's owner and identity endpoints (no browser CORS; agent routes stay with the harness), trusted 46040-46042 owner notifications (accepted only from the owner's own agents, by local ownership or a verified NIP-OA profile) merged into the Inbox like workflow approvals, a pending-approvals poll as the system of record, an approval review dialog (exact draft, requester and link state, venue, data sources, plain-language classifier reasons, edit then approve, owner-data requests that release only the sources the owner picks to one re-run of the guest turn, deny, deny and block, grant scope) that records the decision first and then sends the approve/deny observer control frame, a prominent alert banner, a link-your-account prompt and profile card, and an agent settings Access dialog (policy, grants, requests, blocks, shared items, learned-grant suggestions, daily digest). Guest side: markers on hosted guest replies with pending, resolved and refusal states. Upstream files carry only mount points, inbox labels and a feed merge. Approval cards show who is asking (TEST badge, route-classified kind, linked-ago, first/Nth request), a one-line description of what each shareable source exposes with nothing pre-ticked when the request named none, and a preview sentence above the buttons that follows the owner's current choices; all additive and optional for older routes.",
       "upstreamStatus": "Generic mechanism configured by the build-time guest route URL; not yet proposed upstream.",
       "removalCondition": "Remove when block/buzz ships owner review and settings UI for hosted guest turns.",
       "paths": [
@@ -769,6 +769,8 @@
         "desktop/src/features/agents/ui/AgentManagementDialogs.tsx",
         "desktop/src/features/communities/useCommunityInit.ts",
         "desktop/src/features/guest-access/hooks.ts",
+        "desktop/src/features/guest-access/lib/approvalPreview.test.mjs",
+        "desktop/src/features/guest-access/lib/approvalPreview.ts",
         "desktop/src/features/guest-access/lib/client.test.mjs",
         "desktop/src/features/guest-access/lib/client.ts",
         "desktop/src/features/guest-access/lib/copy.ts",
@@ -793,6 +795,7 @@
         "desktop/src/features/guest-access/ui/GuestReplyMarker.tsx",
         "desktop/src/features/guest-access/ui/LinkAccountForm.tsx",
         "desktop/src/features/guest-access/ui/LinkAccountPrompt.tsx",
+        "desktop/src/features/guest-access/ui/RequesterLine.tsx",
         "desktop/src/features/guest-access/ui/SourcesToSharePicker.tsx",
         "desktop/src/features/guest-access/ui/access/AgentGuestAccessDialog.tsx",
         "desktop/src/features/guest-access/ui/access/AgentGuestAccessSection.tsx",
@@ -807,6 +810,7 @@
         "desktop/src/features/guest-access/ui/access/shared.tsx",
         "desktop/src/features/guest-access/ui/guestAccessUi.test.mjs",
         "desktop/src/features/guest-access/ui/ownerDataApproval.test.mjs",
+        "desktop/src/features/guest-access/ui/requesterLine.test.mjs",
         "desktop/src/features/guest-access/useApprovalDecision.test.mjs",
         "desktop/src/features/guest-access/useApprovalDecision.ts",
         "desktop/src/features/guest-access/useGuestAccessPipeline.ts",

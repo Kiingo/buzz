@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button } from "@/shared/ui/button";
 import { Textarea } from "@/shared/ui/textarea";
 
+import { approvalPreviewSentence } from "../lib/approvalPreview";
 import { requesterLabel } from "../lib/copy";
 import {
   isOwnerDataRequest,
@@ -105,6 +106,11 @@ export function GuestApprovalReview({
   const agentName = approval.agent.displayName ?? "your agent";
   const approveDisabled =
     decision.isPending || (ownerData && sharedSources.length === 0);
+  const previewSentence = approvalPreviewSentence(approval, {
+    sharedSources,
+    grant,
+    writingReply: editing,
+  });
 
   return (
     <div className="space-y-4" data-testid="guest-approval-review">
@@ -192,6 +198,16 @@ export function GuestApprovalReview({
             </Button>
           </div>
         </div>
+      ) : null}
+
+      {previewSentence ? (
+        <p
+          className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm text-foreground"
+          data-testid="guest-approval-preview"
+          role="status"
+        >
+          {previewSentence}
+        </p>
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
