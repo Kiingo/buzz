@@ -193,3 +193,77 @@ test("owner-data requests expose requested and requestable sources", async () =>
   });
   assert.equal(isOwnerDataRequest(ordinary), false);
 });
+
+test("parses requester classification and the approval preview", () => {
+  const approval = parseApproval({
+    approval_id: "ap-2",
+    requester: {
+      pubkey: "c".repeat(64),
+      display_name: "Jess",
+      linked: true,
+      kind: "new",
+      is_test: false,
+      linked_at: "2026-10-12T10:00:00.000Z",
+      prior_request_count: 0,
+    },
+    reason_codes: ["owner_data_requested"],
+    requested_sources: [],
+    preview: {
+      agent_name: "Atlas",
+      recipient_name: "Jess",
+      action: "read_and_reply",
+      sources: [
+        { id: "calendar_events", label: "your calendar events" },
+        { nope: 1 },
+      ],
+      destination: "dm",
+      audience_total: 2,
+      scope: "once",
+      summary:
+        "Choose what Atlas may read before it replies to Jess in this DM, once.",
+    },
+  });
+  assert.equal(approval.requester.kind, "new");
+  assert.equal(approval.requester.isTest, false);
+  assert.equal(approval.requester.linkedAt, "2026-10-12T10:00:00.000Z");
+  assert.equal(approval.requester.priorRequestCount, 0);
+  assert.deepEqual(approval.preview, {
+    agentName: "Atlas",
+    recipientName: "Jess",
+    action: "read_and_reply",
+    sources: [{ id: "calendar_events", label: "your calendar events" }],
+    destination: "dm",
+    audienceTotal: 2,
+    scope: "once",
+    summary:
+      "Choose what Atlas may read before it replies to Jess in this DM, once.",
+  });
+});
+
+test("older routes without the new fields parse to safe defaults", () => {
+  const approval = parseApproval({
+    approval_id: "ap-3",
+    requester: { pubkey: "c".repeat(64), display_name: "Jess", linked: true },
+  });
+  assert.equal(approval.requester.kind, null);
+  assert.equal(approval.requester.isTest, false);
+  assert.equal(approval.requester.linkedAt, null);
+  assert.equal(approval.requester.priorRequestCount, null);
+  assert.equal(approval.preview, null);
+});
+
+test("a test requester is flagged by either field; odd values are dropped", () => {
+  const byKind = parseApproval({
+    approval_id: "a",
+    requester: { kind: "test", prior_request_count: -1 },
+  });
+  assert.equal(byKind.requester.isTest, true);
+  assert.equal(byKind.requester.priorRequestCount, null);
+  const byFlag = parseApproval({
+    approval_id: "b",
+    requester: { kind: "alien", is_test: true, prior_request_count: 2.5 },
+  });
+  assert.equal(byFlag.requester.kind, null);
+  assert.equal(byFlag.requester.isTest, true);
+  assert.equal(byFlag.requester.priorRequestCount, null);
+});

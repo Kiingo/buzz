@@ -1,4 +1,4 @@
-import { Hash, Link2, Link2Off, Lock, MessageSquare } from "lucide-react";
+import { Hash, Lock, MessageSquare } from "lucide-react";
 
 import { Badge } from "@/shared/ui/badge";
 
@@ -6,10 +6,10 @@ import {
   approvalReason,
   classifierReason,
   dataSourceLabel,
-  requesterLabel,
   scorePercent,
 } from "../lib/copy";
 import { isOwnerDataRequest, type GuestApproval } from "../lib/wire";
+import { RequesterLine } from "./RequesterLine";
 
 function Row({
   label,
@@ -44,7 +44,6 @@ export function ApprovalDetails({
   approval: GuestApproval;
   showDraft?: boolean;
 }) {
-  const requester = requesterLabel(approval.requester);
   const agent = approval.agent.displayName ?? "Your agent";
   const ownerOnly = new Set(approval.ownerOnlySources);
   const reasons = approval.reasonCodes.map(approvalReason);
@@ -63,25 +62,7 @@ export function ApprovalDetails({
     <div className="space-y-3" data-testid="guest-approval-details">
       <dl className="space-y-2 rounded-xl border border-border/60 bg-muted/25 p-3 text-sm">
         <Row label="From">
-          <span className="inline-flex flex-wrap items-center gap-2">
-            <span className="font-medium">{requester}</span>
-            {approval.requester.linked ? (
-              <Badge variant="success">
-                <Link2 aria-hidden className="mr-1 h-3 w-3" />
-                Linked account
-              </Badge>
-            ) : (
-              <Badge variant="warning">
-                <Link2Off aria-hidden className="mr-1 h-3 w-3" />
-                Not linked
-              </Badge>
-            )}
-            {approval.requester.viaAgentPubkey ? (
-              <span className="text-xs text-muted-foreground">
-                asked through their agent
-              </span>
-            ) : null}
-          </span>
+          <RequesterLine requester={approval.requester} />
         </Row>
         <Row label="Asked">{agent}</Row>
         <Row label="Where">

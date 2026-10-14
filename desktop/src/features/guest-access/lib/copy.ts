@@ -7,7 +7,7 @@
 
 import { truncatePubkey } from "@/shared/lib/pubkey";
 
-import type { GrantScope } from "./wire";
+import type { GrantScope, RequesterKind } from "./wire";
 
 function humanize(code: string): string {
   const text = code.replace(/[_-]+/g, " ").trim();
@@ -68,6 +68,80 @@ const DATA_SOURCES: Record<string, string> = {
   outlook_mailbox: "Outlook mailbox",
   kiingo_files: "Kiingo files",
 };
+
+const DATA_SOURCE_DESCRIPTIONS: Record<string, string> = {
+  calendar_events:
+    "Your meetings: titles, times, attendees, locations and notes.",
+  calendar_details:
+    "Your meetings: titles, times, attendees, locations and notes.",
+  calendar_free_busy: "Only when you're free or busy, with no meeting details.",
+  outlook_mailbox:
+    "Emails in your Outlook mailbox: senders, subjects and contents.",
+  owner_mailbox: "Emails in your mailbox: senders, subjects and contents.",
+  kiingo_files: "Documents and files in your Kiingo workspace.",
+  sharepoint: "Documents and files in your SharePoint.",
+  communications: "Your past emails and chat messages.",
+  memory: "What your agent remembers from earlier conversations with you.",
+  clients: "Client records you can see in Kiingo.",
+  hubspot: "Contacts, companies and deals in HubSpot.",
+  shareable: "Only the items you marked as shareable.",
+};
+
+/**
+ * One line on what sharing a source exposes, or `null` for a source this
+ * desktop doesn't know yet (the label still shows).
+ */
+export function dataSourceDescription(source: string): string | null {
+  return DATA_SOURCE_DESCRIPTIONS[source] ?? null;
+}
+
+const REQUESTER_KINDS: Record<RequesterKind, string> = {
+  test: "Test",
+  new: "New",
+  colleague: "Colleague",
+  unlinked: "Not linked",
+};
+
+/** Short label for who is asking, as the route classified them. */
+export function requesterKindLabel(kind: RequesterKind): string {
+  return REQUESTER_KINDS[kind];
+}
+
+function ordinal(n: number): string {
+  const rem100 = n % 100;
+  const suffix =
+    rem100 >= 11 && rem100 <= 13
+      ? "th"
+      : (({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ??
+        "th");
+  return `${n}${suffix}`;
+}
+
+/** "First request" or "3rd request", from the count of earlier requests. */
+export function requestCountLabel(priorRequestCount: number): string {
+  return priorRequestCount === 0
+    ? "First request"
+    : `${ordinal(priorRequestCount + 1)} request`;
+}
+
+/** "linked today", "linked 3 days ago", ...; `null` for a bad timestamp. */
+export function linkedAgoLabel(
+  linkedAt: string,
+  nowMs: number = Date.now(),
+): string | null {
+  const at = Date.parse(linkedAt);
+  if (Number.isNaN(at)) return null;
+  const days = Math.floor(Math.max(0, nowMs - at) / 86_400_000);
+  if (days === 0) return "linked today";
+  if (days === 1) return "linked yesterday";
+  if (days < 30) return `linked ${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) {
+    return `linked ${months} ${months === 1 ? "month" : "months"} ago`;
+  }
+  const years = Math.floor(days / 365);
+  return `linked ${years} ${years === 1 ? "year" : "years"} ago`;
+}
 
 /** Owner-facing label for a data source the guest turn read. */
 export function dataSourceLabel(source: string): string {

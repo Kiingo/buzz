@@ -25,11 +25,39 @@ export type ApprovalState =
   | "expired"
   | "cancelled";
 
+/** How the route classifies who is asking (absent on older routes). */
+export type RequesterKind = "test" | "new" | "colleague" | "unlinked";
+
 export type GuestRequester = {
   pubkey: string;
   displayName: string | null;
   linked: boolean;
   viaAgentPubkey: string | null;
+  /** `null` when the route predates requester classification. */
+  kind: RequesterKind | null;
+  /** A seeded test identity; always shown as such. */
+  isTest: boolean;
+  linkedAt: string | null;
+  /** Earlier requests this person sent the agent; `null` when unknown. */
+  priorRequestCount: number | null;
+};
+
+/** One source in an approval preview: the stable id and the route's label. */
+export type ApprovalPreviewSource = { id: string; label: string | null };
+
+/**
+ * The route's plain-language preview of what approving does (absent on older
+ * routes). `summary` is the route's sentence for the request as it arrived.
+ */
+export type ApprovalPreview = {
+  agentName: string | null;
+  recipientName: string | null;
+  action: "read_and_reply" | "send_draft" | null;
+  sources: ApprovalPreviewSource[];
+  destination: "dm" | "channel" | null;
+  audienceTotal: number | null;
+  scope: GrantScope | null;
+  summary: string | null;
 };
 
 export type GuestClassifier = {
@@ -74,6 +102,7 @@ export type GuestApproval = {
   expiresAt: string | null;
   decidedAt: string | null;
   approvalUrl: string | null;
+  preview: ApprovalPreview | null;
 };
 
 export type GuestGrant = {
@@ -212,13 +241,58 @@ const STATES: readonly ApprovalState[] = [
   "cancelled",
 ];
 
+const REQUESTER_KINDS: readonly RequesterKind[] = [
+  "test",
+  "new",
+  "colleague",
+  "unlinked",
+];
+
 function requester(value: unknown): GuestRequester {
   const raw = obj(value);
+  const prior = num(raw.prior_request_count);
   return {
     pubkey: str(raw.pubkey) ?? "",
     displayName: str(raw.display_name),
     linked: raw.linked === true,
     viaAgentPubkey: str(raw.via_agent_pubkey),
+    kind: REQUESTER_KINDS.includes(raw.kind as RequesterKind)
+      ? (raw.kind as RequesterKind)
+      : null,
+    isTest: raw.is_test === true || raw.kind === "test",
+    linkedAt: str(raw.linked_at),
+    priorRequestCount:
+      prior !== null && Number.isInteger(prior) && prior >= 0 ? prior : null,
+  };
+}
+
+function preview(value: unknown): ApprovalPreview | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = obj(value);
+  const sources = (Array.isArray(raw.sources) ? raw.sources : []).flatMap(
+    (entry) => {
+      const source = obj(entry);
+      const id = str(source.id);
+      return id ? [{ id, label: str(source.label) }] : [];
+    },
+  );
+  return {
+    agentName: str(raw.agent_name),
+    recipientName: str(raw.recipient_name),
+    action:
+      raw.action === "read_and_reply" || raw.action === "send_draft"
+        ? raw.action
+        : null,
+    sources,
+    destination:
+      raw.destination === "dm" || raw.destination === "channel"
+        ? raw.destination
+        : null,
+    audienceTotal: num(raw.audience_total),
+    scope: SCOPES.includes(raw.scope as GrantScope)
+      ? (raw.scope as GrantScope)
+      : null,
+    summary: str(raw.summary),
   };
 }
 
@@ -285,6 +359,7 @@ export function parseApproval(value: unknown): GuestApproval | null {
     expiresAt: str(raw.expires_at),
     decidedAt: str(raw.decided_at),
     approvalUrl: str(raw.approval_url),
+    preview: preview(raw.preview),
   };
 }
 
