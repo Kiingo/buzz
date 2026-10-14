@@ -6,8 +6,8 @@
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 149,
     "modifiedUpstreamFiles": 235,
-    "changedUpstreamProductionSourceLines": 10421,
-    "upstreamProductionSourceDiffHunks": 1146,
+    "changedUpstreamProductionSourceLines": 10430,
+    "upstreamProductionSourceDiffHunks": 1147,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -910,7 +910,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz desktop maintainers",
-      "purpose": "Provider-neutral hosted-agent create flow. A build-time VITE_BUZZ_PREFERRED_RUN_ON names a bundled destination: when that provider is discovered, 'Where it runs' leads the create form with exactly that destination (default) or this computer, plain labels, prefilled name and instructions, and no untrusted-binary warning for the provider shipped inside the signed app bundle. Provider protocol v2 gains an optional read-only 'preflight' lifecycle operation (owner-signed kind-27236 proof) so the dialog can show owner readiness, a Connect action and a one-line notice, and block Create until ready. Deploy failures may carry remote_state 'absent'. A failed remote start is rolled back: confirmed delete when an agent id is known, otherwise one replay of the idempotent deploy to learn it; the local record and key are kept unless the provider confirmed deletion or absence.",
+      "purpose": "Provider-neutral hosted-agent create flow. A build-time VITE_BUZZ_PREFERRED_RUN_ON names a bundled destination: when that provider is discovered, 'Where it runs' leads the create form with exactly that destination (default) or this computer, plain labels, prefilled name and instructions, and no untrusted-binary warning for the provider shipped inside the signed app bundle. Provider protocol v2 gains an optional read-only 'preflight' lifecycle operation (owner-signed kind-27236 proof) so the dialog can show owner readiness, a Connect action and a one-line notice, and block Create until ready. Deploy failures may carry remote_state 'absent'. A failed remote start is rolled back: confirmed delete when an agent id is known, otherwise one replay of the idempotent deploy to learn it; the local record and key are kept unless the provider confirmed deletion or absence. A conditionally shown bounded provider field (x-visible-when with options) must hold a current option before Create, and an empty option list renders an explicit empty state instead of a blank dropdown.",
       "upstreamStatus": "Generic provider protocol and create-flow improvements; candidate for upstream.",
       "removalCondition": "Remove when block/buzz offers a build-preferred run destination, provider preflight, and confirmed rollback of failed remote creates.",
       "paths": [

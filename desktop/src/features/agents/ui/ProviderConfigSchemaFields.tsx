@@ -76,6 +76,15 @@ export function ProviderConfigSchemaFields({
               >
                 {value}
               </p>
+            ) : options && options.length === 0 ? (
+              <p
+                className="rounded-xl border border-dashed px-3 py-2 text-sm text-muted-foreground"
+                data-testid={`provider-cfg-${key}-empty`}
+                id={`provider-cfg-${key}`}
+              >
+                Nothing is available for this combination yet. Choose a
+                different option above.
+              </p>
             ) : options ? (
               <PersonaDropdownField
                 id={`provider-cfg-${key}`}

@@ -227,3 +227,24 @@ function isProviderConfigOption(value: unknown): value is ProviderConfigOption {
     typeof (value as ProviderConfigOption).label === "string"
   );
 }
+
+/**
+ * Keys of fields the current configuration still needs a choice for: a field
+ * shown only because of another choice (`x-visible-when`) with bounded options
+ * is part of that choice, so it must hold one of its current options. A field
+ * with no options for the current combination can never be satisfied, which
+ * keeps an impossible combination from reaching the provider.
+ */
+export function providerConfigUnmetChoices(
+  schema: Record<string, unknown>,
+  config: Record<string, string>,
+): string[] {
+  return providerConfigEntries(schema).flatMap(([key, property]) => {
+    if (!property["x-visible-when"]) return [];
+    if (!providerConfigFieldVisible(property, config)) return [];
+    const options = providerConfigOptions(property, config);
+    if (!options) return [];
+    const value = config[key] ?? providerConfigDefault(property);
+    return options.some((option) => option.value === value) ? [] : [key];
+  });
+}
