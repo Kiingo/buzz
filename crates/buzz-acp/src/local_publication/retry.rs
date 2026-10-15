@@ -97,9 +97,12 @@ impl LocalPublicationWorker {
                     self.retry_pacing.lock().await.completed(&intent.fence_id);
                     return Some(event_id);
                 }
-                // A denied authorization is not success. Retain pacing if stale
-                // adapter notifications or recovered intents keep arriving.
-                Ok(None) => return None,
+                // A definite authorization decline is not a transient failure
+                // or delivery success. Let later notifications recheck promptly.
+                Ok(None) => {
+                    self.retry_pacing.lock().await.completed(&intent.fence_id);
+                    return None;
+                }
                 Err(error) => {
                     if is_status_event_publication(intent)
                         && error.contains(RELAY_TIMESTAMP_REJECTION)

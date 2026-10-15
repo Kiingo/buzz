@@ -15,3 +15,5 @@ Use the existing internal bridge to report only a fixed, bounded failure phase; 
 - [ ] Obtain genuine exact-source independent Spot evidence, attach real retry/failure or completed-publication observations, reconcile Mesh or precise blockers and remove owned worktree/branches/claims.
 
 Static checkpoint: cargo fmt --all -- --check and cargo clippy --locked -p buzz-acp --all-targets -- -D warnings completed successfully. All existing test assertions are retained; five new native regression declarations are compiled and unexecuted. No software test ran.
+
+Self-review checkpoint: a definite authorization decline clears only local pacing metadata so later notifications can recheck promptly; it remains a declined publication and does not acknowledge output. Transient failures retain their deadlines. The existing continuous-live-input recovery case and all of its assertions remain unchanged.
