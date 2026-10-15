@@ -1,0 +1,19 @@
+# M-3827: Preserve native Buzz publication retry pacing
+
+Goal: preserve bounded retry pace across recovery/preemption while keeping saved Buzz output, exact event identity, authorization and Stop fences. Every checkbox is binding under the existing full Mesh drain, native session01a11782-38bc-79e3-8bfc-39bd8930983b. Authoritative cross-system scope: Kiingo/kiingo docs/implementation-plans/m3827-buzz-publication-retry-diagnostics.md.
+
+Current main95f42d580955275b1dea90e07647e679026d7107 resets publish_with_retry's local attempt counter whenever the5-second recovery poll drops its future. Exact native production logs for the admitted legacy fence show attempt1/100ms authorization transport failures; metadata remains publishing with no event ID. Underlying delivery cause remains unknown. The fix preserves the existing fast initial retry ladder but retains per-fence attempts/deadlines across interrupted futures and later batches, capped at the existing30-second retry delay. Cache state is bounded and scope is this publisher; it is never delivery authority or output storage. Always reauthorize before signing/reconciling/publishing. Recovery polls run concurrently with in-flight publication; a periodic poll alone must not cancel a healthy I/O attempt. Only an actually recovered/live higher-priority control or output may preempt it. User controls and other receipts retain their present priority.
+
+Use the existing internal bridge to report only a fixed, bounded failure phase; no arbitrary error text, keys, permit or output is sent. Reporting has a short deadline and no retry loop, never converts delivery into success, and leaves the original exact saved output recoverable. Actual completion clears the server diagnostic through the API companion change. No new identity, worker, provider operation, staging mechanism or expiry of chat output is introduced. The product's relay-owned identity/history and bounded, honest failure behavior are preserved.
+
+- [x] Add bounded per-fence retry state and preserve deadlines/attempt history across dropped futures, recovery and batches, while retaining current queue/control ordering.
+- [x] Report a bounded fixed failure phase through the existing bridge, preserving all authorization, exact-event lookup/signing, completion and Stop checks.
+- [x] Retain focused cases that interrupt/re-enter a retry, exercise independent fences and bounded state, verify reporting failure cannot become delivery success and preserve every existing test identity.
+- [ ] Run scoped Rust formatting/Clippy compilation and normal static hooks only; keep existing Cargo dependencies, test execution exclusively post-deployment on Spot.
+- [ ] Review and preserve complete native source, deliver a separate scoped PR through the fork's normal path and qualify the complete accepted composition/files/modes.
+- [ ] Qualify the actual normal Buzz production agent-runtime build/publication and serving image together with the containing API failure callback; coordinate only through the existing serialized owners.
+- [ ] Obtain genuine exact-source independent Spot evidence, attach real retry/failure or completed-publication observations, reconcile Mesh or precise blockers and remove owned worktree/branches/claims.
+
+Static checkpoint: cargo fmt --all -- --check and cargo clippy --locked -p buzz-acp --all-targets -- -D warnings completed successfully. All existing test assertions are retained; five new native regression declarations are compiled and unexecuted. No software test ran.
+
+Self-review checkpoint: a definite authorization decline clears only local pacing metadata so later notifications can recheck promptly; it remains a declined publication and does not acknowledge output. Transient failures retain their deadlines. The existing continuous-live-input recovery case and all of its assertions remain unchanged.

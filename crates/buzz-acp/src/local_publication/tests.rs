@@ -2,7 +2,10 @@ use super::*;
 use nostr::{Keys, Kind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-fn authorization_response(intent: &serde_json::Value, should_publish: bool) -> serde_json::Value {
+pub(super) fn authorization_response(
+    intent: &serde_json::Value,
+    should_publish: bool,
+) -> serde_json::Value {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use buzz_core::managed_publication::{Authorization, Claims, DOMAIN};
     use ed25519_dalek::{Signer, SigningKey};
@@ -64,7 +67,7 @@ fn authorization_response(intent: &serde_json::Value, should_publish: bool) -> s
         "runtime_authorization": URL_SAFE_NO_PAD.encode(serde_json::to_vec(&authority).unwrap()) })
 }
 
-fn rest(keys: Keys) -> RestClient {
+pub(super) fn rest(keys: Keys) -> RestClient {
     RestClient {
         http: reqwest::Client::new(),
         base_url: "http://127.0.0.1:3000".to_string(),
@@ -73,7 +76,7 @@ fn rest(keys: Keys) -> RestClient {
     }
 }
 
-fn intent(agent_public_key: String) -> LocalPublicationIntent {
+pub(super) fn intent(agent_public_key: String) -> LocalPublicationIntent {
     LocalPublicationIntent {
         session_update: "buzz_local_publication".to_string(),
         community_id: "example-community".to_string(),
@@ -184,6 +187,7 @@ fn recovered_output_is_bounded_and_bound_to_this_signer_and_community() {
         completion_api_base_url: "http://127.0.0.1".into(),
         internal_token: "test-token".into(),
         reconcile_reactions: false,
+        retry_pacing: Default::default(),
     };
     let decoded = worker
         .parse_recovered_publications(serde_json::json!({"publications": [saved]}))
@@ -430,6 +434,7 @@ async fn deferred_delivery_never_submits_or_completes_an_event() {
             completion_api_base_url: base,
             internal_token: "test-token".into(),
             reconcile_reactions: false,
+            retry_pacing: Default::default(),
         };
         let fence = saved.fence_id.clone();
         let server = tokio::spawn(async move {
@@ -534,6 +539,7 @@ async fn relay_timestamp_rejection_of_status_is_terminal_without_retry() {
             completion_api_base_url: base,
             internal_token: "stale-status-test-token".into(),
             reconcile_reactions: false,
+            retry_pacing: Default::default(),
         };
         let fence = saved.fence_id.clone();
         let server = tokio::spawn(async move {
@@ -599,6 +605,7 @@ async fn stale_status_is_never_submitted_from_any_route() {
             completion_api_base_url: base,
             internal_token: "stale-status-guard-token".into(),
             reconcile_reactions: false,
+            retry_pacing: Default::default(),
         };
         assert!(worker.publish_with_retry(&saved).await.is_none());
         // Neither authorization nor the relay is contacted.
@@ -630,7 +637,9 @@ fn batched_answer_never_overtakes_its_queued_actions() {
     assert_eq!(state.take_next().unwrap().fence_id, answer.fence_id);
 }
 
-async fn receive_http(stream: &mut tokio::net::TcpStream) -> (String, serde_json::Value) {
+pub(super) async fn receive_http(
+    stream: &mut tokio::net::TcpStream,
+) -> (String, serde_json::Value) {
     let mut bytes = Vec::new();
     loop {
         let mut chunk = [0; 4096];
@@ -659,7 +668,11 @@ async fn receive_http(stream: &mut tokio::net::TcpStream) -> (String, serde_json
     }
 }
 
-async fn respond_http(stream: &mut tokio::net::TcpStream, status: u16, value: serde_json::Value) {
+pub(super) async fn respond_http(
+    stream: &mut tokio::net::TcpStream,
+    status: u16,
+    value: serde_json::Value,
+) {
     let body = value.to_string();
     let response = format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
     stream.write_all(response.as_bytes()).await.unwrap();
@@ -710,6 +723,7 @@ async fn explicit_stop_control_recovers_exactly_without_chat_lookup_or_deletion(
             completion_api_base_url: base,
             internal_token: "stop-recovery-token".into(),
             reconcile_reactions: false,
+            retry_pacing: Default::default(),
         };
         let server = tokio::spawn(async move {
             let cancellation = &batch["cancellations"][0];
@@ -829,6 +843,7 @@ async fn control_batch_rejects_foreign_identity_and_ordinary_publication_authori
         completion_api_base_url: base,
         internal_token: "control-validation-token".into(),
         reconcile_reactions: false,
+        retry_pacing: Default::default(),
     };
     for field in [
         "community_id",
@@ -876,6 +891,7 @@ async fn missing_or_substituted_runtime_authority_never_reaches_relay_or_complet
             completion_api_base_url: base,
             internal_token: "authority-rejection-test".into(),
             reconcile_reactions: false,
+            retry_pacing: Default::default(),
         };
         let server = tokio::spawn(async move {
             for variant in [
@@ -989,6 +1005,7 @@ async fn cancellation_observation_preempts_a_stalled_answer_but_cannot_cancel_it
                 completion_api_base_url: base,
                 internal_token: "preemption-test-token".into(),
                 reconcile_reactions: false,
+                retry_pacing: Default::default(),
             });
             let (sender, mut receiver) = mpsc::channel(4);
             let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -1088,6 +1105,7 @@ async fn continuous_live_delivery_does_not_reset_durable_recovery_deadline() {
             completion_api_base_url: base,
             internal_token: "fairness-test-token".into(),
             reconcile_reactions: false,
+            retry_pacing: Default::default(),
         });
         let (sender, mut receiver) = mpsc::channel(4);
         let (recovered_tx, mut recovered_rx) = tokio::sync::oneshot::channel();
@@ -1173,6 +1191,7 @@ async fn http_reconciliation_acknowledges_only_the_exact_verified_event() {
                 completion_api_base_url: base,
                 internal_token: "reconciliation-test-token".into(),
                 reconcile_reactions: false,
+                retry_pacing: Default::default(),
             };
             let server_saved = saved.clone();
             let server = tokio::spawn(async move {
@@ -1321,6 +1340,7 @@ async fn http_recovery_preserves_event_identity_after_publisher_and_acknowledgem
             completion_api_base_url: base.clone(),
             internal_token: "local-recovery-test-token".into(),
             reconcile_reactions: false,
+            retry_pacing: Default::default(),
         };
         let response_saved = saved.clone();
         let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
@@ -1451,6 +1471,7 @@ async fn top_level_dm_answer_is_signed_without_thread_tags() {
                 completion_api_base_url: base,
                 internal_token: "placement-test-token".into(),
                 reconcile_reactions: false,
+                retry_pacing: Default::default(),
             };
             let server_saved = saved.clone();
             let server = tokio::spawn(async move {

@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::relay::RestClient;
 
 mod cancellation;
+mod retry;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -105,6 +106,7 @@ struct LocalPublicationWorker {
     completion_api_base_url: String,
     internal_token: String,
     reconcile_reactions: bool,
+    retry_pacing: tokio::sync::Mutex<retry::RetryPacing>,
 }
 
 #[derive(Debug, Default)]
@@ -329,6 +331,7 @@ impl LocalPublicationPublisher {
             completion_api_base_url,
             internal_token,
             reconcile_reactions: true,
+            retry_pacing: Default::default(),
         });
         let (queue, mut receiver) = mpsc::channel(PUBLICATION_QUEUE_CAPACITY);
         let queued_worker = Arc::clone(&worker);
@@ -416,6 +419,7 @@ impl LocalPublicationWorker {
             let mut preempted = false;
             let mut received_while_publishing = 0usize;
             let mut publication = Box::pin(self.publish_with_retry(&intent));
+            let mut recovery = Box::pin(self.recover_at(next_recovery));
             loop {
                 tokio::select! {
                     biased;
@@ -439,11 +443,30 @@ impl LocalPublicationWorker {
                     _ = &mut publication => {
                         break;
                     }
-                    _ = tokio::time::sleep_until(next_recovery) => {
-                        // Give durable user controls a turn even during a slow
-                        // publication batch. Saved output is reauthorized later.
-                        preempted = true;
-                        break;
+                    recovered = &mut recovery => {
+                        match recovered {
+                            Ok(intents) => {
+                                let now_secs = publication_now_secs();
+                                for incoming in intents {
+                                    if incoming.fence_id == intent.fence_id
+                                        || state.drop_stale_status(&incoming, now_secs)
+                                    {
+                                        continue;
+                                    }
+                                    preempted |= state.should_preempt(&intent, &incoming);
+                                    state.accept(incoming);
+                                }
+                            }
+                            Err(error) => tracing::warn!(
+                                target: "buzz::local_publication", error = %error,
+                                "durable publication recovery temporarily unavailable"
+                            ),
+                        }
+                        next_recovery = tokio::time::Instant::now() + RECOVERY_POLL_INTERVAL;
+                        if preempted {
+                            break;
+                        }
+                        recovery.set(self.recover_at(next_recovery));
                     }
                 }
             }
@@ -459,69 +482,6 @@ impl LocalPublicationWorker {
                 );
                 state.requeue_preempted(intent);
                 continue;
-            }
-        }
-    }
-
-    async fn publish_with_retry(&self, intent: &LocalPublicationIntent) -> Option<String> {
-        let started_at = tokio::time::Instant::now();
-        let mut attempt = 1usize;
-        loop {
-            let result = if is_status_publication(intent) {
-                tokio::time::timeout(STATUS_PUBLISH_ATTEMPT_TIMEOUT, self.publish(intent))
-                    .await
-                    .map_err(|_| "status publication attempt timed out".to_string())
-                    .and_then(|result| result)
-            } else {
-                self.publish(intent).await
-            };
-            match result {
-                Ok(event_id) => return event_id,
-                Err(error) => {
-                    if is_status_event_publication(intent)
-                        && error.contains(RELAY_TIMESTAMP_REJECTION)
-                    {
-                        // A status event signed at a stale fence time is
-                        // permanently unacceptable; retrying only spams the relay.
-                        tracing::warn!(
-                            target: "buzz::local_publication",
-                            receipt_id = %intent.receipt_id,
-                            fence_id = %intent.fence_id,
-                            publication_kind = %intent.publication_kind,
-                            attempt,
-                            error = %error,
-                            "dropping operational status the relay rejected as outside its timestamp window"
-                        );
-                        return None;
-                    }
-                    let delay = publication_retry_delay(attempt);
-                    if started_at.elapsed().saturating_add(delay)
-                        > publication_retry_max_elapsed(intent)
-                    {
-                        tracing::error!(
-                            target: "buzz::local_publication",
-                            receipt_id = %intent.receipt_id,
-                            fence_id = %intent.fence_id,
-                            publication_kind = %intent.publication_kind,
-                            attempt,
-                            error = %error,
-                            "local publication batch deferred; saved output remains recoverable in the durable outbox"
-                        );
-                        return None;
-                    }
-                    tracing::warn!(
-                        target: "buzz::local_publication",
-                        receipt_id = %intent.receipt_id,
-                        fence_id = %intent.fence_id,
-                        publication_kind = %intent.publication_kind,
-                        attempt,
-                        retry_delay_ms = delay.as_millis(),
-                        error = %error,
-                        "local Buzz publication will retry after a transient boundary failure"
-                    );
-                    tokio::time::sleep(delay).await;
-                    attempt = attempt.saturating_add(1);
-                }
             }
         }
     }
@@ -575,6 +535,14 @@ impl LocalPublicationWorker {
             .json::<PublicationAuthorization>()
             .await
             .map_err(|error| format!("publication authorization response invalid: {error}"))
+    }
+
+    async fn recover_at(
+        &self,
+        at: tokio::time::Instant,
+    ) -> Result<Vec<LocalPublicationIntent>, String> {
+        tokio::time::sleep_until(at).await;
+        self.recover_saved_publications().await
     }
 
     async fn recover_saved_publications(&self) -> Result<Vec<LocalPublicationIntent>, String> {
