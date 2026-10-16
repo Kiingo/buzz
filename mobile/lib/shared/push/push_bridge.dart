@@ -99,19 +99,32 @@ final pushEndpointGrantError = ValueNotifier<String?>(null);
 ///
 /// Native iOS buffers cold-start responses until Dart asks for them. This
 /// notifier also carries warm responses into the existing deep-link pipeline.
-final pendingPushNotificationLink = ValueNotifier<MessageDeepLink?>(null);
+final pendingPushNotificationLink = ValueNotifier<BuzzDeepLink?>(null);
 
-MessageDeepLink? _pushNotificationLink(Object? arguments) {
+/// Guest-access kinds the native target may name: approval requested and
+/// alert. Mirrors `BuzzPushNavigationTarget.guestNotificationKinds`.
+const _pushGuestNotificationKinds = {'46040', '46042'};
+
+BuzzDeepLink? _pushNotificationLink(Object? arguments) {
   if (arguments is! Map) return null;
   final eventId = arguments['eventId'];
   final communityId = arguments['communityId'];
   final channelId = arguments['channelId'];
+  final guestKind = arguments['guestKind'];
   if (eventId is! String ||
       eventId.isEmpty ||
       communityId is! String ||
-      communityId.isEmpty ||
-      channelId is! String ||
-      channelId.isEmpty) {
+      communityId.isEmpty) {
+    return null;
+  }
+  if (channelId == null && guestKind is String) {
+    if (!_pushGuestNotificationKinds.contains(guestKind)) return null;
+    return GuestNotificationDeepLink(
+      communityId: communityId,
+      eventId: eventId,
+    );
+  }
+  if (channelId is! String || channelId.isEmpty || guestKind != null) {
     return null;
   }
   return MessageDeepLink(

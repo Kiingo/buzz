@@ -21,16 +21,30 @@ import 'channels_provider.dart';
 typedef DeepLinkDestinationBuilder =
     Widget Function(Channel channel, BuzzDeepLink link);
 
+/// Opens the owner review for a tapped guest-access notification push once
+/// its community is active. Supplied by the app shell so this dispatcher does
+/// not depend on the inbox feature.
+typedef GuestNotificationOpener =
+    Future<void> Function(
+      BuildContext context,
+      WidgetRef ref,
+      GuestNotificationDeepLink link,
+    );
+
 class DeepLinkDispatcher extends ConsumerStatefulWidget {
   final Widget child;
   final DeepLinkDestinationBuilder? destinationBuilder;
   final bool dispatchMessageLinks;
+
+  /// Handles [GuestNotificationDeepLink]s. Without it they stay parked.
+  final GuestNotificationOpener? openGuestNotification;
 
   const DeepLinkDispatcher({
     super.key,
     required this.child,
     this.destinationBuilder,
     this.dispatchMessageLinks = true,
+    this.openGuestNotification,
   });
 
   @override
@@ -70,6 +84,12 @@ class _DeepLinkDispatcherState extends ConsumerState<DeepLinkDispatcher> {
       _maybeDispatchInvite(link);
       return;
     }
+    if (link is GuestNotificationDeepLink) {
+      if (widget.dispatchMessageLinks && widget.openGuestNotification != null) {
+        unawaited(_dispatchGuestNotificationLink(link));
+      }
+      return;
+    }
     if ((link is! MessageDeepLink && link is! ChannelDeepLink) ||
         !widget.dispatchMessageLinks) {
       return;
@@ -94,20 +114,51 @@ class _DeepLinkDispatcherState extends ConsumerState<DeepLinkDispatcher> {
         // The community-scoped app subtree remounts and consumes the parked
         // target after its channels load.
         return;
-      case DeepLinkCommunityPreparation.unavailable:
-        ref.read(pendingDeepLinkProvider.notifier).consume();
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          const SnackBar(
-            content: Text('Notification community is no longer available'),
-          ),
-        );
-      case DeepLinkCommunityPreparation.failed:
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          const SnackBar(
-            content: Text('Could not open the notification community'),
-          ),
-        );
+      case DeepLinkCommunityPreparation.unavailable ||
+          DeepLinkCommunityPreparation.failed:
+        _reportCommunityPreparationFailure(preparation);
     }
+  }
+
+  Future<void> _dispatchGuestNotificationLink(
+    GuestNotificationDeepLink link,
+  ) async {
+    final preparation = await ref
+        .read(pendingDeepLinkProvider.notifier)
+        .prepareCommunity(link);
+    if (!mounted || ref.read(pendingDeepLinkProvider) != link) return;
+    switch (preparation) {
+      case DeepLinkCommunityPreparation.ready:
+        // Consume before opening so a concurrent dispatch attempt for the
+        // same parked link sees it gone.
+        ref.read(pendingDeepLinkProvider.notifier).consume();
+        await widget.openGuestNotification?.call(context, ref, link);
+      case DeepLinkCommunityPreparation.switched:
+        // The community-scoped subtree remounts and opens the parked target.
+        return;
+      case DeepLinkCommunityPreparation.unavailable ||
+          DeepLinkCommunityPreparation.failed:
+        _reportCommunityPreparationFailure(preparation);
+    }
+  }
+
+  void _reportCommunityPreparationFailure(
+    DeepLinkCommunityPreparation preparation,
+  ) {
+    if (preparation == DeepLinkCommunityPreparation.unavailable) {
+      ref.read(pendingDeepLinkProvider.notifier).consume();
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text('Notification community is no longer available'),
+        ),
+      );
+      return;
+    }
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        content: Text('Could not open the notification community'),
+      ),
+    );
   }
 
   void _dispatchNavigableLink(BuzzDeepLink link) {

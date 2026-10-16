@@ -56,6 +56,56 @@ import Testing
   )
 }
 
+@Test func `Round-trip guest-access notification target without a channel`() throws {
+  let target = try #require(
+    BuzzPushNavigationTarget.guestNotification(
+      eventID: "EVENT-ID",
+      communityID: "community-id",
+      kind: 46_040
+    )
+  )
+
+  #expect(target.channelID == nil)
+  #expect(target.guestNotificationKind == 46_040)
+  #expect(
+    target.userInfoValue == [
+      "event_id": "EVENT-ID",
+      "community_id": "community-id",
+      "guest_kind": "46040",
+    ]
+  )
+  #expect(
+    BuzzPushNavigationTarget.decodeIfPresent(
+      from: [BuzzPushNavigationTarget.userInfoKey: target.userInfoValue]
+    ) == target
+  )
+}
+
+@Test func `Reject guest targets for other kinds or with a channel`() {
+  #expect(
+    BuzzPushNavigationTarget.guestNotification(
+      eventID: "event-id",
+      communityID: "community-id",
+      kind: 46_041
+    ) == nil
+  )
+  for raw: [String: String] in [
+    ["event_id": "event-id", "community_id": "community-id", "guest_kind": "46041"],
+    ["event_id": "event-id", "community_id": "community-id", "guest_kind": "046040"],
+    ["event_id": "event-id", "community_id": "community-id", "guest_kind": "9"],
+    [
+      "event_id": "event-id", "community_id": "community-id",
+      "channel_id": "channel-id", "guest_kind": "46040",
+    ],
+  ] {
+    #expect(
+      BuzzPushNavigationTarget.decodeIfPresent(
+        from: [BuzzPushNavigationTarget.userInfoKey: raw]
+      ) == nil
+    )
+  }
+}
+
 @Test func `Buffer preserves cold-start target until consumed`() {
   let first = BuzzPushNavigationTarget(
     eventID: String(repeating: "a", count: 64),

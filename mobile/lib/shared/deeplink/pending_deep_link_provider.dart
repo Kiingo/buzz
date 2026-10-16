@@ -72,10 +72,12 @@ class PendingDeepLinkNotifier extends Notifier<BuzzDeepLink?> {
   Future<DeepLinkCommunityPreparation> prepareCommunity(
     BuzzDeepLink link,
   ) async {
-    if (link is! MessageDeepLink || link.communityId == null) {
-      return DeepLinkCommunityPreparation.ready;
-    }
-    final communityId = link.communityId!;
+    final communityId = switch (link) {
+      MessageDeepLink(:final communityId) => communityId,
+      GuestNotificationDeepLink(:final communityId) => communityId,
+      _ => null,
+    };
+    if (communityId == null) return DeepLinkCommunityPreparation.ready;
     try {
       final communities = await ref.read(communityListProvider.future);
       if (!communities.any((community) => community.id == communityId)) {
