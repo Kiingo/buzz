@@ -25,6 +25,7 @@ byteorder = "1.5"
 minicbor = "0.25"
 chrono = { workspace = true }
 hex = { workspace = true }
+jsonwebtoken = { version = "10.4.0", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 getrandom = "0.4"
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }

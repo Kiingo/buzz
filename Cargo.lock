@@ -1257,6 +1257,7 @@ dependencies = [
  "chrono",
  "getrandom 0.4.3",
  "hex",
+ "jsonwebtoken",
  "metrics",
  "metrics-exporter-prometheus",
  "minicbor",

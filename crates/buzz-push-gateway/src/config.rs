@@ -11,7 +11,7 @@ pub enum ApnsEnvironment {
 #[derive(Debug, Clone)]
 pub struct AppProfileConfig {
     pub app_attest_app_id: String,
-    pub apns_cert_path: PathBuf,
+    pub apns_auth: crate::apns_token::ApnsAuthConfig,
     pub apns_topic: String,
     pub apns_environment: ApnsEnvironment,
 }
@@ -84,7 +84,6 @@ fn parse_keyring(
 
 fn parse_profile(e: &HashMap<String, String>) -> Result<AppProfileConfig, ConfigError> {
     let app_id_key = "BUZZ_PUSH_DOGFOOD_APP_ATTEST_APP_ID";
-    let cert_key = "BUZZ_PUSH_DOGFOOD_APNS_CERT_PATH";
     let topic_key = "BUZZ_PUSH_DOGFOOD_APNS_TOPIC";
     let environment_key = "BUZZ_PUSH_DOGFOOD_APNS_ENVIRONMENT";
     let required = |key: &'static str| {
@@ -95,7 +94,7 @@ fn parse_profile(e: &HashMap<String, String>) -> Result<AppProfileConfig, Config
     };
     let app_attest_app_id = required(app_id_key)?.to_owned();
     let apns_topic = required(topic_key)?.to_owned();
-    let apns_cert_path = PathBuf::from(required(cert_key)?);
+    let apns_auth = crate::apns_token::parse_auth(e)?;
     let apns_environment = match e.get(environment_key).map(String::as_str) {
         None | Some("production") => ApnsEnvironment::Production,
         Some("sandbox") => ApnsEnvironment::Sandbox,
@@ -103,7 +102,7 @@ fn parse_profile(e: &HashMap<String, String>) -> Result<AppProfileConfig, Config
     };
     Ok(AppProfileConfig {
         app_attest_app_id,
-        apns_cert_path,
+        apns_auth,
         apns_topic,
         apns_environment,
     })
@@ -136,7 +135,7 @@ impl Config {
             .parse::<url::Url>()
             .map_err(|_| ConfigError::Invalid("BUZZ_PUSH_PUBLIC_DELIVERY_URL"))?;
         if public_delivery_url.scheme() != "https"
-            || public_delivery_url.host_str() != Some("push.buzz.xyz")
+            || public_delivery_url.host_str().is_none_or(str::is_empty)
             || public_delivery_url.port().is_some()
             || public_delivery_url.path() != "/v1/deliveries/apns"
             || public_delivery_url.query().is_some()
@@ -267,8 +266,10 @@ mod tests {
     fn dogfood_profile_requires_server_owned_identity_and_certificate() {
         let config = Config::from_map(&base()).unwrap();
         assert_eq!(
-            config.profile.apns_cert_path,
-            PathBuf::from("/dogfood-identity.pem")
+            config.profile.apns_auth,
+            crate::apns_token::ApnsAuthConfig::Certificate {
+                path: PathBuf::from("/dogfood-identity.pem")
+            }
         );
         assert_eq!(config.profile.apns_topic, "xyz.block.buzz.dogfood.mobile");
 
@@ -283,6 +284,20 @@ mod tests {
                 matches!(Config::from_map(&env), Err(ConfigError::Missing(key)) if key == variable)
             );
         }
+    }
+
+    #[test]
+    fn an_operator_owned_https_delivery_host_is_accepted() {
+        let mut env = base();
+        env.insert(
+            "BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(),
+            "https://push.example.com/v1/deliveries/apns".into(),
+        );
+        let config = Config::from_map(&env).unwrap();
+        assert_eq!(
+            config.public_delivery_url.as_str(),
+            "https://push.example.com/v1/deliveries/apns"
+        );
     }
 
     #[test]
@@ -304,7 +319,11 @@ mod tests {
             ),
             (
                 "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
-                "https://push.example/v1/deliveries/apns",
+                "https://push.example:8443/v1/deliveries/apns",
+            ),
+            (
+                "BUZZ_PUSH_PUBLIC_DELIVERY_URL",
+                "https://push.example/v1/deliveries/apns?x=1",
             ),
             ("BUZZ_PUSH_DOGFOOD_APP_ATTEST_APP_ID", ""),
             ("BUZZ_PUSH_DOGFOOD_APNS_ENVIRONMENT", "staging"),
