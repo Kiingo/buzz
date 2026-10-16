@@ -8,6 +8,9 @@ import 'package:uuid/uuid.dart';
 
 import '../relay/relay.dart';
 import 'guest_approval.dart';
+import 'guest_owner_records.dart';
+
+part 'guest_access_client/owner.dart';
 
 /// Base URL of the hosted guest-access route, baked in at build time with
 /// `--dart-define=BUZZ_GUEST_ROUTE_URL=https://...` (the same value desktop
@@ -59,6 +62,18 @@ String describeGuestAccessError(String code) => switch (code) {
   'nip98_replayed' || 'nip98_expired' =>
     "The request signature expired. Check your phone's clock and try again.",
   'rate_limited' => 'Too many requests. Wait a moment and try again.',
+  'admin_required' =>
+    'Only organization admins can review guest safety alerts.',
+  'guest_endpoint_not_found' =>
+    "That agent isn't registered for guest access any more.",
+  'grant_not_found' => 'That grant was already revoked.',
+  'block_not_found' => 'That person was already unblocked.',
+  'shareable_not_found' => 'That item is no longer shared.',
+  'suggestion_not_found' => 'That suggestion was already handled.',
+  'shareable_invalid' => 'Write something to share (up to 8 KB).',
+  'pubkey_invalid' => "That person's key isn't valid.",
+  'owner_not_member' =>
+    "You aren't a member of an organization that can share through agents.",
   _ => 'Guest access request failed.',
 };
 
@@ -119,7 +134,9 @@ final guestAccessRouteProvider = Provider<GuestAccessRoute?>((ref) {
 
 /// Owner-side client for the hosted guest-access route. Every call is
 /// authenticated with NIP-98, signed by the owner's own key. Only owner
-/// routes are used here; agent routes stay with the harness.
+/// routes (and the three org-admin safety routes desktop also reaches) are
+/// used here; agent routes stay with the harness. The management routes are
+/// in [GuestAccessOwnerApi].
 class GuestAccessClient {
   GuestAccessClient({
     required this.route,

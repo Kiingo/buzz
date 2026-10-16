@@ -12,6 +12,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../shared/auth/auth.dart';
 import '../../shared/clipboard_utils.dart';
 import '../../shared/community/community_membership_provider.dart';
+import '../../shared/guest_access/settings/guest_access_settings_section.dart';
 import '../../shared/push/push_bridge.dart';
 import '../../shared/relay/relay.dart';
 import '../pairing/pairing_provider.dart';
@@ -216,6 +217,7 @@ class SettingsPage extends HookConsumerWidget {
                 profileHeader,
                 _CommunitySection(invitePageBuilder: invitePageBuilder),
                 const _NotificationsSection(),
+                const GuestAccessSettingsSection(),
                 _ConnectionSection(
                   identityRecoveryPageBuilder: identityRecoveryPageBuilder,
                 ),
