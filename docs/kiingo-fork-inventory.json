@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 149,
-    "modifiedUpstreamFiles": 235,
+    "modifiedUpstreamFiles": 236,
     "changedUpstreamProductionSourceLines": 10430,
     "upstreamProductionSourceDiffHunks": 1147,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -857,6 +857,14 @@
         "desktop/src/features/settings/hooks/updaterFreshness.ts",
         "desktop/src/features/settings/hooks/use-updater.ts"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "purpose": "Discover registered Visual C++ installations instead of assuming a Visual Studio release-year directory, while preserving installed MSVC, default toolset, Windows SDK and CMake identity in the native desktop cache fingerprint.",
+      "upstreamStatus": "Generic Windows build-cache portability fix; candidate for upstream.",
+      "removalCondition": "Remove when block/buzz discovers registered Visual C++ installations for its native desktop cache identity.",
+      "paths": ["scripts/desktop-native-toolchain-id.sh"]
     },
     {
       "id": "kiingo-spot-only-static-ci",

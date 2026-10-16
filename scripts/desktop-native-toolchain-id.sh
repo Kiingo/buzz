@@ -25,7 +25,36 @@ case "$platform" in
   windows)
     {
       cmd.exe //c ver
-      powershell.exe -NoProfile -Command '$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"; & $vswhere -latest -products * -property installationVersion; Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022" -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name; Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" -Directory | Select-Object -ExpandProperty Name; Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022\*\VC\Tools\MSVC" -Directory | Select-Object -ExpandProperty Name'
+      # Discover registered C++ installations rather than a year-specific path.
+      # Include preview toolsets too; hashing every available candidate is
+      # conservative when Cargo or a native build selects a different instance.
+      powershell.exe -NoProfile -NonInteractive -Command '
+        $ErrorActionPreference = "Stop"
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+        $raw = & $vswhere -products "*" -prerelease -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json -utf8
+        if ($LASTEXITCODE -ne 0) { throw "Visual Studio discovery failed" }
+        $instances = @(($raw -join "`n") | ConvertFrom-Json)
+        if ($instances.Count -eq 0) { throw "No registered Visual C++ toolchain" }
+        foreach ($instance in ($instances | Sort-Object installationPath)) {
+          if ([string]::IsNullOrWhiteSpace($instance.installationPath) -or [string]::IsNullOrWhiteSpace($instance.installationVersion)) {
+            throw "Incomplete Visual Studio identity"
+          }
+          "visualStudio=$($instance.installationVersion)"
+          "installation=$($instance.installationPath)"
+          $toolsetPath = Join-Path $instance.installationPath "VC\Tools\MSVC"
+          $toolsets = @(Get-ChildItem -LiteralPath $toolsetPath -Directory)
+          if ($toolsets.Count -eq 0) { throw "No installed MSVC toolset" }
+          $toolsets | Sort-Object Name | ForEach-Object { "msvc=$($_.Name)" }
+          $defaultPath = Join-Path $instance.installationPath "VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt"
+          $defaultVersion = (Get-Content -LiteralPath $defaultPath -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($defaultVersion)) { throw "Missing default MSVC toolset" }
+          "msvcDefault=$defaultVersion"
+        }
+        $sdkPath = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Include"
+        $sdkVersions = @(Get-ChildItem -LiteralPath $sdkPath -Directory)
+        if ($sdkVersions.Count -eq 0) { throw "No installed Windows SDK" }
+        $sdkVersions | Sort-Object Name | ForEach-Object { "windowsSdk=$($_.Name)" }
+      '
       cmake --version
     } ;;
   *)
