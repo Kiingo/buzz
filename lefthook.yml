@@ -118,5 +118,5 @@ pre-push:
       # Run analysis and tests serially so parallel pre-push hooks do not
       # contend for shared Flutter state (.dart_tool, shader bundle).
       files: scripts/kiingo-hook-files.sh
-      glob: ["mobile/**"]
+      glob: ["mobile/**", "Justfile", "scripts/test-mobile-gateway-recipes.sh"]
       run: ./scripts/without-git-env.sh scripts/kiingo-static-hook.sh mobile
