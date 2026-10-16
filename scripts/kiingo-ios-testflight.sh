@@ -41,6 +41,11 @@ version=""
 gateway_url=""
 relay_url=""
 guest_route_url="https://api.kiingo.com/api/buzz-guest/v1"
+# Hosted-agent creation from the phone (Kiingo compute). The catalog key is a
+# public verification key, not a secret.
+hosted_agents_url="https://api.kiingo.com/api/buzz-hosted"
+hosted_agents_catalog_key="OThJlY5Q0ickWi7w7LKHvUu7CnPLhA5zGTCPcmCzfeQ="
+hosted_agents_location="kiingo-compute"
 upload=1
 
 while (($#)); do
@@ -135,7 +140,10 @@ flutter build ios --release --config-only \
   --build-number "$build_number" "${version_args[@]}" \
   --dart-define=BUZZ_RELAY_URL="$relay_url" \
   --dart-define=BUZZ_PUSH_GATEWAY_URL="$gateway_url" \
-  --dart-define=BUZZ_GUEST_ROUTE_URL="$guest_route_url"
+  --dart-define=BUZZ_GUEST_ROUTE_URL="$guest_route_url" \
+  --dart-define=BUZZ_HOSTED_AGENTS_URL="$hosted_agents_url" \
+  --dart-define=BUZZ_HOSTED_AGENTS_CATALOG_KEY="$hosted_agents_catalog_key" \
+  --dart-define=BUZZ_HOSTED_AGENTS_LOCATION="$hosted_agents_location"
 
 xcodebuild \
   -workspace "$ios/Runner.xcworkspace" \
