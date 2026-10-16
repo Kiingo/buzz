@@ -629,6 +629,8 @@ jobs:
 
   push-gateway-personal-dev:
     name: Build personal development push gateway
+    # GitHub-hosted only; Kiingo/buzz runs no hosted jobs (Spot-only policy).
+    if: github.repository != 'Kiingo/buzz'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
