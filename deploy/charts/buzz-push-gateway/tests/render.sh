@@ -57,6 +57,11 @@ required = Set.new(%w[
   BUZZ_PUSH_GRANT_KEYS BUZZ_PUSH_TOKEN_KEYS BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS
 ])
 assert!(required.subset?(env_names))
+# Helm renders large YAML integers as floats (2.592e+06) unless the template
+# converts them; the gateway rejects anything but a plain integer.
+lifetime = d.dig("spec", "template", "spec", "containers", 0, "env")
+  .find { |entry| entry["name"] == "BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS" }
+assert!(lifetime["value"] == "2592000", lifetime.inspect)
 assert!(!env_names.any? { |name| name.include?("APP_STORE") })
 apns_volume = d.dig("spec", "template", "spec", "volumes").find { |volume| volume["name"] == "apns-dogfood" }
 assert!(apns_volume.dig("secret", "defaultMode") == 0o400, apns_volume.inspect)
