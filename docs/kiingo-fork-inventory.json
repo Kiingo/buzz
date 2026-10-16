@@ -541,8 +541,10 @@
       "removalCondition": "Remove only if Kiingo stops distributing a Buzz composition.",
       "paths": [
         ".github/workflows/ci.yml",
+        ".github/workflows/upstream-sync-rehearsal.yml",
         "docs/implementation-plans/buzz-durable-conversation-reliability.md",
         "docs/implementation-plans/m-92-windows-sidecar-preflight.md",
+        "docs/implementation-plans/m3827-native-publication-retry.md",
         "docs/kiingo-fork-inventory.json",
         "docs/kiingo-fork-last-mile-conflict-isolation-plan-2026-08-11.md",
         "docs/kiingo-fork-maintenance.md",
@@ -550,8 +552,7 @@
         "docs/kiingo-upstream-candidate-ledger-2026-08-11.md",
         "scripts/check-kiingo-fork-boundary.mjs",
         "scripts/rehearse-upstream-sync.mjs",
-        "scripts/rehearse-upstream-sync.test.mjs",
-        ".github/workflows/upstream-sync-rehearsal.yml"
+        "scripts/rehearse-upstream-sync.test.mjs"
       ]
     },
     {
@@ -602,6 +603,8 @@
       "paths": [
         "crates/buzz-acp/Cargo.toml",
         "crates/buzz-acp/src/local_publication/cancellation.rs",
+        "crates/buzz-acp/src/local_publication/retry.rs",
+        "crates/buzz-acp/src/local_publication/retry/tests.rs",
         "crates/buzz-acp/src/local_publication/tests.rs",
         "crates/buzz-acp/src/runtime_failure_status.rs",
         "crates/buzz-admin/src/main.rs",
@@ -633,17 +636,17 @@
         "desktop/src-tauri/src/commands/channel_reconnect_repair.rs",
         "desktop/src-tauri/src/commands/channel_window.rs",
         "desktop/src-tauri/src/commands/messages.rs",
-        "desktop/src-tauri/src/commands/messages_tests.rs",
         "desktop/src-tauri/src/commands/messages/event_batch.rs",
+        "desktop/src-tauri/src/commands/messages_tests.rs",
         "desktop/src/features/messages/lib/agentStatus.test.mjs",
         "desktop/src/features/messages/lib/agentStatus.ts",
         "desktop/src/features/messages/lib/channelWindowResponse.test.mjs",
         "desktop/src/features/messages/lib/channelWindowResponse.ts",
         "desktop/src/features/messages/lib/channelWindowStore.test.mjs",
-        "desktop/src/features/messages/lib/formatTimelineMessages.ts",
         "desktop/src/features/messages/lib/formatTimelineMessages.test.mjs",
-        "desktop/src/features/messages/lib/messageGrouping.ts",
+        "desktop/src/features/messages/lib/formatTimelineMessages.ts",
         "desktop/src/features/messages/lib/messageGrouping.test.mjs",
+        "desktop/src/features/messages/lib/messageGrouping.ts",
         "desktop/src/features/messages/lib/threadPanel.ts",
         "desktop/src/features/messages/lib/timelineItems.ts",
         "desktop/src/features/messages/ui/AgentStatusRow.tsx",
