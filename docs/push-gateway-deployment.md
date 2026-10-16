@@ -19,7 +19,11 @@
 | `BUZZ_PUSH_APP_ATTEST_APP_ID` | Exact server-owned Apple App Attest application identifier (`TEAMID.bundle-id`). |
 | `BUZZ_PUSH_APNS_TOPIC` | Server-owned APNs topic. Never accepted from a client. |
 | `BUZZ_PUSH_APNS_ENVIRONMENT` | `production` or `sandbox`, selected by deployment configuration. |
-| `BUZZ_PUSH_APNS_CERT_PATH` | Read-only certificate/private-key PEM. |
+| `BUZZ_PUSH_APNS_AUTH` | `certificate` (default) or `token`. |
+| `BUZZ_PUSH_APNS_CERT_PATH` | Certificate mode: read-only certificate/private-key PEM. |
+| `BUZZ_PUSH_APNS_KEY_PATH` | Token mode: read-only team `.p8` auth key (PKCS#8 P-256 PEM). |
+| `BUZZ_PUSH_APNS_KEY_ID` | Token mode: the auth key's ten-character Apple key id. |
+| `BUZZ_PUSH_APNS_TEAM_ID` | Token mode: the ten-character Apple team id that owns the key and topic. |
 | `BUZZ_PUSH_GRANT_KEYS` | Capability AEAD keyring, `id:base64-32-bytes[,predecessor...]`; current key first. |
 | `BUZZ_PUSH_TOKEN_KEYS` | Independent token-custody AEAD keyring in the same format. Never reuse grant keys. |
 
@@ -32,6 +36,19 @@ gateway deployments and authority databases.
 See [Buzz push notes](buzz-push.md) for the current experimental contract.
 
 Optional endpoint quota policy variables are `BUZZ_PUSH_ENDPOINT_QUOTA_WINDOW_SECONDS` (default `10`, max `86400`) and `BUZZ_PUSH_ENDPOINT_QUOTA_MAX_DELIVERIES` (default `10`, max `10000`). These are Buzz policy hypotheses, not Apple-published limits; tune under load while retaining a hard ceiling.
+
+### Token-based APNs auth
+
+A team `.p8` auth key can replace the per-app push certificate. The gateway
+signs an ES256 provider token (`kid` = key id, `iss` = team id, `iat`), reuses
+it for 40 minutes, and never refreshes sooner than Apple's 20-minute floor; an
+`ExpiredProviderToken` response becomes a retry with a fresh token instead of
+a configuration fault. Every other 403 (for example `InvalidProviderToken`)
+stays a configuration fault, so endpoints are never invalidated because of a
+key problem. The key is mounted read-only like the certificate identity and
+is never logged, rendered by `Debug`, or used as a metrics label. In the
+chart, set `application.apnsAuth=token` and
+`application.apnsToken.{keyId,teamId,secretName,secretKey}`.
 
 ## Personal device development
 
@@ -214,7 +231,7 @@ is designed.
 
 ### Relay push-trigger retirement gate
 
-Migration 0063 removes the push trigger for supported relay message paths.
+Migration 0068 removes the push trigger for supported relay message paths.
 Before merge, verify that the deployed primary and profiler relays use the
 bounded post-commit application producer and immediate worker-stop behavior from
 [#8216](https://github.com/block/buzz/pull/8216), or a verified equivalent.
@@ -224,7 +241,7 @@ database sessions do not require a privileged audit or block retirement.
 
 Rollback disables push while retaining the qualified image and schema; image
 downgrades are excluded after retirement. Pending migrations must also be
-considered: migration 0062 adds system channels, which older images cannot read
+considered: migration 0067 adds system channels, which older images cannot read
 or filter correctly. The push producer floor alone is not sufficient to justify
 an image downgrade.
 
@@ -234,11 +251,11 @@ requests build images without publishing them; final published digest binding is
 a release gate, not a prerequisite for merging the source change. Keep automatic
 migration disabled during the transition. Resolve overlapping retirement
 migrations and verify the published migration ledger before execution. Migration
-0063's lock timeout bounds acquisition waits, not lock-hold or statement duration.
+0068's lock timeout bounds acquisition waits, not lock-hold or statement duration.
 
-After migration 0063, verify that `events_enqueue_push_match` is absent from
+After migration 0068, verify that `events_enqueue_push_match` is absent from
 the parent and every partition and `enqueue_push_match_job()` is absent.
-Migration 0065 then retires `events_refresh_channel_ttl` and
+Migration 0070 then retires `events_refresh_channel_ttl` and
 `refresh_channel_ttl_after_event_insert()` the same way; after it, raw SQL
 writers no longer refresh ephemeral-channel deadlines. Verify application
 enqueueing and flag-only rollback on the exact deployed candidate. Legacy images and raw SQL
@@ -261,15 +278,15 @@ The relay copies the flag into `DbConfig::push_enabled`. Every physical writer
 connection, including the audit pool and replacement connections, sets the
 `buzz.push_enabled` PostgreSQL session setting. Other `DbConfig` callers default
 to disabled. Updated writers also set `buzz.push_async_enqueue=on`, which makes
-any surviving pre-0063 trigger skip enqueueing regardless of the enabled flag. The
+any surviving pre-0068 trigger skip enqueueing regardless of the enabled flag. The
 application producer is created only when enabled. Disabled writes perform no
 push locks, lease scans or queue writes.
 Before retirement, the overlap migration updates only an existing trigger
 function; it does not recreate a retired trigger or function. Deploy it before
-relying on the flag with a surviving trigger. On these pre-0063 schemas, older
+relying on the flag with a surviving trigger. On these pre-0068 schemas, older
 images and raw SQL writers with a missing setting retain legacy enqueue behavior;
 inventory and replace or explicitly disable all such connections before declaring
-rollback complete. After 0063, only the application producer can enqueue push
+rollback complete. After 0068, only the application producer can enqueue push
 work, and the retirement gate above excludes those legacy writers and images.
 
 On SIGTERM/Ctrl-C, the relay cancels enqueue, matcher and delivery futures immediately,
@@ -303,8 +320,8 @@ update, including renewal of an active lease, can also suppress a notification
 under this best-effort contract. Activation never scans
 historical messages or deliberately backfills older notifications.
 
-Before 0063, this isolation requires the overlap migration and updated writers;
-legacy writers can still execute the transactional trigger. After 0063, the
+Before 0068, this isolation requires the overlap migration and updated writers;
+legacy writers can still execute the transactional trigger. After 0068, the
 trigger is absent and all supported writers must use the application producer.
 
 Pending matcher jobs and pending/claimed delivery jobs remain dormant. Do not

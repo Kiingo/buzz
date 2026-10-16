@@ -1,5 +1,6 @@
 use buzz_push_gateway::{
     apns::ApnsTransport,
+    apns_token::ApnsAuthConfig,
     app_attest::AppAttestVerifier,
     authority::AuthorityStore,
     config::Config,
@@ -44,11 +45,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             configured.app_attest_environment,
         )?;
         tracing::info!(environment = ?apple.environment(), "App Attest verifier configured");
-        let transport = Arc::new(ApnsTransport::certificate(
-            &fs::read(&configured.apns_cert_path)?,
-            configured.apns_topic.clone(),
-            configured.apns_environment,
-        )?);
+        let transport = Arc::new(match &configured.apns_auth {
+            ApnsAuthConfig::Certificate { path } => ApnsTransport::certificate(
+                &fs::read(path)?,
+                configured.apns_topic.clone(),
+                configured.apns_environment,
+            )?,
+            ApnsAuthConfig::Token {
+                key_path,
+                key_id,
+                team_id,
+            } => ApnsTransport::token(
+                &fs::read(key_path)?,
+                key_id,
+                team_id,
+                configured.apns_topic.clone(),
+                configured.apns_environment,
+            )?,
+        });
         buzz_push_gateway::http::ApplicationRuntime {
             app_attest: Arc::new(apple),
             transport,

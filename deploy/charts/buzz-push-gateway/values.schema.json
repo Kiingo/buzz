@@ -357,8 +357,7 @@
       "required": [
         "appAttestAppId",
         "apnsTopic",
-        "apnsEnvironment",
-        "apnsCert"
+        "apnsEnvironment"
       ],
       "properties": {
         "appAttestAppId": {
@@ -377,6 +376,63 @@
         },
         "apnsCert": {
           "$ref": "#/$defs/apnsCert"
+        },
+        "apnsAuth": {
+          "enum": [
+            "certificate",
+            "token"
+          ]
+        },
+        "apnsToken": {
+          "$ref": "#/$defs/apnsToken"
+        }
+      },
+      "if": {
+        "properties": {
+          "apnsAuth": {
+            "const": "token"
+          }
+        },
+        "required": [
+          "apnsAuth"
+        ]
+      },
+      "then": {
+        "required": [
+          "apnsToken"
+        ]
+      },
+      "else": {
+        "required": [
+          "apnsCert"
+        ]
+      }
+    },
+    "apnsToken": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyId",
+        "teamId",
+        "secretName",
+        "secretKey"
+      ],
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "pattern": "^([A-Z0-9]{10})?$"
+        },
+        "teamId": {
+          "type": "string",
+          "pattern": "^([A-Z0-9]{10})?$"
+        },
+        "secretName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

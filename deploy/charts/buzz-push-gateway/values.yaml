@@ -28,9 +28,18 @@ application:
   appAttestAppId: TEAMID.com.example.buzz
   apnsTopic: com.example.buzz
   apnsEnvironment: production
+  # `certificate` mounts a combined certificate + key PEM (apnsCert);
+  # `token` mounts a team .p8 auth key and signs provider tokens (apnsToken).
+  apnsAuth: certificate
   apnsCert:
     secretName: buzz-push-gateway
     secretKey: apns-identity.pem
+  apnsToken:
+    # Apple key id and team id (ten uppercase letters/digits each).
+    keyId: ""
+    teamId: ""
+    secretName: buzz-push-gateway
+    secretKey: apns-auth-key.p8
 appAttestRoot:
   secretName: buzz-push-gateway
   secretKey: app-attest-root.pem

@@ -52,7 +52,14 @@ spec:
             - { name: BUZZ_PUSH_APP_ATTEST_APP_ID, value: {{ .Values.application.appAttestAppId | quote }} }
             - { name: BUZZ_PUSH_APNS_TOPIC, value: {{ .Values.application.apnsTopic | quote }} }
             - { name: BUZZ_PUSH_APNS_ENVIRONMENT, value: {{ .Values.application.apnsEnvironment | quote }} }
+            {{- if eq (.Values.application.apnsAuth | default "certificate") "token" }}
+            - { name: BUZZ_PUSH_APNS_AUTH, value: token }
+            - { name: BUZZ_PUSH_APNS_KEY_PATH, value: /run/buzz/apns/auth-key.p8 }
+            - { name: BUZZ_PUSH_APNS_KEY_ID, value: {{ required "application.apnsToken.keyId is required for token auth" .Values.application.apnsToken.keyId | quote }} }
+            - { name: BUZZ_PUSH_APNS_TEAM_ID, value: {{ required "application.apnsToken.teamId is required for token auth" .Values.application.apnsToken.teamId | quote }} }
+            {{- else }}
             - { name: BUZZ_PUSH_APNS_CERT_PATH, value: /run/buzz/apns/identity.pem }
+            {{- end }}
             {{- range $name := list "DATABASE_URL" "BUZZ_PUSH_GRANT_KEYS" "BUZZ_PUSH_TOKEN_KEYS" }}
             - name: {{ $name }}
               valueFrom: { secretKeyRef: { name: {{ $.Values.existingSecret }}, key: {{ $name }} } }
@@ -68,7 +75,11 @@ spec:
         - name: app-attest-root
           secret: { secretName: {{ .Values.appAttestRoot.secretName }}, items: [{ key: {{ .Values.appAttestRoot.secretKey }}, path: root.pem }] }
         - name: apns
+          {{- if eq (.Values.application.apnsAuth | default "certificate") "token" }}
+          secret: { secretName: {{ .Values.application.apnsToken.secretName }}, defaultMode: 0400, items: [{ key: {{ .Values.application.apnsToken.secretKey }}, path: auth-key.p8 }] }
+          {{- else }}
           secret: { secretName: {{ .Values.application.apnsCert.secretName }}, defaultMode: 0400, items: [{ key: {{ .Values.application.apnsCert.secretKey }}, path: identity.pem }] }
+          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}

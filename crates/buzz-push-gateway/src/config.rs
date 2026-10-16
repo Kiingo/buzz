@@ -14,7 +14,7 @@ pub struct ApplicationConfig {
     pub app_attest_app_id: String,
     /// Exact Apple attestation environment accepted for enrollment.
     pub app_attest_environment: AppAttestEnvironment,
-    pub apns_cert_path: PathBuf,
+    pub apns_auth: crate::apns_token::ApnsAuthConfig,
     pub apns_topic: String,
     pub apns_environment: ApnsEnvironment,
 }
@@ -109,7 +109,6 @@ fn parse_keyring(
 
 fn parse_application(e: &HashMap<String, String>) -> Result<ApplicationConfig, ConfigError> {
     let app_id_key = "BUZZ_PUSH_APP_ATTEST_APP_ID";
-    let cert_key = "BUZZ_PUSH_APNS_CERT_PATH";
     let topic_key = "BUZZ_PUSH_APNS_TOPIC";
     let environment_key = "BUZZ_PUSH_APNS_ENVIRONMENT";
     let required = |key: &'static str| {
@@ -129,7 +128,7 @@ fn parse_application(e: &HashMap<String, String>) -> Result<ApplicationConfig, C
         Some(_) => return Err(ConfigError::Invalid("BUZZ_PUSH_APP_ATTEST_ENVIRONMENT")),
     };
     let apns_topic = required(topic_key)?.to_owned();
-    let apns_cert_path = PathBuf::from(required(cert_key)?);
+    let apns_auth = crate::apns_token::parse_auth(e)?;
     let apns_environment = match e.get(environment_key).map(String::as_str) {
         None | Some("production") => ApnsEnvironment::Production,
         Some("sandbox") => ApnsEnvironment::Sandbox,
@@ -138,7 +137,7 @@ fn parse_application(e: &HashMap<String, String>) -> Result<ApplicationConfig, C
     Ok(ApplicationConfig {
         app_attest_app_id,
         app_attest_environment,
-        apns_cert_path,
+        apns_auth,
         apns_topic,
         apns_environment,
     })
@@ -318,8 +317,10 @@ mod tests {
     fn application_requires_server_owned_identity_and_certificate() {
         let config = Config::from_map(&base()).unwrap();
         assert_eq!(
-            config.application.apns_cert_path,
-            PathBuf::from("/apns-identity.pem")
+            config.application.apns_auth,
+            crate::apns_token::ApnsAuthConfig::Certificate {
+                path: PathBuf::from("/apns-identity.pem")
+            }
         );
         assert_eq!(config.application.apns_topic, "com.example.buzz");
 
