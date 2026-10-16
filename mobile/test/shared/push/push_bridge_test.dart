@@ -359,6 +359,72 @@ void main() {
     expect(pendingPushNotificationLink.value, isNull);
   });
 
+  Future<Object?> openNotification(Map<String, Object?> arguments) async {
+    final response = Completer<ByteData?>();
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+          _channel.name,
+          _channel.codec.encodeMethodCall(
+            MethodCall('notificationOpened', arguments),
+          ),
+          response.complete,
+        );
+    final envelope = await response.future;
+    expect(envelope, isNotNull);
+    return _channel.codec.decodeEnvelope(envelope!);
+  }
+
+  test('routes a guest-access approval notification to its event', () async {
+    expect(
+      await openNotification({
+        'eventId': 'c' * 64,
+        'communityId': 'community-id',
+        'guestKind': '46040',
+      }),
+      'handled',
+    );
+    expect(
+      pendingPushNotificationLink.value,
+      GuestNotificationDeepLink(communityId: 'community-id', eventId: 'c' * 64),
+    );
+  });
+
+  test('routes a guest-access alert notification to its event', () async {
+    expect(
+      await openNotification({
+        'eventId': 'd' * 64,
+        'communityId': 'community-id',
+        'guestKind': '46042',
+      }),
+      'handled',
+    );
+    expect(
+      pendingPushNotificationLink.value,
+      GuestNotificationDeepLink(communityId: 'community-id', eventId: 'd' * 64),
+    );
+  });
+
+  test('ignores other guest kinds and ambiguous guest targets', () async {
+    for (final arguments in [
+      {
+        'eventId': 'e' * 64,
+        'communityId': 'community-id',
+        'guestKind': '46041',
+      },
+      {'eventId': 'e' * 64, 'communityId': 'community-id', 'guestKind': '9'},
+      {
+        'eventId': 'e' * 64,
+        'communityId': 'community-id',
+        'channelId': 'channel-id',
+        'guestKind': '46040',
+      },
+      {'eventId': 'e' * 64, 'communityId': '', 'guestKind': '46040'},
+    ]) {
+      expect(await openNotification(arguments), 'ignored');
+      expect(pendingPushNotificationLink.value, isNull);
+    }
+  });
+
   test('pulls a cold-start notification response from native iOS', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

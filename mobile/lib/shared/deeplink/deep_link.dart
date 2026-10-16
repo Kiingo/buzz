@@ -110,6 +110,36 @@ class MessageDeepLink extends BuzzDeepLink {
       'thread: $threadRootId)';
 }
 
+/// A tapped push for an owner-addressed agent guest-access notification
+/// (approval request or alert). These events carry no channel, so the target
+/// is the event itself in its device-local community. Only native push
+/// routing produces this link; it has no `buzz://` form.
+class GuestNotificationDeepLink extends BuzzDeepLink {
+  /// Local community identifier from the push target.
+  final String communityId;
+
+  /// Event ID of the guest-access notification.
+  final String eventId;
+
+  const GuestNotificationDeepLink({
+    required this.communityId,
+    required this.eventId,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is GuestNotificationDeepLink &&
+      other.communityId == communityId &&
+      other.eventId == eventId;
+
+  @override
+  int get hashCode => Object.hash(communityId, eventId);
+
+  @override
+  String toString() =>
+      'GuestNotificationDeepLink(community: $communityId, id: $eventId)';
+}
+
 /// Build a canonical `buzz://message` link for a channel message.
 ///
 /// Mirrors `desktop/src/features/messages/lib/messageLink.ts` so links copied

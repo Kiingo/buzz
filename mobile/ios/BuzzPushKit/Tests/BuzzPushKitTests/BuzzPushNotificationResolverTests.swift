@@ -129,6 +129,42 @@ final class BuzzPushNotificationResolverTests: XCTestCase {
     XCTAssertEqual(result?.0.body, "lower ID")
   }
 
+  func testGuestAccessNotificationWithoutChannelTargetsItsEvent() {
+    for kind in [46_040, 46_042] {
+      let result = BuzzPushNotificationResolver.decodeResolution(
+        events: [
+          event(
+            id: "guest-\(kind)",
+            content: "Agent wants access",
+            kind: kind,
+            tags: [["p", "my-pubkey"], ["buzz-guest-approval", "approval-1"]]
+          )
+        ],
+        community: community()
+      )
+
+      XCTAssertEqual(
+        result?.0.navigationTarget,
+        BuzzPushNavigationTarget.guestNotification(
+          eventID: "guest-\(kind)",
+          communityID: "community-id",
+          kind: kind
+        )
+      )
+      XCTAssertNil(result?.0.navigationTarget?.channelID)
+    }
+  }
+
+  func testChannelMessageWithoutHTagHasNoTarget() {
+    let result = BuzzPushNotificationResolver.decodeResolution(
+      events: [event(content: "no channel")],
+      community: community()
+    )
+
+    XCTAssertNotNil(result)
+    XCTAssertNil(result?.0.navigationTarget)
+  }
+
   func testResolveSucceedsAndMutatesGatewayContent() throws {
     let event = try JSONDecoder().decode(
       VerifiedNostrEvent.self,

@@ -8,6 +8,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import 'features/activity/activity_provider.dart';
+import 'features/activity/guest_notification_push.dart';
 import 'features/agents/hosted_agents_page.dart';
 import 'features/activity/inbox_local_state_provider.dart';
 import 'features/activity/inbox_read_state.dart';
@@ -382,6 +383,7 @@ class App extends HookConsumerWidget {
         error: (_, _) => const PairingPage(),
         data: (state) => switch (state.status) {
           AuthStatus.authenticated => DeepLinkDispatcher(
+            openGuestNotification: openGuestNotificationFromPush,
             child: HomePage(
               settingsPageBuilder: _buildSettingsPage,
               hasUnreadInbox: hasUnreadInbox,
