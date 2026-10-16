@@ -27,6 +27,7 @@ export const GUEST_NOTIFICATION_KINDS = [
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const CORRELATION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const ALERT_KIND = /^[a-z][a-z0-9_]{0,63}$/;
 
 export type GuestNotification =
   | {
@@ -55,6 +56,8 @@ export type GuestNotification =
       alertId: string;
       agentPubkey: string;
       severity: "high" | "info";
+      /** `buzz-guest-alert-kind`, or `null` when absent or malformed. */
+      kind: string | null;
       content: string;
       createdAt: number;
     };
@@ -134,6 +137,7 @@ export function parseGuestNotification(
     const severity = single(event, "severity");
     if (!alertId || !CORRELATION_ID.test(alertId)) return null;
     if (severity !== "high" && severity !== "info") return null;
+    const kind = single(event, "buzz-guest-alert-kind");
     return {
       type: "alert",
       eventId: event.id,
@@ -141,6 +145,7 @@ export function parseGuestNotification(
       alertId,
       agentPubkey,
       severity,
+      kind: kind && ALERT_KIND.test(kind) ? kind : null,
       content,
       createdAt: event.created_at,
     };

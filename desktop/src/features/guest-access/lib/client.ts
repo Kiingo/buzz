@@ -2,6 +2,7 @@ import { invokeTauri } from "@/shared/api/tauri";
 
 import {
   parseAccessLog,
+  parseAdminOverview,
   parseApproval,
   parseApprovalList,
   parseBlockList,
@@ -60,6 +61,8 @@ export function describeGuestAccessError(code: string): string {
       return "Your account is already linked to a different Buzz identity.";
     case "granted_sources_invalid":
       return "Choose which of the requested sources to share, then approve again.";
+    case "admin_required":
+      return "Only organization admins can review guest safety alerts.";
     case "grantee_not_linked":
       return "That person hasn't linked their account yet, so a grant can't be created.";
     case "nip98_replayed":
@@ -312,6 +315,18 @@ export const guestAccessApi = {
     }),
   removeShareable: (shareableId: string) =>
     transport.request("DELETE", `/owner/shareables/${shareableId}`),
+
+  /** Org-admin guest safety (contracts §12.1); `admin_required` for others. */
+  adminOverview: async () =>
+    parseAdminOverview(await transport.request("GET", "/admin/alerts")),
+  acknowledgeAdminAlert: (alertId: string) =>
+    transport.request("POST", `/admin/alerts/${alertId}/ack`, {}),
+  restoreRequester: (pubkey: string) =>
+    transport.request(
+      "POST",
+      `/admin/requesters/${pubkey.toLowerCase()}/review`,
+      {},
+    ),
 
   suggestions: async () =>
     parseSuggestionList(await transport.request("GET", "/owner/suggestions")),

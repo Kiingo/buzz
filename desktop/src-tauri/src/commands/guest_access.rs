@@ -3,8 +3,10 @@
 //! The route (`BUZZ_BUILD_GUEST_ROUTE_URL`, same value the harness receives)
 //! authenticates every call with NIP-98 signed by the user's own key and does
 //! not serve browser CORS, so the webview reaches it through these commands.
-//! Only owner (`/owner/...`) and identity (`/identity/...`) routes are
-//! reachable; agent routes stay with the harness, which holds the agent key.
+//! Only owner (`/owner/...`), identity (`/identity/...`) and the org-admin
+//! guest safety routes (`/admin/alerts...`, `/admin/requesters/...`) are
+//! reachable; the server checks the admin role. Agent routes stay with the
+//! harness, which holds the agent key.
 
 use std::time::Duration;
 
@@ -73,10 +75,15 @@ fn acceptable_base_url(url: &str) -> bool {
     }
 }
 
-/// Only owner and identity routes, with a plain path and optional query.
+/// Owner, identity and org-admin safety routes, with a plain path and
+/// optional query.
 pub(crate) fn validate_route_path(path: &str) -> Result<(), String> {
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
-    let allowed_prefix = route.starts_with("/owner/") || route.starts_with("/identity/");
+    let allowed_prefix = route.starts_with("/owner/")
+        || route.starts_with("/identity/")
+        || route == "/admin/alerts"
+        || route.starts_with("/admin/alerts/")
+        || route.starts_with("/admin/requesters/");
     let plain = route
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_'));
@@ -242,13 +249,16 @@ mod tests {
     }
 
     #[test]
-    fn only_owner_and_identity_routes_are_reachable() {
+    fn only_owner_identity_and_admin_safety_routes_are_reachable() {
         for ok in [
             "/owner/approvals?state=pending",
             "/owner/approvals/0b6c9f3e-2d3b-4b8a-9d55-0f3c1d2e3f4a/decision",
             "/owner/access-log?limit=50&since=2026-10-09T00:00:00.000Z",
             "/identity/status",
             "/identity/link",
+            "/admin/alerts",
+            "/admin/alerts/0b6c9f3e-2d3b-4b8a-9d55-0f3c1d2e3f4a/ack",
+            "/admin/requesters/3fe270b31e696b1daef91ebbc7992600c1232ffd5b704bc5258a64e0c0b59be1/review",
         ] {
             assert!(validate_route_path(ok).is_ok(), "{ok}");
         }
@@ -260,6 +270,9 @@ mod tests {
             "//evil.example/owner/x",
             "/owner/x?u=<script>",
             "https://evil.example/owner/x",
+            "/admin/calibration",
+            "/admin/alertsx",
+            "/admin/../turns",
         ] {
             assert!(validate_route_path(bad).is_err(), "{bad}");
         }

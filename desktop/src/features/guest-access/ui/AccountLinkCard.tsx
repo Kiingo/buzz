@@ -6,13 +6,26 @@ import {
   LINK_EXPLANATION,
   LinkAccountForm,
 } from "./LinkAccountForm";
+import { GuestSafetyCard } from "./admin/GuestSafetyCard";
 
-/** Profile settings: link this Buzz identity to the user's org account. */
+/**
+ * Profile settings: link this Buzz identity to the user's org account, then
+ * (for org admins only) the agent guest safety card. Both live here so the
+ * upstream settings panel carries a single mount point.
+ */
 export function AccountLinkCard() {
   const enabled = useGuestAccessEnabled();
-  const status = useIdentityLinkStatus();
   if (!enabled) return null;
+  return (
+    <>
+      <AccountLinkSection />
+      <GuestSafetyCard />
+    </>
+  );
+}
 
+function AccountLinkSection() {
+  const status = useIdentityLinkStatus();
   return (
     <section className="mt-8 min-w-0" data-testid="settings-account-link">
       <div className="mb-3">

@@ -3,21 +3,23 @@ import { Info, ShieldAlert, X } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 
+import { alertDestination, alertReviewLabel } from "../lib/alertRoute";
 import type { GuestAlert } from "../lib/store";
 
 /**
  * Prominent banner for 46042 agent guest alerts. High-severity alerts
  * (blocked attack, suspension) are red and stay until dismissed; info alerts
- * (digest ready) are quieter.
+ * (digest ready, an outcome of your agent's request) are quieter. Review
+ * opens the place the alert's kind points to; outcome notices have none.
  */
 export function GuestAlertBanner({
   alerts,
   onDismiss,
-  onOpenSettings,
+  onReview,
 }: {
   alerts: readonly GuestAlert[];
   onDismiss: (alertId: string) => void;
-  onOpenSettings?: () => void;
+  onReview?: (alert: GuestAlert) => void;
 }) {
   if (alerts.length === 0) return null;
   const ordered = [...alerts].sort((a, b) =>
@@ -39,6 +41,7 @@ export function GuestAlertBanner({
       {visible.map((alert) => {
         const high = alert.severity === "high";
         const Icon = high ? ShieldAlert : Info;
+        const reviewLabel = alertReviewLabel(alertDestination(alert.kind));
         return (
           <div
             className={cn(
@@ -65,13 +68,17 @@ export function GuestAlertBanner({
               <p className="break-words text-muted-foreground">
                 {alert.content || "Something needs your attention."}
               </p>
-              {onOpenSettings ? (
+              {onReview && reviewLabel ? (
                 <button
                   className="mt-1 text-xs underline"
-                  onClick={onOpenSettings}
+                  data-testid="guest-alert-review"
+                  onClick={() => {
+                    onReview(alert);
+                    onDismiss(alert.alertId);
+                  }}
                   type="button"
                 >
-                  Review guest access
+                  {reviewLabel}
                 </button>
               ) : null}
             </div>

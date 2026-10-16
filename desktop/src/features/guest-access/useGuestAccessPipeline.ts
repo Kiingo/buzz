@@ -136,6 +136,7 @@ export function useGuestAccessPipeline() {
           eventId: parsed.eventId,
           agentPubkey: parsed.agentPubkey,
           severity: parsed.severity,
+          kind: parsed.kind,
           content: parsed.content,
           createdAt: parsed.createdAt,
         });

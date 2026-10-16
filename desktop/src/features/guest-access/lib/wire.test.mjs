@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   parseAccessLog,
+  parseAdminOverview,
   parseApproval,
   parseApprovalList,
   parseDigest,
@@ -266,4 +267,53 @@ test("a test requester is flagged by either field; odd values are dropped", () =
   assert.equal(byFlag.requester.kind, null);
   assert.equal(byFlag.requester.isTest, true);
   assert.equal(byFlag.requester.priorRequestCount, null);
+});
+
+test("parses org-admin alerts and suspended requesters, skipping bad rows", () => {
+  const overview = parseAdminOverview({
+    alerts: [
+      {
+        alert_id: "al-1",
+        kind: "org_pattern",
+        severity: "high",
+        payload: {
+          pattern: "flagged_across_owners",
+          requester_public_key: "c".repeat(64),
+          owners: 3,
+        },
+        created_at: "2026-10-16T10:00:00.000Z",
+      },
+      { kind: "org_pattern" },
+      {
+        alert_id: "al-2",
+        kind: "requester_suspended",
+        severity: "weird",
+        payload: { high_flags_24h: 2 },
+      },
+    ],
+    suspended_requesters: [
+      {
+        pubkey: "c".repeat(64),
+        user_id: null,
+        suspended_at: "2026-10-16T09:00:00.000Z",
+        reason: "two_high_flags_24h",
+      },
+      { user_id: "u" },
+    ],
+  });
+  assert.deepEqual(
+    overview.alerts.map((alert) => [
+      alert.alertId,
+      alert.severity,
+      alert.pattern,
+      alert.count,
+    ]),
+    [
+      ["al-1", "high", "flagged_across_owners", 3],
+      ["al-2", "info", null, 2],
+    ],
+  );
+  assert.equal(overview.suspended.length, 1);
+  assert.equal(overview.suspended[0].reason, "two_high_flags_24h");
+  assert.deepEqual(parseAdminOverview(null), { alerts: [], suspended: [] });
 });
