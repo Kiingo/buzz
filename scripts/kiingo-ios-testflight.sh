@@ -15,8 +15,12 @@
 #
 # Usage:
 #   scripts/kiingo-ios-testflight.sh --build-number 12 \
-#     --gateway-url https://push.example.com --relay-url https://chat.kiingo.com
+#     --gateway-url https://push.chat.kiingo.com --relay-url https://chat.kiingo.com
+#   [--guest-route-url https://api.kiingo.com/api/buzz-guest/v1]
 #   [--display-name "Buzz"] [--version 0.1.0] [--no-upload]
+#
+# The guest route (default shown) lets the app review agent guest-access
+# approvals in place instead of sending the owner to desktop.
 #
 # Builds only; it never runs tests.
 set -euo pipefail
@@ -32,6 +36,7 @@ build_number=""
 version=""
 gateway_url=""
 relay_url=""
+guest_route_url="https://api.kiingo.com/api/buzz-guest/v1"
 upload=1
 
 while (($#)); do
@@ -40,6 +45,7 @@ while (($#)); do
     --version) version="${2:?}"; shift 2 ;;
     --gateway-url) gateway_url="${2:?}"; shift 2 ;;
     --relay-url) relay_url="${2:?}"; shift 2 ;;
+    --guest-route-url) guest_route_url="${2:?}"; shift 2 ;;
     --display-name) display_name="${2:?}"; shift 2 ;;
     --no-upload) upload=0; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -60,6 +66,10 @@ done
 }
 [[ "$relay_url" =~ ^https://[A-Za-z0-9.-]+$ ]] || {
   echo "--relay-url must be an https origin with no path" >&2
+  exit 2
+}
+[[ "$guest_route_url" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~-]+)*$ ]] || {
+  echo "--guest-route-url must be an https URL without a query or trailing slash" >&2
   exit 2
 }
 [[ "$display_name" =~ ^[A-Za-z0-9\ ]{1,30}$ ]] || {
@@ -97,7 +107,8 @@ version_args=()
 flutter build ios --release --config-only \
   --build-number "$build_number" "${version_args[@]}" \
   --dart-define=BUZZ_RELAY_URL="$relay_url" \
-  --dart-define=BUZZ_PUSH_GATEWAY_URL="$gateway_url"
+  --dart-define=BUZZ_PUSH_GATEWAY_URL="$gateway_url" \
+  --dart-define=BUZZ_GUEST_ROUTE_URL="$guest_route_url"
 
 xcodebuild \
   -workspace "$ios/Runner.xcworkspace" \
