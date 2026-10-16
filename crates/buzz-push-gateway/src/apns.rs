@@ -3,11 +3,16 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::{header::CONTENT_TYPE, StatusCode};
+use reqwest::{
+    header::{AUTHORIZATION, CONTENT_TYPE},
+    StatusCode,
+};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{config::ApnsEnvironment, model::APNS_RECONNECT_PAYLOAD};
+use crate::{
+    apns_token::ProviderTokenSigner, config::ApnsEnvironment, model::APNS_RECONNECT_PAYLOAD,
+};
 
 /// Sanitized delivery outcome. Raw provider bodies never cross this boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,11 +84,28 @@ pub trait PushTransport: Send + Sync {
     async fn send(&self, attempt: DeliveryAttempt, endpoint: &str) -> DeliveryOutcome;
 }
 
-/// Direct HTTP/2 APNs transport using a client certificate identity.
+/// Direct HTTP/2 APNs transport authenticated by a client certificate identity
+/// or by a team `.p8` provider token.
 pub struct ApnsTransport {
     client: reqwest::Client,
     topic: String,
     base_url: String,
+    /// Present for token-based auth; certificate transports send no bearer.
+    provider_token: Option<ProviderTokenSigner>,
+}
+
+fn apns_base_url(environment: ApnsEnvironment) -> &'static str {
+    match environment {
+        ApnsEnvironment::Production => "https://api.push.apple.com",
+        ApnsEnvironment::Sandbox => "https://api.sandbox.push.apple.com",
+    }
+}
+
+/// A send that never reached APNs.
+#[derive(Debug)]
+enum SendError {
+    Transport,
+    ProviderToken,
 }
 
 impl ApnsTransport {
@@ -93,11 +115,45 @@ impl ApnsTransport {
         topic: String,
         environment: ApnsEnvironment,
     ) -> Result<Self, ApnsError> {
-        let base_url = match environment {
-            ApnsEnvironment::Production => "https://api.push.apple.com",
-            ApnsEnvironment::Sandbox => "https://api.sandbox.push.apple.com",
-        };
-        Self::certificate_with_base_url(identity_pem, topic, base_url.to_owned())
+        Self::certificate_with_base_url(identity_pem, topic, apns_base_url(environment).to_owned())
+    }
+
+    /// Build a reusable APNs client authenticated by a team `.p8` auth key.
+    pub fn token(
+        key_pem: &[u8],
+        key_id: &str,
+        team_id: &str,
+        topic: String,
+        environment: ApnsEnvironment,
+    ) -> Result<Self, ApnsError> {
+        Self::token_with_base_url(
+            key_pem,
+            key_id,
+            team_id,
+            topic,
+            apns_base_url(environment).to_owned(),
+        )
+    }
+
+    pub(crate) fn token_with_base_url(
+        key_pem: &[u8],
+        key_id: &str,
+        team_id: &str,
+        topic: String,
+        base_url: String,
+    ) -> Result<Self, ApnsError> {
+        let provider_token = ProviderTokenSigner::new(key_pem, key_id, team_id)?;
+        let client = reqwest::Client::builder()
+            .http2_keep_alive_while_idle(false)
+            .timeout(Duration::from_secs(15))
+            .build()
+            .map_err(|_| ApnsError::Credential)?;
+        Ok(Self {
+            client,
+            topic,
+            base_url,
+            provider_token: Some(provider_token),
+        })
     }
 
     fn certificate_with_base_url(
@@ -121,6 +177,7 @@ impl ApnsTransport {
             client,
             topic,
             base_url,
+            provider_token: None,
         })
     }
 
@@ -143,8 +200,13 @@ impl ApnsTransport {
         &self,
         attempt: DeliveryAttempt,
         endpoint: &str,
-    ) -> Result<reqwest::Response, reqwest::Error> {
-        self.request(attempt, endpoint).send().await
+    ) -> Result<reqwest::Response, SendError> {
+        let mut request = self.request(attempt, endpoint);
+        if let Some(signer) = &self.provider_token {
+            let token = signer.bearer().map_err(|_| SendError::ProviderToken)?;
+            request = request.header(AUTHORIZATION, format!("bearer {token}"));
+        }
+        request.send().await.map_err(|_| SendError::Transport)
     }
 }
 
@@ -169,7 +231,9 @@ impl PushTransport for ApnsTransport {
         let response = self.send_response(attempt, endpoint).await;
         let response = match response {
             Ok(response) => response,
-            Err(_) => {
+            // The key could not sign: a credential problem, never the endpoint's.
+            Err(SendError::ProviderToken) => return DeliveryOutcome::ConfigurationFault,
+            Err(SendError::Transport) => {
                 return DeliveryOutcome::Retry {
                     retry_after_seconds: None,
                 }
@@ -187,6 +251,18 @@ impl PushTransport for ApnsTransport {
             .map(|seconds| seconds.clamp(1, 3600));
         let detail = response.json::<ApnsErrorBody>().await.ok();
         let timestamp = detail.as_ref().and_then(|d| d.timestamp);
+        // A stale provider token is the transport's own state, not a profile
+        // fault: drop it (within Apple's refresh floor) and retry the job.
+        if let (403, Some("ExpiredProviderToken"), Some(signer)) = (
+            code,
+            detail.as_ref().and_then(|d| d.reason.as_deref()),
+            &self.provider_token,
+        ) {
+            signer.expire();
+            return DeliveryOutcome::Retry {
+                retry_after_seconds: retry_after,
+            };
+        }
         match classify(
             code,
             detail.as_ref().and_then(|d| d.reason.as_deref()),

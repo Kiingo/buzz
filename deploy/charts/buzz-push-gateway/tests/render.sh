@@ -100,6 +100,30 @@ if helm template push deploy/charts/buzz-push-gateway \
   exit 1
 fi
 
+# Token auth mounts the team .p8 key, passes its key/team ids, and never also
+# mounts or names a certificate identity.
+token_out=$(helm template push deploy/charts/buzz-push-gateway --set image.tag=t \
+  --set profiles.dogfood.apnsAuth=token \
+  --set profiles.dogfood.apnsToken.keyId=ABCDE12345 \
+  --set profiles.dogfood.apnsToken.teamId=TEAM123456)
+for expected in 'BUZZ_PUSH_DOGFOOD_APNS_AUTH, value: token' \
+  'BUZZ_PUSH_DOGFOOD_APNS_KEY_PATH, value: /run/buzz/apns-dogfood/auth-key.p8' \
+  'BUZZ_PUSH_DOGFOOD_APNS_KEY_ID, value: "ABCDE12345"' \
+  'BUZZ_PUSH_DOGFOOD_APNS_TEAM_ID, value: "TEAM123456"' \
+  'path: auth-key.p8'; do
+  grep -qF "$expected" <<<"$token_out" || { echo "token render missing: $expected" >&2; exit 1; }
+done
+if grep -q 'APNS_CERT_PATH\|identity.pem' <<<"$token_out"; then
+  echo 'token auth must not reference a certificate identity' >&2
+  exit 1
+fi
+# Token auth without Apple key/team ids must fail.
+if helm template push deploy/charts/buzz-push-gateway --set image.tag=t \
+  --set profiles.dogfood.apnsAuth=token >/dev/null 2>&1; then
+  echo 'expected token auth without key/team ids to fail' >&2
+  exit 1
+fi
+
 # Enabling a route without a Gateway attachment must fail schema validation.
 if helm template push deploy/charts/buzz-push-gateway --set httpRoute.enabled=true >/dev/null 2>&1; then
   echo 'expected httpRoute.enabled=true without parentRefs to fail' >&2

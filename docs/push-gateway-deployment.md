@@ -13,14 +13,18 @@
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | PostgreSQL authority/admission store. Runtime credentials need DML on the six gateway tables, not DDL. |
-| `BUZZ_PUSH_PUBLIC_DELIVERY_URL` | Exact externally signed URL, normally `https://push.buzz.xyz/v1/deliveries/apns`. |
+| `BUZZ_PUSH_PUBLIC_DELIVERY_URL` | Exact externally signed URL, normally `https://push.buzz.xyz/v1/deliveries/apns`; an operator-owned https host is accepted (no port, query, fragment or userinfo; path exactly `/v1/deliveries/apns`). Relays must sign the same URL. Enrollment and delegation transcript audiences stay the fixed `push.buzz.xyz` protocol constants, independent of the host. |
 | `BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS` | Maximum delegation capability lifetime (`1..=31536000`). |
 | `BUZZ_PUSH_MAX_INSTALLATION_LIFETIME_SECONDS` | Maximum encrypted-token installation lifetime (default 90 days, max one year). Clients must renew before expiry. |
 | `BUZZ_PUSH_APP_ATTEST_ROOT_CERT_PATH` | Read-only mounted Apple App Attest root certificate PEM. |
 | `BUZZ_PUSH_DOGFOOD_APP_ATTEST_APP_ID` | Exact server-owned Apple App Attest application identifier (`TEAMID.bundle-id`). |
 | `BUZZ_PUSH_DOGFOOD_APNS_TOPIC` | Server-owned APNs topic. Never accepted from a client. |
 | `BUZZ_PUSH_DOGFOOD_APNS_ENVIRONMENT` | `production` or `sandbox`, selected by deployment configuration. |
-| `BUZZ_PUSH_DOGFOOD_APNS_CERT_PATH` | Read-only certificate/private-key PEM. |
+| `BUZZ_PUSH_DOGFOOD_APNS_AUTH` | `certificate` (default) or `token`. |
+| `BUZZ_PUSH_DOGFOOD_APNS_CERT_PATH` | Certificate mode: read-only certificate/private-key PEM. |
+| `BUZZ_PUSH_DOGFOOD_APNS_KEY_PATH` | Token mode: read-only team `.p8` auth key (PKCS#8 P-256 PEM). |
+| `BUZZ_PUSH_DOGFOOD_APNS_KEY_ID` | Token mode: the auth key's ten-character Apple key id. |
+| `BUZZ_PUSH_DOGFOOD_APNS_TEAM_ID` | Token mode: the ten-character Apple team id that owns the key and topic. |
 | `BUZZ_PUSH_GRANT_KEYS` | Capability AEAD keyring, `id:base64-32-bytes[,predecessor...]`; current key first. |
 | `BUZZ_PUSH_TOKEN_KEYS` | Independent token-custody AEAD keyring in the same format. Never reuse grant keys. |
 
@@ -44,6 +48,19 @@ chart, credential, and deployment change; this gateway does not currently
 select among multiple application profiles.
 
 Optional endpoint quota policy variables are `BUZZ_PUSH_ENDPOINT_QUOTA_WINDOW_SECONDS` (default `10`, max `86400`) and `BUZZ_PUSH_ENDPOINT_QUOTA_MAX_DELIVERIES` (default `10`, max `10000`). These are Buzz policy hypotheses, not Apple-published limits; tune under load while retaining a hard ceiling.
+
+### Token-based APNs auth
+
+A team `.p8` auth key can replace the per-app push certificate. The gateway
+signs an ES256 provider token (`kid` = key id, `iss` = team id, `iat`), reuses
+it for 40 minutes, and never refreshes sooner than Apple's 20-minute floor; an
+`ExpiredProviderToken` response becomes a retry with a fresh token instead of
+a configuration fault. Every other 403 (for example `InvalidProviderToken`)
+stays a configuration fault, so endpoints are never invalidated because of a
+key problem. The key is mounted read-only like the certificate identity and
+is never logged, rendered by `Debug`, or used as a metrics label. In the
+chart, set `profiles.dogfood.apnsAuth=token` and
+`profiles.dogfood.apnsToken.{keyId,teamId,secretName,secretKey}`.
 
 ## Secret and key rotation rules
 

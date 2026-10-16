@@ -1,5 +1,6 @@
 //! Stateful, capability-gated APNs last hop for NIP-PL.
 pub mod apns;
+pub mod apns_token;
 pub mod app_attest;
 pub mod authority;
 pub mod config;

@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 149,
-    "modifiedUpstreamFiles": 235,
-    "changedUpstreamProductionSourceLines": 10430,
-    "upstreamProductionSourceDiffHunks": 1147,
+    "modifiedUpstreamProductionSourceFiles": 153,
+    "modifiedUpstreamFiles": 246,
+    "changedUpstreamProductionSourceLines": 10588,
+    "upstreamProductionSourceDiffHunks": 1167,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -942,6 +942,30 @@
         "desktop/src/testing/e2eBridgeProviderCreate.ts",
         "desktop/tests/e2e/provider-owned/preferred-run-on-create-screenshots.spec.ts",
         "docs/provider-preflight-and-create-rollback.md"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz push maintainers",
+      "purpose": "Token-based (team .p8) APNs authentication for buzz-push-gateway alongside the existing certificate identity: BUZZ_PUSH_DOGFOOD_APNS_AUTH=token with key path, Apple key id and team id; ES256 provider JWT cached 40 minutes within Apple's 20-minute refresh floor; ExpiredProviderToken retried with a fresh token, every other 403 still a configuration fault; key never logged or Debug-rendered. Chart apnsAuth/apnsToken values with schema validation and an operator-supplied public delivery host. Plus a Kiingo TestFlight build script that writes the gitignored AppOverrides.xcconfig (com.kiingo.buzz, team BSS337U3E5) and archives/uploads with Xcode automatic signing.",
+      "upstreamStatus": "Token auth is a generic gateway capability; candidate for upstream. The TestFlight script is Kiingo-only.",
+      "removalCondition": "Remove token auth when block/buzz's gateway supports .p8 provider tokens; remove the script when Kiingo iOS releases move to a release pipeline.",
+      "paths": [
+        ".intersect/sadscan.yaml",
+        "crates/buzz-push-gateway/Cargo.toml",
+        "crates/buzz-push-gateway/src/apns.rs",
+        "crates/buzz-push-gateway/src/apns_token.rs",
+        "crates/buzz-push-gateway/src/config.rs",
+        "crates/buzz-push-gateway/src/lib.rs",
+        "crates/buzz-push-gateway/src/main.rs",
+        "crates/buzz-push-gateway/tests/fixtures/apns-test-auth-key.p8",
+        "crates/buzz-push-gateway/tests/fixtures/apns-test-auth-key.pub.pem",
+        "deploy/charts/buzz-push-gateway/templates/deployment.yaml",
+        "deploy/charts/buzz-push-gateway/tests/render.sh",
+        "deploy/charts/buzz-push-gateway/values.schema.json",
+        "deploy/charts/buzz-push-gateway/values.yaml",
+        "docs/push-gateway-deployment.md",
+        "scripts/kiingo-ios-testflight.sh"
       ]
     }
   ],
