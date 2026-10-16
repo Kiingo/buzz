@@ -128,7 +128,8 @@ pub async fn rollback_failed_provider_create(
         RollbackPlan::ReplayDeployThenDelete => {
             let replay = {
                 let state = app.state::<AppState>();
-                super::agents::deploy_to_provider_reporting(&app, &state, &pubkey, None, None).await
+                super::agents::deploy_to_provider_reporting(&app, &state, &pubkey, None, None, None)
+                    .await
             };
             if let ReplayStep::Keep(reason) = replay_step(replay) {
                 return Ok(ProviderCreateRollback::Kept {

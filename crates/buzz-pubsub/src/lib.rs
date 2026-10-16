@@ -30,6 +30,8 @@ pub mod error;
 /// Redis-backed NIP-98 replay seen-set.
 pub mod nip98_replay;
 pub use nip98_replay::RedisNip98ReplayGuard;
+pub mod nip_fi_command_replay;
+pub use nip_fi_command_replay::RedisCommandReplayGuard;
 /// Online/offline presence tracking in Redis.
 pub mod presence;
 /// Redis PUBLISH for channel event fan-out.
@@ -57,8 +59,10 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use crate::cache_invalidation::{
     cache_invalidation_channel, CacheInvalidation, ScopedCacheInvalidation,
 };
+pub use crate::conn_control::NipFiDisconnect;
 use crate::conn_control::{conn_control_channel, ConnControl, ScopedConnControl};
 mod delivery;
+pub use crate::conn_control::{decode_nip_fi_disconnect, encode_nip_fi_disconnect};
 pub use crate::topic::{channel_key, global_key, EventTopic, EventTopicKey};
 
 type SecurityRequalification = Arc<dyn Fn() + Send + Sync>;
@@ -118,6 +122,8 @@ pub struct PubSubManager {
     conn_control_tx: broadcast::Sender<ScopedConnControl>,
     continuity: Arc<AtomicBool>,
     security_requalification: Arc<RwLock<Option<SecurityRequalification>>>,
+    nip_fi_disconnect_tx: broadcast::Sender<NipFiDisconnect>,
+    nip_fi_channels: Arc<RwLock<&'static [&'static str]>>,
 }
 
 impl PubSubManager {
@@ -137,6 +143,7 @@ impl PubSubManager {
         let (broadcast_tx, _) = broadcast::channel(4096);
         let (cache_invalidation_tx, _) = broadcast::channel(4096);
         let (conn_control_tx, _) = broadcast::channel(4096);
+        let (nip_fi_disconnect_tx, _) = broadcast::channel(4096);
         let (subscription_tx, subscription_rx) = mpsc::channel(4096);
 
         Ok(Self {
@@ -151,6 +158,8 @@ impl PubSubManager {
             conn_control_tx,
             continuity: Arc::new(AtomicBool::new(false)),
             security_requalification: Arc::new(RwLock::new(None)),
+            nip_fi_disconnect_tx,
+            nip_fi_channels: Arc::new(RwLock::new(&[])),
         })
     }
 
@@ -175,6 +184,8 @@ impl PubSubManager {
                 events: self.broadcast_tx.clone(),
                 cache: self.cache_invalidation_tx.clone(),
                 control: self.conn_control_tx.clone(),
+                nip_fi: self.nip_fi_disconnect_tx.clone(),
+                nip_fi_channels: self.nip_fi_channels.clone(),
                 continuity: self.continuity.clone(),
                 requalify: self.security_requalification.clone(),
             },
@@ -209,6 +220,28 @@ impl PubSubManager {
             .security_requalification
             .write()
             .unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(callback));
+    }
+
+    /// Starts the NIP-FI disconnect subscriber loop with automatic
+    /// reconnection.  Runs forever — spawn this in a background task.
+    ///
+    /// Subscribes to `channels`: every NIP-FI pod hears the enforce channel,
+    /// and a shadow pod also hears its own.  On receipt the pod merges the
+    /// deny entry; an enforce pod closes matching local sessions.
+    pub async fn run_nip_fi_disconnect_subscriber(
+        self: Arc<Self>,
+        channels: &'static [&'static str],
+    ) {
+        *self
+            .nip_fi_channels
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = channels;
+        conn_control::run_nip_fi_disconnect_subscriber(
+            self.redis_url.clone(),
+            self.nip_fi_disconnect_tx.clone(),
+            channels,
+        )
+        .await;
     }
 
     /// Returns a new broadcast receiver for locally-published channel events.
@@ -296,6 +329,11 @@ impl PubSubManager {
         self.conn_control_tx.subscribe()
     }
 
+    /// Returns a new broadcast receiver for cross-pod NIP-FI disconnect commands.
+    pub fn subscribe_nip_fi_disconnect(&self) -> broadcast::Receiver<NipFiDisconnect> {
+        self.nip_fi_disconnect_tx.subscribe()
+    }
+
     /// Publish a cache-key drop to all pods. Fire-and-forget at the call site:
     /// the local cache is already dropped synchronously; this carries the same
     /// drop cross-pod. A dropped publish is backstopped by the REQ denial-path
@@ -321,6 +359,21 @@ impl PubSubManager {
     ) -> Result<i64, PubSubError> {
         let payload = serde_json::to_string(command)?;
         transport::publish(&self.pool, &conn_control_channel(ctx), &payload).await
+    }
+
+    /// Publish a NIP-FI disconnect command to all pods listening on `channel`.
+    ///
+    /// Called after the local deny entry is inserted.  Remote pods receive this
+    /// and apply the same `max(until)` merge + all-community session close.
+    /// Fire-and-forget: the HTTP response does not wait on delivery.
+    pub async fn publish_nip_fi_disconnect(
+        &self,
+        channel: &str,
+        command: &NipFiDisconnect,
+    ) -> Result<i64, PubSubError> {
+        use crate::conn_control::encode_nip_fi_disconnect;
+        let payload = encode_nip_fi_disconnect(command)?;
+        transport::publish(&self.pool, channel, &payload).await
     }
 
     /// Publish an event to the Redis channel. Returns subscriber count.
@@ -364,6 +417,25 @@ impl PubSubManager {
         pubkey: &PublicKey,
     ) -> Result<(), PubSubError> {
         presence::clear_presence(&self.pool, ctx, pubkey).await
+    }
+
+    /// Set one status with the 180s TTL for each of `pubkeys`, in one round trip.
+    pub async fn set_presence_many(
+        &self,
+        ctx: &TenantContext,
+        pubkeys: &[PublicKey],
+        status: &str,
+    ) -> Result<(), PubSubError> {
+        presence::set_presence_many(&self.pool, ctx, pubkeys, status).await
+    }
+
+    /// Remove presence for each of `pubkeys`.
+    pub async fn clear_presence_many(
+        &self,
+        ctx: &TenantContext,
+        pubkeys: &[PublicKey],
+    ) -> Result<(), PubSubError> {
+        presence::clear_presence_many(&self.pool, ctx, pubkeys).await
     }
 
     /// Returns the current presence status for `pubkey`, or `None` if not set.

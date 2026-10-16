@@ -11,34 +11,39 @@
       "type": "string",
       "minLength": 1
     },
-    "publicDeliveryUrl": {
+    "gatewayOrigin": {
       "type": "string",
-      "pattern": "^https://[A-Za-z0-9.-]+/v1/deliveries/apns$"
+      "description": "Routing origin for the optional HTTPRoute; not passed to the gateway binary.",
+      "pattern": "^(https://[^/?#@:]+/?)?$"
     },
     "maxGrantLifetimeSeconds": {
       "type": "integer",
       "minimum": 1,
       "maximum": 31536000
     },
-    "profiles": {
+    "apnsKey": false,
+    "deploymentAnnotations": {
+      "type": "object",
+      "properties": {
+        "buzz.block.xyz/release-namespace": false,
+        "buzz.block.xyz/external-network-policy": false
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "httpRoute": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "dogfood"
-      ],
-      "properties": {
-        "dogfood": {
-          "$ref": "#/$defs/enabledProfile"
-        }
-      }
-    },
-    "apnsKey": false,
-    "httpRoute": {
-      "type": "object",
-      "required": [
         "enabled",
-        "parentRefs",
-        "hostnames"
+        "parentRefs"
       ],
       "properties": {
         "enabled": {
@@ -46,12 +51,6 @@
         },
         "parentRefs": {
           "type": "array"
-        },
-        "hostnames": {
-          "type": "array",
-          "contains": {
-            "const": "push.buzz.xyz"
-          }
         }
       },
       "allOf": [
@@ -80,17 +79,15 @@
       "type": "object",
       "required": [
         "enabled",
-        "apnsEgressCidrs",
         "postgresEgressCidrs",
         "dns"
       ],
       "properties": {
         "enabled": {
-          "const": true
+          "type": "boolean"
         },
         "apnsEgressCidrs": {
-          "type": "array",
-          "minItems": 1
+          "type": "array"
         },
         "postgresEgressCidrs": {
           "type": "array",
@@ -145,8 +142,51 @@
               }
             }
           ]
+        },
+        "externalPolicyName": {
+          "type": "string",
+          "description": "Name of the replacement runtime NetworkPolicy supplied by the parent chart. Required when the upstream policy is disabled.",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+          "maxLength": 253
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": false
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "required": [
+              "externalPolicyName"
+            ],
+            "properties": {
+              "externalPolicyName": {
+                "minLength": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "externalPolicyName": {
+                "maxLength": 0
+              },
+              "apnsEgressCidrs": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "apnsEgressCidrs"
+            ]
+          }
+        }
+      ]
     },
     "podMonitor": {
       "type": "object",
@@ -238,77 +278,61 @@
         },
         "resources": {
           "type": "object"
-        }
-      }
-    }
-  },
-  "$defs": {
-    "profileBase": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "appAttestAppId",
-        "apnsTopic",
-        "apnsEnvironment"
-      ],
-      "properties": {
-        "appAttestAppId": {
-          "type": "string",
-          "minLength": 1
         },
-        "apnsTopic": {
-          "type": "string",
-          "minLength": 1
-        },
-        "apnsEnvironment": {
-          "enum": [
-            "production",
-            "sandbox"
-          ]
-        },
-        "apnsCert": {
-          "$ref": "#/$defs/apnsCert"
-        },
-        "apnsAuth": {
-          "enum": [
-            "certificate",
-            "token"
-          ]
-        },
-        "apnsToken": {
-          "$ref": "#/$defs/apnsToken"
-        }
-      }
-    },
-    "enabledProfile": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/profileBase"
-        },
-        {
-          "if": {
-            "properties": {
-              "apnsAuth": {
-                "const": "token"
-              }
-            },
-            "required": [
-              "apnsAuth"
-            ]
-          },
-          "then": {
-            "required": [
-              "apnsToken"
-            ]
-          },
-          "else": {
-            "required": [
-              "apnsCert"
-            ]
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
           }
         }
-      ]
+      }
     },
+    "podLabels": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "enum": [
+            "app.kubernetes.io/name",
+            "app.kubernetes.io/instance",
+            "app.kubernetes.io/component"
+          ]
+        },
+        "maxLength": 317,
+        "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$",
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "pattern": "^[^/]+$"
+              },
+              {
+                "pattern": "^[^/]{1,253}/"
+              }
+            ]
+          }
+        ]
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 63,
+        "pattern": "^([A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$"
+      }
+    },
+    "serviceAccountName": {
+      "type": "string",
+      "maxLength": 253,
+      "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$"
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 60
+    },
+    "application": {
+      "$ref": "#/$defs/application"
+    },
+    "profiles": false
+  },
+  "$defs": {
     "apnsCert": {
       "type": "object",
       "additionalProperties": false,
@@ -327,31 +351,32 @@
         }
       }
     },
-    "apnsToken": {
+    "application": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "keyId",
-        "teamId",
-        "secretName",
-        "secretKey"
+        "appAttestAppId",
+        "apnsTopic",
+        "apnsEnvironment",
+        "apnsCert"
       ],
       "properties": {
-        "keyId": {
-          "type": "string",
-          "pattern": "^([A-Z0-9]{10})?$"
-        },
-        "teamId": {
-          "type": "string",
-          "pattern": "^([A-Z0-9]{10})?$"
-        },
-        "secretName": {
+        "appAttestAppId": {
           "type": "string",
           "minLength": 1
         },
-        "secretKey": {
+        "apnsTopic": {
           "type": "string",
           "minLength": 1
+        },
+        "apnsEnvironment": {
+          "enum": [
+            "production",
+            "sandbox"
+          ]
+        },
+        "apnsCert": {
+          "$ref": "#/$defs/apnsCert"
         }
       }
     }
@@ -359,16 +384,16 @@
   "required": [
     "replicaCount",
     "existingSecret",
-    "publicDeliveryUrl",
     "maxGrantLifetimeSeconds",
-    "profiles",
+    "application",
     "httpRoute",
     "image",
-    "migration"
+    "migration",
+    "terminationGracePeriodSeconds"
   ],
   "allOf": [
     {
-      "$comment": "Scraping opt-in is coupled: a PodMonitor and its scoped 8081 ingress must be enabled together, so we never render a scraper that cannot reach the port nor an ingress hole with no scraper.",
+      "$comment": "A PodMonitor requires scoped 8081 ingress when this chart owns the runtime policy. In external-policy mode the named parent policy owns scrape access.",
       "if": {
         "properties": {
           "podMonitor": {
@@ -380,10 +405,21 @@
             "required": [
               "enabled"
             ]
+          },
+          "networkPolicy": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
           }
         },
         "required": [
-          "podMonitor"
+          "podMonitor",
+          "networkPolicy"
         ]
       },
       "then": {
@@ -408,49 +444,6 @@
         },
         "required": [
           "networkPolicy"
-        ]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "networkPolicy": {
-            "properties": {
-              "monitoring": {
-                "properties": {
-                  "enabled": {
-                    "const": true
-                  }
-                },
-                "required": [
-                  "enabled"
-                ]
-              }
-            },
-            "required": [
-              "monitoring"
-            ]
-          }
-        },
-        "required": [
-          "networkPolicy"
-        ]
-      },
-      "then": {
-        "properties": {
-          "podMonitor": {
-            "properties": {
-              "enabled": {
-                "const": true
-              }
-            },
-            "required": [
-              "enabled"
-            ]
-          }
-        },
-        "required": [
-          "podMonitor"
         ]
       }
     }

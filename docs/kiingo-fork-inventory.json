@@ -3,6 +3,223 @@
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
+  "migrationLedger": {
+    "policy": "sqlx keys migrations by filename version and SHA-384 of the bytes. Upstream migrations at or below identityThroughVersion keep their paths. Every later upstream migration is renamed byte for byte to the next free fork version, in apply order (next-free-number rule), so production and fresh databases apply the same sequence. Fork-owned versions applied in production are never renumbered or edited. scripts/check-kiingo-migration-ledger.mjs enforces this; ignore_missing stays false.",
+    "identityThroughVersion": 40,
+    "lastProductionVersion": 45,
+    "entries": [
+      {
+        "version": 41,
+        "forkPath": "migrations/0041_managed_publication_fences.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "df79c95f3ad3b3c1f4190ae3ae1bfe50ed8178bb38f5f3c5d35fa20c85df2771d8380aae2cea629b79c6d7466ef2c28b"
+      },
+      {
+        "version": 42,
+        "forkPath": "migrations/0042_agent_status_thread_counters.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "0a3b105e82542f8942fbee446672829a11049dffa864ba4581613dfb6f2e0291beddd0be4ec563833338deb89401d975"
+      },
+      {
+        "version": 43,
+        "forkPath": "migrations/0043_user_stop_events.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "417047e6d862c0df248624f652ea04c577f1c5608e1bf5a1972fc7214e99497893c0e0fb3c9892cb76806adccb3724a2"
+      },
+      {
+        "version": 44,
+        "forkPath": "migrations/0044_channel_event_sequence.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "8ab6ad125a952895606de9e8b38f9dbc4ed74300d9093f2d5a7fe5fb43f8bc3dcf5114a3fc9c49a5029acd2c30e6da30"
+      },
+      {
+        "version": 45,
+        "forkPath": "migrations/0045_push_guest_notification_kinds.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "3ddca2a5c7cabd42520816f15718971c56e930a0d0e8b5f0b98e850c09a97ae8ab97f77fb5a096964d34c37eeddb7ae1"
+      },
+      {
+        "version": 46,
+        "forkPath": "migrations/0046_nip_fi_identity_foundation.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0041_nip_fi_identity_foundation.sql",
+        "sha384": "ad6359d4b86fc85d028f8921cbd2afc20c79acace320cd0eb7a79019b5e0ee44d0fab1e60a710527cd391126f43a2d6f"
+      },
+      {
+        "version": 47,
+        "forkPath": "migrations/0047_nip_fi_authorization_foundation.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0042_nip_fi_authorization_foundation.sql",
+        "sha384": "702326df04517e53c7fbf5a7720f6b96681dd3f664ed7c493a77d3c2fc57b672e6ebabf377fcd9ac7eacf6285663cfb9"
+      },
+      {
+        "version": 48,
+        "forkPath": "migrations/0048_push_gateway_dogfood_profile.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0043_push_gateway_dogfood_profile.sql",
+        "sha384": "ed55cbda5e3de7e5306b84481399e62b01ff88798f1b708d2d1614d4d9296f5babec17082339944f3eb7b9d8e26e5e7c"
+      },
+      {
+        "version": 49,
+        "forkPath": "migrations/0049_drop_nip_fi_ledger.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0044_drop_nip_fi_ledger.sql",
+        "sha384": "a852862896862d0cf3ecd4f62c9af4036ceec2ca78ff4f6a9054cf601767ad37c5a03ac2b04d56911e9d4611d4070ec7"
+      },
+      {
+        "version": 50,
+        "forkPath": "migrations/0050_retain_push_revocation_tombstones.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0045_retain_push_revocation_tombstones.sql",
+        "sha384": "7c8c13d6e6e7dec23edc20d489f5efcf3e41988cda0034bdd168f09099237077db609706c46e24550a0132d5abf54f39"
+      },
+      {
+        "version": 51,
+        "forkPath": "migrations/0051_storage_accounting_snapshots.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0046_storage_accounting_snapshots.sql",
+        "sha384": "e02ae303449874411dcc3024c3bd9fc727dc3336804a8e2b17785a6016b1c3b73d40792f4711ec50b90cc13f6470f74c"
+      },
+      {
+        "version": 52,
+        "forkPath": "migrations/0052_relay_admin_action_target.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0047_relay_admin_action_target.sql",
+        "sha384": "1e676435f20133640cf443e8d73582b081cec8a33473df029f8da1d2e5f228f64e23fe92ce8282282065a46c8eafade2"
+      },
+      {
+        "version": 53,
+        "forkPath": "migrations/0053_audit_hash_version.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0048_audit_hash_version.sql",
+        "sha384": "2b040688d14216cd7d269f0b086b2e157d8c37a991df89f19aaeb952771d010a598789fdcf8d25288b01f91b8490f1bb"
+      },
+      {
+        "version": 54,
+        "forkPath": "migrations/0054_thread_window_index.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0049_thread_window_index.sql",
+        "sha384": "35b707ad2a8ad28b3eb65f91089b9d91925c48a17eec17aa7bc1077eeb6832d296b3aaadcb2fb61fac01eac03c7ac4b2"
+      },
+      {
+        "version": 55,
+        "forkPath": "migrations/0055_operator_listener_mentions.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0050_operator_listener_mentions.sql",
+        "sha384": "08c1b91010b969dbb885cb9c7ae06ffafc218aa8539a3263aad40e4b3b5a8c45f3ba3a3f5a81185bf5a66e2c379c8487"
+      },
+      {
+        "version": 56,
+        "forkPath": "migrations/0056_owner_community_deletion_admission.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0051_owner_community_deletion_admission.sql",
+        "sha384": "fe6d3068a6512587bfc651ca0a2ae30ff8bb82c4f90aedd7dc8c125f842d3b8b89804f949e77229fcc6b3857bba376f6"
+      },
+      {
+        "version": 57,
+        "forkPath": "migrations/0057_channel_artifacts.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0052_channel_artifacts.sql",
+        "sha384": "dcf66d35143fbd835f2ee7cc57232316524c4bc27bcf9f9d93b94c4588016b261f565ab9876c4515219456c6613f8bce"
+      },
+      {
+        "version": 58,
+        "forkPath": "migrations/0058_owner_deletion_auto_approval.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0053_owner_deletion_auto_approval.sql",
+        "sha384": "9a1914fcb2df1622be9c107af4639d109db3fdf7699a37fd08d3fea803faac2dafb16b359304c8162a7fec17a88d83c6"
+      },
+      {
+        "version": 59,
+        "forkPath": "migrations/0059_owner_deletion_quota_reservation.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0054_owner_deletion_quota_reservation.sql",
+        "sha384": "ef0f783e356c61a904eb31bf51bb77fadfb27148f8dfc5166c8edc2090e854e8ff052fb0a765da3a0f8436358349f7d6"
+      },
+      {
+        "version": 60,
+        "forkPath": "migrations/0060_relay_admin_direct_actions.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0055_relay_admin_direct_actions.sql",
+        "sha384": "4a6dff9da91abd69218d07c30c2ed32a2d52d905083a6694644295422061737ae9341cfaa76101a05819bd022c2ae4f3"
+      },
+      {
+        "version": 61,
+        "forkPath": "migrations/0061_personal_read_state.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0056_personal_read_state.sql",
+        "sha384": "f9b6824b395e1a120b551f6dbddfa24923f3a42ff4860f403687cb0d34eb93664f9d778ff28334eb6602b5cd2547b522"
+      },
+      {
+        "version": 62,
+        "forkPath": "migrations/0062_personal_read_started_at.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0057_personal_read_started_at.sql",
+        "sha384": "9d5038ffc8e9cbc244164bd0b614f5050c6f6dcd111fdd35357038c751e8213d44d959fb168a8aecc6854f982800aa13"
+      },
+      {
+        "version": 63,
+        "forkPath": "migrations/0063_personal_read_through_message.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0058_personal_read_through_message.sql",
+        "sha384": "32b6817d8e7731022b7874426046b6f3a62051557bb0354a2615cf6d01c7316471cd418a194fda8b6f4846634397cf6e"
+      },
+      {
+        "version": 64,
+        "forkPath": "migrations/0064_push_rollback_gate.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0059_push_rollback_gate.sql",
+        "sha384": "ce3afd86480ded9acf88116b6cc7d22f16156cc7964fb74cf338b7c206b1e0e22455a24a9f10a5b9564cb15d61c4354d"
+      },
+      {
+        "version": 65,
+        "forkPath": "migrations/0065_push_single_application.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0060_push_single_application.sql",
+        "sha384": "10149f8eeda1289304c336a907ef8892fa47a729dda95923e442643ecd3c317c7e556f600b8f5271a0289e60012f783d"
+      },
+      {
+        "version": 66,
+        "forkPath": "migrations/0066_channel_labels.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0061_channel_labels.sql",
+        "sha384": "d584af4ed17070c20c32af2522b4a3367ac9d63058f2e7b516cd1c769b051b897f0a5d3a43fa70165aafe5d494824fe9"
+      },
+      {
+        "version": 67,
+        "forkPath": "migrations/0067_system_channel_type.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0062_system_channel_type.sql",
+        "sha384": "f154368d05b20959c1a276115c3bfe43517afa194192604fbaca4e97c58613dea1e463e33bc0b0f2be29551572e35995"
+      },
+      {
+        "version": 68,
+        "forkPath": "migrations/0068_retire_push_match_trigger.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0063_retire_push_match_trigger.sql",
+        "sha384": "a4156e039f95b5bcef7bd87d1bdf764a87eb272072dfe59f90be5a62b64eaf5c51cc5c14c14a51bb347e0cc407436ed7"
+      },
+      {
+        "version": 69,
+        "forkPath": "migrations/0069_profile_name_fields.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0064_profile_name_fields.sql",
+        "sha384": "5a618efc012b8fcac69d892d90a4106f9cbbfc2dd6253f2dae17d21ffb4f5bc129ee767ba0b1e5f30c8aa116b8d56078"
+      },
+      {
+        "version": 70,
+        "forkPath": "migrations/0070_retire_channel_ttl_trigger.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0065_retire_channel_ttl_trigger.sql",
+        "sha384": "2440f69b41932348984cc9295fb3a3b234aa9c43b69a289658f6466f711984c63b5bfaa797f72dfc5a191ea0c6e836a6"
+      }
+    ]
+  },
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 153,
     "modifiedUpstreamFiles": 262,
@@ -868,7 +1085,9 @@
       "purpose": "Discover registered Visual C++ installations instead of assuming a Visual Studio release-year directory, while preserving installed MSVC, default toolset, Windows SDK and CMake identity in the native desktop cache fingerprint.",
       "upstreamStatus": "Generic Windows build-cache portability fix; candidate for upstream.",
       "removalCondition": "Remove when block/buzz discovers registered Visual C++ installations for its native desktop cache identity.",
-      "paths": ["scripts/desktop-native-toolchain-id.sh"]
+      "paths": [
+        "scripts/desktop-native-toolchain-id.sh"
+      ]
     },
     {
       "id": "kiingo-spot-only-static-ci",

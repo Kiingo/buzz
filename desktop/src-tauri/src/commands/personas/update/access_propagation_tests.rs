@@ -7,10 +7,13 @@ const OTHER: &str = "22222222222222222222222222222222222222222222222222222222222
 
 fn definition(respond_to: Option<&str>, allowlist: &[&str]) -> AgentDefinition {
     AgentDefinition {
+        session_policy: Default::default(),
+        description: None,
         id: "persona-1".to_string(),
         display_name: "Atlas".to_string(),
         avatar_url: None,
         system_prompt: String::new(),
+        acp_command: None,
         runtime: None,
         model: None,
         provider: None,

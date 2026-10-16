@@ -6,6 +6,7 @@ import {
   isMembershipSystemEvent,
 } from "./membershipSystemEvents.ts";
 import { revalidateCachedChannelRoster } from "./rosterFreshness.ts";
+import { shouldReadChannelMembersFromWriter } from "@/shared/api/channelMembershipWrites";
 
 const CHANNEL_ID = "428097f7-9b83-4aa6-ac36-9daa05562af4";
 
@@ -73,13 +74,13 @@ describe("isMembershipSystemEvent", () => {
 });
 
 describe("invalidateChannelMembershipQueries", () => {
-  it("invalidates the roster and channel detail for the event's channel", () => {
+  it("notes the roster change and invalidates the channel detail", () => {
     const client = recordingClient(undefined);
     invalidateChannelMembershipQueries(client, CHANNEL_ID);
-    assert.deepEqual(client.invalidated, [
-      ["channels", CHANNEL_ID, "members"],
-      ["channels", CHANNEL_ID, "detail"],
-    ]);
+    // The roster refetch rides noteChannelMembershipChange (writer reads plus
+    // the app-wide roster listener), not a direct invalidation here.
+    assert.equal(shouldReadChannelMembersFromWriter(CHANNEL_ID), true);
+    assert.deepEqual(client.invalidated, [["channels", CHANNEL_ID, "detail"]]);
   });
 });
 

@@ -147,7 +147,7 @@ class _SourcesToSharePicker extends StatelessWidget {
             title: Row(
               children: [
                 Icon(
-                  LucideIcons.lock,
+                  BuzzIcons.lock,
                   size: 14,
                   color: context.appColors.warning,
                 ),

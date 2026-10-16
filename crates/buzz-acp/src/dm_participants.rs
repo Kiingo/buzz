@@ -101,6 +101,75 @@ impl DmParticipantResolver {
     }
 }
 
+/// The opt-in resolver for `BUZZ_ACP_ALLOWLIST_IN_DMS`. Only meaningful in
+/// allowlist mode; `None` keeps the default DM hardening byte-for-byte.
+pub(crate) fn resolver_for(
+    config: &crate::config::Config,
+    rest_client: &RestClient,
+) -> Option<DmParticipantResolver> {
+    (config.allowlist_in_dms && config.respond_to == crate::config::RespondTo::Allowlist)
+        .then(|| DmParticipantResolver::new(rest_client.clone()))
+}
+
+/// Opt-in context for admitting allowlisted authors inside DMs
+/// (`BUZZ_ACP_ALLOWLIST_IN_DMS`).
+pub(crate) struct DmAllowlistGate<'a> {
+    /// The DM channel the event arrived in.
+    pub(crate) channel_id: Uuid,
+    /// This agent's own pubkey (lowercase hex); always a trusted participant.
+    pub(crate) agent_pubkey: &'a str,
+    /// Cached kind:39002 roster resolver.
+    pub(crate) participants: &'a DmParticipantResolver,
+}
+
+impl DmAllowlistGate<'_> {
+    /// Whether every participant of this DM is trusted: this agent, the
+    /// owner / a verified sibling, or allowlisted. Fails closed on an
+    /// unresolved, oversized, or inconsistent (author missing) roster.
+    pub(crate) async fn all_participants_trusted(
+        &self,
+        author: &str,
+        is_listed: &impl Fn(&str) -> bool,
+        owner_cache: &crate::OwnerCache,
+        rest_client: &RestClient,
+    ) -> bool {
+        let Some(members) = self
+            .participants
+            .participants(self.channel_id, author)
+            .await
+        else {
+            tracing::warn!(
+                channel_id = %self.channel_id,
+                "DM participants unresolved — denying allowlisted author (fail closed)"
+            );
+            return false;
+        };
+        if members.len() > MAX_DM_PARTICIPANTS || !members.contains(author) {
+            tracing::warn!(
+                channel_id = %self.channel_id,
+                participants = members.len(),
+                "DM roster oversized or missing author — denying allowlisted author"
+            );
+            return false;
+        }
+        for member in &members {
+            if member == self.agent_pubkey || is_listed(member) {
+                continue;
+            }
+            if crate::is_owner_or_sibling(member, owner_cache, rest_client).await {
+                continue;
+            }
+            tracing::debug!(
+                channel_id = %self.channel_id,
+                participant = %member,
+                "DM contains a non-allowlisted participant — denying allowlisted author"
+            );
+            return false;
+        }
+        true
+    }
+}
+
 /// One bounded REST query for the channel's kind:39002 roster.
 async fn fetch_members(channel_id: Uuid, rest: &RestClient) -> Option<HashSet<String>> {
     use nostr::{Alphabet, SingleLetterTag};

@@ -249,7 +249,13 @@ async fn scope_fence_serializes_stop_publication_replay_and_transaction_rollback
     let cancel = fixture.cancellation();
 
     // Actual event insertion and its journal share the caller-owned transaction.
-    let mut tx = pool.begin().await.unwrap();
+    let mut tx = crate::begin_community_event_write_transaction(
+        &pool,
+        community,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await
+    .unwrap();
     let meta = crate::event::ThreadMetadataParams {
         event_id: event.id.as_bytes(),
         event_created_at: DateTime::from_timestamp(event.created_at.as_secs() as i64, 0).unwrap(),
@@ -262,16 +268,10 @@ async fn scope_fence_serializes_stop_publication_replay_and_transaction_rollback
         broadcast: false,
     };
     assert!(
-        crate::event::insert_event_with_thread_metadata_tx(
-            &mut tx,
-            community,
-            &event,
-            channel,
-            Some(meta)
-        )
-        .await
-        .unwrap()
-        .1
+        crate::event::insert_event_with_thread_metadata_tx(&mut tx, &event, channel, Some(meta))
+            .await
+            .unwrap()
+            .1
     );
     tx.rollback().await.unwrap();
     for table in [
@@ -289,31 +289,38 @@ async fn scope_fence_serializes_stop_publication_replay_and_transaction_rollback
     }
 
     // Stop gets the lock first; an in-flight publication really waits for it.
-    let mut stop_tx = pool.begin().await.unwrap();
+    let mut stop_tx = crate::begin_community_event_write_transaction(
+        &pool,
+        community,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await
+    .unwrap();
     let stop_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(&mut *stop_tx)
+        .fetch_one(stop_tx.conn())
         .await
         .unwrap();
     assert!(
-        !crate::event::insert_event_in_transaction(&mut stop_tx, community, &cancel, channel)
+        !crate::event::insert_event_in_transaction(&mut stop_tx, &cancel, channel)
             .await
             .unwrap()
             .1
     );
-    let mut output_tx = pool.begin().await.unwrap();
+    let mut output_tx = crate::begin_community_event_write_transaction(
+        &pool,
+        community,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await
+    .unwrap();
     let output_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(&mut *output_tx)
+        .fetch_one(output_tx.conn())
         .await
         .unwrap();
     let output_event = event.clone();
     let output = tokio::spawn(async move {
-        let result = crate::event::insert_event_in_transaction(
-            &mut output_tx,
-            community,
-            &output_event,
-            channel,
-        )
-        .await;
+        let result =
+            crate::event::insert_event_in_transaction(&mut output_tx, &output_event, channel).await;
         output_tx.rollback().await.unwrap();
         result
     });
@@ -353,27 +360,38 @@ async fn scope_fence_serializes_stop_publication_replay_and_transaction_rollback
     };
     let event = fixture.publication(fixture.claims.clone(), "accepted before Stop");
     let cancel = fixture.cancellation();
-    let mut output_tx = pool.begin().await.unwrap();
+    let mut output_tx = crate::begin_community_event_write_transaction(
+        &pool,
+        community,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await
+    .unwrap();
     let output_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(&mut *output_tx)
+        .fetch_one(output_tx.conn())
         .await
         .unwrap();
     assert!(
-        crate::event::insert_event_in_transaction(&mut output_tx, community, &event, channel)
+        crate::event::insert_event_in_transaction(&mut output_tx, &event, channel)
             .await
             .unwrap()
             .1
     );
-    let mut stop_tx = pool.begin().await.unwrap();
+    let mut stop_tx = crate::begin_community_event_write_transaction(
+        &pool,
+        community,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await
+    .unwrap();
     let stop_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(&mut *stop_tx)
+        .fetch_one(stop_tx.conn())
         .await
         .unwrap();
     let stop = tokio::spawn(async move {
-        let result =
-            crate::event::insert_event_in_transaction(&mut stop_tx, community, &cancel, channel)
-                .await
-                .unwrap();
+        let result = crate::event::insert_event_in_transaction(&mut stop_tx, &cancel, channel)
+            .await
+            .unwrap();
         stop_tx.commit().await.unwrap();
         result
     });

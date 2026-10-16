@@ -339,7 +339,7 @@ class _ApprovalReview extends HookConsumerWidget {
                   );
                 }
               },
-              icon: const Icon(LucideIcons.externalLink, size: 14),
+              icon: const Icon(BuzzIcons.externalLink, size: 14),
               label: Text('Open in browser', style: muted),
             ),
           ),

@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../../shared/crypto/nip_oa.dart';
 import '../../shared/relay/relay.dart';
+import '../../shared/utils/string_utils.dart';
 
 /// A relay agent parsed from its kind:10100 agent-profile event.
 ///
@@ -29,20 +30,19 @@ class AgentDirectoryEntry {
 
   factory AgentDirectoryEntry.fromEvent(NostrEvent event) {
     final content = _tryDecodeJsonMap(event.content);
+    String? text(String field) =>
+        content?[field] is String ? content![field] as String : null;
+    List<String> strings(String field) => content?[field] is List
+        ? (content![field] as List).whereType<String>().toList()
+        : const [];
     return AgentDirectoryEntry(
       pubkey: event.pubkey.toLowerCase(),
-      displayName:
-          (content?['display_name'] as String?) ??
-          (content?['name'] as String?),
-      respondTo: content?['respond_to'] as String?,
-      respondToAllowlist: [
-        for (final value in (content?['respond_to_allowlist'] as List?) ?? [])
-          if (value is String) value.toLowerCase(),
-      ],
-      channelIds: [
-        for (final value in (content?['channel_ids'] as List?) ?? [])
-          if (value is String) value,
-      ],
+      displayName: text('display_name') ?? text('name'),
+      respondTo: text('respond_to'),
+      respondToAllowlist: strings(
+        'respond_to_allowlist',
+      ).map((value) => value.toLowerCase()).toList(),
+      channelIds: strings('channel_ids'),
     );
   }
 }
@@ -158,8 +158,7 @@ Map<String, String> mentionNamesWithDirectoryLabels({
   return names;
 }
 
-String _agentFallbackLabel(String pubkey) =>
-    pubkey.length >= 8 ? pubkey.substring(0, 8) : pubkey;
+String _agentFallbackLabel(String pubkey) => shortPubkey(pubkey);
 
 /// Readiness and refresh state for a channel's live membership subscription.
 class ChannelMembershipUpdateState {

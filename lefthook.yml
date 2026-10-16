@@ -13,12 +13,13 @@
 # tree, not the pushed commit — the always-on `push-head-scope` lane warns when
 # they diverge and CI remains the authoritative gate for that ref.
 # Deliberate deviations:
-# - The `.github/workflows/ci.yml` path CI adds to its `rust`/`mobile` filters
-#   is omitted; a CI-workflow-only edit doesn't need a local test run.
-# - `desktop-check`/`desktop-typecheck`/`desktop-test` don't trigger on `rust`
-#   changes, though CI's Desktop Core job does. Those commands are pure TS
-#   (biome + tsc + node:test) with no Rust dependency, so the extra trigger
-#   would be spurious locally.
+# - The `.github/workflows/ci.yml` path CI adds to its `rust`/`desktop`/`mobile`
+#   filters, and `scripts/ci-apt-retry.sh` in `rust`/`desktop`, are omitted;
+#   a CI-plumbing-only edit doesn't need a local test run.
+# - `desktop-test` doesn't trigger on `crates/**` changes, though CI's Desktop
+#   JS job does: a few node:test cases read relay/DB crate sources to pin shared
+#   constants. Running the full desktop suite on every crate push would be
+#   expensive locally, so CI is the authoritative check for that coupling.
 # - The repository-wide `file-size-check` is deliberately unfiltered. Its own
 #   merge-base diff is the path filter; duplicating its governed roots here is
 #   the coverage drift this gate is intended to prevent.
@@ -75,6 +76,11 @@ commit-msg:
     signoff:
       run: 'git interpret-trailers --if-exists doNothing --trailer "Signed-off-by: $(git var GIT_COMMITTER_IDENT | sed ''s/ [0-9]* [+-][0-9]*$//'')" --in-place {1}'
 
+# Lanes below that run test suites or builds go through
+# scripts/without-git-env.sh, which strips git's repository-local variables
+# (per `git rev-parse --local-env-vars`) while preserving transport/credential
+# settings. The branch-skew and push-head-scope guards run no test fixtures
+# and need the caller's transport env, so they run unwrapped.
 pre-push:
   # Serialize source refresh and compilation rather than contend on Git/Cargo.
   parallel: false
@@ -91,26 +97,26 @@ pre-push:
     file-size-check:
       # The ratchet computes its own merge-base diff, so path filtering here
       # would only duplicate policy and create another place for coverage drift.
-      run: scripts/kiingo-static-hook.sh file-size
+      run: ./scripts/without-git-env.sh scripts/kiingo-static-hook.sh file-size
     rust-checks:
       files: scripts/kiingo-hook-files.sh
       glob: ["crates/**", "migrations/**", "schema/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "deny.toml", "scripts/run-tests.sh", "Justfile"]
-      run: scripts/kiingo-static-hook.sh rust
+      run: ./scripts/without-git-env.sh scripts/kiingo-static-hook.sh rust
     desktop-source:
       files: scripts/kiingo-hook-files.sh
-      glob: ["desktop/**", "pnpm-lock.yaml"]
+      glob: ["desktop/**", "pnpm-lock.yaml", "Justfile"]
       exclude: ["desktop/src-tauri/**"]
-      run: scripts/kiingo-static-hook.sh desktop
+      run: ./scripts/without-git-env.sh scripts/kiingo-static-hook.sh desktop
     desktop-tauri-checks:
-      # Keep local lint parity with Desktop Core CI for every path that can
+      # Keep local lint parity with Desktop Tauri CI for every path that can
       # affect the Tauri crate or its path dependencies. Run clippy and tests
       # serially so parallel pre-push hooks do not contend for Cargo's lock.
       files: scripts/kiingo-hook-files.sh
       glob: ["desktop/src-tauri/**", "crates/**", "migrations/**", "schema/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "deny.toml", "scripts/run-tests.sh", "Justfile"]
-      run: scripts/kiingo-static-hook.sh tauri
+      run: ./scripts/without-git-env.sh scripts/kiingo-static-hook.sh tauri
     mobile-checks:
       # Run analysis and tests serially so parallel pre-push hooks do not
       # contend for shared Flutter state (.dart_tool, shader bundle).
       files: scripts/kiingo-hook-files.sh
       glob: ["mobile/**"]
-      run: scripts/kiingo-static-hook.sh mobile
+      run: ./scripts/without-git-env.sh scripts/kiingo-static-hook.sh mobile

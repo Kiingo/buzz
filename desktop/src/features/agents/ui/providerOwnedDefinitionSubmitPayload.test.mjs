@@ -6,8 +6,10 @@ import { buildAgentDefinitionSubmitPayload } from "./providerOwnedDefinitionSubm
 test("provider-owned definition strips desktop execution state", () => {
   assert.deepEqual(
     buildAgentDefinitionSubmitPayload({
+      acpCommand: "buzz-janet-acp",
       avatarUrl: " https://example.com/agent.png ",
       behavior: { respondTo: "owner-only" },
+      description: "Public blurb",
       displayName: " Remote Agent ",
       envVars: { LOCAL_SECRET: "fixture" },
       execution: {
@@ -27,8 +29,10 @@ test("provider-owned definition strips desktop execution state", () => {
       systemPrompt: "Preserve this prompt.",
     }),
     {
+      acpCommand: undefined,
       avatarUrl: "https://example.com/agent.png",
       behavior: { respondTo: "owner-only" },
+      description: "Public blurb",
       displayName: "Remote Agent",
       envVars: {},
       model: undefined,

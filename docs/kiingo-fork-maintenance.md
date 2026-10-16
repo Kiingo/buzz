@@ -106,6 +106,34 @@ focused tests. The boundary guard rejects missing hook/implementation paths and
 builds its forbidden Kiingo-content scanner from the inventory's explicit
 pattern list.
 
+## Migration ledger
+
+sqlx keys relay migrations by the integer filename prefix and checksums the
+file bytes (SHA-384); duplicate versions compile, and production then fails at
+startup with `VersionMismatch`. A plain `git merge` of upstream migrations that
+reuse a fork-owned number produces exactly that, with no textual conflict.
+
+- Fork-owned migrations that are applied in production (`0041`-`0045` today)
+  are never renumbered or edited.
+- Upstream migrations above `migrationLedger.identityThroughVersion` are
+  renamed byte for byte (`git mv`, never edited, comments included) to the next
+  free fork versions in apply order. The first sync mapped upstream
+  `0041`-`0065` to `0046`-`0070`.
+- New fork migrations take the next free number (append in ledger order). The
+  next upstream batch is then shifted past them, so production and fresh
+  databases always apply the same sequence. The per-file ledger, not a fixed
+  offset, is the source of truth.
+- Record every file in `migrationLedger.entries` (version, fork path, upstream
+  path for upstream files, SHA-384) and raise `lastProductionVersion` once a
+  deploy applies new versions. Shift upstream test literals that name upstream
+  versions (`run_to`, `migrations[N]`, `include_str!` paths) by the same mapping.
+- `scripts/check-kiingo-migration-ledger.mjs`, run by the boundary guard, fails
+  on duplicate versions, unmapped or unversioned files, a mapped file that is not
+  byte-identical to the frozen upstream snapshot, recorded-checksum drift, gaps
+  or order changes, and `include_str!` paths that no longer exist. It needs no
+  database. Keep `ignore_missing` off: it is what makes an old image fail closed
+  against a newer schema.
+
 ## License and patch boundaries
 
 - Preserve the root `LICENSE`, copyright statements, dependency notices,

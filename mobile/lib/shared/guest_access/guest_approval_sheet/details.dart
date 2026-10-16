@@ -77,19 +77,19 @@ class _RequesterLine extends StatelessWidget {
           const _Badge(
             label: 'TEST',
             tone: _BadgeTone.danger,
-            icon: LucideIcons.flaskConical,
+            icon: GuestAccessIcons.flask,
           ),
         if (kind != null) _Badge(label: kind, tone: _BadgeTone.info),
         requester.linked
             ? const _Badge(
                 label: 'Linked account',
                 tone: _BadgeTone.success,
-                icon: LucideIcons.link2,
+                icon: BuzzIcons.link2,
               )
             : const _Badge(
                 label: 'Not linked',
                 tone: _BadgeTone.warning,
-                icon: LucideIcons.link2Off,
+                icon: GuestAccessIcons.linkOff,
               ),
         if (details.isNotEmpty)
           Text(
@@ -277,7 +277,7 @@ class _ApprovalDetails extends StatelessWidget {
                         label:
                             '${dataSourceLabel(source)} · only you can see this',
                         tone: _BadgeTone.warning,
-                        icon: LucideIcons.lock,
+                        icon: BuzzIcons.lock,
                       )
                     : _Badge(
                         label: dataSourceLabel(source),

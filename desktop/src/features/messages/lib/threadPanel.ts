@@ -3,6 +3,7 @@ import type { ChannelWindowThreadSummary } from "@/features/messages/lib/channel
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { parseAgentStatus } from "@/features/messages/lib/agentStatus";
 import { isBroadcastReply } from "@/features/messages/lib/threading";
+import { truncateNpub } from "@/shared/lib/pubkey";
 import {
   KIND_AGENT_STATUS,
   KIND_HUDDLE_STARTED,
@@ -21,6 +22,7 @@ export type TimelineThreadSummaryParticipant = {
   id: string;
   author: string;
   avatarUrl: string | null;
+  isAgent?: boolean;
 };
 
 export type TimelineThreadSummary = {
@@ -163,6 +165,9 @@ export function buildDescendantStatsByMessageId(
       id: participantKey,
       author: message.author,
       avatarUrl: message.avatarUrl ?? null,
+      ...(message.isAgent === true || message.role === "bot"
+        ? { isAgent: true }
+        : {}),
     };
 
     let ancestorId = message.parentId ?? null;
@@ -244,6 +249,9 @@ function participantFromMessage(
     id: message.pubkey ?? message.id,
     author: message.author,
     avatarUrl: message.avatarUrl ?? null,
+    ...(message.isAgent === true || message.role === "bot"
+      ? { isAgent: true }
+      : {}),
   };
 }
 
@@ -413,8 +421,17 @@ function buildRelayThreadSummary(
       .reverse()
       .map((pubkey) => ({
         id: pubkey,
-        author: profiles?.[pubkey.toLowerCase()]?.displayName ?? pubkey,
+        // Unnamed participants fall back to the compact npub — the same label
+        // the client-assembled path derives via `resolveUserLabel` — so a
+        // cold/relay-only facepile never surfaces raw hex. This `author` is
+        // what `MessageThreadSummaryRow` binds to `UserAvatar`'s
+        // `displayName` (the visible/accessible avatar label).
+        author:
+          profiles?.[pubkey.toLowerCase()]?.displayName ?? truncateNpub(pubkey),
         avatarUrl: profiles?.[pubkey.toLowerCase()]?.avatarUrl ?? null,
+        ...(profiles?.[pubkey.toLowerCase()]?.isAgent === true
+          ? { isAgent: true }
+          : {}),
       })),
   };
 }

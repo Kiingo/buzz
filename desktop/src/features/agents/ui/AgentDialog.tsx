@@ -23,6 +23,8 @@ import {
 import { WhereToRunSection } from "./WhereToRunSection";
 import { canSubmitWhereToRun, resolveBackendIntent } from "./whereToRunIntent";
 import { usePreferredWhereToRunDraft } from "./usePreferredWhereToRunDraft";
+import { EffortPickerField } from "./EffortPickerField";
+import { isSavableEffort } from "./effortPicker";
 import {
   configuredPreferredRunOn,
   preferredCreateDefaults,
@@ -44,6 +46,7 @@ type AgentDialogCreateProps = {
     input: CreatePersonaInput | UpdatePersonaInput,
     intent: AgentCreateIntent,
     backendIntent: BackendIntent | null,
+    effortLevel: string | null,
   ) => Promise<boolean>;
 };
 
@@ -136,6 +139,7 @@ function AgentCreateDialogRouter({
   onDirtyChange,
   onSubmitDefinition,
 }: AgentDialogCreateProps) {
+  const [effortLevel, setEffortLevel] = React.useState<string | null>(null);
   const markDirty = React.useCallback(
     () => onDirtyChange?.(true),
     [onDirtyChange],
@@ -156,6 +160,8 @@ function AgentCreateDialogRouter({
   }, [providedInitialValues]);
 
   const copy = createPersonaDialogState();
+  // Effort is local-only: a provider backend sets it at deploy time.
+  const backendIntent = resolveBackendIntent(runDraft);
 
   return (
     // The create flow is the one surface that knows where the agent will run,
@@ -163,13 +169,24 @@ function AgentCreateDialogRouter({
     <AgentRunLocationProvider runLocation={runLocationForRunOn(runDraft.runOn)}>
       <AgentDefinitionDialog
         providerOwnsExecutionProfile={providerOwnsExecutionProfile(runDraft)}
-        createRunSection={
-          <WhereToRunSection
-            draft={runDraft}
-            isPending={isDefinitionPending}
-            onDraftChange={setRunDraft}
-          />
-        }
+        createRunSection={(effortOptions) => (
+          <>
+            <WhereToRunSection
+              draft={runDraft}
+              isPending={isDefinitionPending}
+              onDraftChange={setRunDraft}
+            />
+            {backendIntent ? null : (
+              <EffortPickerField
+                backend={{ type: "local" }}
+                choices={effortOptions}
+                disabled={isDefinitionPending}
+                onChange={setEffortLevel}
+                value={effortLevel}
+              />
+            )}
+          </>
+        )}
         createRunSectionFirst={preferredActive}
         createSubmitBlocked={!canSubmitWhereToRun(runDraft)}
         description={copy.description}
@@ -179,11 +196,14 @@ function AgentCreateDialogRouter({
         isPending={isDefinitionPending}
         onDirtyChange={onDirtyChange}
         onOpenChange={onOpenChange}
-        onSubmit={async (input) => {
+        onSubmit={async (input, { effortOptions }) => {
           const submitted = await onSubmitDefinition(
             input,
             "definition_start",
-            resolveBackendIntent(runDraft),
+            backendIntent,
+            !backendIntent && isSavableEffort(effortLevel, effortOptions)
+              ? effortLevel
+              : null,
           );
           if (submitted) {
             onDirtyChange?.(false);

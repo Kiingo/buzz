@@ -13,7 +13,10 @@ use tokio::sync::{broadcast, mpsc};
 use crate::cache_invalidation::{
     parse_cache_invalidation_channel, ScopedCacheInvalidation, CACHE_INVALIDATION_PATTERN,
 };
-use crate::conn_control::{parse_conn_control_channel, ScopedConnControl, CONN_CONTROL_PATTERN};
+use crate::conn_control::{
+    decode_nip_fi_disconnect, parse_conn_control_channel, NipFiDisconnect, ScopedConnControl,
+    CONN_CONTROL_PATTERN,
+};
 use crate::subscriber::{DesiredTopics, SubscriptionCommand};
 use crate::topic::EventTopicKey;
 use crate::transport::{self, Position, MODERN_PREFIX};
@@ -23,6 +26,12 @@ pub(crate) struct Destinations {
     pub(crate) events: broadcast::Sender<ChannelEvent>,
     pub(crate) cache: broadcast::Sender<ScopedCacheInvalidation>,
     pub(crate) control: broadcast::Sender<ScopedConnControl>,
+    /// NIP-FI disconnects keep upstream's live subscriber; the ordered cursor
+    /// replays retained ones for the channels this pod listens on (an enforce
+    /// pod never hears a shadow command). The deny merge is `max(until)`, so a
+    /// replayed duplicate of a live delivery is idempotent.
+    pub(crate) nip_fi: broadcast::Sender<NipFiDisconnect>,
+    pub(crate) nip_fi_channels: Arc<RwLock<&'static [&'static str]>>,
     pub(crate) continuity: Arc<AtomicBool>,
     pub(crate) requalify: Arc<RwLock<Option<crate::SecurityRequalification>>>,
 }
@@ -120,6 +129,16 @@ async fn route(
             community_id,
             command,
         });
+    } else if channel.starts_with("buzz:nip-fi:") {
+        let listening = destinations
+            .nip_fi_channels
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&channel);
+        if listening {
+            let command = decode_nip_fi_disconnect(payload)?;
+            let _ = destinations.nip_fi.send(command);
+        }
     } else {
         let topic =
             EventTopicKey::parse_redis_channel(channel).map_err(|_| PubSubError::ReplayGap)?;

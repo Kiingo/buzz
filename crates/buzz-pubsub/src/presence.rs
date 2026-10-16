@@ -55,6 +55,49 @@ pub async fn clear_presence(
     Ok(())
 }
 
+/// Sets one status for every pubkey in `pubkeys`, each with the
+/// [`PRESENCE_TTL_SECS`] TTL, in one atomic round trip.
+pub async fn set_presence_many(
+    pool: &Pool,
+    ctx: &TenantContext,
+    pubkeys: &[PublicKey],
+    status: &str,
+) -> Result<(), PubSubError> {
+    if pubkeys.is_empty() {
+        return Ok(());
+    }
+    // One script keeps the batch atomic while the write follows the primary.
+    let mut command = redis::cmd("EVAL");
+    command
+        .arg("for _, key in ipairs(KEYS) do redis.call('SET', key, ARGV[1], 'EX', ARGV[2]) end")
+        .arg(pubkeys.len());
+    for pubkey in pubkeys {
+        command.arg(presence_key(ctx, pubkey));
+    }
+    command.arg(status).arg(PRESENCE_TTL_SECS);
+    crate::writer::write::<()>(pool, &command).await?;
+    Ok(())
+}
+
+/// Removes the presence entries for every pubkey in `pubkeys`.
+pub async fn clear_presence_many(
+    pool: &Pool,
+    ctx: &TenantContext,
+    pubkeys: &[PublicKey],
+) -> Result<(), PubSubError> {
+    if pubkeys.is_empty() {
+        return Ok(());
+    }
+    let keys: Vec<String> = pubkeys
+        .iter()
+        .map(|pubkey| presence_key(ctx, pubkey))
+        .collect();
+    let mut command = redis::cmd("DEL");
+    command.arg(&keys);
+    crate::writer::write::<()>(pool, &command).await?;
+    Ok(())
+}
+
 /// Returns the current presence status for `pubkey`, or `None` if not set or expired.
 pub async fn get_presence(
     pool: &Pool,
@@ -204,6 +247,50 @@ mod tests {
 
         clear_presence(&pool, &ctx, &pk1).await.unwrap();
         clear_presence(&pool, &ctx, &pk2).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Redis"]
+    async fn test_presence_many_sets_with_ttl_and_clears() {
+        let pool = make_test_pool();
+        let pk1 = make_pubkey();
+        let pk2 = make_pubkey();
+        let untouched = make_pubkey();
+        let ctx = ctx(0xaaaa, "a.example");
+        set_presence(&pool, &ctx, &untouched, "away").await.unwrap();
+
+        set_presence_many(&pool, &ctx, &[pk1, pk2], "online")
+            .await
+            .unwrap();
+        let result = get_presence_bulk(&pool, &ctx, &[pk1, pk2, untouched])
+            .await
+            .unwrap();
+        assert_eq!(
+            result.get(&pk1.to_hex()).map(String::as_str),
+            Some("online")
+        );
+        assert_eq!(
+            result.get(&pk2.to_hex()).map(String::as_str),
+            Some("online")
+        );
+        assert_eq!(
+            result.get(&untouched.to_hex()).map(String::as_str),
+            Some("away")
+        );
+        let mut conn = pool.get().await.unwrap();
+        let ttl: i64 = redis::cmd("TTL")
+            .arg(presence_key(&ctx, &pk2))
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        assert!(ttl > 0 && ttl <= PRESENCE_TTL_SECS as i64, "got TTL {ttl}");
+
+        clear_presence_many(&pool, &ctx, &[pk1, pk2]).await.unwrap();
+        let result = get_presence_bulk(&pool, &ctx, &[pk1, pk2, untouched])
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 1, "only the untouched key remains");
+        clear_presence(&pool, &ctx, &untouched).await.unwrap();
     }
 
     #[tokio::test]

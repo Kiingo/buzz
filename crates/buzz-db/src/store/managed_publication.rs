@@ -10,7 +10,7 @@ use buzz_core::managed_publication::{
 use buzz_core::CommunityId;
 use chrono::{DateTime, Utc};
 use nostr::Event;
-use sqlx::{Postgres, Row, Transaction};
+use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use crate::{DbError, Result};
@@ -39,11 +39,13 @@ impl crate::Db {
         }
         ed25519_dalek::VerifyingKey::from_bytes(public_key)
             .map_err(|_| denied("invalid runtime verification key"))?;
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("SELECT assert_community_write_allowed($1)")
-            .bind(community.as_uuid())
-            .execute(&mut *tx)
-            .await?;
+        // Fenced-table writer: community admission before the first write.
+        let mut tx = crate::begin_community_write_transaction(
+            &self.pool,
+            community,
+            crate::observability::WriterOperation::Maintenance,
+        )
+        .await?;
         sqlx::query(
             "INSERT INTO managed_runtime_issuers (community_id, issuer, key_id, public_key) \
             VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
@@ -52,7 +54,7 @@ impl crate::Db {
         .bind(issuer)
         .bind(key_id)
         .bind(public_key.as_slice())
-        .execute(&mut *tx)
+        .execute(tx.conn())
         .await?;
         let stored: Vec<u8> = sqlx::query_scalar(
             "SELECT public_key FROM managed_runtime_issuers \
@@ -61,7 +63,7 @@ impl crate::Db {
         .bind(community.as_uuid())
         .bind(issuer)
         .bind(key_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.conn())
         .await?;
         if stored.as_slice() != public_key {
             return Err(denied("runtime issuer key ID conflict"));
@@ -93,11 +95,31 @@ fn scope_kind(claims: &Claims) -> &'static str {
 #[cfg(test)]
 mod tests;
 
+/// Write paths that cannot run the publication fence (replaceable and
+/// addressable coordinates) refuse any event carrying managed publication or
+/// cancellation semantics, so the fence cannot be bypassed through them.
+pub(crate) fn reject_unfenced_managed_event(event: &Event) -> Result<()> {
+    let kind = u32::from(event.kind.as_u16());
+    let managed = event.tags.iter().any(|tag| {
+        let parts = tag.as_slice();
+        parts.first().is_some_and(|name| name == AUTHORIZATION_TAG)
+            || (parts.first().is_some_and(|name| name == "d")
+                && parts
+                    .get(1)
+                    .is_some_and(|value| value.starts_with("buzz-local-publication:")))
+    });
+    if kind == KIND_AGENT_CANCELLATION || managed {
+        return Err(denied("managed publication requires a fenced event write"));
+    }
+    Ok(())
+}
+
 /// Return the original acceptance time when this operation must not insert or
 /// fan out a chat event. `None` allows the enclosing event transaction to insert.
-/// This is the single gate used by every event-store insertion entry point.
+/// This is the single gate used by every event-store insertion entry point;
+/// callers pass their admitted transaction's connection (`AdmittedTx::conn`).
 pub(crate) async fn apply_event_tx(
-    tx: &mut Transaction<'_, Postgres>,
+    tx: &mut PgConnection,
     community: CommunityId,
     event: &Event,
     channel_id: Option<Uuid>,
@@ -140,13 +162,10 @@ pub(crate) async fn apply_event_tx(
     // Parsed claims are only a lookup hint, never a source of trust.
     let parsed =
         Authorization::decode(encoded).map_err(|_| denied("invalid runtime authorization"))?;
-    // Respect the existing lock order: community lifecycle before any row
-    // locks. Otherwise a concurrent whole-community fence could deadlock with
-    // this transaction holding a community row while waiting for its lock.
-    sqlx::query("SELECT assert_community_write_allowed($1)")
-        .bind(community.as_uuid())
-        .execute(&mut **tx)
-        .await?;
+    // Lock order: community lifecycle before any row locks. Every caller holds
+    // an admitted transaction (`AdmittedTx`), which took the shared community
+    // deletion lock and the active check before its first write, so no SQL
+    // fence-function call is needed here.
     let trusted = sqlx::query(
         "SELECT c.host, i.public_key FROM managed_runtime_issuers i \
          JOIN communities c ON c.id = i.community_id \
@@ -156,7 +175,7 @@ pub(crate) async fn apply_event_tx(
     .bind(community.as_uuid())
     .bind(&parsed.claims.issuer)
     .bind(&parsed.claims.key_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| denied("untrusted runtime issuer"))?;
     let host: String = trusted.try_get("host")?;
@@ -221,7 +240,7 @@ pub(crate) async fn apply_event_tx(
     .bind(channel_id)
     .bind(&requester)
     .bind(&request)
-    .execute(&mut **tx)
+    .execute(&mut *tx)
     .await?;
     // Both Stop and all participants' publications serialize on this row.
     // A Stop arriving first creates it, so a delayed permit cannot reset Stop.
@@ -234,7 +253,7 @@ pub(crate) async fn apply_event_tx(
     .bind(&claims.issuer)
     .bind(scope_kind(claims))
     .bind(scope_id)
-    .fetch_one(&mut **tx)
+    .fetch_one(&mut *tx)
     .await?;
     if Some(scope.try_get::<Uuid, _>("channel_id")?) != channel_id
         || scope.try_get::<Vec<u8>, _>("requester_pubkey")? != requester
@@ -263,7 +282,7 @@ pub(crate) async fn apply_event_tx(
             .bind(event.id.as_bytes().as_slice())
             .bind(bytes(user_request_event_id)?)
             .bind(encoded)
-            .fetch_one(&mut **tx)
+            .fetch_one(&mut *tx)
             .await?;
             Ok(Some(cancelled_at))
         }
@@ -286,7 +305,7 @@ pub(crate) async fn apply_event_tx(
             .bind(scope_kind(claims))
             .bind(scope_id)
             .bind(&signer)
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await?;
             let receipt = sqlx::query(
                 "SELECT scope_kind, scope_id, signer_pubkey FROM managed_publication_receipts \
@@ -295,7 +314,7 @@ pub(crate) async fn apply_event_tx(
             .bind(community.as_uuid())
             .bind(&claims.issuer)
             .bind(receipt_id)
-            .fetch_one(&mut **tx)
+            .fetch_one(&mut *tx)
             .await?;
             if receipt.try_get::<String, _>("scope_kind")? != scope_kind(claims)
                 || receipt.try_get::<Uuid, _>("scope_id")? != scope_id
@@ -311,7 +330,7 @@ pub(crate) async fn apply_event_tx(
             .bind(community.as_uuid())
             .bind(&claims.issuer)
             .bind(fence_id)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut *tx)
             .await?;
             if let Some(accepted) = accepted {
                 if accepted.try_get::<Uuid, _>("receipt_id")? != receipt_id
@@ -336,7 +355,7 @@ pub(crate) async fn apply_event_tx(
             .bind(receipt_id)
             .bind(event.id.as_bytes().as_slice())
             .bind(encoded)
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await?;
             Ok(None)
         }

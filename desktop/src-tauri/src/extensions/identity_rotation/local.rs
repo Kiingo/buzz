@@ -343,19 +343,33 @@ pub(super) fn drain_selected_local_runtimes(
     journal::save(app, journal)
 }
 
+/// A community removed from this device since the rotation began has no
+/// runtime to restart; any other start failure still fails the step.
+fn restart_or_skip_removed_relay<T>(result: Result<T, String>) -> Result<(), String> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(error) if error == crate::managed_agents::RELAY_REMOVED_ERROR => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 pub(super) fn restart_rotated_local_runtimes(
     app: &tauri::AppHandle,
     journal: &IdentityRotationJournal,
 ) -> Result<(), String> {
+    let admission = crate::managed_agents::AdmissionSnapshot::capture(&app.state::<AppState>());
     for item in journal
         .agents
         .iter()
         .filter(|item| item.local_runtime_was_running)
     {
-        crate::managed_agents::start_managed_agent_runtime_pair_lazy(
-            item.new_public_key.clone(),
-            journal.relay_url.clone(),
-            app.clone(),
+        restart_or_skip_removed_relay(
+            crate::managed_agents::start_managed_agent_runtime_pair_lazy(
+                item.new_public_key.clone(),
+                journal.relay_url.clone(),
+                &admission,
+                app.clone(),
+            ),
         )?;
     }
     Ok(())
@@ -365,15 +379,19 @@ pub(super) fn restart_original_local_runtimes(
     app: &tauri::AppHandle,
     journal: &IdentityRotationJournal,
 ) -> Result<(), String> {
+    let admission = crate::managed_agents::AdmissionSnapshot::capture(&app.state::<AppState>());
     for item in journal
         .agents
         .iter()
         .filter(|item| item.local_runtime_was_running)
     {
-        crate::managed_agents::start_managed_agent_runtime_pair_lazy(
-            item.old_public_key.clone(),
-            journal.relay_url.clone(),
-            app.clone(),
+        restart_or_skip_removed_relay(
+            crate::managed_agents::start_managed_agent_runtime_pair_lazy(
+                item.old_public_key.clone(),
+                journal.relay_url.clone(),
+                &admission,
+                app.clone(),
+            ),
         )?;
     }
     Ok(())

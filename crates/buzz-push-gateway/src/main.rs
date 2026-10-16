@@ -1,6 +1,5 @@
 use buzz_push_gateway::{
     apns::ApnsTransport,
-    apns_token::ApnsAuthConfig,
     app_attest::AppAttestVerifier,
     authority::AuthorityStore,
     config::Config,
@@ -37,31 +36,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let c = Config::from_env()?;
     let metrics_handle = buzz_push_gateway::metrics::install()?;
     let app_attest_root = fs::read(&c.app_attest_root_cert_path)?;
-    let configured = &c.profile;
-    let profile = {
-        let transport = Arc::new(match &configured.apns_auth {
-            ApnsAuthConfig::Certificate { path } => ApnsTransport::certificate(
-                &fs::read(path)?,
-                configured.apns_topic.clone(),
-                configured.apns_environment,
-            )?,
-            ApnsAuthConfig::Token {
-                key_path,
-                key_id,
-                team_id,
-            } => ApnsTransport::token(
-                &fs::read(key_path)?,
-                key_id,
-                team_id,
-                configured.apns_topic.clone(),
-                configured.apns_environment,
-            )?,
-        });
-        let apple = AppAttestVerifier::new(
+    let configured = &c.application;
+    let application = {
+        let apple = AppAttestVerifier::with_environment(
             configured.app_attest_app_id.clone(),
-            app_attest_root.clone(),
+            app_attest_root,
+            configured.app_attest_environment,
         )?;
-        buzz_push_gateway::http::ProfileRuntime {
+        tracing::info!(environment = ?apple.environment(), "App Attest verifier configured");
+        let transport = Arc::new(ApnsTransport::certificate(
+            &fs::read(&configured.apns_cert_path)?,
+            configured.apns_topic.clone(),
+            configured.apns_environment,
+        )?);
+        buzz_push_gateway::http::ApplicationRuntime {
             app_attest: Arc::new(apple),
             transport,
         }
@@ -108,8 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             grant_keyring: Arc::new(grant_keyring),
             authority,
             token_keyring: Arc::new(token_keyring),
-            profile: Arc::new(profile),
-            delivery_url: c.public_delivery_url,
+            application: Arc::new(application),
             max_grant_lifetime_seconds: c.max_grant_lifetime_seconds,
             max_installation_lifetime_seconds: c.max_installation_lifetime_seconds,
             endpoint_quota_window_seconds: c.endpoint_quota_window_seconds,
