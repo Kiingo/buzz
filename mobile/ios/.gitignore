@@ -18,6 +18,7 @@ xcuserdata
 **/.generated/
 Flutter/App.framework
 Flutter/AppOverrides.xcconfig
+Runner/Assets.xcassets/AppOverrideIcon.appiconset/
 Flutter/WorktreeOverrides.xcconfig
 Flutter/Flutter.framework
 Flutter/Flutter.podspec
