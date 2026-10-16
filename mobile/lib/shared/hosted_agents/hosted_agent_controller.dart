@@ -10,6 +10,7 @@ import 'hosted_agent_errors.dart';
 import 'hosted_agent_identity.dart';
 import 'hosted_agent_relay_publisher.dart';
 import 'hosted_agent_responses.dart';
+import 'hosted_agent_snapshot.dart';
 import 'hosted_agent_store.dart';
 
 /// What a create produced.
@@ -197,26 +198,29 @@ class HostedAgentController extends Notifier<HostedAgentFlowState> {
     return HostedCreateSucceeded(record, warning: warning);
   }
 
-  /// Delete a phone-created agent through the API, then retire its Buzz
-  /// records. Throws [HostedAgentException] when removal is not confirmed;
-  /// the record is kept so a retry can finish.
+  /// Delete a hosted agent through the API's confirmed delete, then retire
+  /// its Buzz records the way the desktop's delete does: the owner's
+  /// kind:30177 tombstone and the NIP-IA archive request. Throws
+  /// [HostedAgentException] when removal is not confirmed; nothing local is
+  /// touched then, so a retry can finish.
   Future<String?> delete({
     required HostedAgentCatalog catalog,
-    required HostedAgentRecord record,
+    required String providerAgentId,
+    required String agentPublicKey,
   }) async {
     final client = _client();
     await client.confirmedDelete(
       catalog: catalog,
-      providerAgentId: record.providerAgentId,
+      providerAgentId: providerAgentId,
     );
-    await ref.read(hostedAgentStoreProvider.notifier).remove(record.pubkey);
+    await ref.read(hostedAgentStoreProvider.notifier).remove(agentPublicKey);
     try {
       await _publisher(client).retireAgent(
         ownerPublicKey: client.ownerPublicKey(),
-        agentPublicKey: record.pubkey,
+        agentPublicKey: agentPublicKey,
         ownerAttestation: computeOwnerAttestation(
           ownerSecretHex: client.ownerSecretHex(),
-          agentPublicKey: record.pubkey,
+          agentPublicKey: agentPublicKey,
         ),
       );
     } catch (error) {
@@ -224,6 +228,44 @@ class HostedAgentController extends Notifier<HostedAgentFlowState> {
       return 'The agent was deleted, but Buzz may list it for a little while.';
     }
     return null;
+  }
+
+  /// After an edit of an agent this phone created (and so whose kind:30177
+  /// it owns as a definition-less record), republish that record and the
+  /// local summary so desktops and this list show the new name and
+  /// instructions. Agents created elsewhere keep their own records.
+  Future<void> syncEditedAgent(
+    HostedAgentSnapshot snapshot, {
+    String? harnessLabel,
+    String? modelLabel,
+  }) async {
+    final store = ref.read(hostedAgentStoreProvider.notifier);
+    HostedAgentRecord? record;
+    for (final candidate in ref.read(hostedAgentStoreProvider)) {
+      if (candidate.pubkey == snapshot.agentPublicKey) record = candidate;
+    }
+    if (record == null) return;
+    await store.upsert(
+      HostedAgentRecord(
+        pubkey: record.pubkey,
+        providerAgentId: record.providerAgentId,
+        displayName: snapshot.displayName,
+        destination: record.destination,
+        harness: harnessLabel ?? record.harness,
+        model: modelLabel ?? record.model,
+        observedState: snapshot.observedState,
+        createdAt: record.createdAt,
+      ),
+    );
+    try {
+      await _publisher(_client()).publishManagedAgent(
+        agentPublicKey: snapshot.agentPublicKey,
+        displayName: snapshot.displayName,
+        systemPrompt: snapshot.systemPrompt ?? '',
+      );
+    } catch (error) {
+      debugPrint('[hosted-agents] managed-agent republish failed: $error');
+    }
   }
 }
 
