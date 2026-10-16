@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 153,
-    "modifiedUpstreamFiles": 265,
-    "changedUpstreamProductionSourceLines": 10588,
-    "upstreamProductionSourceDiffHunks": 1167,
+    "modifiedUpstreamProductionSourceFiles": 154,
+    "modifiedUpstreamFiles": 266,
+    "changedUpstreamProductionSourceLines": 10612,
+    "upstreamProductionSourceDiffHunks": 1175,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -1112,6 +1112,34 @@
         "mobile/lib/shared/guest_access/settings/guest_suggestions_page/suggestion_row.dart",
         "mobile/test/shared/guest_access/guest_owner_settings_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz agent access maintainers",
+      "purpose": "Desktop remote signer (Kiingo design mcp-buzz-module.md section 7): a broker next to the build-time guest route (its /buzz-signer/v1 sibling, or BUZZ_DESKTOP_REMOTE_SIGNER_URL) can ask this device to sign as the user. A Rust long-poller (GET /requests?wait_ms=25000, one request in flight, backoff on errors) runs only while the app runs and the per-device, per-community switch 'Allow Kiingo to request signatures' (off by default) is on; every broker call is NIP-98 signed by the user's key with the guest route's X-Buzz-Community. Each request is validated in the backend before anything is shown: signer and event pubkey are the user's own, the expected event id matches the computed id, relay_url is the connected relay's /events or /query, publish kinds are 9/7/40003/9005 (never 0, 10100, 30315, 9000-9002, 9007, 9008, 9030-9032, 27235, 27236, 24243, 1059, identity-rotation kinds or NIP-OA auth tags), only h/e/p/k tags, the h tag equals the displayed channel, the action matches the kind, edits and deletes target the user's own message, read filters stay within the read kinds, and expired requests are skipped; anything else is declined and never signed. A consent modal shows 'Signing as: You (<name>)' distinct from agents, the locally derived action, the channel resolved locally with member count or DM peer, full content or read scope, kind and the requesting client/agent, with Allow once, Deny and Allow for... (kinds in this channel, or reads in this channel or all channels, for 15 min/1 h/8 h). Scopes are created only from the prompt and stored only in the app data dir (remote-signer.json), auto-approve with decision_source scope:<id>, are listed in Settings, Kiingo signing with per-scope revoke, and a top-chrome pill ('Kiingo can sign as you, N scopes') offers one-click revoke of all. A local signing log records time, action, channel, decision and outcome event id (no signatures). Signing (the exact event plus the relay NIP-98 header over the exact body) happens in Rust; the renderer receives display data only. Upstream files carry a module/command registration, the dialog host mount and the settings section hook.",
+      "upstreamStatus": "Generic mechanism configured by the build-time guest route URL; Kiingo naming only in added files; not proposed upstream.",
+      "removalCondition": "Remove when block/buzz ships a remote signer (NIP-46 or equivalent) with device-local consent scopes, or when Kiingo moves remote signing to relay-native NIP-46.",
+      "paths": [
+        "desktop/src-tauri/src/commands/remote_signer.rs",
+        "desktop/src-tauri/src/commands/remote_signer/broker.rs",
+        "desktop/src-tauri/src/commands/remote_signer/sign.rs",
+        "desktop/src-tauri/src/commands/remote_signer/store.rs",
+        "desktop/src-tauri/src/commands/remote_signer/store_tests.rs",
+        "desktop/src-tauri/src/commands/remote_signer/validate.rs",
+        "desktop/src-tauri/src/commands/remote_signer/validate_tests.rs",
+        "desktop/src-tauri/src/commands/remote_signer/view.rs",
+        "desktop/src/features/remote-signer/lib/api.ts",
+        "desktop/src/features/remote-signer/lib/display.test.mjs",
+        "desktop/src/features/remote-signer/lib/display.ts",
+        "desktop/src/features/remote-signer/ui/RemoteSignerHost.tsx",
+        "desktop/src/features/remote-signer/ui/RemoteSignerPromptDialog.tsx",
+        "desktop/src/features/remote-signer/ui/RemoteSignerScopePill.tsx",
+        "desktop/src/features/remote-signer/ui/RemoteSignerSettingsCard.tsx",
+        "desktop/src/features/remote-signer/ui/ScopePicker.tsx",
+        "desktop/src/features/remote-signer/ui/remoteSignerSettingsSection.ts",
+        "desktop/src/features/remote-signer/useRemoteSigner.ts",
+        "desktop/src/features/settings/ui/SettingsView.tsx"
+      ]
     }
   ],
   "budgetAmendments": [
@@ -1180,6 +1208,24 @@
       "reason": "Fourteen newly modified upstream mobile files: the channel-less guest-access push tap (BuzzPushKit navigation target, Runner push bridge, Flutter push bridge, deep link, pending link, dispatcher, app shell, plus their tests) and the generic BUZZ_APP_ICON_NAME icon hook (Runner project, Debug/Release xcconfig, ios .gitignore). Account for fourteen files; production-source files, lines, hunks and zero-business-logic budgets remain unchanged. No wildcard, checker exception or unused allowance.",
       "previousModifiedUpstreamFiles": 248,
       "qualifiedModifiedUpstreamFiles": 262
+    },
+    {
+      "id": "desktop-remote-signer-hooks",
+      "baseline": "efc7fb7d129a63e6d5ca5d1360bb5b3a33f89106",
+      "reason": "Desktop remote signer: one newly modified upstream production file (SettingsView.tsx gains the remote-signing nav entry) and small hooks in already-modified upstream files (commands/mod.rs module and re-export, lib.rs four command registrations, AgentManagementDialogs.tsx host mount, SettingsPanels.tsx section type, descriptor and render case). All behavior lives in added files; zero Kiingo business-logic lines in upstream production source. Account for exactly +1 modified file, +1 production-source file, +24 changed lines and +8 hunks. No wildcard, checker exception or unused allowance.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 153,
+        "modifiedUpstreamFiles": 265,
+        "changedUpstreamProductionSourceLines": 10588,
+        "upstreamProductionSourceDiffHunks": 1167,
+        "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
+      },
+      "qualifiedComposition": {
+        "modifiedUpstreamProductionSourceFiles": 154,
+        "modifiedUpstreamFiles": 266,
+        "changedUpstreamProductionSourceLines": 10612,
+        "upstreamProductionSourceDiffHunks": 1175
+      }
     }
   ]
 }
