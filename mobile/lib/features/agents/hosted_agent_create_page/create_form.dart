@@ -293,7 +293,12 @@ class _CreateForm extends HookConsumerWidget {
           ],
         ),
         if (existing == null)
-          const _Caption('It answers only you to start with.'),
+          const _Caption('It answers only you to start with.')
+        else if (name.trim() != existing.displayName)
+          const _Caption(
+            'The new name applies to the agent right away. Its Buzz profile '
+            'may keep showing the old name for now.',
+          ),
         if (editError.value case final message?)
           Padding(
             padding: const EdgeInsets.fromLTRB(
