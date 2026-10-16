@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 153,
-    "modifiedUpstreamFiles": 262,
+    "modifiedUpstreamFiles": 265,
     "changedUpstreamProductionSourceLines": 10588,
     "upstreamProductionSourceDiffHunks": 1167,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -1002,6 +1002,46 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz agent maintainers",
+      "purpose": "Mobile creation and management of hosted agents, matching the desktop create flow. The phone has no provider binary, so a native Dart client speaks the same provisioning contract the desktop's bundled provider uses: GET /capabilities (Ed25519 catalog pinned by the build-time key, validity window, API-base check), POST /preflight and POST /agents/confirmed-delete with owner-signed kind-27236 proofs (buzz-provider-preflight-v1 / buzz-provider-delete-v1, exact ordered tags), and POST /agents with the standard NIP-OA owner attestation and an x25519-chacha20poly1305 identity envelope (v2 bundle: key plus attestation) sealed to the catalog's provisioning key. The agent key is generated in memory per create and dropped afterwards; it is never stored. The create form leads with Where it runs, renders the provider schema generically (harness, model mode, model family/version, reasoning, tier) with the desktop's visibility, option-filter, reconcile and unmet-choice rules, gates Create on a fresh ready preflight of the current configuration (re-checked on resume and Check again), and rolls back a failed create (confirmed delete with a known id; otherwise one identical idempotent replay then delete; agent_state absent is the only proof of absence; an unconfirmed cleanup is kept in memory and retried before the next create). On success it publishes the agent's kind:0 (agent NIP-98 plus x-auth-tag) and the owner's kind:30177, and remembers the public record; delete retires both (kind:5 plus NIP-IA 9035). The Agents page lists phone-created hosted agents (delete) and the owner's other kind:30177 agents read-only. Configuration is build-time only: BUZZ_HOSTED_AGENTS_URL, BUZZ_HOSTED_AGENTS_CATALOG_KEY, BUZZ_HOSTED_AGENTS_LOCATION and BUZZ_HOSTED_AGENTS_RELAY_URL (default BUZZ_RELAY_URL), gated to the community it serves. Upstream hooks: one optional Settings page builder and row part, the app.dart builder line (app.dart is classified with the push-tap delta), and the pure-Dart cryptography dependency.",
+      "upstreamStatus": "Generic mechanism configured entirely by build-time values; not yet proposed upstream.",
+      "removalCondition": "Remove when block/buzz ships hosted-agent creation and management on mobile.",
+      "paths": [
+        "mobile/lib/features/agents/hosted_agent_create_page.dart",
+        "mobile/lib/features/agents/hosted_agent_create_page/create_form.dart",
+        "mobile/lib/features/agents/hosted_agent_create_page/execution_fields.dart",
+        "mobile/lib/features/agents/hosted_agent_create_page/failure_notice.dart",
+        "mobile/lib/features/agents/hosted_agent_create_page/preflight_status.dart",
+        "mobile/lib/features/agents/hosted_agent_create_page/where_it_runs_section.dart",
+        "mobile/lib/features/agents/hosted_agents_page.dart",
+        "mobile/lib/features/agents/hosted_agents_page/agent_detail_sheet.dart",
+        "mobile/lib/features/agents/hosted_agents_page/agent_sections.dart",
+        "mobile/lib/features/settings/settings_page.dart",
+        "mobile/lib/features/settings/settings_page/agents_section.dart",
+        "mobile/lib/shared/hosted_agents/canonical_json.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_catalog.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_client.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_config.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_controller.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_create_flow.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_deploy_request.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_errors.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_identity.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_proofs.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_relay_publisher.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_responses.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_store.dart",
+        "mobile/lib/shared/hosted_agents/owned_agents_provider.dart",
+        "mobile/lib/shared/hosted_agents/provider_config_schema.dart",
+        "mobile/pubspec.lock",
+        "mobile/pubspec.yaml",
+        "mobile/test/shared/hosted_agents/hosted_agent_contract_test.dart",
+        "mobile/test/shared/hosted_agents/hosted_agent_create_flow_test.dart",
+        "mobile/test/shared/hosted_agents/hosted_agent_fixtures.dart"
+      ]
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz push maintainers",
       "purpose": "Push taps on owner-addressed agent guest-access notifications (46040 approval requested, 46042 alert), which carry no channel h tag and so previously got no tap target. BuzzPushNavigationTarget gains a channel-less guest variant (event, community, guest_kind) decoded strictly from the NSE-written user info; Flutter routes it as a GuestNotificationDeepLink that selects the community, reloads the trusted inbox and opens the existing owner review sheet, or says the request was already handled. Plus a white-label app icon hook: the Runner icon set name is the BUZZ_APP_ICON_NAME build setting (default AppIcon), overridable from the gitignored AppOverrides.xcconfig like the bundle id and display name.",
       "upstreamStatus": "Generic; the guest notification kinds exist only in this fork, and the icon hook is a candidate for upstream alongside its other AppOverrides settings.",
@@ -1036,6 +1076,13 @@
     }
   ],
   "budgetAmendments": [
+    {
+      "id": "mobile-hosted-agents",
+      "baseline": "b743da9a28697cb336218065579a1e4f22af9f00",
+      "reason": "Three newly modified upstream mobile files for hosted-agent create and management on the phone: the Settings page (one optional agents page builder and its row part) and pubspec.yaml/pubspec.lock (the pure-Dart cryptography package for the identity envelope and signed catalog). Its one-line app.dart builder rides on app.dart, already classified by the push-tap delta. Everything else is added files. Account for three files; production-source files, lines, hunks and zero-business-logic budgets remain unchanged. No wildcard, checker exception or unused allowance.",
+      "previousModifiedUpstreamFiles": 262,
+      "qualifiedModifiedUpstreamFiles": 265
+    },
     {
       "id": "mobile-guest-approval-review",
       "baseline": "10f9165094829fea5d9e447dc51c8fca4495fca5",
