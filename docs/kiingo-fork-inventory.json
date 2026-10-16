@@ -1073,6 +1073,45 @@
       "paths": [
         "scripts/kiingo-ios-assets/KiingoBuzzAppIcon-1024.png"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz agent access maintainers",
+      "purpose": "Mobile owner management of agent guest access, matching desktop's per-agent Access dialog across all of the owner's agents. Settings shows an Agent guest access row (hidden without a route for the active community or a signing key) that opens: each registered agent's hosted-answer switch (PATCH /owner/agents/{id}); active grants with Revoke; recent requests from the access log with an agent filter, cursor paging, outcome/tier/data-used/safety-check detail and Block; blocked people with Unblock; items shared via my agent with add and Stop sharing; learned-grant suggestions with Allow/Dismiss; the read-only daily digest by UTC day; and, for org admins only (admin_required hides it), the guest safety review with Mark reviewed and Restore access. The existing NIP-98 owner client gains these owner and admin routes as an extension in a part file; no route is added or changed. The upstream settings page (already classified by the hosted-agents delta) carries one section hook.",
+      "upstreamStatus": "Generic mechanism configured by the build-time guest route URL; not yet proposed upstream.",
+      "removalCondition": "Remove when block/buzz ships owner management of hosted guest access on mobile.",
+      "paths": [
+        "mobile/lib/shared/guest_access/guest_access_client/owner.dart",
+        "mobile/lib/shared/guest_access/guest_owner_copy.dart",
+        "mobile/lib/shared/guest_access/guest_owner_records.dart",
+        "mobile/lib/shared/guest_access/settings/guest_access_settings_page.dart",
+        "mobile/lib/shared/guest_access/settings/guest_access_settings_page/agents_card.dart",
+        "mobile/lib/shared/guest_access/settings/guest_access_settings_page/manage_card.dart",
+        "mobile/lib/shared/guest_access/settings/guest_access_settings_section.dart",
+        "mobile/lib/shared/guest_access/settings/guest_agent_names.dart",
+        "mobile/lib/shared/guest_access/settings/guest_badge.dart",
+        "mobile/lib/shared/guest_access/settings/guest_blocks_page.dart",
+        "mobile/lib/shared/guest_access/settings/guest_blocks_page/block_row.dart",
+        "mobile/lib/shared/guest_access/settings/guest_digest_page.dart",
+        "mobile/lib/shared/guest_access/settings/guest_digest_page/day_picker.dart",
+        "mobile/lib/shared/guest_access/settings/guest_digest_page/digest_summary.dart",
+        "mobile/lib/shared/guest_access/settings/guest_grants_page.dart",
+        "mobile/lib/shared/guest_access/settings/guest_grants_page/grant_row.dart",
+        "mobile/lib/shared/guest_access/settings/guest_owner_list_state.dart",
+        "mobile/lib/shared/guest_access/settings/guest_owner_page_scaffold.dart",
+        "mobile/lib/shared/guest_access/settings/guest_owner_providers.dart",
+        "mobile/lib/shared/guest_access/settings/guest_requests_page.dart",
+        "mobile/lib/shared/guest_access/settings/guest_requests_page/log_page.dart",
+        "mobile/lib/shared/guest_access/settings/guest_requests_page/request_row.dart",
+        "mobile/lib/shared/guest_access/settings/guest_safety_page.dart",
+        "mobile/lib/shared/guest_access/settings/guest_safety_page/safety_rows.dart",
+        "mobile/lib/shared/guest_access/settings/guest_shared_page.dart",
+        "mobile/lib/shared/guest_access/settings/guest_shared_page/share_form.dart",
+        "mobile/lib/shared/guest_access/settings/guest_shared_page/shared_row.dart",
+        "mobile/lib/shared/guest_access/settings/guest_suggestions_page.dart",
+        "mobile/lib/shared/guest_access/settings/guest_suggestions_page/suggestion_row.dart",
+        "mobile/test/shared/guest_access/guest_owner_settings_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [
