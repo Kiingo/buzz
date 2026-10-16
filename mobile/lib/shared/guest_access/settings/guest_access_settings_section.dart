@@ -20,7 +20,7 @@ class GuestAccessSettingsSection extends ConsumerWidget {
       return const SizedBox.shrink();
     }
     return AppListCard(
-      label: 'Agents',
+      label: 'Guest access',
       verticalPadding: Grid.twelve,
       children: [
         AppListRow(
