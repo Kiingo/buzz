@@ -12,7 +12,8 @@
       "minLength": 1
     },
     "publicDeliveryUrl": {
-      "const": "https://push.buzz.xyz/v1/deliveries/apns"
+      "type": "string",
+      "pattern": "^https://[A-Za-z0-9.-]+/v1/deliveries/apns$"
     },
     "maxGrantLifetimeSeconds": {
       "type": "integer",
@@ -267,6 +268,15 @@
         },
         "apnsCert": {
           "$ref": "#/$defs/apnsCert"
+        },
+        "apnsAuth": {
+          "enum": [
+            "certificate",
+            "token"
+          ]
+        },
+        "apnsToken": {
+          "$ref": "#/$defs/apnsToken"
         }
       }
     },
@@ -276,9 +286,26 @@
           "$ref": "#/$defs/profileBase"
         },
         {
-          "required": [
-            "apnsCert"
-          ]
+          "if": {
+            "properties": {
+              "apnsAuth": {
+                "const": "token"
+              }
+            },
+            "required": [
+              "apnsAuth"
+            ]
+          },
+          "then": {
+            "required": [
+              "apnsToken"
+            ]
+          },
+          "else": {
+            "required": [
+              "apnsCert"
+            ]
+          }
         }
       ]
     },
@@ -290,6 +317,34 @@
         "secretKey"
       ],
       "properties": {
+        "secretName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "apnsToken": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyId",
+        "teamId",
+        "secretName",
+        "secretKey"
+      ],
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "pattern": "^([A-Z0-9]{10})?$"
+        },
+        "teamId": {
+          "type": "string",
+          "pattern": "^([A-Z0-9]{10})?$"
+        },
         "secretName": {
           "type": "string",
           "minLength": 1

@@ -35,7 +35,14 @@ spec:
             - { name: BUZZ_PUSH_DOGFOOD_APP_ATTEST_APP_ID, value: {{ .Values.profiles.dogfood.appAttestAppId | quote }} }
             - { name: BUZZ_PUSH_DOGFOOD_APNS_TOPIC, value: {{ .Values.profiles.dogfood.apnsTopic | quote }} }
             - { name: BUZZ_PUSH_DOGFOOD_APNS_ENVIRONMENT, value: {{ .Values.profiles.dogfood.apnsEnvironment | quote }} }
+            {{- if eq (.Values.profiles.dogfood.apnsAuth | default "certificate") "token" }}
+            - { name: BUZZ_PUSH_DOGFOOD_APNS_AUTH, value: token }
+            - { name: BUZZ_PUSH_DOGFOOD_APNS_KEY_PATH, value: /run/buzz/apns-dogfood/auth-key.p8 }
+            - { name: BUZZ_PUSH_DOGFOOD_APNS_KEY_ID, value: {{ required "profiles.dogfood.apnsToken.keyId is required for token auth" .Values.profiles.dogfood.apnsToken.keyId | quote }} }
+            - { name: BUZZ_PUSH_DOGFOOD_APNS_TEAM_ID, value: {{ required "profiles.dogfood.apnsToken.teamId is required for token auth" .Values.profiles.dogfood.apnsToken.teamId | quote }} }
+            {{- else }}
             - { name: BUZZ_PUSH_DOGFOOD_APNS_CERT_PATH, value: /run/buzz/apns-dogfood/identity.pem }
+            {{- end }}
             {{- range $name := list "DATABASE_URL" "BUZZ_PUSH_GRANT_KEYS" "BUZZ_PUSH_TOKEN_KEYS" }}
             - name: {{ $name }}
               valueFrom: { secretKeyRef: { name: {{ $.Values.existingSecret }}, key: {{ $name }} } }
@@ -51,7 +58,11 @@ spec:
         - name: app-attest-root
           secret: { secretName: {{ .Values.appAttestRoot.secretName }}, items: [{ key: {{ .Values.appAttestRoot.secretKey }}, path: root.pem }] }
         - name: apns-dogfood
+          {{- if eq (.Values.profiles.dogfood.apnsAuth | default "certificate") "token" }}
+          secret: { secretName: {{ .Values.profiles.dogfood.apnsToken.secretName }}, defaultMode: 0400, items: [{ key: {{ .Values.profiles.dogfood.apnsToken.secretKey }}, path: auth-key.p8 }] }
+          {{- else }}
           secret: { secretName: {{ .Values.profiles.dogfood.apnsCert.secretName }}, defaultMode: 0400, items: [{ key: {{ .Values.profiles.dogfood.apnsCert.secretKey }}, path: identity.pem }] }
+          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}
