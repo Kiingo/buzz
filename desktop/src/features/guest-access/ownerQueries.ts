@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-query";
 
 import { useGuestAccessEnabled } from "./hooks";
-import { guestAccessApi } from "./lib/client";
+import { GuestAccessError, guestAccessApi } from "./lib/client";
 
 const root = ["guest-access", "owner"] as const;
 export const ownerKeys = {
@@ -17,6 +17,7 @@ export const ownerKeys = {
   shareables: [...root, "shareables"] as const,
   suggestions: [...root, "suggestions"] as const,
   digest: (date: string) => [...root, "digest", date] as const,
+  admin: [...root, "admin"] as const,
 };
 
 function useOwnerQuery<T>(key: QueryKey, fn: () => Promise<T>, enabled = true) {
@@ -76,6 +77,30 @@ export function useOwnerDigest(date: string) {
   return useOwnerQuery(ownerKeys.digest(date), () =>
     guestAccessApi.digest(date),
   );
+}
+
+/** Whether a route error means "you are not an org admin". */
+export function isAdminRequired(error: unknown): boolean {
+  return (
+    error instanceof GuestAccessError &&
+    (error.code === "admin_required" || error.status === 403)
+  );
+}
+
+/**
+ * Org-admin guest safety alerts and suspended requesters. Non-admins get
+ * `admin_required` once (no retry); callers hide the surface on it.
+ */
+export function useAdminGuestSafety(enabled = true) {
+  const routeEnabled = useGuestAccessEnabled();
+  return useQuery({
+    queryKey: ownerKeys.admin,
+    queryFn: () => guestAccessApi.adminOverview(),
+    enabled: routeEnabled && enabled,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+    retry: (failures, error) => !isAdminRequired(error) && failures < 1,
+  });
 }
 
 /** A mutation that refreshes every owner-side guest-access query on success. */

@@ -574,3 +574,72 @@ export function parseIdentityStatus(value: unknown): IdentityStatus {
     linkUrl: str(raw.link_url),
   };
 }
+
+/** An open org-admin guest safety alert (`GET /admin/alerts`). */
+export type GuestAdminAlert = {
+  alertId: string;
+  kind: string;
+  severity: "high" | "info";
+  /** `flagged_across_owners` or `approval_requests_across_agents` for org patterns. */
+  pattern: string | null;
+  requesterPubkey: string | null;
+  /** Distinct owners (or agents) involved, or high flags in 24 h. */
+  count: number | null;
+  createdAt: string | null;
+};
+
+/** A requester whose guest access is suspended org-wide pending review. */
+export type GuestSuspendedRequester = {
+  pubkey: string;
+  userId: string | null;
+  suspendedAt: string | null;
+  reason: string | null;
+};
+
+export type GuestAdminOverview = {
+  alerts: GuestAdminAlert[];
+  suspended: GuestSuspendedRequester[];
+};
+
+export function parseAdminOverview(value: unknown): GuestAdminOverview {
+  const raw = obj(value);
+  const alerts = (Array.isArray(raw.alerts) ? raw.alerts : []).flatMap(
+    (entry): GuestAdminAlert[] => {
+      const row = obj(entry);
+      const alertId = str(row.alert_id);
+      const kind = str(row.kind);
+      if (!alertId || !kind) return [];
+      const payload = obj(row.payload);
+      return [
+        {
+          alertId,
+          kind,
+          severity: row.severity === "high" ? "high" : "info",
+          pattern: str(payload.pattern),
+          requesterPubkey: str(payload.requester_public_key),
+          count:
+            num(payload.owners) ??
+            num(payload.agents) ??
+            num(payload.high_flags_24h),
+          createdAt: str(row.created_at),
+        },
+      ];
+    },
+  );
+  const suspended = (
+    Array.isArray(raw.suspended_requesters) ? raw.suspended_requesters : []
+  ).flatMap((entry): GuestSuspendedRequester[] => {
+    const row = obj(entry);
+    const pubkey = str(row.pubkey);
+    if (!pubkey) return [];
+    return [
+      {
+        pubkey,
+        userId: str(row.user_id),
+        suspendedAt: str(row.suspended_at),
+        reason: str(row.reason),
+      },
+    ];
+  });
+  return { alerts, suspended };
+}

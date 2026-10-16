@@ -181,3 +181,33 @@ test("a failed profile lookup is not cached", async () => {
   assert.equal(await isTrusted(AGENT), true);
   assert.equal(calls.fetch, 2);
 });
+
+test("reads the alert kind tag and ignores malformed or missing kinds", () => {
+  const tags = (extra) => [
+    ["p", OWNER],
+    ["buzz-guest-alert", "alert-2"],
+    ["severity", "info"],
+    ["agent", AGENT],
+    ...extra,
+  ];
+  assert.equal(
+    parseGuestNotification(
+      event(46042, tags([["buzz-guest-alert-kind", "daily_digest"]])),
+      OWNER,
+      NOW,
+    )?.kind,
+    "daily_digest",
+  );
+  assert.equal(
+    parseGuestNotification(
+      event(46042, tags([["buzz-guest-alert-kind", "Not A Kind!"]])),
+      OWNER,
+      NOW,
+    )?.kind,
+    null,
+  );
+  assert.equal(
+    parseGuestNotification(event(46042, tags([])), OWNER, NOW)?.kind,
+    null,
+  );
+});

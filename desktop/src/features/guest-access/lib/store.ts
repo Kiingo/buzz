@@ -30,8 +30,16 @@ export type GuestAlert = {
   eventId: string;
   agentPubkey: string;
   severity: "high" | "info";
+  /** `buzz-guest-alert-kind` (e.g. `daily_digest`); absent on older routes. */
+  kind?: string | null;
   content: string;
   createdAt: number;
+};
+
+/** Tabs of an agent's Access dialog that alerts can open directly. */
+export type AgentAccessTarget = {
+  agentPubkey: string;
+  tab: "requests" | "digest";
 };
 
 export type EndpointStatus = {
@@ -46,6 +54,8 @@ export type GuestAccessSnapshot = {
   alerts: readonly GuestAlert[];
   openApprovalId: string | null;
   endpointStatus: Readonly<Record<string, EndpointStatus>>;
+  /** The agent Access dialog an alert asked to open, if any. */
+  accessTarget: AgentAccessTarget | null;
 };
 
 const EMPTY: GuestAccessSnapshot = {
@@ -53,6 +63,7 @@ const EMPTY: GuestAccessSnapshot = {
   alerts: [],
   openApprovalId: null,
   endpointStatus: {},
+  accessTarget: null,
 };
 
 let pending = new Map<string, PendingApprovalEntry>();
@@ -60,6 +71,7 @@ let resolved = new Set<string>();
 let alerts = new Map<string, GuestAlert>();
 let dismissedAlerts = new Set<string>();
 let openApprovalId: string | null = null;
+let accessTarget: AgentAccessTarget | null = null;
 let endpointStatus: Record<string, EndpointStatus> = {};
 let snapshot: GuestAccessSnapshot = EMPTY;
 const listeners = new Set<() => void>();
@@ -72,6 +84,7 @@ function publish() {
       .sort((a, b) => b.createdAt - a.createdAt),
     openApprovalId,
     endpointStatus,
+    accessTarget,
   };
   for (const listener of listeners) listener();
 }
@@ -186,7 +199,23 @@ export function recordEndpointStatus(
   publish();
 }
 
+/** Open one agent's Access dialog on a tab (from an alert's Review). */
+export function openAgentAccess(target: AgentAccessTarget) {
+  accessTarget = {
+    agentPubkey: target.agentPubkey.toLowerCase(),
+    tab: target.tab,
+  };
+  publish();
+}
+
+export function closeAgentAccess() {
+  if (accessTarget === null) return;
+  accessTarget = null;
+  publish();
+}
+
 export function resetGuestAccessStore() {
+  accessTarget = null;
   pending = new Map();
   resolved = new Set();
   alerts = new Map();

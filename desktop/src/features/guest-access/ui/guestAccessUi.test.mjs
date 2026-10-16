@@ -154,3 +154,33 @@ test("the link prompt shows at most once a day", () => {
   assert.equal(shouldShowLinkPrompt(String(now - 60_000), now), false);
   assert.equal(shouldShowLinkPrompt(String(now - 25 * 60 * 60_000), now), true);
 });
+
+test("alert Review follows the alert kind; outcome notices have none", () => {
+  const alert = (alertId, kind) => ({
+    alertId,
+    eventId: `e-${alertId}`,
+    agentPubkey: "b".repeat(64),
+    severity: "info",
+    kind,
+    content: `${alertId} content`,
+    createdAt: 1,
+  });
+  const render = (alerts) =>
+    renderToStaticMarkup(
+      React.createElement(GuestAlertBanner, {
+        alerts,
+        onDismiss: () => {},
+        onReview: () => {},
+      }),
+    );
+  assert.match(render([alert("d", "daily_digest")]), /Open digest/);
+  assert.match(
+    render([alert("s", "requester_suspended")]),
+    /Review in Settings/,
+  );
+  assert.match(render([alert("b", null)]), /Review requests/);
+  assert.doesNotMatch(
+    render([alert("o", "agent_request_outcome")]),
+    /guest-alert-review/,
+  );
+});
