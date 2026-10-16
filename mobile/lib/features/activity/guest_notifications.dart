@@ -45,12 +45,14 @@ Set<String> trustedGuestNotifiers({
 }
 
 /// The guest notifications to show in Needs Action: approval requests that
-/// have not been resolved, and alerts, from trusted authors addressed to the
+/// have not been resolved (by a 46041, or by a decision this device just
+/// recorded, [locallyResolved]), and alerts, from trusted authors addressed to the
 /// owner by exactly one `p` tag.
 List<NostrEvent> visibleGuestNotifications({
   required Iterable<NostrEvent> events,
   required Set<String> trustedAuthors,
   required String ownerPubkey,
+  Set<String> locallyResolved = const {},
 }) {
   final owner = ownerPubkey.toLowerCase();
   bool addressedOnlyToOwner(NostrEvent event) {
@@ -68,7 +70,7 @@ List<NostrEvent> visibleGuestNotifications({
           addressedOnlyToOwner(event))
         event,
   ];
-  final resolved = <String>{};
+  final resolved = <String>{...locallyResolved};
   for (final event in trusted) {
     final approvalId = _tag(event, 'buzz-guest-approval');
     if (event.kind == guestApprovalResolvedKind && approvalId != null) {

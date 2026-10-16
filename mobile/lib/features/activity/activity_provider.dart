@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import '../../shared/guest_access/resolved_guest_approvals.dart';
 import '../../shared/relay/relay.dart';
 import '../channels/channel.dart';
 import '../channels/channel_management_provider.dart';
@@ -625,6 +626,7 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
         ownerPubkey: myPk,
       ),
       ownerPubkey: myPk,
+      locallyResolved: ref.read(resolvedGuestApprovalIdsProvider),
     );
   }
 
