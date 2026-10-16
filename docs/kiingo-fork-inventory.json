@@ -1288,6 +1288,17 @@
         "mobile/ios/Podfile.lock",
         "mobile/ios/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz agent access maintainers",
+      "purpose": "Mobile \"Review\" action on agent guest alerts (46042), matching desktop alertRoute.ts: the buzz-guest-alert-kind tag opens the owner digest (daily_digest), the request log (blocks, rate limits, budget, untagged) or org-admin guest safety (requester_suspended, org_pattern; non-admins stay on the inbox); agent_request_outcome has nothing to review.",
+      "upstreamStatus": "Generic; guest alerts exist only in this fork.",
+      "removalCondition": "Remove with the guest-access feature or when block/buzz ships guest alerts on mobile.",
+      "paths": [
+        "mobile/lib/shared/guest_access/guest_alert_route.dart",
+        "mobile/test/shared/guest_access/guest_alert_route_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [
