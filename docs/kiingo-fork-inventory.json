@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 153,
-    "modifiedUpstreamFiles": 246,
+    "modifiedUpstreamFiles": 247,
     "changedUpstreamProductionSourceLines": 10588,
     "upstreamProductionSourceDiffHunks": 1167,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -859,6 +859,14 @@
       ]
     },
     {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "purpose": "Discover registered Visual C++ installations instead of assuming a Visual Studio release-year directory, while preserving installed MSVC, default toolset, Windows SDK and CMake identity in the native desktop cache fingerprint.",
+      "upstreamStatus": "Generic Windows build-cache portability fix; candidate for upstream.",
+      "removalCondition": "Remove when block/buzz discovers registered Visual C++ installations for its native desktop cache identity.",
+      "paths": ["scripts/desktop-native-toolchain-id.sh"]
+    },
+    {
       "id": "kiingo-spot-only-static-ci",
       "classification": "move-to-kiingo",
       "purpose": "Kiingo organization policy for isolated public Linux/Windows Azure Spot build/static/publication profiles, test-free fork CI and normal static hooks; upstream owners keep their existing behavior. Required Windows MSVC workspace/Tauri compile and ARM image output remain. Default Apple compilation uses existing exact-source Kiingo native platform owners under the documented exception.",
@@ -970,6 +978,13 @@
     }
   ],
   "budgetAmendments": [
+    {
+      "id": "M-3880-registered-windows-cache-toolchain",
+      "baseline": "f210dbf0abd342877889a6d059c1d671fb494745",
+      "reason": "One newly modified upstream shell helper repairs the actual Windows publication failure caused by a hardcoded Visual Studio2022 directory. Classify that exact generic path and account for one file; production-source files, lines, hunks and zero-business-logic budgets remain unchanged. No wildcard, checker exception or unused allowance.",
+      "previousModifiedUpstreamFiles": 246,
+      "qualifiedModifiedUpstreamFiles": 247
+    },
     {
       "id": "M-3560-qualified-online-cost-cutover",
       "baseline": "c003cf40eea136b76d3eb0b20a3b3dab291aacc9",
