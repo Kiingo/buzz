@@ -25,6 +25,9 @@ dependencies:
   connectivity_plus: ^7.0.0
   nostr: ^2.0.0
   pointycastle: ^4.0.0
+  # Pure-Dart X25519, Ed25519 and ChaCha20-Poly1305 for the hosted-agent
+  # identity envelope and signed capability catalog.
+  cryptography: ^2.9.0
   url_launcher: ^6.3.2
   gpt_markdown: ^1.2.1
   highlight: ^0.7.0

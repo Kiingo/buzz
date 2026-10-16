@@ -14,6 +14,7 @@ import 'features/age_gate/age_restriction_page.dart';
 import 'features/age_gate/age_signal_provider.dart';
 import 'features/activity/activity_provider.dart';
 import 'features/activity/guest_notification_push.dart';
+import 'features/agents/hosted_agents_page.dart';
 import 'features/activity/inbox_local_state_provider.dart';
 import 'features/activity/inbox_read_state.dart';
 import 'features/channels/channel.dart';
@@ -453,6 +454,7 @@ class _SettingsPageContent extends ConsumerWidget {
       ),
       onEditDisplayName: showProfileDisplayNameEditor,
       onEditProfileDescription: showProfileDescriptionEditor,
+      agentsPageBuilder: (_) => const HostedAgentsPage(),
       identityRecoveryPageBuilder: (_) =>
           const PairingPage(addingCommunity: true, identityRecoveryOnly: true),
     );
