@@ -7,6 +7,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../shared/guest_access/guest_notification_sheet.dart';
 import '../../shared/mentions/agent_identity_provider.dart';
 import '../../shared/mentions/mention_tags.dart';
 import '../../shared/relay/relay.dart';
@@ -192,6 +193,16 @@ class ActivityPage extends HookConsumerWidget {
     }
 
     Future<void> openItem(InboxItem item) async {
+      if (await openGuestNotification(
+        context,
+        kind: item.item.kind,
+        tags: item.item.tags,
+        content: item.item.content,
+        onDecided: () => ref.invalidate(activityProvider),
+      )) {
+        return;
+      }
+      if (!context.mounted) return;
       final channelId = item.item.channelId;
       if (channelId == null) {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(
