@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
-  "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
+  "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
   "migrationLedger": {
     "policy": "sqlx keys migrations by filename version and SHA-384 of the bytes. Upstream migrations at or below identityThroughVersion keep their paths. Every later upstream migration is renamed byte for byte to the next free fork version, in apply order (next-free-number rule), so production and fresh databases apply the same sequence. Fork-owned versions applied in production are never renumbered or edited. scripts/check-kiingo-migration-ledger.mjs enforces this; ignore_missing stays false.",
     "identityThroughVersion": 40,
@@ -221,10 +221,10 @@
     ]
   },
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 153,
-    "modifiedUpstreamFiles": 265,
-    "changedUpstreamProductionSourceLines": 10588,
-    "upstreamProductionSourceDiffHunks": 1167,
+    "modifiedUpstreamProductionSourceFiles": 156,
+    "modifiedUpstreamFiles": 277,
+    "changedUpstreamProductionSourceLines": 9577,
+    "upstreamProductionSourceDiffHunks": 1163,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -535,13 +535,20 @@
   ],
   "deltas": [
     {
-      "classification": "retain-generic",
+      "classification": "drop/upstream-present",
       "owner": "Buzz integration maintainers",
       "purpose": "Keep the development and integration object-store dependency on MinIO's public multi-architecture registry after the former Docker Hub image paths stopped serving anonymous pulls.",
-      "upstreamStatus": "Generic dependency-registry correction discovered by hosted integration CI; not submitted upstream.",
+      "upstreamStatus": "Upstream-present: block/buzz #8023 (pinned Silo images) supersedes the MinIO registry move.",
       "removalCondition": "Remove when block/buzz uses an equivalent available MinIO registry or replaces this development dependency.",
-      "paths": [
-        "docker-compose.yml"
+      "paths": [],
+      "upstreamPresentAtSync": [
+        {
+          "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+          "droppedPaths": [
+            "docker-compose.yml"
+          ],
+          "reason": "Upstream #8023 replaced MinIO with pinned pgsty/silo images; the fork registry change has no target."
+        }
       ]
     },
     {
@@ -555,7 +562,12 @@
         "crates/buzz-db/src/store/channel_event_sequence.rs",
         "crates/buzz-db/src/store/channel_event_sequence/tests.rs",
         "crates/buzz-relay/src/api/bridge/channel_event_sequence.rs",
-        "migrations/0044_channel_event_sequence.sql"
+        "migrations/0044_channel_event_sequence.sql",
+        "schema/functions/assign_channel_event_sequence.sql",
+        "schema/tables/public/channel_event_heads.sql",
+        "schema/tables/public/events.sql",
+        "schema/triggers/channel_event_heads.sql",
+        "schema/triggers/events.sql"
       ]
     },
     {
@@ -573,7 +585,11 @@
         "crates/buzz-db/src/store/user_stop/tests.rs",
         "crates/buzz-relay/src/api/bridge.rs",
         "crates/buzz-relay/src/api/bridge/user_stop.rs",
-        "migrations/0043_user_stop_events.sql"
+        "migrations/0043_user_stop_events.sql",
+        "schema/functions/retain_user_stop_event.sql",
+        "schema/functions/user_stop_event_root.sql",
+        "schema/tables/public/user_stop_events.sql",
+        "schema/triggers/user_stop_events.sql"
       ]
     },
     {
@@ -590,7 +606,9 @@
         "crates/buzz-acp/src/local_publication.rs",
         "crates/buzz-acp/src/pool.rs",
         "crates/buzz-acp/src/queue.rs",
+        "crates/buzz-acp/src/queue/conversation.rs",
         "crates/buzz-acp/src/relay.rs",
+        "crates/buzz-acp/src/runtime.rs",
         "crates/buzz-sdk/src/builders.rs"
       ]
     },
@@ -746,8 +764,16 @@
         "desktop/src/features/onboarding/machineOnboarding.test.mjs",
         "desktop/src/features/onboarding/machineOnboarding.ts",
         "desktop/src/features/onboarding/ui/MachineOnboardingFlow.tsx",
-        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs",
-        "desktop/tests/e2e/harness-management.spec.ts"
+        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs"
+      ],
+      "upstreamPresentAtSync": [
+        {
+          "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+          "droppedPaths": [
+            "desktop/tests/e2e/harness-management.spec.ts"
+          ],
+          "reason": "Upstream #7528 deleted the F8 onboarding e2e the fork had edited; the D8 recovered-identity coverage needs a new onboarding spec."
+        }
       ]
     },
     {
@@ -768,6 +794,7 @@
         "docs/kiingo-fork-minimization-hard-cutover-plan-2026-08-11.md",
         "docs/kiingo-upstream-candidate-ledger-2026-08-11.md",
         "scripts/check-kiingo-fork-boundary.mjs",
+        "scripts/check-kiingo-migration-ledger.mjs",
         "scripts/rehearse-upstream-sync.mjs",
         "scripts/rehearse-upstream-sync.test.mjs"
       ]
@@ -790,6 +817,7 @@
         "desktop/src-tauri/src/managed_agents/config_bridge/reader_tests.rs",
         "desktop/src-tauri/src/managed_agents/discovery.rs",
         "desktop/src-tauri/src/managed_agents/discovery/auth_status_cache.rs",
+        "desktop/src-tauri/src/managed_agents/discovery/catalog.rs",
         "desktop/src-tauri/src/managed_agents/discovery/login_shell.rs",
         "desktop/src-tauri/src/managed_agents/discovery/login_shell_spawn_probe.rs",
         "desktop/src-tauri/src/managed_agents/discovery/runtime_metadata.rs",
@@ -880,13 +908,21 @@
         "mobile/lib/shared/relay/nostr_models.dart",
         "mobile/test/features/channels/agent_status_test.dart",
         "schema/schema.sql",
+        "schema/tables/public/managed_publication_receipts.sql",
+        "schema/tables/public/managed_publication_scopes.sql",
+        "schema/tables/public/managed_publications.sql",
+        "schema/tables/public/managed_runtime_issuers.sql",
+        "schema/triggers/managed_publication_receipts.sql",
+        "schema/triggers/managed_publication_scopes.sql",
+        "schema/triggers/managed_publications.sql",
+        "schema/triggers/managed_runtime_issuers.sql",
         "scripts/reconcile-schema-after-pgschema.sql"
       ]
     },
     {
       "classification": "retain-generic",
       "owner": "Buzz reliability maintainers",
-      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised; and keep relay-signed kind:40099 system events (dm_created) out of the Home inbox DM context, which has no system-row renderer and showed their JSON as chat; and export each agent turn's reply destination (BUZZ_TURN_CONTEXT_FILE) so `buzz messages send` in the turn's channel replies in the triggering thread by default, with --top-level to opt out; and refuse further chat sends to the turn's channel after the agent @mentions someone other than itself and the turn's triggering members (a floor handoff recorded beside the turn file), unless --after-handoff is passed, so an agent cannot ask a question and post the conclusion in the same turn; parallel sends in one turn serialize the handoff check, send, and marker write on an advisory lock file in the turn directory; and carry a saved agent definition's access (who can send instructions) to its deployed instances still on the definition's previous access, through the instance update command so the running agent restarts on the new gate, and let the access people picker add a pasted npub or hex key whatever the profile search returns, with the member picker's search page size; and keep Home inbox thread context failures per message (reuse ancestors already in the channel window, retry a failed context fetch once, render an inline placeholder for a deleted or unreadable root/ancestor and a quiet retry note for replies) instead of a page-level error banner, and refresh channel rosters on every live kind:40099 membership row (joined/left/removed/added) for all member channels, not only the open channel screen, with the members sidebar revalidating a cached roster on open.",
+      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised; and keep relay-signed kind:40099 system events (dm_created) out of the Home inbox DM context, which has no system-row renderer and showed their JSON as chat; and export each agent turn's reply destination (BUZZ_TURN_CONTEXT_FILE) so `buzz messages send` in the turn's channel replies in the triggering thread by default, with --top-level to opt out; and refuse further chat sends to the turn's channel after the agent @mentions someone other than itself and the turn's triggering members (a floor handoff recorded beside the turn file), unless --after-handoff is passed, so an agent cannot ask a question and post the conclusion in the same turn; parallel sends in one turn serialize the handoff check, send, and marker write on an advisory lock file in the turn directory; and carry a saved agent definition's access (who can send instructions) to its deployed instances still on the definition's previous access, through the instance update command so the running agent restarts on the new gate; and keep Home inbox thread context failures per message (reuse ancestors already in the channel window, retry a failed context fetch once, render an inline placeholder for a deleted or unreadable root/ancestor and a quiet retry note for replies) instead of a page-level error banner, and refresh channel rosters on every live kind:40099 membership row (joined/left/removed/added) for all member channels, not only the open channel screen, with the members sidebar revalidating a cached roster on open.",
       "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
       "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
       "paths": [
@@ -909,9 +945,6 @@
         "desktop/src-tauri/src/commands/personas/update/access_propagation_tests.rs",
         "desktop/src-tauri/src/managed_agents/persona_events/tests.rs",
         "desktop/src-tauri/src/managed_agents/types/requests.rs",
-        "desktop/src/features/agents/lib/respondToAllowlist.test.mjs",
-        "desktop/src/features/agents/lib/respondToAllowlist.ts",
-        "desktop/src/features/agents/ui/RespondToField.tsx",
         "desktop/src/features/agents/ui/respondToFieldContract.test.mjs",
         "desktop/src/features/channels/membershipSystemEvents.test.mjs",
         "desktop/src/features/channels/membershipSystemEvents.ts",
@@ -928,23 +961,43 @@
         "desktop/src/features/home/useInboxThreadContext.ts",
         "desktop/src/shared/api/relayClientSession.ts",
         "desktop/tests/e2e/messaging.spec.ts"
+      ],
+      "upstreamPresentAtSync": [
+        {
+          "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+          "droppedPaths": [
+            "desktop/src/features/agents/lib/respondToAllowlist.test.mjs",
+            "desktop/src/features/agents/lib/respondToAllowlist.ts",
+            "desktop/src/features/agents/ui/RespondToField.tsx"
+          ],
+          "reason": "Upstream #7489 ships the same pasted npub/hex access picker (byte-identical respondToAllowlist files)."
+        }
       ]
     },
     {
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
-      "purpose": "Relay support for agent guest access notifications: stored, global, owner-addressed kinds 46040 (approval requested), 46041 (approval resolved) and 46042 (guest-access alert) with strict envelope validation (one hex p tag, agent tag, correlation id, status/severity enums, short content, no h tag); p-gated reads at the filter, result and live fan-out layers (only the addressed owner can read them, including by id); and push eligibility for 46040/46042 (relay NIP-PL push kinds, an additive push-match trigger migration, the activation backfill) so approval requests wake the owner's phone. The read gate now derives from RESULT_GATED_KINDS instead of hard-coded kinds.",
+      "purpose": "Relay support for agent guest access notifications: stored, global, owner-addressed kinds 46040 (approval requested), 46041 (approval resolved) and 46042 (guest-access alert) with strict envelope validation (one hex p tag, agent tag, correlation id, status/severity enums, short content, no h tag); p-gated reads at the filter, result and live fan-out layers (only the addressed owner can read them, including by id); and push eligibility for 46040/46042 (relay push kinds under buzz-push-v1, the application push-match allowlist PUSH_MATCH_KINDS that replaced the retired trigger, and fork migration 0045 retained as applied history) so approval requests wake the owner's phone. The read gate now derives from RESULT_GATED_KINDS instead of hard-coded kinds.",
       "upstreamStatus": "Generic notification kinds with no deployment-specific behaviour; not yet proposed upstream.",
       "removalCondition": "Remove when block/buzz ships owner-addressed approval notification kinds with private reads and push eligibility.",
       "paths": [
         "crates/buzz-core/src/filter.rs",
-        "crates/buzz-db/src/store/push.rs",
+        "crates/buzz-db/src/store/event_follow_up.rs",
         "crates/buzz-relay/src/handlers/guest_notification.rs",
         "crates/buzz-relay/src/handlers/mod.rs",
         "crates/buzz-relay/src/handlers/push_lease.rs",
         "crates/buzz-relay/src/handlers/req.rs",
         "crates/buzz-relay/src/push_runtime.rs",
         "migrations/0045_push_guest_notification_kinds.sql"
+      ],
+      "upstreamPresentAtSync": [
+        {
+          "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+          "droppedPaths": [
+            "crates/buzz-db/src/store/push.rs"
+          ],
+          "reason": "Upstream #8178 removed the activation backfill the fork extended; 46040/46042 push eligibility now lives in event_follow_up::PUSH_MATCH_KINDS."
+        }
       ]
     },
     {
@@ -956,20 +1009,23 @@
       "paths": [
         "crates/buzz-acp/src/agent_guards.rs",
         "crates/buzz-acp/src/dm_addressing.rs",
-        "deny.toml",
         "crates/buzz-acp/src/guest_route.rs",
         "crates/buzz-acp/src/guest_runtime.rs",
         "crates/buzz-acp/src/guest_runtime_tests.rs",
+        "crates/buzz-acp/src/inbound_author_gate/trust_screen.rs",
+        "crates/buzz-acp/src/listener_trust.rs",
         "crates/buzz-acp/src/provenance.rs",
+        "crates/buzz-acp/src/scope.rs",
         "crates/buzz-acp/src/trust.rs",
         "crates/buzz-acp/tests/e2e_guest_routing.rs",
         "crates/buzz-acp/tests/fixtures/fake_acp_agent.py",
         "crates/buzz-cli/src/client.rs",
-        "crates/buzz-cli/src/commands/feed.rs",
         "crates/buzz-cli/src/commands/dm_mentions.rs",
+        "crates/buzz-cli/src/commands/feed.rs",
         "crates/buzz-cli/src/commands/hosted_quarantine.rs",
         "crates/buzz-cli/src/commands/outbound_classify.rs",
         "crates/buzz-sdk/src/agent_relay.rs",
+        "deny.toml",
         "desktop/src-tauri/build.rs",
         "desktop/src-tauri/src/managed_agents/access_policy.rs",
         "desktop/src-tauri/src/managed_agents/reserved_env_keys.rs"
@@ -1097,6 +1153,10 @@
       "removalCondition": "Remove when equivalent externally owned Kiingo source/build/publication workflows preserve the same outputs and immutable source/profile custody.",
       "paths": [
         ".github/kiingo-spot-ci.json",
+        ".github/workflows/_ci-clients.yml",
+        ".github/workflows/_ci-desktop.yml",
+        ".github/workflows/_ci-rust.yml",
+        ".github/workflows/_ci-security.yml",
         ".github/workflows/auto-tag-on-release-pr-merge.yml",
         ".github/workflows/benchmark-harbor.yml",
         ".github/workflows/desktop-release-cache-proof.yml",
@@ -1105,6 +1165,7 @@
         ".github/workflows/linux-canary.yml",
         ".github/workflows/macos-intel-canary.yml",
         ".github/workflows/mesh-lifecycle.yml",
+        ".github/workflows/minio-image.yml",
         ".github/workflows/mobile-release-candidate.yml",
         ".github/workflows/promote-oss-desktop-release.yml",
         ".github/workflows/push-gateway-helm-chart.yml",
@@ -1136,12 +1197,14 @@
         "crates/buzz-pubsub/src/error.rs",
         "crates/buzz-pubsub/src/lib.rs",
         "crates/buzz-pubsub/src/nip98_replay.rs",
+        "crates/buzz-pubsub/src/nip_fi_command_replay.rs",
         "crates/buzz-pubsub/src/presence.rs",
         "crates/buzz-pubsub/src/publisher.rs",
         "crates/buzz-pubsub/src/rate_limiter.rs",
         "crates/buzz-pubsub/src/subscriber.rs",
         "crates/buzz-pubsub/src/transport.rs",
         "crates/buzz-pubsub/src/writer.rs",
+        "crates/buzz-relay/src/api/mod.rs",
         "crates/buzz-relay/src/router.rs"
       ]
     },
@@ -1208,6 +1271,7 @@
       "paths": [
         "mobile/lib/features/activity/activity_page.dart",
         "mobile/lib/shared/guest_access/guest_access_client.dart",
+        "mobile/lib/shared/guest_access/guest_access_icons.dart",
         "mobile/lib/shared/guest_access/guest_approval.dart",
         "mobile/lib/shared/guest_access/guest_approval_decision.dart",
         "mobile/lib/shared/guest_access/guest_approval_sheet.dart",
@@ -1245,6 +1309,7 @@
         "mobile/lib/shared/hosted_agents/hosted_agent_create_flow.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_deploy_request.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_errors.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_icons.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_identity.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_proofs.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_relay_publisher.dart",
@@ -1280,6 +1345,7 @@
         "mobile/lib/shared/deeplink/deep_link.dart",
         "mobile/lib/shared/deeplink/pending_deep_link_provider.dart",
         "mobile/lib/shared/push/push_bridge.dart",
+        "mobile/test/features/channels/channel_detail_page_test.dart",
         "mobile/test/shared/push/push_bridge_test.dart"
       ]
     },
@@ -1292,9 +1358,68 @@
       "paths": [
         "scripts/kiingo-ios-assets/KiingoBuzzAppIcon-1024.png"
       ]
+    },
+    {
+      "id": "kiingo-migration-ledger",
+      "classification": "retain-generic",
+      "owner": "Kiingo platform engineering (relay migrations)",
+      "purpose": "Fork-numbered relay migration history. The fork's production-applied 0041-0045 keep their versions; upstream migrations above version 40 are renamed byte for byte to the next free fork versions (this sync: upstream 0041-0065 to 0046-0070), recorded with SHA-384 in migrationLedger and enforced by scripts/check-kiingo-migration-ledger.mjs. Upstream test literals and docs that name those versions are shifted with them.",
+      "upstreamStatus": "Kiingo-specific consequence of fork migrations reaching production before upstream used those numbers; not proposed upstream.",
+      "removalCondition": "Remove only if the production ledger is rewritten to upstream numbering (risk analysis option b1) or upstream adopts the fork's 0041-0045.",
+      "paths": [
+        "crates/buzz-db/src/runtime/follow_up_retirement_tests.rs",
+        "crates/buzz-db/src/runtime/tests/thread_window_postgres_tests.rs",
+        "crates/buzz-db/src/store/event_follow_up_postgres_tests.rs",
+        "docs/thread-window-deployment.md",
+        "migrations/0046_nip_fi_identity_foundation.sql",
+        "migrations/0047_nip_fi_authorization_foundation.sql",
+        "migrations/0048_push_gateway_dogfood_profile.sql",
+        "migrations/0049_drop_nip_fi_ledger.sql",
+        "migrations/0050_retain_push_revocation_tombstones.sql",
+        "migrations/0051_storage_accounting_snapshots.sql",
+        "migrations/0052_relay_admin_action_target.sql",
+        "migrations/0053_audit_hash_version.sql",
+        "migrations/0054_thread_window_index.sql",
+        "migrations/0055_operator_listener_mentions.sql",
+        "migrations/0056_owner_community_deletion_admission.sql",
+        "migrations/0057_channel_artifacts.sql",
+        "migrations/0058_owner_deletion_auto_approval.sql",
+        "migrations/0059_owner_deletion_quota_reservation.sql",
+        "migrations/0060_relay_admin_direct_actions.sql",
+        "migrations/0061_personal_read_state.sql",
+        "migrations/0062_personal_read_started_at.sql",
+        "migrations/0063_personal_read_through_message.sql",
+        "migrations/0064_push_rollback_gate.sql",
+        "migrations/0065_push_single_application.sql",
+        "migrations/0066_channel_labels.sql",
+        "migrations/0067_system_channel_type.sql",
+        "migrations/0068_retire_push_match_trigger.sql",
+        "migrations/0069_profile_name_fields.sql",
+        "migrations/0070_retire_channel_ttl_trigger.sql"
+      ]
     }
   ],
   "budgetAmendments": [
+    {
+      "id": "upstream-sync-97e1f6a0",
+      "baseline": "599d88ec385efb052850caf07f9810e9ead87bdf",
+      "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+      "previousUpstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
+      "reason": "Fork-wide upstream sync re-baselines every metric on block/buzz 97e1f6a0. Upstream rewrote seams the fork patches, so re-ports add newly modified upstream files: the CI split into _ci-*.yml (Spot-only, test-free), the minio-image hosted-runner guard, the ACP per-thread SessionScope trust lane and runtime field, the PUSH_MATCH_KINDS allowlist, the NIP-FI replay writer, the observer-owner continuity gate, discovery/catalog.rs cfg(unix), the ed25519-dalek =3.0.0 pin bump, and one upstream mobile test cast. Renamed migrations count as R100, not M. Upstream-present paths are dropped: D0 docker-compose.yml, D8 harness-management.spec.ts, D12 respondToAllowlist and RespondToField, D13 push.rs. Changed lines and hunks fall, and both limits ratchet down to the measured values. Exact measured composition; no slack, wildcard path or checker exception; forbidden business-logic budget remains zero. Needs Ross's policy approval with the sync PR.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 153,
+        "modifiedUpstreamFiles": 265,
+        "changedUpstreamProductionSourceLines": 10588,
+        "upstreamProductionSourceDiffHunks": 1167,
+        "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
+      },
+      "qualifiedComposition": {
+        "modifiedUpstreamProductionSourceFiles": 156,
+        "modifiedUpstreamFiles": 277,
+        "changedUpstreamProductionSourceLines": 9577,
+        "upstreamProductionSourceDiffHunks": 1163
+      }
+    },
     {
       "id": "mobile-hosted-agents",
       "baseline": "b743da9a28697cb336218065579a1e4f22af9f00",
