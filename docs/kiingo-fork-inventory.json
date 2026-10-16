@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 153,
-    "modifiedUpstreamFiles": 248,
+    "modifiedUpstreamFiles": 262,
     "changedUpstreamProductionSourceLines": 10588,
     "upstreamProductionSourceDiffHunks": 1167,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -999,6 +999,40 @@
         "mobile/lib/shared/guest_access/resolved_guest_approvals.dart",
         "mobile/test/shared/guest_access/guest_approval_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz push maintainers",
+      "purpose": "Push taps on owner-addressed agent guest-access notifications (46040 approval requested, 46042 alert), which carry no channel h tag and so previously got no tap target. BuzzPushNavigationTarget gains a channel-less guest variant (event, community, guest_kind) decoded strictly from the NSE-written user info; Flutter routes it as a GuestNotificationDeepLink that selects the community, reloads the trusted inbox and opens the existing owner review sheet, or says the request was already handled. Plus a white-label app icon hook: the Runner icon set name is the BUZZ_APP_ICON_NAME build setting (default AppIcon), overridable from the gitignored AppOverrides.xcconfig like the bundle id and display name.",
+      "upstreamStatus": "Generic; the guest notification kinds exist only in this fork, and the icon hook is a candidate for upstream alongside its other AppOverrides settings.",
+      "removalCondition": "Remove when block/buzz routes channel-less notification taps and exposes an app icon override.",
+      "paths": [
+        "mobile/ios/.gitignore",
+        "mobile/ios/BuzzPushKit/Sources/BuzzPushKit/BuzzPushNavigationTarget.swift",
+        "mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/BuzzPushNavigationTargetTests.swift",
+        "mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/BuzzPushNotificationResolverTests.swift",
+        "mobile/ios/Flutter/Debug.xcconfig",
+        "mobile/ios/Flutter/Release.xcconfig",
+        "mobile/ios/Runner.xcodeproj/project.pbxproj",
+        "mobile/ios/Runner/AppDelegate.swift",
+        "mobile/lib/app.dart",
+        "mobile/lib/features/activity/guest_notification_push.dart",
+        "mobile/lib/features/channels/deep_link_dispatcher.dart",
+        "mobile/lib/shared/deeplink/deep_link.dart",
+        "mobile/lib/shared/deeplink/pending_deep_link_provider.dart",
+        "mobile/lib/shared/push/push_bridge.dart",
+        "mobile/test/shared/push/push_bridge_test.dart"
+      ]
+    },
+    {
+      "classification": "move-to-kiingo",
+      "owner": "Buzz push maintainers",
+      "purpose": "Kiingo Buzz iOS app icon (the Kiingo ring-and-K mark from Kiingo/kiingo apps/kiingo-link-companion, full-bleed 1024 opaque PNG). scripts/kiingo-ios-testflight.sh generates the gitignored AppOverrideIcon.appiconset from it for TestFlight builds and removes it afterwards.",
+      "upstreamStatus": "Kiingo-only release asset; never upstream.",
+      "removalCondition": "Move with the TestFlight script when Kiingo iOS releases move to a Kiingo release pipeline.",
+      "paths": [
+        "scripts/kiingo-ios-assets/KiingoBuzzAppIcon-1024.png"
+      ]
     }
   ],
   "budgetAmendments": [
@@ -1053,6 +1087,13 @@
         "changedUpstreamProductionSourceLines": 9859,
         "upstreamProductionSourceDiffHunks": 1083
       }
+    },
+    {
+      "id": "mobile-guest-push-tap-and-app-icon-hook",
+      "baseline": "7f90e0e75994acbd33a1a30432df385788cff9b3",
+      "reason": "Fourteen newly modified upstream mobile files: the channel-less guest-access push tap (BuzzPushKit navigation target, Runner push bridge, Flutter push bridge, deep link, pending link, dispatcher, app shell, plus their tests) and the generic BUZZ_APP_ICON_NAME icon hook (Runner project, Debug/Release xcconfig, ios .gitignore). Account for fourteen files; production-source files, lines, hunks and zero-business-logic budgets remain unchanged. No wildcard, checker exception or unused allowance.",
+      "previousModifiedUpstreamFiles": 248,
+      "qualifiedModifiedUpstreamFiles": 262
     }
   ]
 }

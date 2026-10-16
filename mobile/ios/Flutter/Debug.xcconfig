@@ -8,6 +8,8 @@ SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DEBUG
 // `BUNDLE_IDENTIFIER = your.app.id` (gitignored).
 BUNDLE_IDENTIFIER = xyz.block.buzz.dogfood.mobile
 APP_DISPLAY_NAME = Buzz
+// Runner app icon set in Runner/Assets.xcassets; overridable like the name.
+BUZZ_APP_ICON_NAME = AppIcon
 BUZZ_DEVELOPMENT_TEAM = JMTDPW9CG3
 
 // Push support is always present in the iOS artifact. The current relay's
