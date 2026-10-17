@@ -1354,6 +1354,42 @@
       "paths": [
         "crates/buzz-db/src/store/channel_members.rs"
       ]
+    },
+    {
+      "id": "upstream-ci-prelanding",
+      "classification": "drop/upstream-present",
+      "owner": "Kiingo fork maintainers",
+      "purpose": "Upstream CI workflow files and their CI-support scripts, hermit tool pins and nextest config, landed on the fork ahead of the upstream sync (#202) so the sync PR's own workflows match main and Kiingo's Spot runner admission (public_workflow_not_current) can run its CI. Content is upstream's from the sync branch, with Kiingo's Spot-only, no-test policy re-applied and upstream-only GitHub-hosted jobs skipped on Kiingo/buzz.",
+      "upstreamStatus": "Upstream-present after the sync; identical to the merged upstream snapshot.",
+      "removalCondition": "Remove this delta in the upstream sync (#202), which moves upstreamSnapshot past these files.",
+      "paths": [
+        ".config/nextest.toml",
+        ".github/ci/minio/Dockerfile",
+        ".github/ci/minio/README.md",
+        ".github/ci/minio/smoke-test.sh",
+        ".github/scripts/codex-security-review.js",
+        ".github/scripts/codex-security-review.test.js",
+        ".github/workflows/_ci-clients.yml",
+        ".github/workflows/_ci-desktop-macos.yml",
+        ".github/workflows/_ci-desktop.yml",
+        ".github/workflows/_ci-relay.yml",
+        ".github/workflows/_ci-rust.yml",
+        ".github/workflows/_ci-security.yml",
+        ".github/workflows/minio-image.yml",
+        "bin/.actionlint-1.7.12.pkg",
+        "bin/.uv-0.12.21.pkg",
+        "bin/actionlint",
+        "bin/hermit.hcl",
+        "bin/uv",
+        "bin/uvx",
+        "scripts/check-postgres-test-discovery.py",
+        "scripts/ci-apt-retry.sh",
+        "scripts/ci-runtime-selection.mjs",
+        "scripts/generate-macos-icon.py",
+        "scripts/macos-icon.sh",
+        "scripts/postgres-test-packages.sh",
+        "scripts/postgres-test-run.sh"
+      ]
     }
   ],
   "budgetAmendments": [
