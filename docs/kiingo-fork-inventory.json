@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 155,
-    "modifiedUpstreamFiles": 275,
+    "modifiedUpstreamFiles": 276,
     "changedUpstreamProductionSourceLines": 10671,
     "upstreamProductionSourceDiffHunks": 1187,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -1322,6 +1322,17 @@
         "mobile/lib/features/channels/reply_details.dart",
         "mobile/test/features/channels/reply_details_test.dart"
       ]
+    },
+    {
+      "classification": "drop/upstream-present",
+      "owner": "Buzz push maintainers",
+      "purpose": "Exact upstream mobile fix 4af2324d8 (block/buzz #7745): the relay configuration depends only on the active community's id, relay URL and signing key, so push lease bookkeeping (reserving a lease generation) no longer rebuilds the relay session. Without it, enabling push on the TestFlight build put the session into a reconnect loop (avatar and inbox flashing) and the kind-30350 lease never published (observed in production on 2026-10-17).",
+      "upstreamStatus": "Present upstream as 4af2324d8; cherry-picked unchanged.",
+      "removalCondition": "Drop on the next upstream sync that includes 4af2324d8.",
+      "paths": [
+        "mobile/lib/shared/relay/relay_provider.dart",
+        "mobile/test/shared/community/push_relay_config_regression_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [
@@ -1429,6 +1440,23 @@
       "qualified": {
         "modifiedUpstreamProductionSourceFiles": 155,
         "modifiedUpstreamFiles": 275,
+        "changedUpstreamProductionSourceLines": 10671,
+        "upstreamProductionSourceDiffHunks": 1187
+      }
+    },
+    {
+      "id": "upstream-7745-relay-session-stable",
+      "baseline": "4667db572f88268826a89a60debaa5e7f3c03981",
+      "reason": "Unchanged cherry-pick of upstream 4af2324d8 (block/buzz #7745) so enabling push no longer reconnects the relay session and the kind-30350 lease can publish. One newly modified upstream file (mobile/lib/shared/relay/relay_provider.dart, classified drop/upstream-present, so production-source budgets are unchanged) plus the upstream regression test as an added file. No wildcard, checker exception or unused allowance.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 155,
+        "modifiedUpstreamFiles": 275,
+        "changedUpstreamProductionSourceLines": 10671,
+        "upstreamProductionSourceDiffHunks": 1187
+      },
+      "qualified": {
+        "modifiedUpstreamProductionSourceFiles": 155,
+        "modifiedUpstreamFiles": 276,
         "changedUpstreamProductionSourceLines": 10671,
         "upstreamProductionSourceDiffHunks": 1187
       }
