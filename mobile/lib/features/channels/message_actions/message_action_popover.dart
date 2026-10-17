@@ -363,6 +363,18 @@ List<_PopoverMessageAction> _buildPopoverMessageActions({
             Clipboard.setData(ClipboardData(text: message.content)),
       ),
     );
+    actions.add(
+      _PopoverMessageAction(
+        id: 'details',
+        title: 'Details',
+        icon: LucideIcons.info,
+        group: _PopoverMessageActionGroup.utility,
+        onSelected: () {
+          if (!context.mounted) return;
+          unawaited(showMessageDetailsSheet(context, message));
+        },
+      ),
+    );
   }
 
   if (canManageMessage) {
