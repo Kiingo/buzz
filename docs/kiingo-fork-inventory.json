@@ -5,7 +5,7 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 155,
-    "modifiedUpstreamFiles": 276,
+    "modifiedUpstreamFiles": 279,
     "changedUpstreamProductionSourceLines": 10671,
     "upstreamProductionSourceDiffHunks": 1187,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
@@ -1333,6 +1333,18 @@
         "mobile/lib/shared/relay/relay_provider.dart",
         "mobile/test/shared/community/push_relay_config_regression_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz mobile maintainers",
+      "purpose": "Media image cache identity by value: MediaImageProvider compares MediaGetAuthService.cacheScope (relay base URL + signing public key) instead of the auth service object, so a provider rebuild for the same relay and account keeps ImageCache hits. Without it every relay-config rebuild re-downloaded each visible image (a 7.7 MB avatar per reconnect in production, 2026-10-17). Relay or account switches still never share cached bytes; the secret key is never part of the key.",
+      "upstreamStatus": "Generic fix written for upstream submission; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when block/buzz keys media image cache identity by relay and signing identity value (or carries this change).",
+      "paths": [
+        "mobile/lib/shared/relay/media_auth.dart",
+        "mobile/lib/shared/relay/media_image.dart",
+        "mobile/test/shared/relay/media_image_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [
@@ -1457,6 +1469,23 @@
       "qualified": {
         "modifiedUpstreamProductionSourceFiles": 155,
         "modifiedUpstreamFiles": 276,
+        "changedUpstreamProductionSourceLines": 10671,
+        "upstreamProductionSourceDiffHunks": 1187
+      }
+    },
+    {
+      "id": "media-cache-scope-by-value",
+      "baseline": "e6157f29ad24b8a66c3fb51630b3eda24fe6c6af",
+      "reason": "Value-based media image cache identity (relay base URL + signing public key) so relay-config rebuilds stop re-downloading every visible image (7.7 MB avatar per reconnect, 2026-10-17). Three newly modified upstream files: mobile media_auth.dart (cacheScope getter, 7 lines), media_image.dart (equality/hash use cacheScope, doc comment) and media_image_test.dart (three identity tests). Classified retain-generic; production-source budgets unchanged. No wildcard, checker exception or unused allowance.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 155,
+        "modifiedUpstreamFiles": 276,
+        "changedUpstreamProductionSourceLines": 10671,
+        "upstreamProductionSourceDiffHunks": 1187
+      },
+      "qualified": {
+        "modifiedUpstreamProductionSourceFiles": 155,
+        "modifiedUpstreamFiles": 279,
         "changedUpstreamProductionSourceLines": 10671,
         "upstreamProductionSourceDiffHunks": 1187
       }
