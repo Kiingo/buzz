@@ -7,6 +7,10 @@ import {
   isMeaningfulItem,
   isSpineItem,
 } from "@/features/agents/ui/agentSessionTranscriptPresentation";
+import {
+  type TypingPhase,
+  typingPhaseSentence,
+} from "@/features/messages/lib/typingStatus";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { ManagedAgent } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
@@ -27,6 +31,8 @@ type BotActivityBarProps = {
   onOpenAgentSession: (pubkey: string, channelId?: string | null) => void;
   openAgentSessionPubkey: string | null;
   profiles?: UserProfileLookup;
+  /** Server-reported typing status per lowercase pubkey, when the agent sends one. */
+  typingPhaseByPubkey?: Readonly<Record<string, TypingPhase | null>>;
   workingBotPubkeys: string[];
   variant?: "toolbar" | "inline";
 };
@@ -40,6 +46,7 @@ export function BotActivityComposerAction({
   onOpenAgentSession,
   openAgentSessionPubkey,
   profiles,
+  typingPhaseByPubkey,
   workingBotPubkeys,
   variant = "toolbar",
 }: BotActivityBarProps) {
@@ -147,18 +154,28 @@ export function BotActivityComposerAction({
   const agentAvatarUrl = (agent: BotActivityAgent) =>
     profiles?.[agent.pubkey.toLowerCase()]?.avatarUrl ?? null;
   const selectedPubkey = openAgentSessionPubkey?.toLowerCase() ?? null;
+  // A server-reported phase is what every device shows for this agent, so it
+  // wins over this desktop's own transcript headline.
+  const singlePhase = singleWorkingAgent
+    ? (typingPhaseByPubkey?.[singleWorkingAgent.pubkey.toLowerCase()] ?? null)
+    : null;
+  const phaseLabel = singlePhase
+    ? `${singleWorkingAgent?.name ?? "Agent"} ${typingPhaseSentence(singlePhase)}`
+    : null;
   const triggerLabel =
-    workingAgents.length === 1
+    phaseLabel ??
+    (workingAgents.length === 1
       ? `${workingAgents[0]?.name ?? "Agent"} is working`
-      : `${workingAgents.length} agents working`;
+      : `${workingAgents.length} agents working`);
   const isInline = variant === "inline";
   const visibleStatusLabel =
-    workingAgents.length === 1
+    phaseLabel ??
+    (workingAgents.length === 1
       ? `${workingAgents[0]?.name ?? "Agent"}: ${
           activityHeadlines[headlineIndex % activityHeadlines.length] ??
           "Working"
         }`
-      : `${workingAgents[0]?.name ?? "Agent"} +${workingAgents.length - 1}`;
+      : `${workingAgents[0]?.name ?? "Agent"} +${workingAgents.length - 1}`);
 
   return (
     <Popover onOpenChange={setOpen} open={open}>

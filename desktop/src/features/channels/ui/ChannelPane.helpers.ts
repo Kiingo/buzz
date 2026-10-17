@@ -108,6 +108,23 @@ export function mentionsKnownAgent(
   );
 }
 
+/**
+ * Latest typing status per lowercase pubkey in one scope: the channel itself
+ * (`threadHeadId` null) or one thread. Entries without a phase are omitted.
+ */
+export function selectTypingPhaseByPubkey(
+  entries: TypingIndicatorEntry[],
+  threadHeadId: string | null,
+): Record<string, NonNullable<TypingIndicatorEntry["phase"]>> {
+  const phases: Record<string, NonNullable<TypingIndicatorEntry["phase"]>> = {};
+  for (const entry of entries) {
+    if (entry.threadHeadId === threadHeadId && entry.phase) {
+      phases[entry.pubkey.toLowerCase()] = entry.phase;
+    }
+  }
+  return phases;
+}
+
 export function selectThreadComposerBotTypingPubkeys(
   entries: TypingIndicatorEntry[],
   threadHeadId: string | null,
