@@ -53,6 +53,7 @@ import { useWelcomeComposerBanner } from "@/features/channels/ui/useWelcomeCompo
 import {
   mentionsKnownAgent,
   selectThreadComposerBotTypingPubkeys,
+  selectTypingPhaseByPubkey,
   shouldPrioritizeIdleAuxiliary,
   shouldUseFocusIdleDrawer,
 } from "@/features/channels/ui/ChannelPane.helpers";
@@ -347,6 +348,17 @@ export const ChannelPane = React.memo(function ChannelPane({
   );
   const hasThreadComposerBotActivity =
     threadComposerBotTypingPubkeys.length > 0;
+  const channelTypingPhaseByPubkey = React.useMemo(
+    () => selectTypingPhaseByPubkey(botTypingEntries, null),
+    [botTypingEntries],
+  );
+  const threadTypingPhaseByPubkey = React.useMemo(
+    () =>
+      openThreadHeadId
+        ? selectTypingPhaseByPubkey(botTypingEntries, openThreadHeadId)
+        : {},
+    [botTypingEntries, openThreadHeadId],
+  );
   const directMessageIntro = React.useMemo(
     () =>
       buildDirectMessageIntro({
@@ -799,6 +811,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                     onOpenAgentSession={onOpenAgentSession}
                     openAgentSessionPubkey={openAgentSessionPubkey}
                     profiles={profiles}
+                    typingPhaseByPubkey={channelTypingPhaseByPubkey}
                     typingPubkeys={typingPubkeys}
                     visible={hasComposerBottomActivity}
                     workingBotPubkeys={composerWorkingBotPubkeys}
@@ -898,6 +911,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                       onOpenAgentSession={onOpenAgentSession}
                       openAgentSessionPubkey={openAgentSessionPubkey}
                       profiles={profiles}
+                      typingPhaseByPubkey={threadTypingPhaseByPubkey}
                       workingBotPubkeys={threadComposerBotTypingPubkeys}
                       variant="inline"
                     />

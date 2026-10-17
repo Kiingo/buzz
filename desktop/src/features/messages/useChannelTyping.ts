@@ -12,10 +12,16 @@ import {
   KIND_TYPING_INDICATOR,
 } from "@/shared/constants/kinds";
 import { resolveEventAuthorPubkey } from "@/shared/lib/authors";
+import {
+  parseTypingPhase,
+  type TypingPhase,
+} from "@/features/messages/lib/typingStatus";
 
 export type TypingIndicatorEntry = {
   pubkey: string;
   threadHeadId: string | null;
+  /** Status carried by the latest pulse; null is plain "is typing…". */
+  phase: Exclude<TypingPhase, "idle"> | null;
 };
 
 type TypingEntry = {
@@ -23,6 +29,7 @@ type TypingEntry = {
   firstSeenAt: number;
   pubkey: string;
   threadHeadId: string | null;
+  phase: Exclude<TypingPhase, "idle"> | null;
 };
 type TypingState = Record<string, TypingEntry>;
 
@@ -115,6 +122,21 @@ export function useChannelTyping(
       return;
     }
 
+    const phase = parseTypingPhase(event.content);
+    if (phase === "idle") {
+      // The sender stopped: end its typing in this scope now, not at the TTL.
+      setTypingByPubkey((current) => {
+        const next = pruneTypingState(current, now);
+        if (!(typingKey in next)) {
+          return next;
+        }
+        const updated = { ...next };
+        delete updated[typingKey];
+        return updated;
+      });
+      return;
+    }
+
     setTypingByPubkey((current) => {
       const pruned = pruneTypingState(current, now);
       const existing = pruned[typingKey];
@@ -125,6 +147,7 @@ export function useChannelTyping(
           firstSeenAt: existing?.firstSeenAt ?? now,
           pubkey: typingPubkey,
           threadHeadId,
+          phase,
         },
       };
     });
@@ -234,7 +257,11 @@ export function useChannelTyping(
     () =>
       Object.values(typingByPubkey)
         .sort((left, right) => left.firstSeenAt - right.firstSeenAt)
-        .map(({ pubkey, threadHeadId }) => ({ pubkey, threadHeadId })),
+        .map(({ pubkey, threadHeadId, phase }) => ({
+          pubkey,
+          threadHeadId,
+          phase,
+        })),
     [typingByPubkey],
   );
 }
