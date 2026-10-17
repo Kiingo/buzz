@@ -46,3 +46,15 @@ ReplyDetails readReplyDetails(List<List<String>> tags) {
         : null,
   );
 }
+
+/// Kiingo's mission acknowledgment and "not replied yet" notices, which used
+/// to post into chat before every agent answer. Kiingo no longer posts them;
+/// agent messages that are exactly these are hidden from the timeline.
+/// Terminal outcomes ("Stopped as requested.") stay visible.
+const _retiredMissionNoticePrefixes = [
+  'Kiingo platform notice — request received; your agent will reply in this thread',
+  'Kiingo platform notice — your agent has not replied yet',
+];
+
+bool isRetiredMissionNotice(String content) =>
+    _retiredMissionNoticePrefixes.any(content.startsWith);

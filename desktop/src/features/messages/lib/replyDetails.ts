@@ -46,3 +46,18 @@ export function readReplyDetails(
     detailsUrl: safeHttpsUrl(singleTagValue(tags, KIINGO_DETAILS_URL_TAG)),
   };
 }
+
+/** Kiingo's mission acknowledgment and "not replied yet" notices, which used
+ *  to post into chat before every agent answer. Kiingo no longer posts them;
+ *  agent messages that are exactly these are hidden from the timeline. Terminal
+ *  outcomes ("Stopped as requested.") stay visible. */
+const RETIRED_MISSION_NOTICE_PREFIXES = [
+  "Kiingo platform notice — request received; your agent will reply in this thread",
+  "Kiingo platform notice — your agent has not replied yet",
+] as const;
+
+export function isRetiredMissionNotice(content: string): boolean {
+  return RETIRED_MISSION_NOTICE_PREFIXES.some((prefix) =>
+    content.startsWith(prefix),
+  );
+}

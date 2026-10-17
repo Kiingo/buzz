@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../shared/relay/relay.dart';
 import '../../shared/custom_emoji/custom_emoji.dart';
 import 'channel_window.dart';
+import 'reply_details.dart';
 
 enum SystemEventType {
   agentStatus,
@@ -424,6 +425,7 @@ List<List<MainTimelineEntry>> groupMembershipTimelineEntries(
 List<TimelineMessage> formatTimeline(
   List<NostrEvent> events, {
   String? currentPubkey,
+  Set<String> agentPubkeys = const {},
 }) {
   // 1. Collect deletion targets. Both kind:5 (NIP-09) and kind:9005
   // (Buzz-native) are deletion markers; mirror desktop's behavior.
@@ -591,6 +593,10 @@ List<TimelineMessage> formatTimeline(
       ];
 
       final threadRef = event.threadReference;
+      if (agentPubkeys.contains(event.pubkey.toLowerCase()) &&
+          isRetiredMissionNotice(edit?.content ?? event.content)) {
+        continue;
+      }
 
       result.add(
         TimelineMessage(

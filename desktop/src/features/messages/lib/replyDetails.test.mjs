@@ -38,3 +38,24 @@ test("ignores missing, duplicated or unsafe values", () => {
     { missionId: null, detailsUrl: null },
   );
 });
+
+test("recognizes only the retired acknowledgment and delay notices", async () => {
+  const { isRetiredMissionNotice } = await import("./replyDetails.ts");
+  assert.equal(
+    isRetiredMissionNotice(
+      "Kiingo platform notice — request received; your agent will reply in this thread\n\nMission: https://x",
+    ),
+    true,
+  );
+  assert.equal(
+    isRetiredMissionNotice(
+      "Kiingo platform notice — your agent has not replied yet\n\nMission: https://x",
+    ),
+    true,
+  );
+  assert.equal(
+    isRetiredMissionNotice("Kiingo platform notice — Stopped as requested."),
+    false,
+  );
+  assert.equal(isRetiredMissionNotice("request received"), false);
+});

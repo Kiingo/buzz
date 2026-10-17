@@ -5,9 +5,9 @@
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 155,
-    "modifiedUpstreamFiles": 274,
-    "changedUpstreamProductionSourceLines": 10662,
-    "upstreamProductionSourceDiffHunks": 1183,
+    "modifiedUpstreamFiles": 275,
+    "changedUpstreamProductionSourceLines": 10671,
+    "upstreamProductionSourceDiffHunks": 1187,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -1307,7 +1307,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
-      "purpose": "Message Details on desktop (More actions or right-click on a message) and mobile (long-press -> Details): event id, author key and time, plus the Kiingo mission behind an agent reply, read from its kiingo-mission / kiingo-details tags (strictly parsed, https only) with an Open mission action. Kiingo/kiingo stopped posting the mission acknowledgment and links into chat (Ross, 2026-10-17: 'I just want the agent to respond'); this is where that information now lives.",
+      "purpose": "Message Details on desktop (More actions or right-click on a message) and mobile (long-press -> Details): event id, author key and time, plus the Kiingo mission behind an agent reply, read from its kiingo-mission / kiingo-details tags (strictly parsed, https only) with an Open mission action. Kiingo/kiingo stopped posting the mission acknowledgment and links into chat (Ross, 2026-10-17: 'I just want the agent to respond'); this is where that information now lives. Agent messages that are exactly Kiingo's retired mission acknowledgment or 'not replied yet' notice are hidden from desktop and mobile timelines (terminal outcomes stay visible).",
       "upstreamStatus": "Generic Details surface; the mission tags are Kiingo's, so the mission section is fork-only.",
       "removalCondition": "Remove when block/buzz ships a message details view that can show publisher-supplied reply metadata.",
       "paths": [
@@ -1315,6 +1315,7 @@
         "desktop/src/features/messages/lib/replyDetails.ts",
         "desktop/src/features/messages/ui/MessageActionBar.tsx",
         "desktop/src/features/messages/ui/MessageDetailsDialog.tsx",
+        "mobile/lib/features/channels/channel_detail_page.dart",
         "mobile/lib/features/channels/message_actions.dart",
         "mobile/lib/features/channels/message_actions/message_action_popover.dart",
         "mobile/lib/features/channels/message_details_sheet.dart",
@@ -1418,7 +1419,7 @@
     {
       "id": "reply-details-menu",
       "baseline": "a55a1127432b39a4550c4aeae0b7b93d17c03219",
-      "reason": "Message Details on desktop and mobile (Ross, 2026-10-17). Three newly modified upstream files: desktop MessageActionBar.tsx (Details item, right-click opens More actions; one production-source file, 50 lines, 8 hunks, no Kiingo business logic) and mobile message_actions.dart plus message_action_popover.dart (Details entry). Everything else is added files. No wildcard, checker exception or unused allowance.",
+      "reason": "Message Details on desktop and mobile, and hiding Kiingo's retired mission notices (Ross, 2026-10-17). Four newly modified upstream files: desktop MessageActionBar.tsx (Details item, right-click opens More actions), mobile message_actions.dart, message_action_popover.dart and channel_detail_page.dart; plus the already-modified formatTimelineMessages.ts (retired-notice filter). Production source: one new file, 59 lines, 12 hunks, no Kiingo business logic. Everything else is added files or already-classified paths. No wildcard, checker exception or unused allowance.",
       "previous": {
         "modifiedUpstreamProductionSourceFiles": 154,
         "modifiedUpstreamFiles": 271,
@@ -1427,9 +1428,9 @@
       },
       "qualified": {
         "modifiedUpstreamProductionSourceFiles": 155,
-        "modifiedUpstreamFiles": 274,
-        "changedUpstreamProductionSourceLines": 10662,
-        "upstreamProductionSourceDiffHunks": 1183
+        "modifiedUpstreamFiles": 275,
+        "changedUpstreamProductionSourceLines": 10671,
+        "upstreamProductionSourceDiffHunks": 1187
       }
     }
   ]

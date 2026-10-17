@@ -727,6 +727,7 @@ class ChannelDetailPage extends HookConsumerWidget {
                             final messages = formatTimeline(
                               events,
                               currentPubkey: currentPubkey,
+                              agentPubkeys: agentPubkeys,
                             );
                             final summaries = ref
                                 .read(

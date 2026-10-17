@@ -32,4 +32,24 @@ void main() {
     expect(duplicated.missionId, isNull);
     expect(duplicated.detailsUrl, isNull);
   });
+
+  test('recognizes only the retired acknowledgment and delay notices', () {
+    expect(
+      isRetiredMissionNotice(
+        'Kiingo platform notice — request received; your agent will reply '
+        'in this thread\n\nMission: https://x',
+      ),
+      isTrue,
+    );
+    expect(
+      isRetiredMissionNotice(
+        'Kiingo platform notice — your agent has not replied yet',
+      ),
+      isTrue,
+    );
+    expect(
+      isRetiredMissionNotice('Kiingo platform notice — Stopped as requested.'),
+      isFalse,
+    );
+  });
 }
