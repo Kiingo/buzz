@@ -399,6 +399,15 @@ The harness works with any agent that implements the [ACP spec](https://agentcli
 - Accept `session/prompt` with a text message and stream `session/update` notifications
 - Return a `stopReason` (`end_turn`, `cancelled`, `max_tokens`, etc.)
 
+An adapter that hands a turn's work to a durable backend which keeps working
+after the ACP turn ends may return, with a successful `session/prompt` result,
+`_meta.buzz.indicators: {"owner": "external", "eventIds": ["<event id>", ...]}`
+naming the events whose indicators that backend now owns. The harness leaves
+exactly those messages marked as seen (👀) instead of clearing the reaction;
+every other event of the turn is cleared as usual, and the harness stops its
+own typing indicator either way. The backend removes the mark when its work
+ends. Failed, cancelled and retried turns ignore the hint.
+
 Set `BUZZ_ACP_AGENT_COMMAND` and `BUZZ_ACP_AGENT_ARGS` to point at your agent binary.
 
 ## Testing

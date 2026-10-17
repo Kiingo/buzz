@@ -228,6 +228,11 @@ pub struct AcpClient {
     steer_rx: Option<tokio::sync::mpsc::Receiver<crate::pool::SteerRequest>>,
     /// Usage tracker for goose/buzz-agent's cumulative notification format.
     goose_usage: UsageTracker,
+    /// Events whose seen/working indicators the last `session/prompt` result
+    /// handed to an external owner (`_meta.buzz.indicators = {"owner":
+    /// "external", "eventIds": [...]}`): a durable backend that keeps working
+    /// after the turn ends. Consumed once per prompt result.
+    external_indicator_event_ids: Vec<String>,
     /// Optional, explicitly enabled publisher for the local ACP extension.
     /// It holds the Buzz signer in this parent process; the child only emits
     /// validated publication intents and never receives private key material.
@@ -661,6 +666,7 @@ impl AcpClient {
             single_event_prompts: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
+            external_indicator_event_ids: Vec::new(),
             local_publication_publisher: None,
             buzz_prompt_metadata: None,
             standard_usage: StandardUsageTracker::default(),
@@ -1124,6 +1130,12 @@ impl AcpClient {
     /// Idempotent — safe to call when `steer_rx` is already `None`.
     pub fn clear_steer_rx(&mut self) {
         self.steer_rx = None;
+    }
+
+    /// The events whose seen/working indicators the prompt that just ended
+    /// handed to an external owner. Resets, so the hint never outlives its turn.
+    pub fn take_external_indicator_event_ids(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.external_indicator_event_ids)
     }
 
     /// Returns `true` if no steer receiver is currently installed.
@@ -2228,6 +2240,7 @@ impl AcpClient {
         result: &serde_json::Value,
     ) -> Result<StopReason, AcpError> {
         let stop_reason = self.parse_stop_reason(result)?;
+        self.external_indicator_event_ids = parse_external_indicator_event_ids(result);
         if let Some(adapter) = self.standard_adapter {
             match serde_json::from_value::<PromptResponseUsage>(result["usage"].clone()) {
                 Ok(usage) => self
@@ -2251,6 +2264,27 @@ impl AcpClient {
         StopReason::from_str(raw)
             .ok_or_else(|| AcpError::Protocol(format!("unknown stopReason: {raw:?}")))
     }
+}
+
+/// Bounded, lower-cased 64-hex event ids from `_meta.buzz.indicators` when its
+/// owner is `"external"`; anything malformed hands nothing over.
+fn parse_external_indicator_event_ids(result: &serde_json::Value) -> Vec<String> {
+    let Some(indicators) = result.pointer("/_meta/buzz/indicators") else {
+        return Vec::new();
+    };
+    if indicators.get("owner").and_then(serde_json::Value::as_str) != Some("external") {
+        return Vec::new();
+    }
+    indicators
+        .get("eventIds")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(str::to_ascii_lowercase)
+        .take(64)
+        .collect()
 }
 
 /// Build `session/prompt` params from one or more text content blocks.
@@ -4931,6 +4965,39 @@ sleep 1"#,
         assert_eq!(usage.cumulative_cost_usd, Some(0.042));
         assert_eq!(usage.cumulative_input_tokens, None);
         assert_eq!(usage.cumulative_output_tokens, None);
+    }
+
+    #[tokio::test]
+    async fn prompt_response_external_indicator_hint_is_consumed_once() {
+        let mut client = spawn_inert_client().await;
+        let owned = "A".repeat(64);
+        client
+            .parse_prompt_response(
+                "session",
+                &serde_json::json!({
+                    "stopReason": "end_turn",
+                    "_meta": {"buzz": {"indicators": {
+                        "owner": "external",
+                        "eventIds": [owned, "not-hex"]
+                    }}}
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            client.take_external_indicator_event_ids(),
+            vec!["a".repeat(64)]
+        );
+        assert!(client.take_external_indicator_event_ids().is_empty());
+        for result in [
+            serde_json::json!({"stopReason": "end_turn"}),
+            serde_json::json!({"stopReason": "end_turn", "_meta": {"buzz": {"indicators": "external"}}}),
+            serde_json::json!({"stopReason": "end_turn", "_meta": {"buzz": {"indicators": {
+                "owner": "self", "eventIds": ["a".repeat(64)]
+            }}}}),
+        ] {
+            client.parse_prompt_response("session", &result).unwrap();
+            assert!(client.take_external_indicator_event_ids().is_empty());
+        }
     }
 
     #[tokio::test]

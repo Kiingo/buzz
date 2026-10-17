@@ -2468,7 +2468,17 @@ fn send_prompt_result(
     batch: Option<FlushBatch>,
     reaction_guard: &mut ReactionGuard,
 ) {
-    reaction_guard.finish(reaction_state_for_prompt_exit(&outcome, batch.is_some()));
+    let external: HashSet<String> = agent
+        .acp
+        .take_external_indicator_event_ids()
+        .into_iter()
+        .collect();
+    let state = reaction_state_for_prompt_exit(&outcome, batch.is_some());
+    if hands_off_indicators(&outcome, batch.is_some()) && !external.is_empty() {
+        reaction_guard.finish_with_external(state, &external);
+    } else {
+        reaction_guard.finish(state);
+    }
     agent.acp.clear_steer_rx();
     let _ = result_tx.send(PromptResult {
         agent,
@@ -5317,6 +5327,12 @@ pub(crate) enum ReactionState {
     Clear,
 }
 
+/// Only a successful, final turn may hand its indicators to an external
+/// owner; failed, cancelled and retried turns keep their own state.
+fn hands_off_indicators(outcome: &PromptOutcome, has_retry_batch: bool) -> bool {
+    !has_retry_batch && matches!(outcome, PromptOutcome::Ok(_))
+}
+
 fn reaction_state_for_prompt_exit(outcome: &PromptOutcome, has_retry_batch: bool) -> ReactionState {
     if has_retry_batch {
         return ReactionState::Queued;
@@ -5362,6 +5378,27 @@ impl ReactionGuard {
             spawn_reconcile_reactions(rest, ids, state);
         }
     }
+
+    /// The adapter's durable backend (for example a server-side mission
+    /// runtime answering minutes later) took over the events in `external`:
+    /// they stay marked as seen (👀) for that owner to remove. Every other
+    /// event of the turn gets `state` as usual.
+    fn finish_with_external(&mut self, state: ReactionState, external: &HashSet<String>) {
+        if let Some(rest) = self.rest.take() {
+            let (kept, others) = split_external_reactions(std::mem::take(&mut self.ids), external);
+            spawn_reconcile_reactions(rest.clone(), kept, ReactionState::Queued);
+            spawn_reconcile_reactions(rest, others, state);
+        }
+    }
+}
+
+/// Partition reaction targets into those an external owner took over and the rest.
+fn split_external_reactions(
+    ids: Vec<String>,
+    external: &HashSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    ids.into_iter()
+        .partition(|id| external.contains(&id.to_ascii_lowercase()))
 }
 
 impl Drop for ReactionGuard {
@@ -6036,6 +6073,30 @@ pub(crate) mod tests {
         assert_eq!(desired_reaction(ReactionState::Running), Some("💬"));
         assert_eq!(desired_reaction(ReactionState::TerminalError), Some("⚠️"));
         assert_eq!(desired_reaction(ReactionState::Clear), None);
+    }
+
+    #[test]
+    fn external_indicator_hand_off_keeps_only_the_owned_seen_reaction() {
+        let owned = "a".repeat(64);
+        let other = "b".repeat(64);
+        let external: HashSet<String> = [owned.clone()].into_iter().collect();
+        let (kept, rest) =
+            split_external_reactions(vec![owned.to_ascii_uppercase(), other.clone()], &external);
+        assert_eq!(kept, vec![owned.to_ascii_uppercase()]);
+        assert_eq!(rest, vec![other]);
+        let ok = PromptOutcome::Ok(StopReason::EndTurn);
+        assert!(hands_off_indicators(&ok, false));
+        // A failure, cancellation or retry keeps its own state even with the hint.
+        assert!(!hands_off_indicators(&ok, true));
+        assert!(!hands_off_indicators(&PromptOutcome::Cancelled, false));
+        assert!(!hands_off_indicators(
+            &PromptOutcome::Error(AcpError::Protocol("boom".into())),
+            false
+        ));
+        assert_eq!(
+            reaction_state_for_prompt_exit(&ok, false),
+            ReactionState::Clear
+        );
     }
 
     #[test]
