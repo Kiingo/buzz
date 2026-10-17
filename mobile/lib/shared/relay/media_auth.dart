@@ -40,6 +40,13 @@ class MediaGetAuthService {
        _nsec = nsec,
        _now = now ?? DateTime.now;
 
+  /// Value identity for caches keyed by this service: the relay base URL and
+  /// the signing public key. Two services built for the same relay and
+  /// account (for example after an unrelated provider rebuild) share cached
+  /// media; a relay or account switch never does. The secret key itself is
+  /// never part of the identity.
+  late final String cacheScope = '$_baseUrl|${pubkeyFromNsec(_nsec) ?? ''}';
+
   bool isRelayMediaUrl(String url) {
     final uri = Uri.tryParse(url);
     final relayUri = Uri.tryParse(_baseUrl);

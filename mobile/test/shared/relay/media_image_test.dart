@@ -92,6 +92,52 @@ void main() {
       expect(a, isNot(equals(b)));
     });
 
+    test('rebuilt auth service for the same relay and key => equal keys', () {
+      final nsec = nostr.Keys.generate().nsec;
+      final client = http.Client();
+      addTearDown(client.close);
+      final a = MediaImageProvider(
+        url: _mediaUrl,
+        auth: _auth(nsec: nsec),
+        client: client,
+      );
+      final b = MediaImageProvider(
+        url: _mediaUrl,
+        auth: _auth(nsec: nsec),
+        client: client,
+      );
+      expect(a, equals(b));
+      expect(a.hashCode, equals(b.hashCode));
+    });
+
+    test('same key on a different relay => unequal keys', () {
+      final nsec = nostr.Keys.generate().nsec;
+      final client = http.Client();
+      addTearDown(client.close);
+      final a = MediaImageProvider(
+        url: _mediaUrl,
+        auth: _auth(nsec: nsec),
+        client: client,
+      );
+      final b = MediaImageProvider(
+        url: _mediaUrl,
+        auth: MediaGetAuthService(
+          baseUrl: 'https://other-relay.example.com',
+          nsec: nsec,
+        ),
+        client: client,
+      );
+      expect(a, isNot(equals(b)));
+    });
+
+    test('cache scope never contains the secret key', () {
+      final keys = nostr.Keys.generate();
+      final scope = _auth(nsec: keys.nsec).cacheScope;
+      expect(scope, contains(keys.public));
+      expect(scope, isNot(contains(keys.nsec)));
+      expect(scope, isNot(contains(keys.secret)));
+    });
+
     test('transport client is not part of identity', () {
       final auth = _auth(nsec: nostr.Keys.generate().nsec);
       final c1 = http.Client();

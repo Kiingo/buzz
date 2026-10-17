@@ -31,7 +31,9 @@ final mediaHttpClientProvider = Provider<http.Client>((ref) {
 ///    cooldown elapses (honoring `Retry-After` on 429), so error retries on
 ///    rebuild cannot amplify into a request storm against the rate limiter.
 ///
-/// The auth scope (relay base URL + signing identity) is part of key equality:
+/// The auth scope (relay base URL + signing public key, see
+/// [MediaGetAuthService.cacheScope]) is part of key equality by value, so a
+/// rebuilt auth service for the same relay and account keeps cache hits, while
 /// switching relay or account can never reuse another identity's cached bytes.
 class MediaImageProvider extends ImageProvider<MediaImageProvider> {
   final String url;
@@ -142,11 +144,11 @@ class MediaImageProvider extends ImageProvider<MediaImageProvider> {
     return other is MediaImageProvider &&
         other.url == url &&
         other.scale == scale &&
-        other.auth == auth;
+        other.auth.cacheScope == auth.cacheScope;
   }
 
   @override
-  int get hashCode => Object.hash(url, scale, auth);
+  int get hashCode => Object.hash(url, scale, auth.cacheScope);
 
   @override
   String toString() =>
