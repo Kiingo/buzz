@@ -221,10 +221,10 @@
     ]
   },
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 99999,
-    "modifiedUpstreamFiles": 99999,
-    "changedUpstreamProductionSourceLines": 99999,
-    "upstreamProductionSourceDiffHunks": 99999,
+    "modifiedUpstreamProductionSourceFiles": 158,
+    "modifiedUpstreamFiles": 282,
+    "changedUpstreamProductionSourceLines": 9674,
+    "upstreamProductionSourceDiffHunks": 1183,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -1497,6 +1497,17 @@
         "mobile/lib/features/channels/reply_details.dart",
         "mobile/test/features/channels/reply_details_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz mobile maintainers",
+      "purpose": "Media image cache identity by value: MediaGetAuthService compares equal by cacheScope (relay base URL + signing public key, never the secret), so MediaImageProvider keys (which already compare the auth service) keep ImageCache hits when the service is rebuilt for the same relay and account. Without it every relay-config rebuild re-downloaded each visible image (a 7.7 MB avatar per reconnect in production, 2026-10-17). Relay or account switches still never share cached bytes. Tests live in a fork-owned file.",
+      "upstreamStatus": "Generic fix written for upstream submission; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when block/buzz keys media image cache identity by relay and signing identity value (or carries this change).",
+      "paths": [
+        "mobile/lib/shared/relay/media_auth.dart",
+        "mobile/test/shared/relay/media_cache_scope_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [
@@ -1621,6 +1632,24 @@
         "changedUpstreamProductionSourceLines": 10671,
         "upstreamProductionSourceDiffHunks": 1187
       }
+    },
+    {
+      "id": "sync-merge-main-20261017",
+      "baseline": "f5e365ea5cca077de8073a0ab30aed6a2fb43fc4",
+      "reason": "Merging Kiingo/buzz main #199, #201, #203, #205-#209 into the sync. #199 and #208 are upstream-present in 97e1f6a0 and drop out. Five newly modified upstream files: desktop MessageActionBar.tsx (Message Details item and right-click menu, #205) and SettingsView.tsx (remote signer settings hook, #203), both production source; mobile message_actions.dart (Details in upstream's grouped action sheet) and channel_detail_page.dart (agentPubkeys for retired-notice filtering), #205; and mobile/lib/shared/relay/media_auth.dart (value cache identity, #209). Production lines +97 and hunks +20 come from those two .tsx files. No wildcard, checker exception or unused allowance; forbidden business-logic budget remains zero.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 156,
+        "modifiedUpstreamFiles": 277,
+        "changedUpstreamProductionSourceLines": 9577,
+        "upstreamProductionSourceDiffHunks": 1163
+      },
+      "qualified": {
+        "modifiedUpstreamProductionSourceFiles": 158,
+        "modifiedUpstreamFiles": 282,
+        "changedUpstreamProductionSourceLines": 9674,
+        "upstreamProductionSourceDiffHunks": 1183
+      },
+      "policyApproval": "PENDING: exceeds Ross's 2026-10-16 sync approval (277 modified upstream files, 156 production-source files). Routed to main on 2026-10-17; do not merge until approved."
     }
   ]
 }
