@@ -1519,6 +1519,17 @@
       "paths": [
         "crates/buzz-db/src/store/channel_members.rs"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz push maintainers",
+      "purpose": "Build-time push default for newly added communities: Community.create sets pushNotificationsEnabled from the BUZZ_PUSH_DEFAULT_ON dart-define (default false, so upstream behaviour is unchanged). The Kiingo TestFlight script passes true so a re-added Kiingo community enrolls without a trip to Settings; iOS still asks for notification permission. Agreed with Ross 2026-10-17 for the post-sync build.",
+      "upstreamStatus": "Generic build option; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream offers a build-time or onboarding push default, or Kiingo builds stop wanting push on by default.",
+      "paths": [
+        "mobile/lib/shared/community/community.dart",
+        "mobile/test/shared/community/push_default_on_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [
