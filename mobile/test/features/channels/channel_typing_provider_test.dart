@@ -165,9 +165,11 @@ void main() {
       container.read(provider);
       await Future<void>.value();
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      void emit(int kind, String agent, String root, int time) => relay.receive(
+      // Scope is the message the pulse or reply answers (its `reply` e-tag),
+      // as on desktop and in the thread view; the thread root does not split it.
+      void emit(int kind, String agent, String head, int time) => relay.receive(
         NostrEvent(
-          id: '$kind-$agent-$root-$time',
+          id: '$kind-$agent-$head-$time',
           pubkey: agent,
           kind: kind,
           createdAt: time,
@@ -175,8 +177,8 @@ void main() {
           sig: '',
           tags: [
             ['h', 'chat'],
-            ['e', root, '', 'root'],
-            ['e', threadIdParent, '', 'reply'],
+            ['e', threadIdParent, '', 'root'],
+            ['e', head, '', 'reply'],
           ],
         ),
       );
@@ -206,4 +208,52 @@ void main() {
       expect(container.read(provider), hasLength(2));
     },
   );
+  test('typing status phases label the pulse; idle ends it at once', () async {
+    final relay = _Relay();
+    final container = ProviderContainer(
+      overrides: [relaySessionProvider.overrideWith(() => relay)],
+    );
+    addTearDown(container.dispose);
+    final provider = channelTypingProvider('chat');
+    container.read(provider);
+    await Future<void>.value();
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    void pulse(String content, int time) => relay.receive(
+      NostrEvent(
+        id: 'pulse-$time-${content.hashCode}',
+        pubkey: 'agent',
+        kind: 20002,
+        createdAt: time,
+        content: content,
+        sig: '',
+        tags: [
+          ['h', 'chat'],
+        ],
+      ),
+    );
+    pulse('{"v":1,"phase":"starting"}', now - 3);
+    expect(container.read(provider).single.phase, TypingPhase.starting);
+    pulse('{"v":1,"phase":"working"}', now - 2);
+    expect(container.read(provider).single.phase, TypingPhase.working);
+    pulse('{"v":1,"phase":"idle"}', now - 1);
+    expect(container.read(provider), isEmpty);
+    pulse('', now);
+    expect(container.read(provider).single.phase, isNull);
+  });
+
+  test('unknown or malformed status is plain typing', () {
+    expect(parseTypingPhase(''), isNull);
+    expect(parseTypingPhase('not json'), isNull);
+    expect(parseTypingPhase('{"v":2,"phase":"working"}'), isNull);
+    expect(parseTypingPhase('{"v":1,"phase":"dancing"}'), isNull);
+    expect(typingPhaseSentence(null), 'is typing…');
+    expect(typingPhaseSentence(TypingPhase.starting), 'is starting up…');
+    expect(
+      typingPhaseSentence(TypingPhase.warming),
+      'is warming up a session…',
+    );
+    expect(typingPhaseSentence(TypingPhase.reconnecting), 'is reconnecting…');
+    expect(typingPhaseSentence(TypingPhase.working), 'is working…');
+    expect(typingPhaseSentence(TypingPhase.typing), 'is typing…');
+  });
 }
