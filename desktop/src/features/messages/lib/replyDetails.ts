@@ -39,7 +39,8 @@ function safeHttpsUrl(value: string | null): string | null {
 export function readReplyDetails(
   tags: readonly (readonly string[])[] | undefined,
 ): ReplyDetails {
-  const mission = singleTagValue(tags, KIINGO_MISSION_TAG)?.toLowerCase() ?? null;
+  const mission =
+    singleTagValue(tags, KIINGO_MISSION_TAG)?.toLowerCase() ?? null;
   return {
     missionId: mission && UUID_PATTERN.test(mission) ? mission : null,
     detailsUrl: safeHttpsUrl(singleTagValue(tags, KIINGO_DETAILS_URL_TAG)),
