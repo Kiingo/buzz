@@ -297,7 +297,131 @@ pub(crate) fn unix_now_secs() -> u64 {
         .as_secs()
 }
 
+/// What the relay's NIP-11 document says about its own signing key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelaySelfKey {
+    /// The relay advertises `self`: relay-authored state (kind:39000 metadata,
+    /// kind:39002 members) is trusted only when this key signed it.
+    Key(String),
+    /// The relay answered NIP-11 without `self` (an open relay with an
+    /// ephemeral key); it has no stable signer to pin.
+    NotAdvertised,
+}
+
+/// How long a NIP-11 `self` answer is reused before it is read again.
+const RELAY_SELF_KEY_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// Per-relay NIP-11 `self` answers with the time they were read. Answers are
+/// refreshed after [`RELAY_SELF_KEY_TTL`]; when a refresh cannot read the
+/// document, the last known-good answer stays in use.
+type RelaySelfKeyCache = HashMap<String, (RelaySelfKey, std::time::Instant)>;
+static RELAY_SELF_KEYS: std::sync::OnceLock<std::sync::Mutex<RelaySelfKeyCache>> =
+    std::sync::OnceLock::new();
+
+/// Add `authors=[relay key]` to a filter for relay-authored state (kind:39000
+/// metadata, kind:39002 members) when the relay advertises its key.
+pub(crate) fn relay_authored_filter(
+    filter: nostr::Filter,
+    key: Option<&RelaySelfKey>,
+) -> Option<nostr::Filter> {
+    match key {
+        Some(RelaySelfKey::Key(hex)) => Some(filter.author(nostr::PublicKey::from_hex(hex).ok()?)),
+        _ => Some(filter),
+    }
+}
+
+/// Whether a relay answer event was signed by the relay's advertised key.
+/// Relays that advertise no key (or an unknown answer) impose no signer check.
+pub(crate) fn signed_by_relay(event: &Value, key: Option<&RelaySelfKey>) -> bool {
+    match key {
+        Some(RelaySelfKey::Key(hex)) => {
+            event.get("pubkey").and_then(|pubkey| pubkey.as_str()) == Some(hex.as_str())
+        }
+        _ => true,
+    }
+}
+
+/// A relay that once advertised its key never loses it to a later answer
+/// without one: keep pinning the known key.
+pub(crate) fn merge_relay_self_key(
+    fresh: RelaySelfKey,
+    known: Option<RelaySelfKey>,
+) -> RelaySelfKey {
+    match (fresh, known) {
+        (RelaySelfKey::NotAdvertised, Some(known @ RelaySelfKey::Key(_))) => known,
+        (fresh, _) => fresh,
+    }
+}
+
+/// Parse a NIP-11 document's `self` field.
+pub(crate) fn relay_self_key_from_nip11(document: &Value) -> Option<RelaySelfKey> {
+    match document.get("self") {
+        None | Some(Value::Null) => Some(RelaySelfKey::NotAdvertised),
+        Some(Value::String(key)) => {
+            let key = key.trim().to_ascii_lowercase();
+            (key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                .then_some(RelaySelfKey::Key(key))
+        }
+        Some(_) => None,
+    }
+}
+
 impl RestClient {
+    /// The relay's own signing key from its NIP-11 document (`GET /` with
+    /// `Accept: application/nostr+json`). `None` when the document cannot be
+    /// read or its `self` field is malformed: callers must then fail closed.
+    pub async fn relay_self_key(&self) -> Option<RelaySelfKey> {
+        let cache = RELAY_SELF_KEYS.get_or_init(Default::default);
+        let known = cache
+            .lock()
+            .ok()
+            .and_then(|known| known.get(&self.base_url).cloned());
+        if let Some((key, read_at)) = &known {
+            if read_at.elapsed() < RELAY_SELF_KEY_TTL {
+                return Some(key.clone());
+            }
+        }
+        let stale = known.map(|(key, _)| key);
+        let Some(fresh) = self.read_relay_self_key().await else {
+            // Keep the last known-good answer rather than dropping trust state.
+            return stale;
+        };
+        let fresh = merge_relay_self_key(fresh, stale);
+        if let Ok(mut known) = cache.lock() {
+            known.insert(
+                self.base_url.clone(),
+                (fresh.clone(), std::time::Instant::now()),
+            );
+        }
+        Some(fresh)
+    }
+
+    async fn read_relay_self_key(&self) -> Option<RelaySelfKey> {
+        let canonical_authority = std::env::var("BUZZ_CANONICAL_RELAY_URL")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(canonical_relay_authority)
+            .transpose()
+            .ok()?;
+        let url = format!("{}/", self.base_url.trim_end_matches('/'));
+        let request = self
+            .http
+            .get(&url)
+            .header("Accept", "application/nostr+json")
+            .timeout(Duration::from_secs(5));
+        let response = with_canonical_http_host(request, canonical_authority.as_deref())
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let document: Value = response.json().await.ok()?;
+        relay_self_key_from_nip11(&document)
+    }
+
     /// Sign a NIP-98 HTTP Auth event (kind:27235) for the given method/URL/body.
     ///
     /// Returns the `Authorization: Nostr <base64>` header value (without the
@@ -792,16 +916,24 @@ impl HarnessRelay {
 
         // Step 1: Find all channels where agent is a member (kind:39002 with #p tag).
         let p_tag = SingleLetterTag::lowercase(Alphabet::P);
+        // Rosters and metadata are relay-authored: read only what the relay key
+        // signed. An unreadable NIP-11 document leaves discovery unfiltered (it
+        // only decides the subscribe set), never fails it.
+        let relay_key = rest.relay_self_key().await;
         let member_filter = nostr::Filter::new()
             .kind(Kind::Custom(
                 buzz_core::kind::KIND_NIP29_GROUP_MEMBERS as u16,
             ))
             .custom_tags(p_tag, [pk_hex.as_str()]);
-        let member_events = rest.query(&[member_filter]).await?;
+        let member_filter = relay_authored_filter(member_filter.clone(), relay_key.as_ref())
+            .unwrap_or(member_filter);
+        let mut member_events = rest.query(&[member_filter]).await?;
 
         let member_arr = member_events
-            .as_array()
+            .as_array_mut()
             .ok_or_else(|| RelayError::Http("expected JSON array from /query (members)".into()))?;
+        member_arr.retain(|event| signed_by_relay(event, relay_key.as_ref()));
+        let member_arr = &*member_arr;
 
         // Extract channel UUIDs from #d tags.
         let mut channel_uuids: Vec<Uuid> = Vec::new();
@@ -834,7 +966,12 @@ impl HarnessRelay {
                 buzz_core::kind::KIND_NIP29_GROUP_METADATA as u16,
             ))
             .custom_tags(d_tag, d_values);
-        let meta_events = rest.query(&[meta_filter]).await?;
+        let meta_filter =
+            relay_authored_filter(meta_filter.clone(), relay_key.as_ref()).unwrap_or(meta_filter);
+        let mut meta_events = rest.query(&[meta_filter]).await?;
+        if let Some(events) = meta_events.as_array_mut() {
+            events.retain(|event| signed_by_relay(event, relay_key.as_ref()));
+        }
 
         // Step 3: Build the final subscribe set, skipping archived channels.
         let map = merge_discovered_channels(channel_uuids, &meta_events);
@@ -4282,6 +4419,59 @@ async fn wait_for_any_ok(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_self_key_reads_nip11_self() {
+        let key = "AB".repeat(32);
+        assert_eq!(
+            relay_self_key_from_nip11(&json!({ "self": key })),
+            Some(RelaySelfKey::Key("ab".repeat(32)))
+        );
+        assert_eq!(
+            relay_self_key_from_nip11(&json!({ "name": "relay" })),
+            Some(RelaySelfKey::NotAdvertised)
+        );
+        assert_eq!(
+            relay_self_key_from_nip11(&json!({ "self": null })),
+            Some(RelaySelfKey::NotAdvertised)
+        );
+        assert_eq!(relay_self_key_from_nip11(&json!({ "self": "nope" })), None);
+        assert_eq!(relay_self_key_from_nip11(&json!({ "self": 7 })), None);
+    }
+
+    #[test]
+    fn a_known_relay_key_is_never_replaced_by_not_advertised() {
+        let key = RelaySelfKey::Key("ab".repeat(32));
+        assert_eq!(
+            merge_relay_self_key(RelaySelfKey::NotAdvertised, Some(key.clone())),
+            key
+        );
+        let rotated = RelaySelfKey::Key("cd".repeat(32));
+        assert_eq!(
+            merge_relay_self_key(rotated.clone(), Some(key.clone())),
+            rotated
+        );
+        assert_eq!(
+            merge_relay_self_key(RelaySelfKey::NotAdvertised, None),
+            RelaySelfKey::NotAdvertised
+        );
+    }
+
+    #[test]
+    fn relay_authored_state_must_be_signed_by_the_advertised_key() {
+        let relay = RelaySelfKey::Key("ab".repeat(32));
+        let signed = json!({ "pubkey": "ab".repeat(32) });
+        let forged = json!({ "pubkey": "cd".repeat(32) });
+        assert!(signed_by_relay(&signed, Some(&relay)));
+        assert!(!signed_by_relay(&forged, Some(&relay)));
+        assert!(signed_by_relay(&forged, Some(&RelaySelfKey::NotAdvertised)));
+        assert!(relay_authored_filter(nostr::Filter::new(), Some(&relay)).is_some());
+        assert!(relay_authored_filter(
+            nostr::Filter::new(),
+            Some(&RelaySelfKey::Key("zz".repeat(32)))
+        )
+        .is_none());
+    }
 
     #[test]
     fn nip42_uses_canonical_relay_url_when_edge_alias_is_configured() {

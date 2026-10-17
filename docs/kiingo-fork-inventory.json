@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 155,
-    "modifiedUpstreamFiles": 277,
-    "changedUpstreamProductionSourceLines": 10671,
-    "upstreamProductionSourceDiffHunks": 1187,
+    "modifiedUpstreamProductionSourceFiles": 400,
+    "modifiedUpstreamFiles": 600,
+    "changedUpstreamProductionSourceLines": 40000,
+    "upstreamProductionSourceDiffHunks": 4000,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -1344,6 +1344,16 @@
         "mobile/lib/shared/relay/media_auth.dart",
         "mobile/test/shared/relay/media_cache_scope_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz DM privacy maintainers",
+      "purpose": "Make a DM's membership a privacy boundary: refuse kind 9007 channel_type=dm, refuse member additions (kind 9000, add_member of new or departed participants) and privileged kind 9002 metadata/visibility changes on DMs, so a DM's audience can only shrink after creation; and read relay metadata (39000/39002) only from the relay's NIP-11 self key in buzz-acp. Consumers can then trust a relay-signed DM roster as the exact audience.",
+      "upstreamStatus": "Kiingo M-4017 privacy correction; not submitted upstream.",
+      "removalCondition": "Remove when block/buzz enforces fixed DM membership and relay-signed metadata reads equivalently.",
+      "paths": [
+        "crates/buzz-db/src/store/channel_members.rs"
+      ]
     }
   ],
   "budgetAmendments": [
@@ -1487,6 +1497,23 @@
         "modifiedUpstreamFiles": 277,
         "changedUpstreamProductionSourceLines": 10671,
         "upstreamProductionSourceDiffHunks": 1187
+      }
+    },
+    {
+      "id": "ross-generous-ceilings-2026-10-17",
+      "baseline": "f5e365ea5cca077de8073a0ab30aed6a2fb43fc4",
+      "reason": "Ross decided on 2026-10-17 that the fork patch budgets should no longer gate changes (\"much higher, we don't need this limitation\"). Raise the four size ceilings to generous values in one amendment. Per-path classification (owner, purpose, upstream status, removal condition), the boundary check and the zero Kiingo content rule in upstream-owned production source stay enforced for upstream syncs. Measured at this change (DM privacy boundary, Kiingo M-4017, which newly modifies crates/buzz-db/src/store/channel_members.rs): 278 modified upstream files, 156 production source files, 11025 changed production source lines, 1204 hunks.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 155,
+        "modifiedUpstreamFiles": 277,
+        "changedUpstreamProductionSourceLines": 10671,
+        "upstreamProductionSourceDiffHunks": 1187
+      },
+      "qualified": {
+        "modifiedUpstreamProductionSourceFiles": 400,
+        "modifiedUpstreamFiles": 600,
+        "changedUpstreamProductionSourceLines": 40000,
+        "upstreamProductionSourceDiffHunks": 4000
       }
     }
   ]
