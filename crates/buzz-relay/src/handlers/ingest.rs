@@ -2588,6 +2588,18 @@ async fn ingest_event_inner(
         }
     }
 
+    // DM membership is fixed at creation: refuse NIP-29 add/remove on a DM
+    // before storage so the event is never persisted or fanned out.
+    if matches!(kind_u32, KIND_NIP29_PUT_USER | KIND_NIP29_REMOVE_USER)
+        && channel_row
+            .as_ref()
+            .is_some_and(|channel| channel.channel_type == "dm")
+    {
+        return Err(IngestError::Rejected(
+            "restricted: DM membership is fixed at creation".into(),
+        ));
+    }
+
     // Handled directly — these mutate relay_members and do NOT get stored.
     // The handler enforces the durable community ban itself: the write-path
     // gate above exempts relay-admin kinds so timed-out admins keep their
@@ -2905,6 +2917,14 @@ async fn ingest_event_inner(
             channel_type_str.parse().map_err(|_| {
                 IngestError::Rejected(format!("invalid channel_type: {channel_type_str}"))
             })?;
+        // DMs are opened through the DM path, which fixes the participant set
+        // and private visibility. A kind:9007 `dm` could be open or re-membered
+        // later, so agents could not treat it as a privacy boundary.
+        if channel_type == buzz_db::channel::ChannelType::Dm {
+            return Err(IngestError::Rejected(
+                "invalid: channel_type dm is created by opening a DM, not kind:9007".into(),
+            ));
+        }
 
         if let Some(client_uuid) = channel_id {
             let name = create_name.unwrap_or_default();

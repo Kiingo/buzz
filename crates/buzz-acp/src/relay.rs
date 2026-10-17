@@ -297,7 +297,77 @@ pub(crate) fn unix_now_secs() -> u64 {
         .as_secs()
 }
 
+/// What the relay's NIP-11 document says about its own signing key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelaySelfKey {
+    /// The relay advertises `self`: relay-authored state (kind:39000 metadata,
+    /// kind:39002 members) is trusted only when this key signed it.
+    Key(String),
+    /// The relay answered NIP-11 without `self` (an open relay with an
+    /// ephemeral key); it has no stable signer to pin.
+    NotAdvertised,
+}
+
+/// Per-relay NIP-11 `self` answers. A relay's signing key is stable for the
+/// process, so only successful reads are cached; a failed read is retried.
+static RELAY_SELF_KEYS: std::sync::OnceLock<std::sync::Mutex<HashMap<String, RelaySelfKey>>> =
+    std::sync::OnceLock::new();
+
+/// Parse a NIP-11 document's `self` field.
+pub(crate) fn relay_self_key_from_nip11(document: &Value) -> Option<RelaySelfKey> {
+    match document.get("self") {
+        None | Some(Value::Null) => Some(RelaySelfKey::NotAdvertised),
+        Some(Value::String(key)) => {
+            let key = key.trim().to_ascii_lowercase();
+            (key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                .then_some(RelaySelfKey::Key(key))
+        }
+        Some(_) => None,
+    }
+}
+
 impl RestClient {
+    /// The relay's own signing key from its NIP-11 document (`GET /` with
+    /// `Accept: application/nostr+json`). `None` when the document cannot be
+    /// read or its `self` field is malformed: callers must then fail closed.
+    pub async fn relay_self_key(&self) -> Option<RelaySelfKey> {
+        let cache = RELAY_SELF_KEYS.get_or_init(Default::default);
+        if let Some(known) = cache
+            .lock()
+            .ok()
+            .and_then(|known| known.get(&self.base_url).cloned())
+        {
+            return Some(known);
+        }
+        let canonical_authority = std::env::var("BUZZ_CANONICAL_RELAY_URL")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(canonical_relay_authority)
+            .transpose()
+            .ok()?;
+        let url = format!("{}/", self.base_url.trim_end_matches('/'));
+        let request = self
+            .http
+            .get(&url)
+            .header("Accept", "application/nostr+json")
+            .timeout(Duration::from_secs(5));
+        let response = with_canonical_http_host(request, canonical_authority.as_deref())
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let document: Value = response.json().await.ok()?;
+        let key = relay_self_key_from_nip11(&document)?;
+        if let Ok(mut known) = cache.lock() {
+            known.insert(self.base_url.clone(), key.clone());
+        }
+        Some(key)
+    }
+
     /// Sign a NIP-98 HTTP Auth event (kind:27235) for the given method/URL/body.
     ///
     /// Returns the `Authorization: Nostr <base64>` header value (without the
@@ -4282,6 +4352,25 @@ async fn wait_for_any_ok(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_self_key_reads_nip11_self() {
+        let key = "AB".repeat(32);
+        assert_eq!(
+            relay_self_key_from_nip11(&json!({ "self": key })),
+            Some(RelaySelfKey::Key("ab".repeat(32)))
+        );
+        assert_eq!(
+            relay_self_key_from_nip11(&json!({ "name": "relay" })),
+            Some(RelaySelfKey::NotAdvertised)
+        );
+        assert_eq!(
+            relay_self_key_from_nip11(&json!({ "self": null })),
+            Some(RelaySelfKey::NotAdvertised)
+        );
+        assert_eq!(relay_self_key_from_nip11(&json!({ "self": "nope" })), None);
+        assert_eq!(relay_self_key_from_nip11(&json!({ "self": 7 })), None);
+    }
 
     #[test]
     fn nip42_uses_canonical_relay_url_when_edge_alias_is_configured() {

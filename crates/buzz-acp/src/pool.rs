@@ -3284,15 +3284,28 @@ pub(crate) async fn fetch_channel_info(
 /// Used by prompt-turn refreshes when cached metadata is already available as
 /// a graceful fallback. First-time resolution uses [`fetch_channel_info`] so
 /// unknown channels still receive the established retry behavior.
+///
+/// Channel metadata is relay-authored: when the relay advertises its NIP-11
+/// `self` key, only metadata signed by that key is read (`authors` filter plus
+/// a signer check on the answer), so a member-published lookalike can never
+/// make a channel look like a DM. An unreadable NIP-11 document yields no
+/// metadata (callers fail closed).
 async fn fetch_channel_info_once(channel_id: Uuid, rest: &RestClient) -> Option<PromptChannelInfo> {
     use nostr::{Alphabet, SingleLetterTag};
 
+    let relay_key = match rest.relay_self_key().await? {
+        crate::relay::RelaySelfKey::Key(key) => Some(key),
+        crate::relay::RelaySelfKey::NotAdvertised => None,
+    };
     let d_tag = SingleLetterTag::lowercase(Alphabet::D);
-    let filter = nostr::Filter::new()
+    let mut filter = nostr::Filter::new()
         .kind(nostr::Kind::Custom(
             buzz_core::kind::KIND_NIP29_GROUP_METADATA as u16,
         ))
         .custom_tags(d_tag, [channel_id.to_string()]);
+    if let Some(key) = relay_key.as_deref() {
+        filter = filter.author(nostr::PublicKey::from_hex(key).ok()?);
+    }
 
     match timeout(
         CONTEXT_FETCH_TIMEOUT,
@@ -3302,7 +3315,11 @@ async fn fetch_channel_info_once(channel_id: Uuid, rest: &RestClient) -> Option<
     {
         Ok(Ok(json)) => {
             let events = json.as_array()?;
-            let ev = events.first()?;
+            let ev = events.iter().find(|event| {
+                relay_key.as_deref().is_none_or(|key| {
+                    event.get("pubkey").and_then(|pubkey| pubkey.as_str()) == Some(key)
+                })
+            })?;
             let tags = ev.get("tags")?.as_array()?;
             let mut name = None;
             let mut description = None;
