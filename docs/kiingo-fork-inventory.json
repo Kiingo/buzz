@@ -785,6 +785,7 @@
       "paths": [
         ".github/workflows/ci.yml",
         ".github/workflows/upstream-sync-rehearsal.yml",
+        "docs/implementation-plans/M-4108-workflow-token-permissions.md",
         "docs/implementation-plans/buzz-durable-conversation-reliability.md",
         "docs/implementation-plans/m-92-windows-sidecar-preflight.md",
         "docs/implementation-plans/m3827-native-publication-retry.md",

@@ -42,6 +42,13 @@ ignore = [
     { id = "RUSTSEC-2026-0367", reason = "zip 8.6.0 via mesh-llm v0.76.2 only; extract() is never called (entries written as plain files); needs mesh-llm on zip >= 9" },
     { id = "RUSTSEC-2026-0368", reason = "zip 8.6.0 via mesh-llm v0.76.2 only; extract() is never called and no symlinks are created; needs mesh-llm on zip >= 9" },
     { id = "RUSTSEC-2026-0369", reason = "zip 8.6.0 via mesh-llm v0.76.2 only; extract() is never called and no permissions are applied; needs mesh-llm on zip >= 9" },
+    # zvariant, zbus_names and zvariant_derive 5.x/4.x: unmaintained notices
+    # (merged into zbus 6), not vulnerabilities. Pulled only by zbus 5.19 via
+    # secret-service / zbus-secret-service-keyring-store (desktop Linux
+    # keyring). No compatible upgrade until keyring moves to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); transitive via zbus 5.19 for the Linux keyring; no compatible upgrade yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); transitive via zbus 5.19 for the Linux keyring; no compatible upgrade yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); transitive via zbus 5.19 for the Linux keyring; no compatible upgrade yet" },
 ]
 
 [licenses]
