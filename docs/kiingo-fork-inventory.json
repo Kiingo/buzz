@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 156,
-    "modifiedUpstreamFiles": 278,
-    "changedUpstreamProductionSourceLines": 11025,
-    "upstreamProductionSourceDiffHunks": 1204,
+    "modifiedUpstreamProductionSourceFiles": 400,
+    "modifiedUpstreamFiles": 600,
+    "changedUpstreamProductionSourceLines": 40000,
+    "upstreamProductionSourceDiffHunks": 4000,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -1500,9 +1500,9 @@
       }
     },
     {
-      "id": "dm-privacy-boundary-m4017",
+      "id": "ross-generous-ceilings-2026-10-17",
       "baseline": "f5e365ea5cca077de8073a0ab30aed6a2fb43fc4",
-      "reason": "DM privacy boundary (Kiingo M-4017): one newly modified upstream production file, crates/buzz-db/src/store/channel_members.rs (refuse adding new or departed DM participants), plus guards in already-modified crates/buzz-relay ingest.rs/side_effects.rs (refuse kind 9007 dm, kind 9000 and privileged kind 9002 on DMs) and buzz-acp relay.rs/pool.rs/dm_participants.rs (relay-key-signed 39000/39002 reads, NIP-11 self cache). Generic, provider-neutral; no Kiingo content in upstream-owned source. No wildcard, checker exception or unused allowance.",
+      "reason": "Ross decided on 2026-10-17 that the fork patch budgets should no longer gate changes (\"much higher, we don't need this limitation\"). Raise the four size ceilings to generous values in one amendment. Per-path classification (owner, purpose, upstream status, removal condition), the boundary check and the zero Kiingo content rule in upstream-owned production source stay enforced for upstream syncs. Measured at this change (DM privacy boundary, Kiingo M-4017, which newly modifies crates/buzz-db/src/store/channel_members.rs): 278 modified upstream files, 156 production source files, 11025 changed production source lines, 1204 hunks.",
       "previous": {
         "modifiedUpstreamProductionSourceFiles": 155,
         "modifiedUpstreamFiles": 277,
@@ -1510,10 +1510,10 @@
         "upstreamProductionSourceDiffHunks": 1187
       },
       "qualified": {
-        "modifiedUpstreamProductionSourceFiles": 156,
-        "modifiedUpstreamFiles": 278,
-        "changedUpstreamProductionSourceLines": 11025,
-        "upstreamProductionSourceDiffHunks": 1204
+        "modifiedUpstreamProductionSourceFiles": 400,
+        "modifiedUpstreamFiles": 600,
+        "changedUpstreamProductionSourceLines": 40000,
+        "upstreamProductionSourceDiffHunks": 4000
       }
     }
   ]
