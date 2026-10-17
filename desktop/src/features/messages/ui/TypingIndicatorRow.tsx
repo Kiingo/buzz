@@ -9,12 +9,18 @@ import type { Channel } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { Shimmer } from "@/shared/ui/Shimmer";
 import { truncateNpub } from "@/shared/lib/pubkey";
+import {
+  type TypingPhase,
+  typingPhaseSentence,
+} from "@/features/messages/lib/typingStatus";
 
 type TypingIndicatorRowProps = {
   channel: Channel | null;
   className?: string;
   currentPubkey?: string;
   profiles?: UserProfileLookup;
+  /** Typing status per lowercase pubkey; shown when exactly one person types. */
+  typingPhaseByPubkey?: Readonly<Record<string, TypingPhase | null>>;
   typingPubkeys: string[];
   variant?: "default" | "activity";
 };
@@ -56,6 +62,7 @@ export function TypingIndicatorRow({
   className,
   currentPubkey,
   profiles,
+  typingPhaseByPubkey,
   typingPubkeys,
   variant = "default",
 }: TypingIndicatorRowProps) {
@@ -134,7 +141,14 @@ export function TypingIndicatorRow({
             )}
             data-testid="message-typing-indicator-label"
           >
-            <Shimmer>{formatTypingLabel(labels)}</Shimmer>
+            <Shimmer>
+              {labels.length === 1 &&
+              typingPhaseByPubkey?.[typingPubkeys[0]?.toLowerCase() ?? ""]
+                ? `${labels[0]} ${typingPhaseSentence(
+                    typingPhaseByPubkey[typingPubkeys[0]?.toLowerCase() ?? ""],
+                  )}`
+                : formatTypingLabel(labels)}
+            </Shimmer>
           </p>
         </div>
       )}
