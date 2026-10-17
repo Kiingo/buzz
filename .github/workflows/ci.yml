@@ -322,7 +322,8 @@ jobs:
 
   windows-rust:
     name: Windows Rust (x86_64-pc-windows-msvc)
-    if: always() && (needs.changes.result != 'success' || ((github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.desktop-rust == 'true')))
+    # TEMPORARY (Kiingo M-4109): skipped on Kiingo/buzz with the job it gates.
+    if: always() && github.repository != 'Kiingo/buzz' && (needs.changes.result != 'success' || ((github.event_name == 'push' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.desktop-rust == 'true')))
     needs: [changes, rust]
     runs-on: ${{ fromJSON(github.repository == 'Kiingo/buzz' && '["self-hosted","linux","x64","kiingo-azure","untrusted-test","d4ads-v6","docker","kiingo-buzz-public"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
