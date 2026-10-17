@@ -17,6 +17,9 @@ on:
       mobile_result:
         value: ${{ jobs.results.outputs.mobile_result }}
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   BUZZ_TEST_POSTGRES_PASSWORD: buzz_dev
