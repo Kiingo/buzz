@@ -1,9 +1,41 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../../shared/relay/relay.dart';
+
+/// Status an agent can attach to its typing pulse (`{"v":1,"phase":...}`
+/// in the ephemeral kind:20002 content). Absent or unknown means plain
+/// "is typing…"; `idle` ends the sender's typing at once.
+enum TypingPhase { starting, warming, reconnecting, working, typing, idle }
+
+/// Parses a typing pulse's optional status payload.
+TypingPhase? parseTypingPhase(String content) {
+  if (content.isEmpty || content.length > 512) return null;
+  try {
+    final value = jsonDecode(content);
+    if (value is! Map || value['v'] != 1) return null;
+    final phase = value['phase'];
+    if (phase is! String) return null;
+    for (final candidate in TypingPhase.values) {
+      if (candidate.name == phase) return candidate;
+    }
+  } on FormatException {
+    return null;
+  }
+  return null;
+}
+
+/// The status-line words after the sender's name, e.g. "is starting up…".
+String typingPhaseSentence(TypingPhase? phase) => switch (phase) {
+  TypingPhase.starting => 'is starting up…',
+  TypingPhase.warming => 'is warming up a session…',
+  TypingPhase.reconnecting => 'is reconnecting…',
+  TypingPhase.working => 'is working…',
+  _ => 'is typing…',
+};
 
 /// A single typing indicator entry.
 @immutable
@@ -12,10 +44,14 @@ class TypingEntry {
   final String? threadHeadId;
   final int expiresAtMs;
 
+  /// The latest pulse's status; null is plain "is typing…".
+  final TypingPhase? phase;
+
   const TypingEntry({
     required this.pubkey,
     this.threadHeadId,
     required this.expiresAtMs,
+    this.phase,
   });
 }
 
@@ -131,14 +167,22 @@ class ChannelTypingNotifier extends Notifier<List<TypingEntry>> {
     final now = DateTime.now().millisecondsSinceEpoch;
     final at = event.createdAt * 1000;
     if (event.channelId != channelId || at > now || at + _ttlMs <= now) return;
-    final scope = (event.pubkey.toLowerCase(), event.threadReference.rootId);
+    // Typing and replies are scoped to the message they answer (the `reply`
+    // e-tag), exactly as desktop and the thread view key them.
+    final scope = (event.pubkey.toLowerCase(), event.threadReference.parentId);
     _activity.removeWhere((_, value) => value.retainUntil <= now);
     if (!_activity.containsKey(scope) && _activity.length >= 1024) return;
     final record = _activity.putIfAbsent(scope, _TypingActivity.new);
     if (event.kind == EventKind.typingIndicator) {
       if (at <= record.lastActivity || at <= record.lastMessage) return;
       record.lastActivity = at;
-      if (now >= record.quietUntil) record.visibleUntil = at + _ttlMs;
+      final phase = parseTypingPhase(event.content);
+      if (phase == TypingPhase.idle) {
+        record.visibleUntil = 0;
+      } else {
+        record.phase = phase;
+        if (now >= record.quietUntil) record.visibleUntil = at + _ttlMs;
+      }
     } else {
       if (at <= record.lastMessage) return;
       record.lastMessage = at;
@@ -168,6 +212,7 @@ class ChannelTypingNotifier extends Notifier<List<TypingEntry>> {
             pubkey: entry.key.$1,
             threadHeadId: entry.key.$2,
             expiresAtMs: entry.value.visibleUntil,
+            phase: entry.value.phase,
           ),
     ];
     if (_activity.isEmpty) {
@@ -187,6 +232,7 @@ class _TypingActivity {
   int lastMessage = -1;
   int visibleUntil = 0;
   int quietUntil = 0;
+  TypingPhase? phase;
   int get retainUntil {
     final expiry =
         (lastActivity > lastMessage ? lastActivity : lastMessage) + 8000;
