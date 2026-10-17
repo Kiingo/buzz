@@ -61,7 +61,7 @@ pub(crate) fn community_id_for_relay(relay_url: &str) -> String {
 }
 
 /// HTTPS, or HTTP on loopback for local development (same rule as buzz-acp).
-fn acceptable_base_url(url: &str) -> bool {
+pub(crate) fn acceptable_base_url(url: &str) -> bool {
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };

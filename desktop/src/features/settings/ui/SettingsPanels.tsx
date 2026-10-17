@@ -78,6 +78,8 @@ import {
 import { SegmentedControl } from "@/shared/ui/segmented-control";
 import { ProfileSettingsCard } from "./ProfileSettingsCard";
 import { AccountLinkCard } from "@/features/guest-access/ui/AccountLinkCard";
+import { RemoteSignerSettingsCard } from "@/features/remote-signer/ui/RemoteSignerSettingsCard";
+import { remoteSignerSettingsSection } from "@/features/remote-signer/ui/remoteSignerSettingsSection";
 import { UpdateChecker } from "../UpdateChecker";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
 import { VoiceSettingsCard } from "./VoiceSettingsCard";
@@ -98,6 +100,7 @@ export type SettingsSection =
   | "custom-emoji"
   | "local-archive"
   | "mobile"
+  | "remote-signing"
   | "updates";
 
 export const DEFAULT_SETTINGS_SECTION: SettingsSection = "profile";
@@ -118,6 +121,7 @@ const SETTINGS_SECTION_VALUES: readonly SettingsSection[] = [
   "custom-emoji",
   "local-archive",
   "mobile",
+  "remote-signing",
   "updates",
 ];
 
@@ -230,6 +234,7 @@ export const settingsSections: SettingsSectionDescriptor[] = [
     label: "Mobile",
     icon: Smartphone,
   },
+  remoteSignerSettingsSection,
   {
     value: "updates",
     label: "Updates",
@@ -860,6 +865,8 @@ export function renderSettingsSection(
       return <LocalArchiveSettingsCard />;
     case "mobile":
       return <MobilePairingCard currentPubkey={props.currentPubkey} />;
+    case "remote-signing":
+      return <RemoteSignerSettingsCard />;
     case "updates":
       return <UpdateChecker />;
     default: {
