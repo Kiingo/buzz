@@ -2588,15 +2588,17 @@ async fn ingest_event_inner(
         }
     }
 
-    // DM membership is fixed at creation: refuse NIP-29 add/remove on a DM
-    // before storage so the event is never persisted or fanned out.
-    if matches!(kind_u32, KIND_NIP29_PUT_USER | KIND_NIP29_REMOVE_USER)
+    // A DM never gains participants after creation (Kiingo M-4017): refuse
+    // NIP-29 add on a DM before storage so the event is never persisted or
+    // fanned out. Removal stays allowed: a shrunk DM is no longer a two-member
+    // DM, which agents classify as a group audience.
+    if kind_u32 == KIND_NIP29_PUT_USER
         && channel_row
             .as_ref()
             .is_some_and(|channel| channel.channel_type == "dm")
     {
         return Err(IngestError::Rejected(
-            "restricted: DM membership is fixed at creation".into(),
+            "restricted: a DM cannot gain participants".into(),
         ));
     }
 

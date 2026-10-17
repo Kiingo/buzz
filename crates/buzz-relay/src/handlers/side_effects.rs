@@ -596,6 +596,21 @@ pub async fn validate_admin_event(
                 k == "name" || k == "about" || k == "archived" || k == "visibility" || k == "ttl"
             });
             if has_privileged_tag {
+                // A DM's visibility and identity are fixed at creation (Kiingo
+                // M-4017): agents treat a private two-member DM as a
+                // requester-only audience, so nobody, including the owner of a
+                // legacy kind:9007 DM, may open it or rewrite its metadata.
+                if state
+                    .db
+                    .get_channel(tenant.community(), channel_id)
+                    .await?
+                    .channel_type
+                    == "dm"
+                {
+                    return Err(anyhow::anyhow!(
+                        "DM name/about/archived/visibility/ttl are fixed at creation"
+                    ));
+                }
                 let members = state.db.get_members(tenant.community(), channel_id).await?;
                 let actor_member = members.iter().find(|m| m.pubkey == actor_bytes);
                 match actor_member {
@@ -1605,12 +1620,13 @@ async fn handle_edit_metadata(
                     .await?;
                 }
                 "visibility" => {
-                    let was_open = state
-                        .db
-                        .get_channel(tenant.community(), channel_id)
-                        .await
-                        .map(|c| c.visibility == "open")
-                        .unwrap_or(false);
+                    let current = state.db.get_channel(tenant.community(), channel_id).await;
+                    // Defense in depth for the authorization refusal above: a DM's
+                    // visibility never changes.
+                    if matches!(&current, Ok(channel) if channel.channel_type == "dm") {
+                        return Err(anyhow::anyhow!("DM visibility is fixed at creation"));
+                    }
+                    let was_open = current.map(|c| c.visibility == "open").unwrap_or(false);
                     state
                         .db
                         .update_channel(

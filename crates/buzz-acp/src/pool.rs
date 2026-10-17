@@ -3293,19 +3293,16 @@ pub(crate) async fn fetch_channel_info(
 async fn fetch_channel_info_once(channel_id: Uuid, rest: &RestClient) -> Option<PromptChannelInfo> {
     use nostr::{Alphabet, SingleLetterTag};
 
-    let relay_key = match rest.relay_self_key().await? {
-        crate::relay::RelaySelfKey::Key(key) => Some(key),
-        crate::relay::RelaySelfKey::NotAdvertised => None,
-    };
+    let relay_key = rest.relay_self_key().await?;
     let d_tag = SingleLetterTag::lowercase(Alphabet::D);
-    let mut filter = nostr::Filter::new()
-        .kind(nostr::Kind::Custom(
-            buzz_core::kind::KIND_NIP29_GROUP_METADATA as u16,
-        ))
-        .custom_tags(d_tag, [channel_id.to_string()]);
-    if let Some(key) = relay_key.as_deref() {
-        filter = filter.author(nostr::PublicKey::from_hex(key).ok()?);
-    }
+    let filter = crate::relay::relay_authored_filter(
+        nostr::Filter::new()
+            .kind(nostr::Kind::Custom(
+                buzz_core::kind::KIND_NIP29_GROUP_METADATA as u16,
+            ))
+            .custom_tags(d_tag, [channel_id.to_string()]),
+        Some(&relay_key),
+    )?;
 
     match timeout(
         CONTEXT_FETCH_TIMEOUT,
@@ -3315,11 +3312,9 @@ async fn fetch_channel_info_once(channel_id: Uuid, rest: &RestClient) -> Option<
     {
         Ok(Ok(json)) => {
             let events = json.as_array()?;
-            let ev = events.iter().find(|event| {
-                relay_key.as_deref().is_none_or(|key| {
-                    event.get("pubkey").and_then(|pubkey| pubkey.as_str()) == Some(key)
-                })
-            })?;
+            let ev = events
+                .iter()
+                .find(|event| crate::relay::signed_by_relay(event, Some(&relay_key)))?;
             let tags = ev.get("tags")?.as_array()?;
             let mut name = None;
             let mut description = None;

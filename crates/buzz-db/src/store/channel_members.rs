@@ -404,17 +404,18 @@ pub async fn add_member(
 
     let channel = get_channel_tx(&mut tx, community_id, channel_id).await?;
 
-    // DM membership is fixed at creation: the participant set is the DM's
-    // identity (`participant_hash`) and its privacy boundary, and agents treat a
-    // relay-signed two-member DM as requester-only. Only an idempotent re-add of
-    // an already-active participant passes; a different set opens a new DM.
+    // A DM never gains participants after creation: the participant set is the
+    // DM's identity (`participant_hash`) and its privacy boundary, and agents
+    // treat a relay-signed two-member DM as requester-only. Only an idempotent
+    // re-add of an already-active participant passes; a different set opens a
+    // new DM. Removal stays allowed: a shrunk DM classifies as a group audience.
     if channel.channel_type == "dm"
         && get_active_role_tx(&mut tx, community_id, channel_id, pubkey)
             .await?
             .is_none()
     {
         return Err(DbError::AccessDenied(
-            "DM membership is fixed at creation".to_string(),
+            "a DM cannot gain participants".to_string(),
         ));
     }
 
@@ -599,17 +600,6 @@ pub async fn remove_member(
     acquire_channel_membership_lock(&mut tx, community_id, channel_id).await?;
 
     if !is_self_remove {
-        // DM membership is fixed at creation (see `add_member`). A participant
-        // may still leave; nobody may remove another participant.
-        if get_channel_tx(&mut tx, community_id, channel_id)
-            .await?
-            .channel_type
-            == "dm"
-        {
-            return Err(DbError::AccessDenied(
-                "DM membership is fixed at creation".to_string(),
-            ));
-        }
         let actor_role_str = get_active_role_tx(&mut tx, community_id, channel_id, actor_pubkey)
             .await?
             .ok_or_else(|| DbError::AccessDenied("actor is not an active member".to_string()))?;
@@ -1489,7 +1479,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires Postgres"]
-    async fn dm_membership_is_fixed_at_creation() {
+    async fn dm_never_gains_participants() {
         let pool = setup_pool().await;
         let community_id = make_test_community(&pool).await;
         let community = CommunityId::from_uuid(community_id);
@@ -1534,12 +1524,8 @@ mod tests {
         .await
         .expect("idempotent re-add");
 
-        // Nobody may remove another participant; a participant may leave.
-        let removed = remove_member(&pool, community, dm.id, &agent, &requester).await;
-        assert!(
-            matches!(removed, Err(DbError::AccessDenied(_))),
-            "{removed:?}"
-        );
+        // Shrinking is privacy-safe (a shrunk DM classifies as group): a
+        // participant may leave.
         remove_member(&pool, community, dm.id, &agent, &agent)
             .await
             .expect("participant leaves");
