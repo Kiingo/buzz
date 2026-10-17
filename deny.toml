@@ -20,6 +20,17 @@ ignore = [
     # remove these when upstream catches up.
     { id = "RUSTSEC-2026-0194", reason = "transitive via rust-s3 and mesh-llm→plist; trusted-input XML only; no upstream fix available yet" },
     { id = "RUSTSEC-2026-0195", reason = "transitive via rust-s3 and mesh-llm→plist; trusted-input XML only; no upstream fix available yet" },
+    # zip < 9: SUID/SGID bits kept by extraction (0367), extract() following
+    # attacker symlinks (0368) and applying permissions through symlinks (0369).
+    # zip 2.4.2 is pulled only by mesh-llm v0.75.1 (plugin-manager, system,
+    # host-runtime), which never calls ZipArchive::extract or
+    # ZipStreamReader::extract: it walks entries itself, rejects paths without
+    # an enclosed_name, and writes plain files with File::create, so no mode bits
+    # or symlinks are materialized. A fixed zip needs a mesh-llm release on
+    # zip >= 9; remove these when buzz-relay moves to it.
+    { id = "RUSTSEC-2026-0367", reason = "zip 2.4.2 via mesh-llm v0.75.1 only; extract() is never called (entries written as plain files); needs mesh-llm on zip >= 9" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 2.4.2 via mesh-llm v0.75.1 only; extract() is never called and no symlinks are created; needs mesh-llm on zip >= 9" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 2.4.2 via mesh-llm v0.75.1 only; extract() is never called and no permissions are applied; needs mesh-llm on zip >= 9" },
 ]
 
 [licenses]
