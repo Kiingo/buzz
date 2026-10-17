@@ -48,6 +48,7 @@ import { formatTime } from "@/features/messages/lib/dateFormatters";
 // can exercise the exact same source the renderer uses.
 import { applyEditTagOverlay } from "@/features/messages/lib/applyEditTagOverlay.mjs";
 import { truncateNpub } from "@/shared/lib/pubkey";
+import { isRetiredMissionNotice } from "./replyDetails";
 
 const HEX_RE = /^[0-9a-f]+$/i;
 
@@ -465,7 +466,7 @@ export function formatTimelineMessages(
     return depth;
   }
 
-  return visibleEvents.map((event) => {
+  return visibleEvents.flatMap((event) => {
     const author = getAuthorLabel(event);
     const authorPubkey =
       authorPubkeyByEventId.get(event.id) ??
@@ -481,7 +482,7 @@ export function formatTimelineMessages(
     const authorProfile = profiles?.[authorPubkey.toLowerCase()];
     const isAgent = role === "bot" || authorProfile?.isAgent === true;
     const ownerPubkey = isAgent ? (authorProfile?.ownerPubkey ?? null) : null;
-    return {
+    const message: TimelineMessage = {
       id: event.id,
       renderKey: event.localKey ?? event.id,
       createdAt: event.created_at,
@@ -547,6 +548,10 @@ export function formatTimelineMessages(
           .map(({ earliestCreatedAt: _drop, ...pill }) => pill);
       })(),
     };
+    // Retired platform mission notices from agents stay out of the conversation.
+    return message.isAgent && isRetiredMissionNotice(message.body)
+      ? []
+      : [message];
   });
 }
 

@@ -1,6 +1,7 @@
 import { useAgentManagement } from "@/features/agents/useAgentManagement";
 import { GuestAccessHost } from "@/features/guest-access/ui/GuestAccessHost";
 import { ProjectChannelRequestDialog } from "@/features/projects/ui/ProjectChannelRequestDialog";
+import { RemoteSignerHost } from "@/features/remote-signer/ui/RemoteSignerHost";
 import { AgentCardDialogs } from "./AgentCardViewerDialog";
 import { AgentDialog } from "./AgentDialog";
 
@@ -47,6 +48,7 @@ export function AgentManagementDialogs() {
       <ProjectChannelRequestDialog />
       <AgentCardDialogs />
       <GuestAccessHost />
+      <RemoteSignerHost />
     </>
   );
 }

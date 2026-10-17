@@ -6,6 +6,7 @@ import {
   CornerUpLeft,
   EllipsisVertical,
   Flag,
+  Info,
   Link2,
   MailCheck,
   MailOpen,
@@ -42,6 +43,7 @@ import { KIND_HUDDLE_STARTED } from "@/shared/constants/kinds";
 import { Button } from "@/shared/ui/button";
 import { HashArrowIn } from "@/shared/ui/icons";
 import { DeleteMessageConfirmDialog } from "./DeleteMessageConfirmDialog";
+import { MessageDetailsDialog } from "./MessageDetailsDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -121,6 +123,7 @@ function MoreActionsMenu({
 }) {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false);
   const [isReportDialogOpen, setIsReportDialogOpen] = React.useState(false);
+  const [isDetailsDialogOpen, setIsDetailsDialogOpen] = React.useState(false);
   // Transfer focus ownership only after the menu has finished closing.
   // During its exit animation Radix's pointer-leave handler can still focus
   // the menu, stealing keystrokes from an already-open composer. Merely
@@ -292,6 +295,18 @@ function MoreActionsMenu({
             </DropdownMenuItem>
           ) : null}
 
+          {hasCopyActions ? (
+            <DropdownMenuItem
+              data-testid={`message-details-${message.id}`}
+              onClick={() => {
+                setIsDetailsDialogOpen(true);
+              }}
+            >
+              <Info className="h-4 w-4" />
+              Details
+            </DropdownMenuItem>
+          ) : null}
+
           {canReport || onDelete ? <DropdownMenuSeparator /> : null}
 
           {canReport ? (
@@ -327,6 +342,14 @@ function MoreActionsMenu({
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {hasCopyActions ? (
+        <MessageDetailsDialog
+          message={message}
+          onOpenChange={setIsDetailsDialogOpen}
+          open={isDetailsDialogOpen}
+        />
+      ) : null}
 
       {onDelete ? (
         <DeleteMessageConfirmDialog
@@ -443,6 +466,20 @@ export const MessageActionBar = React.memo(function MessageActionBar({
 }) {
   const [isReactionPickerOpen, setIsReactionPickerOpen] = React.useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = React.useState(false);
+  const rootRef = React.useRef<HTMLDivElement | null>(null);
+  // The host's `ref` measures the rail; `rootRef` finds the message row for
+  // the right-click menu. Both point at the same root element.
+  const setRootRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      rootRef.current = node;
+      if (typeof ref === "function") {
+        ref(node);
+      } else if (ref) {
+        ref.current = node;
+      }
+    },
+    [ref],
+  );
   const customEmoji = useCustomEmoji();
   const quickReactionEmojis = useQuickReactionEmojis(3, customEmoji);
   const quickReactionItems = React.useMemo(
@@ -470,6 +507,31 @@ export const MessageActionBar = React.memo(function MessageActionBar({
     Boolean(onRemindLater) ||
     Boolean(onSendToChannel) ||
     !message.pending;
+
+  // Right-clicking the message opens the same More actions menu (Copy,
+  // Details, ...). Selected text, links and editable fields keep the native
+  // menu so copy and paste behave as usual.
+  React.useEffect(() => {
+    const row = rootRef.current?.closest<HTMLElement>(
+      '[data-testid="message-row"]',
+    );
+    if (!row || !hasMoreMenuActions) {
+      return;
+    }
+    const handleContextMenu = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        window.getSelection()?.toString() ||
+        target?.closest("a, input, textarea, [contenteditable='true']")
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setIsDropdownOpen(true);
+    };
+    row.addEventListener("contextmenu", handleContextMenu);
+    return () => row.removeEventListener("contextmenu", handleContextMenu);
+  }, [hasMoreMenuActions]);
 
   const wouldAddReaction = React.useCallback(
     (emoji: string) =>
@@ -518,7 +580,7 @@ export const MessageActionBar = React.memo(function MessageActionBar({
           : "",
       )}
       data-testid={`message-action-bar-${message.id}`}
-      ref={ref}
+      ref={setRootRef}
     >
       <div className="overflow-hidden rounded-full border border-border/70 bg-background/95 shadow-xs backdrop-blur-sm supports-[backdrop-filter]:bg-background/85">
         <div className="flex items-center gap-0.5 p-1">

@@ -145,6 +145,7 @@ class ThreadDetailPage extends HookConsumerWidget {
     // reaches it — a new pill (and its burst) only showed up after leaving and
     // re-entering, which refetched. The channel socket already receives those
     // events, so union the two sources and format once.
+    final knownAgentPubkeys = ref.watch(knownAgentPubkeysProvider);
     final liveChannelEvents =
         ref.watch(channelMessagesProvider(channelId)).value ??
         const <NostrEvent>[];
@@ -156,6 +157,7 @@ class ThreadDetailPage extends HookConsumerWidget {
         : formatTimeline(
             mergeThreadEvents(replyEvents, liveChannelEvents),
             currentPubkey: currentPubkey,
+            agentPubkeys: knownAgentPubkeys,
           );
     final hasFetchedReplies = fetchedReplies != null;
     // A terminal query error cannot produce a more authoritative list. Keep
@@ -172,7 +174,11 @@ class ThreadDetailPage extends HookConsumerWidget {
         ? _provisionalThreadMessages(
             allMessages,
             fetchedReplies ??
-                formatTimeline(liveChannelEvents, currentPubkey: currentPubkey),
+                formatTimeline(
+                  liveChannelEvents,
+                  currentPubkey: currentPubkey,
+                  agentPubkeys: knownAgentPubkeys,
+                ),
             liveChannelEvents,
           )
         : [

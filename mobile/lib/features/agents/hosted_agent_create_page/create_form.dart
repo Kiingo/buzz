@@ -16,20 +16,56 @@ String? _optionLabel(
   return null;
 }
 
+/// Edit starts from the schema's defaults overlaid with the agent's current
+/// choices, normalized so a choice the catalog no longer offers is cleared.
+Map<String, String> _initialEditConfig(
+  Map<String, Object?> schema,
+  HostedAgentSnapshot existing,
+) {
+  final entries = providerConfigEntries(schema);
+  final keys = {for (final entry in entries) entry.key};
+  final hidden = {
+    for (final entry in entries)
+      if (entry.value['x-hidden'] == true) entry.key,
+  };
+  final config = {
+    ...providerConfigDefaults(schema),
+    for (final entry in existing.formConfig.entries)
+      if (keys.contains(entry.key) && !hidden.contains(entry.key))
+        entry.key: entry.value,
+  };
+  final harness = config['harness'];
+  return harness == null
+      ? config
+      : reconcileProviderConfig(entries, config, 'harness', harness);
+}
+
 class _CreateForm extends HookConsumerWidget {
-  const _CreateForm({required this.catalog});
+  const _CreateForm({required this.catalog, this.existing});
 
   final HostedAgentCatalog catalog;
+  final HostedAgentSnapshot? existing;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final schema = catalog.configSchema;
-    final initialConfig = useMemoized(() => providerConfigDefaults(schema));
-    final config = useState(initialConfig);
-    final nameController = useTextEditingController(text: _defaultAgentName);
-    final promptController = useTextEditingController(
-      text: _defaultAgentInstructions,
+    final existing = this.existing;
+    final initialConfig = useMemoized(
+      () => existing == null
+          ? providerConfigDefaults(schema)
+          : _initialEditConfig(schema, existing),
     );
+    final config = useState(initialConfig);
+    final nameController = useTextEditingController(
+      text: existing?.displayName ?? _defaultAgentName,
+    );
+    final promptController = useTextEditingController(
+      text: existing == null
+          ? _defaultAgentInstructions
+          : existing.systemPrompt ?? '',
+    );
+    final expectedRevision = useState(existing?.profileRevision);
+    final editError = useState<String?>(null);
     useListenable(nameController);
     useListenable(promptController);
     final preflight = useState(_PreflightState.idle);
@@ -123,6 +159,7 @@ class _CreateForm extends HookConsumerWidget {
 
     void updateField(String key, String value) {
       failure.value = null;
+      editError.value = null;
       config.value = reconcileProviderConfig(
         providerConfigEntries(schema),
         config.value,
@@ -136,7 +173,28 @@ class _CreateForm extends HookConsumerWidget {
       unawaited(HapticFeedback.lightImpact());
       submitting.value = true;
       failure.value = null;
+      editError.value = null;
       final modelMode = config.value['model_mode'];
+      final harnessLabel = _optionLabel(schema, config.value, 'harness');
+      final modelLabel = modelMode == 'auto'
+          ? 'Default model'
+          : _optionLabel(schema, config.value, 'model_selector');
+      if (existing != null) {
+        await _saveEdit(
+          context: context,
+          ref: ref,
+          existing: existing,
+          expectedRevision: expectedRevision,
+          editError: editError,
+          displayName: name.trim(),
+          systemPrompt: prompt.trim().isEmpty ? null : prompt.trim(),
+          providerConfig: typedConfig,
+          harnessLabel: harnessLabel,
+          modelLabel: modelLabel,
+        );
+        if (context.mounted) submitting.value = false;
+        return;
+      }
       final outcome = await ref
           .read(hostedAgentControllerProvider.notifier)
           .create(
@@ -146,10 +204,8 @@ class _CreateForm extends HookConsumerWidget {
               systemPrompt: prompt,
               providerConfig: typedConfig,
             ),
-            harnessLabel: _optionLabel(schema, config.value, 'harness'),
-            modelLabel: modelMode == 'auto'
-                ? 'Default model'
-                : _optionLabel(schema, config.value, 'model_selector'),
+            harnessLabel: harnessLabel,
+            modelLabel: modelLabel,
           );
       if (!context.mounted) return;
       submitting.value = false;
@@ -236,7 +292,29 @@ class _CreateForm extends HookConsumerWidget {
             ),
           ],
         ),
-        const _Caption('It answers only you to start with.'),
+        if (existing == null)
+          const _Caption('It answers only you to start with.')
+        else if (name.trim() != existing.displayName)
+          const _Caption(
+            'The new name applies to the agent right away. Its Buzz profile '
+            'may keep showing the old name for now.',
+          ),
+        if (editError.value case final message?)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              Grid.gutter + Grid.xxs,
+              Grid.xs,
+              Grid.gutter + Grid.xxs,
+              0,
+            ),
+            child: Text(
+              message,
+              key: const ValueKey('hosted-agent-edit-error'),
+              style: context.textTheme.bodySmall?.copyWith(
+                color: context.colors.error,
+              ),
+            ),
+          ),
         if (failure.value case final failed?) ...[
           const SizedBox(height: Grid.sm),
           _FailureNotice(
@@ -251,10 +329,58 @@ class _CreateForm extends HookConsumerWidget {
           child: FilledButton(
             key: const ValueKey('hosted-agent-create'),
             onPressed: canCreate ? () => unawaited(submit()) : null,
-            child: Text(submitting.value ? 'Creating…' : 'Create'),
+            child: Text(
+              existing == null
+                  ? (submitting.value ? 'Creating…' : 'Create')
+                  : (submitting.value ? 'Saving…' : 'Save'),
+            ),
           ),
         ),
       ],
     );
+  }
+}
+
+/// Save an edit. A revision conflict adopts the newest revision from the
+/// refreshed list and asks the owner to review before saving again.
+Future<void> _saveEdit({
+  required BuildContext context,
+  required WidgetRef ref,
+  required HostedAgentSnapshot existing,
+  required ValueNotifier<int?> expectedRevision,
+  required ValueNotifier<String?> editError,
+  required String displayName,
+  required String? systemPrompt,
+  required Map<String, Object> providerConfig,
+  String? harnessLabel,
+  String? modelLabel,
+}) async {
+  final list = ref.read(hostedAgentListProvider.notifier);
+  try {
+    final saved = await list.saveEdit(
+      agent: existing,
+      expectedRevision: expectedRevision.value ?? existing.profileRevision,
+      displayName: displayName,
+      systemPrompt: systemPrompt,
+      providerConfig: providerConfig,
+      harnessLabel: harnessLabel,
+      modelLabel: modelLabel,
+    );
+    if (context.mounted) Navigator.of(context).pop(saved);
+  } on HostedAgentException catch (error) {
+    if (!context.mounted) return;
+    if (isHostedRevisionConflict(error)) {
+      final latest = list.find(existing.providerAgentId);
+      if (latest != null) expectedRevision.value = latest.profileRevision;
+      editError.value =
+          'This agent was changed somewhere else. Check your changes, then '
+          'save again to apply them on top.';
+      return;
+    }
+    editError.value = error.supportId == null
+        ? error.message
+        : '${error.message} Support ID: ${error.supportId}';
+  } catch (_) {
+    if (context.mounted) editError.value = describeHostedAgentError('');
   }
 }

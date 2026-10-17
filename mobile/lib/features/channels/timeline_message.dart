@@ -8,6 +8,7 @@ import '../../shared/mentions/mention_tags.dart';
 import 'channel_window.dart';
 import 'message_media.dart';
 import 'message_content/bubble_segments.dart';
+import 'reply_details.dart';
 
 enum SystemEventType {
   agentStatus,
@@ -454,6 +455,7 @@ VoidCallback? debugOnFormatTimeline;
 List<TimelineMessage> formatTimeline(
   List<NostrEvent> events, {
   String? currentPubkey,
+  Set<String> agentPubkeys = const {},
 }) {
   assert(() {
     debugOnFormatTimeline?.call();
@@ -625,6 +627,10 @@ List<TimelineMessage> formatTimeline(
       final mentions = mentionedPubkeysFromTags(effectiveTags).toList();
 
       final threadRef = event.threadReference;
+      if (agentPubkeys.contains(event.pubkey.toLowerCase()) &&
+          isRetiredMissionNotice(edit?.content ?? event.content)) {
+        continue;
+      }
 
       result.add(
         TimelineMessage(

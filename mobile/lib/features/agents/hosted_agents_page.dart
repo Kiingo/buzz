@@ -9,6 +9,8 @@ import 'package:intl/intl.dart';
 import '../../shared/hosted_agents/hosted_agent_client.dart';
 import '../../shared/hosted_agents/hosted_agent_controller.dart';
 import '../../shared/hosted_agents/hosted_agent_errors.dart';
+import '../../shared/hosted_agents/hosted_agent_list.dart';
+import '../../shared/hosted_agents/hosted_agent_snapshot.dart';
 import '../../shared/hosted_agents/hosted_agent_store.dart';
 import '../../shared/hosted_agents/owned_agents_provider.dart';
 import '../../shared/theme/buzz_icons.dart';
@@ -20,11 +22,13 @@ import '../../shared/widgets/frosted_scaffold.dart';
 import '../../shared/widgets/modal_presentation.dart';
 import 'hosted_agent_create_page.dart';
 
+part 'hosted_agents_page/agent_actions.dart';
 part 'hosted_agents_page/agent_detail_sheet.dart';
 part 'hosted_agents_page/agent_sections.dart';
 
-/// The owner's agents: hosted agents created on this phone (with delete) and
-/// the other agents they manage, plus the entry to create a hosted agent.
+/// The owner's agents: every hosted agent with live state and full
+/// management (including those created on desktop), the other agents they
+/// manage, and the entry to create a hosted agent.
 class HostedAgentsPage extends ConsumerWidget {
   /// Creates the agents page.
   const HostedAgentsPage({super.key});
@@ -40,6 +44,7 @@ class HostedAgentsPage extends ConsumerWidget {
       );
       if (!context.mounted || outcome is! HostedCreateSucceeded) return;
       ref.invalidate(ownedAgentsProvider);
+      unawaited(ref.read(hostedAgentListProvider.notifier).refresh());
       final record = outcome.record;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -80,17 +85,18 @@ class _AgentsBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final hosted = ref.watch(hostedAgentListProvider);
     final records = ref.watch(hostedAgentStoreProvider);
     final owned = ref.watch(ownedAgentsProvider);
-    final hostedKeys = {for (final record in records) record.pubkey};
+    final hostedKeys = {
+      for (final agent in hosted.value ?? const <HostedAgentSnapshot>[])
+        agent.agentPublicKey,
+      for (final record in records) record.pubkey,
+    };
     return RefreshIndicator(
       onRefresh: () async {
         ref.invalidate(ownedAgentsProvider);
-        try {
-          await ref.read(ownedAgentsProvider.future);
-        } catch (_) {
-          // The section shows the error.
-        }
+        await ref.read(hostedAgentListProvider.notifier).refresh();
       },
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -101,7 +107,7 @@ class _AgentsBody extends ConsumerWidget {
           Grid.lg,
         ),
         children: [
-          _HostedSection(records: records, onCreate: onCreate),
+          _HostedSection(agents: hosted, onCreate: onCreate),
           const SizedBox(height: Grid.sm),
           _OtherAgentsSection(
             agents: owned.whenData(
@@ -137,14 +143,20 @@ class _AgentsUnavailable extends StatelessWidget {
   }
 }
 
-/// Plain label for the API's observed state.
-String _stateLabel(String? state) => switch (state) {
-  'provisioning' => 'Starting',
-  'ready' || 'active' || 'running' => 'Running',
-  'updating' => 'Updating',
-  'paused' => 'Paused',
-  'failed' || 'error' => 'Needs attention',
-  'deleted' => 'Deleted',
-  null || '' => 'Created',
-  _ => state[0].toUpperCase() + state.substring(1).replaceAll('_', ' '),
-};
+/// Plain label for an agent's live state.
+String _stateLabel(HostedAgentSnapshot agent) {
+  if (agent.isDeleted) return 'Deleting';
+  if (agent.isPaused) {
+    return agent.observedState == 'paused' ? 'Paused' : 'Pausing';
+  }
+  return switch (agent.observedState) {
+    'provisioning' => 'Starting',
+    'ready' => 'Running',
+    'updating' => 'Updating',
+    'paused' => 'Resuming',
+    'action_required' => 'Needs attention',
+    'degraded' => 'Degraded',
+    final other =>
+      other[0].toUpperCase() + other.substring(1).replaceAll('_', ' '),
+  };
+}

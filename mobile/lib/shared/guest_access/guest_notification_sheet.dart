@@ -3,8 +3,13 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../theme/theme.dart';
 import '../widgets/modal_presentation.dart';
+import 'guest_access_client.dart';
+import 'guest_alert_route.dart';
 import 'guest_approval_sheet.dart';
 import 'resolved_guest_approvals.dart';
+import 'settings/guest_digest_page.dart';
+import 'settings/guest_requests_page.dart';
+import 'settings/guest_safety_page.dart';
 
 /// Agent guest-access owner notification kinds (relay kinds 46040–46042).
 const _approvalRequestedKind = 46040;
@@ -25,8 +30,10 @@ String? _tag(List<List<String>> tags, String name) {
 }
 
 /// Open a guest-access notification from the inbox: an approval request
-/// opens the owner review card; an alert shows its text. Returns `false`
-/// for any other kind so the caller keeps its normal navigation.
+/// opens the owner review card; an alert shows its text with a "Review"
+/// action to the matching guest-access page (from `buzz-guest-alert-kind`,
+/// like desktop). Returns `false` for any other kind so the caller keeps its
+/// normal navigation.
 ///
 /// [onDecided] runs after the owner records a decision, so the caller can
 /// refresh its list.
@@ -59,7 +66,10 @@ Future<bool> openGuestNotification(
     return true;
   }
   if (!context.mounted) return true;
-  await showBuzzModalBottomSheet<void>(
+  final destination = kind == _alertKind
+      ? guestAlertDestination(_tag(tags, 'buzz-guest-alert-kind'))
+      : null;
+  final review = await showBuzzModalBottomSheet<bool>(
     context: context,
     title: kind == _alertKind ? 'Agent alert' : 'Approval request',
     builder: (sheetContext) => SafeArea(
@@ -70,12 +80,77 @@ Future<bool> openGuestNotification(
           Grid.gutter,
           Grid.xs,
         ),
-        child: Text(
-          content.trim().isEmpty ? 'Your agent sent an alert.' : content,
-          style: sheetContext.textTheme.bodyMedium,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              content.trim().isEmpty ? 'Your agent sent an alert.' : content,
+              style: sheetContext.textTheme.bodyMedium,
+            ),
+            if (destination != null) ...[
+              const SizedBox(height: Grid.xs),
+              FilledButton(
+                key: const ValueKey('guest-alert-review'),
+                onPressed: () => Navigator.of(sheetContext).pop(true),
+                child: Text(guestAlertReviewLabel(destination)),
+              ),
+            ],
+          ],
         ),
       ),
     ),
   );
+  if (review == true && destination != null && context.mounted) {
+    await _openAlertDestination(context, destination);
+  }
   return true;
+}
+
+Future<void> _openAlertDestination(
+  BuildContext context,
+  GuestAlertDestination destination,
+) async {
+  final Widget page;
+  switch (destination) {
+    case GuestAlertDestination.digest:
+      page = const GuestDigestPage();
+    case GuestAlertDestination.requests:
+      page = const GuestRequestsPage();
+    case GuestAlertDestination.adminSafety:
+      // Safety review is for organization admins; everyone else stays on
+      // the inbox, as on desktop.
+      if (!await _isGuestAdmin(context)) {
+        if (context.mounted) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            const SnackBar(
+              content: Text('Only organization admins can review this alert'),
+            ),
+          );
+        }
+        return;
+      }
+      page = const GuestSafetyPage();
+  }
+  if (!context.mounted) return;
+  await Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => page));
+}
+
+/// Whether the owner may open org-admin guest safety. Any failure other than
+/// a definite "admin required" still opens the page, which shows its own
+/// error and retry.
+Future<bool> _isGuestAdmin(BuildContext context) async {
+  final client = ProviderScope.containerOf(
+    context,
+    listen: false,
+  ).read(guestAccessClientProvider);
+  if (client == null) return false;
+  try {
+    await client.adminOverview();
+    return true;
+  } catch (error) {
+    return !isAdminRequired(error);
+  }
 }

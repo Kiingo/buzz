@@ -1,74 +1,67 @@
 part of '../hosted_agents_page.dart';
 
-class _HostedSection extends StatelessWidget {
-  const _HostedSection({required this.records, required this.onCreate});
+class _HostedSection extends ConsumerWidget {
+  const _HostedSection({required this.agents, required this.onCreate});
 
-  final List<HostedAgentRecord> records;
+  final AsyncValue<List<HostedAgentSnapshot>> agents;
   final VoidCallback onCreate;
 
   @override
-  Widget build(BuildContext context) {
-    final sorted = [...records]
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        AppListCard(
-          label: 'Hosted agents from this phone',
-          verticalPadding: Grid.twelve,
-          children: [
-            if (sorted.isEmpty)
+  Widget build(BuildContext context, WidgetRef ref) {
+    final catalog = ref.watch(hostedAgentCatalogProvider).value;
+    final List<Widget> rows;
+    if (agents.hasValue) {
+      final list = agents.requireValue;
+      rows = list.isEmpty
+          ? [
               AppListRow(
                 key: const ValueKey('hosted-agents-empty'),
                 icon: BuzzIcons.plus,
                 title: 'New agent',
                 subtitle: 'Runs in the cloud and answers you in Buzz.',
                 onTap: onCreate,
-              )
-            else
-              for (final record in sorted)
+              ),
+            ]
+          : [
+              for (final agent in list)
                 AppListRow(
-                  key: ValueKey('hosted-agent-${record.pubkey}'),
-                  icon: BuzzIcons.bot,
-                  title: record.displayName,
+                  key: ValueKey('hosted-agent-${agent.providerAgentId}'),
+                  icon: agent.isPaused ? BuzzIcons.pause : BuzzIcons.bot,
+                  title: agent.displayName,
                   subtitle: [
-                    record.destination,
-                    ?record.harness,
-                    ?record.model,
-                  ].where((part) => part.isNotEmpty).join(' · '),
-                  value: _stateLabel(record.observedState),
+                    ?hostedProfileLabels(catalog, agent.providerConfig).harness,
+                    ?hostedProfileLabels(catalog, agent.providerConfig).model,
+                  ].join(' · '),
+                  value: _stateLabel(agent),
                   trailing: Icon(
                     BuzzIcons.chevronRight,
                     size: 18,
                     color: context.colors.onSurfaceVariant,
                   ),
-                  onTap: () => unawaited(
-                    showBuzzModalBottomSheet<void>(
-                      context: context,
-                      title: record.displayName,
-                      isScrollControlled: true,
-                      builder: (_) => _AgentDetailSheet(record: record),
-                    ),
-                  ),
+                  onTap: () => unawaited(_openAgent(context, ref, agent)),
                 ),
-          ],
+            ];
+    } else if (agents.hasError) {
+      final error = agents.error;
+      rows = [
+        AppListRow(
+          icon: BuzzIcons.wifiOff,
+          title: "Couldn't load your hosted agents",
+          subtitle: error is HostedAgentException
+              ? error.message
+              : 'Pull down to try again.',
+          subtitleMaxLines: 3,
+          onTap: () =>
+              unawaited(ref.read(hostedAgentListProvider.notifier).refresh()),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            Grid.gutter + Grid.xxs,
-            Grid.xxs,
-            Grid.gutter + Grid.xxs,
-            0,
-          ),
-          child: Text(
-            'You can delete these here. Starting, stopping and editing a '
-            "hosted agent isn't available on the phone yet.",
-            style: context.textTheme.bodySmall?.copyWith(
-              color: context.colors.onSurfaceVariant,
-            ),
-          ),
-        ),
-      ],
+      ];
+    } else {
+      rows = const [AppListRow(title: 'Loading your hosted agents…')];
+    }
+    return AppListCard(
+      label: 'Hosted agents',
+      verticalPadding: Grid.twelve,
+      children: rows,
     );
   }
 }

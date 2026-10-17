@@ -31,6 +31,17 @@ ignore = [
     # Keep the exact NetEQ pin and the wrapper ban below together. Re-audit or
     # remove this exception when NetEQ removes/updates the unused dependency.
     { id = "RUSTSEC-2026-0293", reason = "unused dependency of audited, exactly pinned neteq 0.8.3; no Rust references to ringbuf; other consumers forbidden by bans.deny" },
+    # zip < 9: SUID/SGID bits kept by extraction (0367), extract() following
+    # attacker symlinks (0368) and applying permissions through symlinks (0369).
+    # zip 8.6.0 is pulled only by mesh-llm v0.76.2 (plugin-manager, system,
+    # host-runtime), which never calls ZipArchive::extract or
+    # ZipStreamReader::extract: it walks entries itself, rejects paths without
+    # an enclosed_name, and writes plain files with File::create, so no mode bits
+    # or symlinks are materialized. A fixed zip needs a mesh-llm release on
+    # zip >= 9; remove these when buzz-relay moves to it.
+    { id = "RUSTSEC-2026-0367", reason = "zip 8.6.0 via mesh-llm v0.76.2 only; extract() is never called (entries written as plain files); needs mesh-llm on zip >= 9" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 8.6.0 via mesh-llm v0.76.2 only; extract() is never called and no symlinks are created; needs mesh-llm on zip >= 9" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 8.6.0 via mesh-llm v0.76.2 only; extract() is never called and no permissions are applied; needs mesh-llm on zip >= 9" },
 ]
 
 [licenses]

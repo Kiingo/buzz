@@ -75,3 +75,61 @@ Map<String, dynamic> buildDeleteOwnerProof({
     ],
   );
 }
+
+/// Content of an owner-management proof (list, update, control).
+const hostedOwnerManagementProofContent = 'buzz-provider-owner-v1';
+
+/// Proof for listing the owner's hosted agents: `action=list`, `provider`,
+/// `request`, `community`, `expires`.
+Map<String, dynamic> buildOwnerListProof({
+  required String ownerSecretHex,
+  required String providerId,
+  required String requestId,
+  required String communityId,
+  DateTime? now,
+}) {
+  final createdAt = _nowSeconds(now);
+  return _signProof(
+    ownerSecretHex: ownerSecretHex,
+    content: hostedOwnerManagementProofContent,
+    createdAt: createdAt,
+    tags: [
+      ['action', 'list'],
+      ['provider', providerId],
+      ['request', requestId],
+      ['community', communityId],
+      ['expires', '${createdAt + hostedOwnerProofTtlSeconds}'],
+    ],
+  );
+}
+
+/// Proof for one update or control write: `action=update|control`,
+/// `provider`, `request`, `agent`, `community`, `payload` (SHA-256 of the
+/// canonical request body without the proof), `expires`. The API burns each
+/// write proof, so sign a fresh one for every attempt.
+Map<String, dynamic> buildOwnerWriteProof({
+  required String ownerSecretHex,
+  required String action,
+  required String providerId,
+  required String requestId,
+  required String providerAgentId,
+  required String communityId,
+  required String payloadSha256,
+  DateTime? now,
+}) {
+  final createdAt = _nowSeconds(now);
+  return _signProof(
+    ownerSecretHex: ownerSecretHex,
+    content: hostedOwnerManagementProofContent,
+    createdAt: createdAt,
+    tags: [
+      ['action', action],
+      ['provider', providerId],
+      ['request', requestId],
+      ['agent', providerAgentId],
+      ['community', communityId],
+      ['payload', payloadSha256],
+      ['expires', '${createdAt + hostedOwnerProofTtlSeconds}'],
+    ],
+  );
+}

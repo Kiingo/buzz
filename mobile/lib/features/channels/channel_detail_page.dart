@@ -640,6 +640,7 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
         : formatTimeline(
             messagesState.value ?? const [],
             currentPubkey: currentPubkey,
+            agentPubkeys: agentPubkeys,
           );
     final timelineEntries = buildMainTimelineEntries(
       // End events still update the original card through allMessages.

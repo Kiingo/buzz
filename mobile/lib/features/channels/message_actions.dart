@@ -27,6 +27,7 @@ import '../../shared/reminders/reminder_service.dart';
 import 'channel_management_provider.dart';
 import 'channels_provider.dart';
 import 'emoji_picker.dart';
+import 'message_details_sheet.dart';
 import 'reaction_row.dart';
 import 'recent_emoji_provider.dart';
 import '../../shared/read_state/message_read_state.dart';
@@ -159,6 +160,16 @@ Future<void> showMessageActions({
                             // Copy to clipboard
                             final data = ClipboardData(text: message.content);
                             Clipboard.setData(data);
+                          },
+                        ),
+                        ListTile(
+                          leading: const Icon(messageDetailsIcon),
+                          title: const Text('Details'),
+                          onTap: () {
+                            if (!_selectMessageAction(sheetContext)) return;
+                            unawaited(
+                              showMessageDetailsSheet(context, message),
+                            );
                           },
                         ),
                       ],
