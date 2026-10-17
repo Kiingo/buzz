@@ -596,8 +596,8 @@ pub async fn validate_admin_event(
                 k == "name" || k == "about" || k == "archived" || k == "visibility" || k == "ttl"
             });
             if has_privileged_tag {
-                // A DM's visibility and identity are fixed at creation (Kiingo
-                // M-4017): agents treat a private two-member DM as a
+                // A DM's visibility and identity are fixed at creation:
+                // agents treat a private two-member DM as a
                 // requester-only audience, so nobody, including the owner of a
                 // legacy kind:9007 DM, may open it or rewrite its metadata.
                 if state

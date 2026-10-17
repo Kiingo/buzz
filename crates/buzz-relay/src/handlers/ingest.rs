@@ -2588,7 +2588,7 @@ async fn ingest_event_inner(
         }
     }
 
-    // A DM never gains participants after creation (Kiingo M-4017): refuse
+    // A DM never gains participants after creation: refuse
     // NIP-29 add on a DM before storage so the event is never persisted or
     // fanned out. Removal stays allowed: a shrunk DM is no longer a two-member
     // DM, which agents classify as a group audience.

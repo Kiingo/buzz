@@ -4,10 +4,10 @@
   "upstreamReference": "upstream/main",
   "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 155,
-    "modifiedUpstreamFiles": 277,
-    "changedUpstreamProductionSourceLines": 10671,
-    "upstreamProductionSourceDiffHunks": 1187,
+    "modifiedUpstreamProductionSourceFiles": 156,
+    "modifiedUpstreamFiles": 278,
+    "changedUpstreamProductionSourceLines": 11025,
+    "upstreamProductionSourceDiffHunks": 1204,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -1344,6 +1344,16 @@
         "mobile/lib/shared/relay/media_auth.dart",
         "mobile/test/shared/relay/media_cache_scope_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz DM privacy maintainers",
+      "purpose": "Make a DM's membership a privacy boundary: refuse kind 9007 channel_type=dm, refuse member additions (kind 9000, add_member of new or departed participants) and privileged kind 9002 metadata/visibility changes on DMs, so a DM's audience can only shrink after creation; and read relay metadata (39000/39002) only from the relay's NIP-11 self key in buzz-acp. Consumers can then trust a relay-signed DM roster as the exact audience.",
+      "upstreamStatus": "Kiingo M-4017 privacy correction; not submitted upstream.",
+      "removalCondition": "Remove when block/buzz enforces fixed DM membership and relay-signed metadata reads equivalently.",
+      "paths": [
+        "crates/buzz-db/src/store/channel_members.rs"
+      ]
     }
   ],
   "budgetAmendments": [
@@ -1487,6 +1497,23 @@
         "modifiedUpstreamFiles": 277,
         "changedUpstreamProductionSourceLines": 10671,
         "upstreamProductionSourceDiffHunks": 1187
+      }
+    },
+    {
+      "id": "dm-privacy-boundary-m4017",
+      "baseline": "f5e365ea5cca077de8073a0ab30aed6a2fb43fc4",
+      "reason": "DM privacy boundary (Kiingo M-4017): one newly modified upstream production file, crates/buzz-db/src/store/channel_members.rs (refuse adding new or departed DM participants), plus guards in already-modified crates/buzz-relay ingest.rs/side_effects.rs (refuse kind 9007 dm, kind 9000 and privileged kind 9002 on DMs) and buzz-acp relay.rs/pool.rs/dm_participants.rs (relay-key-signed 39000/39002 reads, NIP-11 self cache). Generic, provider-neutral; no Kiingo content in upstream-owned source. No wildcard, checker exception or unused allowance.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 155,
+        "modifiedUpstreamFiles": 277,
+        "changedUpstreamProductionSourceLines": 10671,
+        "upstreamProductionSourceDiffHunks": 1187
+      },
+      "qualified": {
+        "modifiedUpstreamProductionSourceFiles": 156,
+        "modifiedUpstreamFiles": 278,
+        "changedUpstreamProductionSourceLines": 11025,
+        "upstreamProductionSourceDiffHunks": 1204
       }
     }
   ]
