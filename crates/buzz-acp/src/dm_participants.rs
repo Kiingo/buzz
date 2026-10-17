@@ -171,19 +171,29 @@ impl DmAllowlistGate<'_> {
 }
 
 /// One bounded REST query for the channel's kind:39002 roster.
+///
+/// The roster is relay-authored: only a roster signed by the relay's NIP-11
+/// `self` key counts. An unreadable NIP-11 document yields no roster.
 async fn fetch_members(channel_id: Uuid, rest: &RestClient) -> Option<HashSet<String>> {
     use nostr::{Alphabet, SingleLetterTag};
 
-    let filter = nostr::Filter::new()
-        .kind(nostr::Kind::Custom(
-            buzz_core::kind::KIND_NIP29_GROUP_MEMBERS as u16,
-        ))
-        .custom_tags(
-            SingleLetterTag::lowercase(Alphabet::D),
-            [channel_id.to_string()],
-        );
+    let relay_key = rest.relay_self_key().await?;
+    let filter = crate::relay::relay_authored_filter(
+        nostr::Filter::new()
+            .kind(nostr::Kind::Custom(
+                buzz_core::kind::KIND_NIP29_GROUP_MEMBERS as u16,
+            ))
+            .custom_tags(
+                SingleLetterTag::lowercase(Alphabet::D),
+                [channel_id.to_string()],
+            ),
+        Some(&relay_key),
+    )?;
     match tokio::time::timeout(FETCH_TIMEOUT, rest.query(std::slice::from_ref(&filter))).await {
-        Ok(Ok(json)) => {
+        Ok(Ok(mut json)) => {
+            if let Some(events) = json.as_array_mut() {
+                events.retain(|event| crate::relay::signed_by_relay(event, Some(&relay_key)));
+            }
             let members = parse_members(&json, channel_id);
             if members.is_none() {
                 tracing::warn!(channel_id = %channel_id, "DM roster missing or empty");

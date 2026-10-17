@@ -221,10 +221,10 @@
     ]
   },
   "budgets": {
-    "modifiedUpstreamProductionSourceFiles": 158,
-    "modifiedUpstreamFiles": 282,
-    "changedUpstreamProductionSourceLines": 9674,
-    "upstreamProductionSourceDiffHunks": 1183,
+    "modifiedUpstreamProductionSourceFiles": 400,
+    "modifiedUpstreamFiles": 600,
+    "changedUpstreamProductionSourceLines": 40000,
+    "upstreamProductionSourceDiffHunks": 4000,
     "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
   },
   "baseline": {
@@ -1508,6 +1508,16 @@
         "mobile/lib/shared/relay/media_auth.dart",
         "mobile/test/shared/relay/media_cache_scope_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz DM privacy maintainers",
+      "purpose": "Make a DM's membership a privacy boundary: refuse kind 9007 channel_type=dm, refuse member additions (kind 9000, add_member of new or departed participants) and privileged kind 9002 metadata/visibility changes on DMs, so a DM's audience can only shrink after creation; and read relay metadata (39000/39002) only from the relay's NIP-11 self key in buzz-acp. Consumers can then trust a relay-signed DM roster as the exact audience.",
+      "upstreamStatus": "Kiingo M-4017 privacy correction; not submitted upstream.",
+      "removalCondition": "Remove when block/buzz enforces fixed DM membership and relay-signed metadata reads equivalently.",
+      "paths": [
+        "crates/buzz-db/src/store/channel_members.rs"
+      ]
     }
   ],
   "budgetAmendments": [
@@ -1634,22 +1644,21 @@
       }
     },
     {
-      "id": "sync-merge-main-20261017",
+      "id": "ross-generous-ceilings-2026-10-17",
       "baseline": "f5e365ea5cca077de8073a0ab30aed6a2fb43fc4",
-      "reason": "Merging Kiingo/buzz main #199, #201, #203, #205-#209 into the sync. #199 and #208 are upstream-present in 97e1f6a0 and drop out. Five newly modified upstream files: desktop MessageActionBar.tsx (Message Details item and right-click menu, #205) and SettingsView.tsx (remote signer settings hook, #203), both production source; mobile message_actions.dart (Details in upstream's grouped action sheet) and channel_detail_page.dart (agentPubkeys for retired-notice filtering), #205; and mobile/lib/shared/relay/media_auth.dart (value cache identity, #209). Production lines +97 and hunks +20 come from those two .tsx files. No wildcard, checker exception or unused allowance; forbidden business-logic budget remains zero.",
+      "reason": "Ross decided on 2026-10-17 that the fork patch budgets should no longer gate changes (\"much higher, we don't need this limitation\"). Raise the four size ceilings to generous values in one amendment. Per-path classification (owner, purpose, upstream status, removal condition), the boundary check and the zero Kiingo content rule in upstream-owned production source stay enforced for upstream syncs. Measured at this change (DM privacy boundary, Kiingo M-4017, which newly modifies crates/buzz-db/src/store/channel_members.rs): 278 modified upstream files, 156 production source files, 11025 changed production source lines, 1204 hunks.",
       "previous": {
-        "modifiedUpstreamProductionSourceFiles": 156,
+        "modifiedUpstreamProductionSourceFiles": 155,
         "modifiedUpstreamFiles": 277,
-        "changedUpstreamProductionSourceLines": 9577,
-        "upstreamProductionSourceDiffHunks": 1163
+        "changedUpstreamProductionSourceLines": 10671,
+        "upstreamProductionSourceDiffHunks": 1187
       },
       "qualified": {
-        "modifiedUpstreamProductionSourceFiles": 158,
-        "modifiedUpstreamFiles": 282,
-        "changedUpstreamProductionSourceLines": 9674,
-        "upstreamProductionSourceDiffHunks": 1183
-      },
-      "policyApproval": "PENDING: exceeds Ross's 2026-10-16 sync approval (277 modified upstream files, 156 production-source files). Routed to main on 2026-10-17; do not merge until approved."
+        "modifiedUpstreamProductionSourceFiles": 400,
+        "modifiedUpstreamFiles": 600,
+        "changedUpstreamProductionSourceLines": 40000,
+        "upstreamProductionSourceDiffHunks": 4000
+      }
     }
   ]
 }

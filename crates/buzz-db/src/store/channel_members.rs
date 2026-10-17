@@ -644,6 +644,21 @@ pub async fn add_member(
 
     let channel = get_channel_tx(tx.conn(), community_id, channel_id).await?;
 
+    // A DM never gains participants after creation: the participant set is the
+    // DM's identity (`participant_hash`) and its privacy boundary, and agents
+    // treat a relay-signed two-member DM as requester-only. Only an idempotent
+    // re-add of an already-active participant passes; a different set opens a
+    // new DM. Removal stays allowed: a shrunk DM classifies as a group audience.
+    if channel.channel_type == "dm"
+        && get_active_role_tx(tx.conn(), community_id, channel_id, pubkey)
+            .await?
+            .is_none()
+    {
+        return Err(DbError::AccessDenied(
+            "a DM cannot gain participants".to_string(),
+        ));
+    }
+
     let effective_role = if channel.visibility == "private" {
         let inviter = invited_by.ok_or_else(|| {
             DbError::AccessDenied("private channel requires an invite".to_string())
@@ -2141,6 +2156,75 @@ mod postgres_tests {
         .expect("insert owner membership");
 
         crate::channel::get_channel(pool, CommunityId::from_uuid(community_id), id).await
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn dm_never_gains_participants() {
+        let pool = setup_pool().await;
+        let community_id = make_test_community(&pool).await;
+        let community = CommunityId::from_uuid(community_id);
+        let requester = random_pubkey();
+        let agent = random_pubkey();
+        let stranger = random_pubkey();
+        for pubkey in [&requester, &agent, &stranger] {
+            ensure_user(&pool, community, pubkey)
+                .await
+                .expect("ensure user");
+        }
+        let dm = crate::dm::create_dm(
+            &pool,
+            community,
+            &[requester.as_slice(), agent.as_slice()],
+            &requester,
+        )
+        .await
+        .expect("create dm");
+
+        // A new participant (even invited by a participant) is refused.
+        let added = add_member(
+            &pool,
+            community,
+            dm.id,
+            &stranger,
+            MemberRole::Member,
+            Some(&requester),
+        )
+        .await;
+        assert!(matches!(added, Err(DbError::AccessDenied(_))), "{added:?}");
+
+        // An idempotent re-add of an active participant still passes.
+        add_member(
+            &pool,
+            community,
+            dm.id,
+            &agent,
+            MemberRole::Member,
+            Some(&requester),
+        )
+        .await
+        .expect("idempotent re-add");
+
+        // Shrinking is privacy-safe (a shrunk DM classifies as group): a
+        // participant may leave.
+        remove_member(&pool, community, dm.id, &agent, &agent)
+            .await
+            .expect("participant leaves");
+
+        // A participant who left cannot be re-added outside the DM open path.
+        let rejoined = add_member(
+            &pool,
+            community,
+            dm.id,
+            &agent,
+            MemberRole::Member,
+            Some(&requester),
+        )
+        .await;
+        assert!(
+            matches!(rejoined, Err(DbError::AccessDenied(_))),
+            "{rejoined:?}"
+        );
     }
 
     #[tokio::test]
