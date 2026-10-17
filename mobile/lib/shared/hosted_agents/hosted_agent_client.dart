@@ -7,12 +7,14 @@ import 'package:nostr/nostr.dart' as nostr;
 import 'package:uuid/uuid.dart';
 
 import '../relay/relay.dart';
+import 'canonical_json.dart';
 import 'hosted_agent_catalog.dart';
 import 'hosted_agent_config.dart';
 import 'hosted_agent_create_flow.dart';
 import 'hosted_agent_errors.dart';
 import 'hosted_agent_proofs.dart';
 import 'hosted_agent_responses.dart';
+import 'hosted_agent_snapshot.dart';
 
 const _maxResponseBytes = 2 * 1024 * 1024;
 
@@ -205,7 +207,141 @@ class HostedAgentClient implements HostedAgentProvisioner {
       providerAgentId: providerAgentId,
     );
   }
+
+  /// Every hosted agent the owner has, with live state.
+  Future<List<HostedAgentSnapshot>> listAgents({
+    required HostedAgentCatalog catalog,
+  }) async {
+    final requestId = const Uuid().v4();
+    final (status, body) = await _send(
+      'POST',
+      '/owner/agents/list',
+      timeout: const Duration(seconds: 20),
+      body: {
+        'contract_version': 1,
+        'request_id': requestId,
+        'owner_proof': buildOwnerListProof(
+          ownerSecretHex: ownerSecretHex(),
+          providerId: catalog.providerId,
+          requestId: requestId,
+          communityId: route.communityId,
+        ),
+      },
+    );
+    if (!_ok(status)) {
+      throw hostedAgentFailure(
+        body,
+        status: status,
+        fallbackCode: 'list_failed',
+      );
+    }
+    return parseHostedAgentList(body, requestId);
+  }
+
+  /// Change name, instructions and execution profile. [expectedRevision] is
+  /// the revision the owner edited; a newer one on the API is a conflict.
+  Future<HostedAgentSnapshot> updateAgent({
+    required HostedAgentCatalog catalog,
+    required String providerAgentId,
+    required int expectedRevision,
+    required String displayName,
+    required Map<String, Object> providerConfig,
+    required String? systemPrompt,
+  }) => _ownerWrite(
+    catalog: catalog,
+    path: '/owner/agents/update',
+    action: 'update',
+    providerAgentId: providerAgentId,
+    fields: {
+      'expected_profile_revision': expectedRevision,
+      'display_name': displayName,
+      'provider_config': providerConfig,
+      'system_prompt': systemPrompt,
+    },
+  );
+
+  /// Run one lifecycle action: `status`, `pause`, `resume` or `reconcile`.
+  Future<HostedAgentSnapshot> controlAgent({
+    required HostedAgentCatalog catalog,
+    required String providerAgentId,
+    required int expectedRevision,
+    required String action,
+  }) => _ownerWrite(
+    catalog: catalog,
+    path: '/owner/agents/control',
+    action: 'control',
+    providerAgentId: providerAgentId,
+    fields: {'expected_profile_revision': expectedRevision, 'action': action},
+  );
+
+  /// One owner write. The request id is fixed for the operation, so a retry
+  /// after a lost answer is idempotent on the API; each attempt signs a fresh
+  /// single-use proof bound to the exact body. A transport failure or a
+  /// replayed/expired proof is retried once.
+  Future<HostedAgentSnapshot> _ownerWrite({
+    required HostedAgentCatalog catalog,
+    required String path,
+    required String action,
+    required String providerAgentId,
+    required Map<String, Object?> fields,
+  }) async {
+    final body = <String, Object?>{
+      'contract_version': 1,
+      'request_id': const Uuid().v4(),
+      'provider_agent_id': providerAgentId,
+      ...fields,
+    };
+    final payload = stableJsonSha256(body);
+    for (var attempt = 0; ; attempt++) {
+      final proof = buildOwnerWriteProof(
+        ownerSecretHex: ownerSecretHex(),
+        action: action,
+        providerId: catalog.providerId,
+        requestId: body['request_id']! as String,
+        providerAgentId: providerAgentId,
+        communityId: route.communityId,
+        payloadSha256: payload,
+      );
+      try {
+        final (status, response) = await _send(
+          'POST',
+          path,
+          timeout: const Duration(seconds: 30),
+          body: {...body, 'owner_proof': proof},
+        );
+        if (!_ok(status)) {
+          throw hostedAgentFailure(
+            response,
+            status: status,
+            fallbackCode: '${action}_failed',
+          );
+        }
+        return parseHostedAgentWrite(
+          response,
+          providerAgentId: providerAgentId,
+        );
+      } on HostedAgentException catch (error) {
+        if (attempt == 0 && isRetryableOwnerWriteFailure(error)) continue;
+        rethrow;
+      }
+    }
+  }
 }
+
+/// Whether one owner write may be retried as-is with a fresh proof: the
+/// answer was lost, or the proof was replayed or expired in flight.
+bool isRetryableOwnerWriteFailure(HostedAgentException error) =>
+    switch (error.code) {
+      'hosted_agents_timeout' ||
+      'hosted_agents_unreachable' ||
+      'buzz_hosted_owner_proof_replayed' ||
+      'buzz_hosted_owner_proof_invalid' => true,
+      _ => false,
+    };
+
+/// The API's optimistic-concurrency rejection: refresh and review again.
+bool isHostedRevisionConflict(HostedAgentException error) =>
+    error.code == 'buzz_hosted_profile_revision_conflict';
 
 /// A client for the active community, or `null` when hosted agents are
 /// unavailable (no API in this build, another community, or no key).

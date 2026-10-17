@@ -14,7 +14,9 @@ import '../../shared/hosted_agents/hosted_agent_client.dart';
 import '../../shared/hosted_agents/hosted_agent_controller.dart';
 import '../../shared/hosted_agents/hosted_agent_deploy_request.dart';
 import '../../shared/hosted_agents/hosted_agent_errors.dart';
+import '../../shared/hosted_agents/hosted_agent_list.dart';
 import '../../shared/hosted_agents/hosted_agent_responses.dart';
+import '../../shared/hosted_agents/hosted_agent_snapshot.dart';
 import '../../shared/hosted_agents/provider_config_schema.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/app_list_card.dart';
@@ -35,18 +37,25 @@ const _defaultAgentInstructions =
     'You are a helpful teammate. Answer clearly and briefly, say when you are '
     'unsure, and ask before doing anything that cannot be undone.';
 
-/// Create a hosted agent: where it runs, harness and model, then name and
-/// instructions. Pops with the created record's display name on success.
+/// Create a hosted agent (where it runs, harness and model, then name and
+/// instructions), or edit [existing] with the same form. Create pops with a
+/// [HostedCreateOutcome]; edit pops with the saved [HostedAgentSnapshot].
 class HostedAgentCreatePage extends HookConsumerWidget {
-  /// Creates the hosted-agent create page.
-  const HostedAgentCreatePage({super.key});
+  /// Creates the hosted-agent create page, or the edit page for [existing].
+  const HostedAgentCreatePage({super.key, this.existing});
+
+  /// The agent to edit; `null` creates a new one.
+  final HostedAgentSnapshot? existing;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final catalog = ref.watch(hostedAgentCatalogProvider);
     return FrostedScaffold(
       useUtilitySurfaceTheme: true,
-      appBar: const FrostedAppBar(centerTitle: true, title: Text('New agent')),
+      appBar: FrostedAppBar(
+        centerTitle: true,
+        title: Text(existing == null ? 'New agent' : 'Edit agent'),
+      ),
       body: catalog.when(
         loading: () => const Center(
           child: BuzzLoadingIndicator(
@@ -60,7 +69,7 @@ class HostedAgentCreatePage extends HookConsumerWidget {
               : describeHostedAgentError(''),
           onRetry: () => ref.invalidate(hostedAgentCatalogProvider),
         ),
-        data: (catalog) => _CreateForm(catalog: catalog),
+        data: (catalog) => _CreateForm(catalog: catalog, existing: existing),
       ),
     );
   }
