@@ -30,6 +30,7 @@ import '../../shared/reminders/reminder_service.dart';
 import 'channel_management_provider.dart';
 import 'emoji_picker.dart';
 import 'message_action_backdrop_state.dart';
+import 'message_details_sheet.dart';
 import 'reaction_row.dart';
 import 'recent_emoji_provider.dart';
 import '../../shared/read_state/message_read_state.dart';
@@ -176,6 +177,15 @@ void showMessageActions({
                         // Copy to clipboard
                         final data = ClipboardData(text: message.content);
                         Clipboard.setData(data);
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(LucideIcons.info),
+                      title: const Text('Details'),
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        unawaited(showMessageDetailsSheet(context, message));
                       },
                     ),
                   ],
