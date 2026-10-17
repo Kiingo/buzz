@@ -7,7 +7,9 @@ let package = Package(
     products: [
         .library(name: "BuzzPushKit", targets: ["BuzzPushKit"])
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/swhitty/SwiftDraw.git", exact: "0.29.0")
+    ],
     targets: [
         .target(
             name: "CSecp256k1",
@@ -17,7 +19,7 @@ let package = Package(
         ),
         .target(
             name: "BuzzPushKit",
-            dependencies: ["CSecp256k1"]
+            dependencies: ["CSecp256k1", .product(name: "SwiftDraw", package: "SwiftDraw")]
         ),
         .testTarget(
             name: "BuzzPushKitTests",

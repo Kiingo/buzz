@@ -331,6 +331,26 @@ pub(crate) fn owner_only_notice(owner_label: Option<&str>) -> String {
     }
 }
 
+impl crate::scope::SessionScope {
+    /// Key this admitted scope by its trust lane.
+    ///
+    /// The lane is part of the session key, not a batching hint: a guest
+    /// requester's events get their own provider session, queue partition,
+    /// in-flight slot and steer target, so they can never run inside (or
+    /// steer into) an owner turn, and two guests never share one. Owner-lane
+    /// scopes are returned unchanged, so owner behaviour is exactly upstream's.
+    pub(crate) fn in_lane(self, lane: &TrustLane) -> Self {
+        let TrustLane::Guest(requester) = lane else {
+            return self;
+        };
+        Self::Guest {
+            channel_id: self.channel_id(),
+            requester: requester.clone(),
+            root_event_id: self.root_event_id().map(str::to_string),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,5 +547,40 @@ mod tests {
             serde_json::to_value(&profile).expect("json"),
         );
         assert!(facts.attested_owner.is_none());
+    }
+
+    #[test]
+    fn guest_lane_is_a_distinct_session_key_and_owner_lane_is_unchanged() {
+        use crate::scope::SessionScope;
+        let channel_id = uuid::Uuid::new_v4();
+        let conversation = SessionScope::Conversation { channel_id };
+        let thread = SessionScope::Thread {
+            channel_id,
+            root_event_id: "a".repeat(64),
+        };
+        assert_eq!(
+            conversation.clone().in_lane(&TrustLane::Owner),
+            conversation
+        );
+        assert_eq!(thread.clone().in_lane(&TrustLane::Owner), thread);
+
+        let alice = TrustLane::Guest("alice".into());
+        let bob = TrustLane::Guest("bob".into());
+        let alice_thread = thread.clone().in_lane(&alice);
+        assert_ne!(
+            alice_thread, thread,
+            "guest never shares the owner's thread session"
+        );
+        assert_ne!(
+            alice_thread,
+            thread.clone().in_lane(&bob),
+            "two guests never share one"
+        );
+        assert_eq!(alice_thread.channel_id(), channel_id);
+        assert_eq!(alice_thread.root_event_id(), thread.root_event_id());
+        assert!(alice_thread.is_thread());
+        let alice_conversation = conversation.clone().in_lane(&alice);
+        assert_ne!(alice_conversation, conversation);
+        assert!(!alice_conversation.is_thread());
     }
 }

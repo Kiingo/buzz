@@ -16,7 +16,7 @@ class _HostedSection extends ConsumerWidget {
           ? [
               AppListRow(
                 key: const ValueKey('hosted-agents-empty'),
-                icon: LucideIcons.plus,
+                icon: BuzzIcons.plus,
                 title: 'New agent',
                 subtitle: 'Runs in the cloud and answers you in Buzz.',
                 onTap: onCreate,
@@ -26,7 +26,7 @@ class _HostedSection extends ConsumerWidget {
               for (final agent in list)
                 AppListRow(
                   key: ValueKey('hosted-agent-${agent.providerAgentId}'),
-                  icon: agent.isPaused ? LucideIcons.pause : LucideIcons.bot,
+                  icon: agent.isPaused ? BuzzIcons.pause : BuzzIcons.bot,
                   title: agent.displayName,
                   subtitle: [
                     ?hostedProfileLabels(catalog, agent.providerConfig).harness,
@@ -34,7 +34,7 @@ class _HostedSection extends ConsumerWidget {
                   ].join(' · '),
                   value: _stateLabel(agent),
                   trailing: Icon(
-                    LucideIcons.chevronRight,
+                    BuzzIcons.chevronRight,
                     size: 18,
                     color: context.colors.onSurfaceVariant,
                   ),
@@ -45,7 +45,7 @@ class _HostedSection extends ConsumerWidget {
       final error = agents.error;
       rows = [
         AppListRow(
-          icon: LucideIcons.wifiOff,
+          icon: BuzzIcons.wifiOff,
           title: "Couldn't load your hosted agents",
           subtitle: error is HostedAgentException
               ? error.message
@@ -82,7 +82,7 @@ class _OtherAgentsSection extends StatelessWidget {
         for (final agent in list)
           AppListRow(
             key: ValueKey('owned-agent-${agent.pubkey}'),
-            icon: LucideIcons.bot,
+            icon: BuzzIcons.bot,
             title: agent.name,
             subtitle: 'Manage it in Buzz on desktop',
           ),
@@ -90,7 +90,7 @@ class _OtherAgentsSection extends StatelessWidget {
     } else if (value.hasError) {
       rows = const [
         AppListRow(
-          icon: LucideIcons.wifiOff,
+          icon: BuzzIcons.wifiOff,
           title: "Couldn't load your other agents",
           subtitle: 'Pull down to try again.',
         ),

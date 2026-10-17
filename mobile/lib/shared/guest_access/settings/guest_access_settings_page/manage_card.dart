@@ -22,7 +22,7 @@ class _ManageCard extends ConsumerWidget {
     final shared = count(ref.watch(ownerGuestShareablesProvider));
     final suggestions = count(ref.watch(ownerGuestSuggestionsProvider));
     final chevron = Icon(
-      LucideIcons.chevronRight,
+      BuzzIcons.chevronRight,
       size: 18,
       color: context.colors.onSurfaceVariant,
     );
@@ -33,7 +33,7 @@ class _ManageCard extends ConsumerWidget {
       children: [
         AppListRow(
           key: const ValueKey('guest-access-grants'),
-          icon: LucideIcons.keyRound,
+          icon: BuzzIcons.key,
           title: 'Grants',
           subtitle: 'People you let get answers without asking you',
           value: grants,
@@ -42,7 +42,7 @@ class _ManageCard extends ConsumerWidget {
         ),
         AppListRow(
           key: const ValueKey('guest-access-requests'),
-          icon: LucideIcons.history,
+          icon: GuestAccessIcons.history,
           title: 'Recent requests',
           subtitle: 'Who asked, the outcome and the safety check',
           trailing: chevron,
@@ -50,7 +50,7 @@ class _ManageCard extends ConsumerWidget {
         ),
         AppListRow(
           key: const ValueKey('guest-access-blocks'),
-          icon: LucideIcons.ban,
+          icon: GuestAccessIcons.ban,
           title: 'Blocked people',
           value: blocks,
           trailing: chevron,
@@ -58,7 +58,7 @@ class _ManageCard extends ConsumerWidget {
         ),
         AppListRow(
           key: const ValueKey('guest-access-shared'),
-          icon: LucideIcons.share2,
+          icon: BuzzIcons.share2,
           title: 'Shared via your agents',
           subtitle: 'Status and notes anyone in your org may be told',
           value: shared,
@@ -67,7 +67,7 @@ class _ManageCard extends ConsumerWidget {
         ),
         AppListRow(
           key: const ValueKey('guest-access-suggestions'),
-          icon: LucideIcons.lightbulb,
+          icon: BuzzIcons.lightbulb,
           title: 'Suggestions',
           subtitle: 'Grants based on what you keep approving',
           value: suggestions,
@@ -76,7 +76,7 @@ class _ManageCard extends ConsumerWidget {
         ),
         AppListRow(
           key: const ValueKey('guest-access-digest'),
-          icon: LucideIcons.calendarDays,
+          icon: GuestAccessIcons.calendarMonth,
           title: 'Daily digest',
           trailing: chevron,
           onTap: () => _push(context, const GuestDigestPage()),
@@ -107,12 +107,12 @@ class _AdminCard extends ConsumerWidget {
       children: [
         AppListRow(
           key: const ValueKey('guest-access-safety'),
-          icon: LucideIcons.shieldAlert,
+          icon: BuzzIcons.shieldAlert,
           title: 'Agent guest safety',
           subtitle: 'For admins: suspensions and unusual request patterns',
           value: open == null || open == 0 ? null : '$open',
           trailing: Icon(
-            LucideIcons.chevronRight,
+            BuzzIcons.chevronRight,
             size: 18,
             color: context.colors.onSurfaceVariant,
           ),

@@ -8,7 +8,7 @@ use std::time::Duration;
 use buzz_core::agent_status::{AgentStatus, AgentStatusState};
 use nostr::{Event, EventId, Keys};
 
-use crate::queue::{parse_thread_tags, FlushBatch};
+use crate::queue::{edit_target_id, FlushBatch};
 use crate::relay::RestClient;
 
 /// Coarse failure classes are safe to publish without upstream error bodies.
@@ -17,6 +17,9 @@ pub(crate) enum Failure {
     Timeout,
     Authentication,
     RetryExhausted,
+    /// The configured model does not exist at the provider; retrying the
+    /// same model cannot repair it.
+    ModelNotFound,
 }
 
 impl Failure {
@@ -28,6 +31,9 @@ impl Failure {
             }
             Self::RetryExhausted => {
                 "Runtime request delivery failed after retries. Recovery needs attention."
+            }
+            Self::ModelNotFound => {
+                "The configured model was not found at the provider. Choose another model in agent settings and restart the agent."
             }
         }
     }
@@ -49,13 +55,16 @@ fn status_events(
     let mut roots = HashSet::new();
     let mut events = Vec::new();
     for trigger in batch.events.iter().chain(&batch.cancelled_events) {
-        let thread = parse_thread_tags(&trigger.event);
-        let root = match thread.root_event_id {
-            Some(root) => EventId::from_hex(&root).map_err(|_| "invalid failure status thread")?,
-            // An unthreaded request starts its own thread. Never fall back to
-            // publishing a root-channel chat notice.
-            None => trigger.event.id,
-        };
+        // An edit belongs to its original message's thread. An edit whose
+        // original is still unknown has no provable thread: its target may
+        // itself be a reply, so it is never claimed as a root.
+        if trigger.edit.is_none() && edit_target_id(&trigger.event).is_some() {
+            continue;
+        }
+        // An unthreaded request starts its own thread. Never fall back to
+        // publishing a root-channel chat notice.
+        let root = EventId::from_hex(&trigger.reply_thread())
+            .map_err(|_| "invalid failure status thread")?;
         if !roots.insert(root) {
             continue;
         }
@@ -78,18 +87,30 @@ pub(crate) fn spawn(
     failure: Failure,
 ) {
     let Some(rest) = rest else { return };
-    let events = match status_events(&rest.keys, batch, invocation_id, failure) {
-        Ok(events) => events,
-        Err(_) => {
-            tracing::warn!("runtime failure status could not be scoped or signed");
-            return;
-        }
-    };
-    if events.is_empty() {
-        return;
-    }
     let rest = rest.clone();
+    let mut batch = batch.clone();
+    let invocation_id = invocation_id.to_string();
     tokio::spawn(async move {
+        // An edit whose original was not resolved at admission gets one more
+        // lookup, so a transient fetch failure does not lose its thread.
+        for trigger in batch
+            .events
+            .iter_mut()
+            .chain(batch.cancelled_events.iter_mut())
+        {
+            if trigger.edit.is_none() && edit_target_id(&trigger.event).is_some() {
+                trigger.edit =
+                    crate::edit_routing::resolve_edit(&trigger.event, batch.channel_id, &rest)
+                        .await;
+            }
+        }
+        let events = match status_events(&rest.keys, &batch, &invocation_id, failure) {
+            Ok(events) => events,
+            Err(_) => {
+                tracing::warn!("runtime failure status could not be scoped or signed");
+                return;
+            }
+        };
         for event in events {
             match tokio::time::timeout(Duration::from_secs(5), rest.submit_event(&event)).await {
                 Ok(Ok(_)) => {}
@@ -126,12 +147,16 @@ mod tests {
     fn batch(channel: Uuid, events: Vec<Event>) -> FlushBatch {
         FlushBatch {
             channel_id: channel,
+            scope: crate::scope::SessionScope::Conversation {
+                channel_id: channel,
+            },
             events: events
                 .into_iter()
                 .map(|event| BatchEvent {
                     event,
                     prompt_tag: "test".to_string(),
                     received_at: Instant::now(),
+                    edit: None,
                 })
                 .collect(),
             cancelled_events: vec![],
@@ -150,6 +175,7 @@ mod tests {
             Failure::Timeout,
             Failure::Authentication,
             Failure::RetryExhausted,
+            Failure::ModelNotFound,
         ] {
             let events = status_events(&keys, &input, INVOCATION, failure).unwrap();
             assert_eq!(events.len(), 1);

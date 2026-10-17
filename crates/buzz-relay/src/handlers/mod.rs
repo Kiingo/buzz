@@ -2,6 +2,8 @@
 pub mod admin_action_worker;
 pub mod admin_outbox_worker;
 pub mod auth;
+/// Pure NIP-29 channel membership-authority decisions (kinds 9000/9001/9022).
+pub mod channel_authz;
 /// Subscription close (CLOSE) handler.
 pub mod close;
 /// Command executor — transactional processing for command kinds.
@@ -12,6 +14,8 @@ pub mod community_provisioning;
 pub mod count;
 /// EVENT handler — WS dispatcher → ingest pipeline → fan-out.
 pub mod event;
+#[cfg(test)]
+pub(crate) mod group_state_postgres_tests;
 /// Agent guest access notification (46040–46042) envelope validation.
 pub(crate) mod guest_notification;
 /// NIP-IA identity archive request handler (kinds 9035–9036).
@@ -40,6 +44,10 @@ pub mod report_resolution;
 pub mod req;
 /// NIP-29 and NIP-25 side-effect handlers.
 pub mod side_effects;
+#[cfg(test)]
+mod system_channel_postgres_tests;
+/// Per-filter query scope for system channels.
+pub(crate) mod system_channels;
 
 /// Extract an optional TTL (in seconds) from a Nostr event's `ttl` tag,
 /// applying the server-side override when configured.
@@ -66,3 +74,6 @@ pub fn resolve_ttl(event: &nostr::Event, ephemeral_ttl_override: Option<i32>) ->
         (ttl, _) => ttl,
     }
 }
+
+/// NIP-AR artifact lifecycle.
+pub mod artifact;

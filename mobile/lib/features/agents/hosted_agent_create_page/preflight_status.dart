@@ -57,7 +57,7 @@ class _PreflightStatus extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            LucideIcons.circleCheck,
+            BuzzIcons.circleCheck,
             size: 16,
             color: context.appColors.success,
           ),
@@ -79,7 +79,7 @@ class _PreflightStatus extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
-                LucideIcons.circleAlert,
+                BuzzIcons.circleAlert,
                 size: 16,
                 color: context.appColors.warning,
               ),

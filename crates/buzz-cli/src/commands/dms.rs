@@ -18,8 +18,16 @@ fn has_tag(event: &serde_json::Value, name: &str, value: &str) -> bool {
         })
 }
 
+/// The channel type is the FIRST `t` tag; later `t` tags are labels.
+fn first_tag_value<'a>(event: &'a serde_json::Value, name: &str) -> Option<&'a str> {
+    event.get("tags")?.as_array()?.iter().find_map(|tag| {
+        let values = tag.as_array()?;
+        (values.first()?.as_str()? == name).then(|| values.get(1)?.as_str())?
+    })
+}
+
 fn is_dm_metadata(event: &serde_json::Value, my_pubkey: &str) -> bool {
-    has_tag(event, "t", "dm") && has_tag(event, "p", my_pubkey)
+    first_tag_value(event, "t") == Some("dm") && has_tag(event, "p", my_pubkey)
 }
 
 /// List DMs from canonical kind:39000 metadata, scoped to this participant.

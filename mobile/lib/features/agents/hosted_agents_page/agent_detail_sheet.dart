@@ -118,7 +118,7 @@ class _AgentDetailSheet extends HookConsumerWidget {
                 children: [
                   AppListRow(
                     key: const ValueKey('hosted-agent-edit'),
-                    icon: LucideIcons.pencil,
+                    icon: BuzzIcons.pencil,
                     title: 'Edit',
                     subtitle: 'Name, instructions, harness and model',
                     onTap: working == null
@@ -128,7 +128,7 @@ class _AgentDetailSheet extends HookConsumerWidget {
                   if (agent.isPaused)
                     AppListRow(
                       key: const ValueKey('hosted-agent-resume'),
-                      icon: LucideIcons.play,
+                      icon: BuzzIcons.play,
                       title: actionTitle('resume', 'Resume', 'Resuming…'),
                       onTap: working == null
                           ? () => unawaited(
@@ -139,7 +139,7 @@ class _AgentDetailSheet extends HookConsumerWidget {
                   else
                     AppListRow(
                       key: const ValueKey('hosted-agent-pause'),
-                      icon: LucideIcons.pause,
+                      icon: BuzzIcons.pause,
                       title: actionTitle('pause', 'Pause', 'Pausing…'),
                       subtitle: 'Stops answering until you resume it',
                       onTap: working == null
@@ -150,7 +150,7 @@ class _AgentDetailSheet extends HookConsumerWidget {
                     ),
                   AppListRow(
                     key: const ValueKey('hosted-agent-status'),
-                    icon: LucideIcons.refreshCw,
+                    icon: BuzzIcons.refreshCw,
                     title: actionTitle('status', 'Check status', 'Checking…'),
                     onTap: working == null
                         ? () => unawaited(
@@ -160,7 +160,7 @@ class _AgentDetailSheet extends HookConsumerWidget {
                   ),
                   AppListRow(
                     key: const ValueKey('hosted-agent-reconcile'),
-                    icon: LucideIcons.wrench,
+                    icon: BuzzIcons.wrench,
                     title: actionTitle(
                       'reconcile',
                       'Reconcile',
@@ -181,7 +181,7 @@ class _AgentDetailSheet extends HookConsumerWidget {
               children: [
                 AppListRow(
                   key: const ValueKey('hosted-agent-delete'),
-                  icon: LucideIcons.trash2,
+                  icon: BuzzIcons.trash2,
                   title: actionTitle('delete', 'Delete agent', 'Deleting…'),
                   titleColor: context.colors.error,
                   onTap: working == null ? () => unawaited(delete()) : null,

@@ -28,7 +28,7 @@ pub const MIN_REFRESH_INTERVAL_SECONDS: i64 = 20 * 60;
 /// How the gateway authenticates to APNs, from deployment configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApnsAuthConfig {
-    /// A combined certificate + private key PEM (`BUZZ_PUSH_DOGFOOD_APNS_CERT_PATH`).
+    /// A combined certificate + private key PEM (`BUZZ_PUSH_APNS_CERT_PATH`).
     Certificate { path: PathBuf },
     /// A team `.p8` auth key with its key id and team id.
     Token {
@@ -46,14 +46,14 @@ fn apple_identifier(value: &str) -> bool {
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
 }
 
-/// Parse `BUZZ_PUSH_DOGFOOD_APNS_AUTH` (`certificate` by default, or `token`)
+/// Parse `BUZZ_PUSH_APNS_AUTH` (`certificate` by default, or `token`)
 /// and the variables that mode requires.
 pub fn parse_auth(e: &HashMap<String, String>) -> Result<ApnsAuthConfig, ConfigError> {
-    const MODE: &str = "BUZZ_PUSH_DOGFOOD_APNS_AUTH";
-    const CERT: &str = "BUZZ_PUSH_DOGFOOD_APNS_CERT_PATH";
-    const KEY: &str = "BUZZ_PUSH_DOGFOOD_APNS_KEY_PATH";
-    const KEY_ID: &str = "BUZZ_PUSH_DOGFOOD_APNS_KEY_ID";
-    const TEAM_ID: &str = "BUZZ_PUSH_DOGFOOD_APNS_TEAM_ID";
+    const MODE: &str = "BUZZ_PUSH_APNS_AUTH";
+    const CERT: &str = "BUZZ_PUSH_APNS_CERT_PATH";
+    const KEY: &str = "BUZZ_PUSH_APNS_KEY_PATH";
+    const KEY_ID: &str = "BUZZ_PUSH_APNS_KEY_ID";
+    const TEAM_ID: &str = "BUZZ_PUSH_APNS_TEAM_ID";
     let required = |key: &'static str| {
         e.get(key)
             .map(String::as_str)
@@ -400,16 +400,16 @@ mod tests {
     #[test]
     fn auth_mode_defaults_to_certificate_and_token_mode_needs_all_three() {
         assert_eq!(
-            parse_auth(&env(&[("BUZZ_PUSH_DOGFOOD_APNS_CERT_PATH", "/id.pem")])).unwrap(),
+            parse_auth(&env(&[("BUZZ_PUSH_APNS_CERT_PATH", "/id.pem")])).unwrap(),
             ApnsAuthConfig::Certificate {
                 path: PathBuf::from("/id.pem")
             }
         );
         let token = [
-            ("BUZZ_PUSH_DOGFOOD_APNS_AUTH", "token"),
-            ("BUZZ_PUSH_DOGFOOD_APNS_KEY_PATH", "/key.p8"),
-            ("BUZZ_PUSH_DOGFOOD_APNS_KEY_ID", "ABCDE12345"),
-            ("BUZZ_PUSH_DOGFOOD_APNS_TEAM_ID", "TEAM123456"),
+            ("BUZZ_PUSH_APNS_AUTH", "token"),
+            ("BUZZ_PUSH_APNS_KEY_PATH", "/key.p8"),
+            ("BUZZ_PUSH_APNS_KEY_ID", "ABCDE12345"),
+            ("BUZZ_PUSH_APNS_TEAM_ID", "TEAM123456"),
         ];
         assert_eq!(
             parse_auth(&env(&token)).unwrap(),
@@ -421,9 +421,9 @@ mod tests {
         );
         // Token mode needs no certificate path.
         for missing in [
-            "BUZZ_PUSH_DOGFOOD_APNS_KEY_PATH",
-            "BUZZ_PUSH_DOGFOOD_APNS_KEY_ID",
-            "BUZZ_PUSH_DOGFOOD_APNS_TEAM_ID",
+            "BUZZ_PUSH_APNS_KEY_PATH",
+            "BUZZ_PUSH_APNS_KEY_ID",
+            "BUZZ_PUSH_APNS_TEAM_ID",
         ] {
             let mut partial = env(&token);
             partial.remove(missing);
@@ -432,8 +432,8 @@ mod tests {
             );
         }
         let mut bad_id = env(&token);
-        bad_id.insert("BUZZ_PUSH_DOGFOOD_APNS_KEY_ID".into(), "abc".into());
+        bad_id.insert("BUZZ_PUSH_APNS_KEY_ID".into(), "abc".into());
         assert!(parse_auth(&bad_id).is_err());
-        assert!(parse_auth(&env(&[("BUZZ_PUSH_DOGFOOD_APNS_AUTH", "magic")])).is_err());
+        assert!(parse_auth(&env(&[("BUZZ_PUSH_APNS_AUTH", "magic")])).is_err());
     }
 }

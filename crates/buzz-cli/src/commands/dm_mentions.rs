@@ -8,17 +8,19 @@
 
 use crate::client::BuzzClient;
 
-fn has_tag(event: &serde_json::Value, name: &str, value: &str) -> bool {
+/// Whether channel metadata declares a DM. The channel type is the FIRST `t`
+/// tag; later `t` tags are labels (a `stream` channel labelled `dm` is not a DM).
+fn is_dm_metadata(event: &serde_json::Value) -> bool {
     event
         .get("tags")
         .and_then(|t| t.as_array())
-        .is_some_and(|tags| {
-            tags.iter().any(|tag| {
-                let parts = tag.as_array();
-                parts.and_then(|p| p.first()).and_then(|v| v.as_str()) == Some(name)
-                    && parts.and_then(|p| p.get(1)).and_then(|v| v.as_str()) == Some(value)
+        .and_then(|tags| {
+            tags.iter().find_map(|tag| {
+                let parts = tag.as_array()?;
+                (parts.first()?.as_str()? == "t").then(|| parts.get(1)?.as_str())?
             })
         })
+        == Some("dm")
 }
 
 fn first_event(raw: &str) -> Option<serde_json::Value> {
@@ -46,7 +48,7 @@ pub(crate) async fn other_dm_participants(
     else {
         return Vec::new();
     };
-    if !has_tag(&meta, "t", "dm") {
+    if !is_dm_metadata(&meta) {
         return Vec::new();
     }
     let roster = serde_json::json!({"kinds": [39002], "#d": [channel_id], "limit": 1});
@@ -91,7 +93,12 @@ mod tests {
     fn dm_tag_detection() {
         let dm = serde_json::json!({"tags": [["d", "x"], ["t", "dm"]]});
         let stream = serde_json::json!({"tags": [["d", "x"], ["t", "stream"]]});
-        assert!(has_tag(&dm, "t", "dm"));
-        assert!(!has_tag(&stream, "t", "dm"));
+        let labelled = serde_json::json!({"tags": [["d", "x"], ["t", "stream"], ["t", "dm"]]});
+        assert!(is_dm_metadata(&dm));
+        assert!(!is_dm_metadata(&stream));
+        assert!(
+            !is_dm_metadata(&labelled),
+            "only the first `t` tag is the type"
+        );
     }
 }

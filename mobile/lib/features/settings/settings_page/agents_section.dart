@@ -18,7 +18,7 @@ class _AgentsSection extends ConsumerWidget {
       children: [
         AppListRow(
           key: const ValueKey('settings-agents-row'),
-          icon: LucideIcons.bot,
+          icon: BuzzIcons.bot,
           title: 'Your agents',
           subtitle: 'Create and manage hosted agents',
           trailing: const _RowChevron(),

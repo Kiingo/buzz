@@ -91,8 +91,14 @@ async fn channel_sequence_survives_late_commit_rollback_replacement_and_exact_la
 
     let late = signed(&keys, channel, "late old authored timestamp", 1789000000);
     let newer = signed(&keys, channel, "newer transaction", 1789010001);
-    let mut first = pool.begin().await.unwrap();
-    crate::event::insert_event_in_transaction(&mut first, community, &late, Some(channel))
+    let mut first = crate::begin_community_event_write_transaction(
+        &pool,
+        community,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await
+    .unwrap();
+    crate::event::insert_event_in_transaction(&mut first, &late, Some(channel))
         .await
         .unwrap();
     let other_db = Db::from_pool(pool.clone());
@@ -158,8 +164,14 @@ async fn channel_sequence_survives_late_commit_rollback_replacement_and_exact_la
     );
 
     let rolled_back = signed(&keys, channel, "not accepted", 1789010003);
-    let mut tx = pool.begin().await.unwrap();
-    crate::event::insert_event_in_transaction(&mut tx, community, &rolled_back, Some(channel))
+    let mut tx = crate::begin_community_event_write_transaction(
+        &pool,
+        community,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await
+    .unwrap();
+    crate::event::insert_event_in_transaction(&mut tx, &rolled_back, Some(channel))
         .await
         .unwrap();
     tx.rollback().await.unwrap();
@@ -171,7 +183,7 @@ async fn channel_sequence_survives_late_commit_rollback_replacement_and_exact_la
         0
     );
     // A genuine deletion stays deleted; the transport does not resurrect chat.
-    db.soft_delete_event(community, newer.id.as_bytes())
+    db.soft_delete_event_and_update_thread(community, newer.id.as_bytes(), None, None)
         .await
         .unwrap();
     assert!(db

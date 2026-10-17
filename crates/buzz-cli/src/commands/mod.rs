@@ -7,6 +7,7 @@ pub(crate) mod dm_mentions;
 pub mod dms;
 pub mod emoji;
 pub mod feed;
+pub mod gifs;
 /// Quarantine of crossing text in hosted-mode reads.
 pub(crate) mod hosted_quarantine;
 pub mod issues;
@@ -22,6 +23,7 @@ pub mod pr;
 pub mod project_channel;
 pub mod projects;
 pub mod reactions;
+mod repo_default_branch;
 pub mod repos;
 pub mod social;
 pub mod turn_context;

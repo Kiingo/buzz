@@ -43,20 +43,20 @@ class _DayPicker extends StatelessWidget {
           IconButton(
             tooltip: 'Previous day',
             onPressed: day == null ? null : () => shift(-1),
-            icon: const Icon(LucideIcons.chevronLeft),
+            icon: const Icon(BuzzIcons.chevronLeft),
           ),
           Expanded(
             child: TextButton.icon(
               key: const ValueKey('guest-digest-date'),
               onPressed: () => unawaited(pick()),
-              icon: const Icon(LucideIcons.calendar, size: 16),
+              icon: const Icon(GuestAccessIcons.calendar, size: 16),
               label: Text(formatDigestDay(date)),
             ),
           ),
           IconButton(
             tooltip: 'Next day',
             onPressed: canGoForward ? () => shift(1) : null,
-            icon: const Icon(LucideIcons.chevronRight),
+            icon: const Icon(BuzzIcons.chevronRight),
           ),
         ],
       ),

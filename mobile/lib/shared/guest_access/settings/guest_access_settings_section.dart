@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../theme/buzz_icons.dart';
 import '../../theme/theme.dart';
 import '../../widgets/app_list.dart';
 import '../../widgets/app_list_card.dart';
@@ -25,11 +25,11 @@ class GuestAccessSettingsSection extends ConsumerWidget {
       children: [
         AppListRow(
           key: const ValueKey('guest-access-settings-row'),
-          icon: LucideIcons.shieldCheck,
+          icon: BuzzIcons.shieldCheck,
           title: 'Agent guest access',
           subtitle: 'Grants, blocks, recent requests and the daily digest',
           trailing: Icon(
-            LucideIcons.chevronRight,
+            BuzzIcons.chevronRight,
             size: 18,
             color: context.colors.onSurfaceVariant,
           ),

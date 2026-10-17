@@ -2,7 +2,224 @@
   "schemaVersion": 3,
   "upstreamRepository": "https://github.com/block/buzz.git",
   "upstreamReference": "upstream/main",
-  "upstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
+  "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+  "migrationLedger": {
+    "policy": "sqlx keys migrations by filename version and SHA-384 of the bytes. Upstream migrations at or below identityThroughVersion keep their paths. Every later upstream migration is renamed byte for byte to the next free fork version, in apply order (next-free-number rule), so production and fresh databases apply the same sequence. Fork-owned versions applied in production are never renumbered or edited. scripts/check-kiingo-migration-ledger.mjs enforces this; ignore_missing stays false.",
+    "identityThroughVersion": 40,
+    "lastProductionVersion": 45,
+    "entries": [
+      {
+        "version": 41,
+        "forkPath": "migrations/0041_managed_publication_fences.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "df79c95f3ad3b3c1f4190ae3ae1bfe50ed8178bb38f5f3c5d35fa20c85df2771d8380aae2cea629b79c6d7466ef2c28b"
+      },
+      {
+        "version": 42,
+        "forkPath": "migrations/0042_agent_status_thread_counters.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "0a3b105e82542f8942fbee446672829a11049dffa864ba4581613dfb6f2e0291beddd0be4ec563833338deb89401d975"
+      },
+      {
+        "version": 43,
+        "forkPath": "migrations/0043_user_stop_events.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "417047e6d862c0df248624f652ea04c577f1c5608e1bf5a1972fc7214e99497893c0e0fb3c9892cb76806adccb3724a2"
+      },
+      {
+        "version": 44,
+        "forkPath": "migrations/0044_channel_event_sequence.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "8ab6ad125a952895606de9e8b38f9dbc4ed74300d9093f2d5a7fe5fb43f8bc3dcf5114a3fc9c49a5029acd2c30e6da30"
+      },
+      {
+        "version": 45,
+        "forkPath": "migrations/0045_push_guest_notification_kinds.sql",
+        "owner": "kiingo",
+        "appliedInProduction": true,
+        "sha384": "3ddca2a5c7cabd42520816f15718971c56e930a0d0e8b5f0b98e850c09a97ae8ab97f77fb5a096964d34c37eeddb7ae1"
+      },
+      {
+        "version": 46,
+        "forkPath": "migrations/0046_nip_fi_identity_foundation.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0041_nip_fi_identity_foundation.sql",
+        "sha384": "ad6359d4b86fc85d028f8921cbd2afc20c79acace320cd0eb7a79019b5e0ee44d0fab1e60a710527cd391126f43a2d6f"
+      },
+      {
+        "version": 47,
+        "forkPath": "migrations/0047_nip_fi_authorization_foundation.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0042_nip_fi_authorization_foundation.sql",
+        "sha384": "702326df04517e53c7fbf5a7720f6b96681dd3f664ed7c493a77d3c2fc57b672e6ebabf377fcd9ac7eacf6285663cfb9"
+      },
+      {
+        "version": 48,
+        "forkPath": "migrations/0048_push_gateway_dogfood_profile.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0043_push_gateway_dogfood_profile.sql",
+        "sha384": "ed55cbda5e3de7e5306b84481399e62b01ff88798f1b708d2d1614d4d9296f5babec17082339944f3eb7b9d8e26e5e7c"
+      },
+      {
+        "version": 49,
+        "forkPath": "migrations/0049_drop_nip_fi_ledger.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0044_drop_nip_fi_ledger.sql",
+        "sha384": "a852862896862d0cf3ecd4f62c9af4036ceec2ca78ff4f6a9054cf601767ad37c5a03ac2b04d56911e9d4611d4070ec7"
+      },
+      {
+        "version": 50,
+        "forkPath": "migrations/0050_retain_push_revocation_tombstones.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0045_retain_push_revocation_tombstones.sql",
+        "sha384": "7c8c13d6e6e7dec23edc20d489f5efcf3e41988cda0034bdd168f09099237077db609706c46e24550a0132d5abf54f39"
+      },
+      {
+        "version": 51,
+        "forkPath": "migrations/0051_storage_accounting_snapshots.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0046_storage_accounting_snapshots.sql",
+        "sha384": "e02ae303449874411dcc3024c3bd9fc727dc3336804a8e2b17785a6016b1c3b73d40792f4711ec50b90cc13f6470f74c"
+      },
+      {
+        "version": 52,
+        "forkPath": "migrations/0052_relay_admin_action_target.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0047_relay_admin_action_target.sql",
+        "sha384": "1e676435f20133640cf443e8d73582b081cec8a33473df029f8da1d2e5f228f64e23fe92ce8282282065a46c8eafade2"
+      },
+      {
+        "version": 53,
+        "forkPath": "migrations/0053_audit_hash_version.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0048_audit_hash_version.sql",
+        "sha384": "2b040688d14216cd7d269f0b086b2e157d8c37a991df89f19aaeb952771d010a598789fdcf8d25288b01f91b8490f1bb"
+      },
+      {
+        "version": 54,
+        "forkPath": "migrations/0054_thread_window_index.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0049_thread_window_index.sql",
+        "sha384": "35b707ad2a8ad28b3eb65f91089b9d91925c48a17eec17aa7bc1077eeb6832d296b3aaadcb2fb61fac01eac03c7ac4b2"
+      },
+      {
+        "version": 55,
+        "forkPath": "migrations/0055_operator_listener_mentions.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0050_operator_listener_mentions.sql",
+        "sha384": "08c1b91010b969dbb885cb9c7ae06ffafc218aa8539a3263aad40e4b3b5a8c45f3ba3a3f5a81185bf5a66e2c379c8487"
+      },
+      {
+        "version": 56,
+        "forkPath": "migrations/0056_owner_community_deletion_admission.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0051_owner_community_deletion_admission.sql",
+        "sha384": "fe6d3068a6512587bfc651ca0a2ae30ff8bb82c4f90aedd7dc8c125f842d3b8b89804f949e77229fcc6b3857bba376f6"
+      },
+      {
+        "version": 57,
+        "forkPath": "migrations/0057_channel_artifacts.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0052_channel_artifacts.sql",
+        "sha384": "dcf66d35143fbd835f2ee7cc57232316524c4bc27bcf9f9d93b94c4588016b261f565ab9876c4515219456c6613f8bce"
+      },
+      {
+        "version": 58,
+        "forkPath": "migrations/0058_owner_deletion_auto_approval.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0053_owner_deletion_auto_approval.sql",
+        "sha384": "9a1914fcb2df1622be9c107af4639d109db3fdf7699a37fd08d3fea803faac2dafb16b359304c8162a7fec17a88d83c6"
+      },
+      {
+        "version": 59,
+        "forkPath": "migrations/0059_owner_deletion_quota_reservation.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0054_owner_deletion_quota_reservation.sql",
+        "sha384": "ef0f783e356c61a904eb31bf51bb77fadfb27148f8dfc5166c8edc2090e854e8ff052fb0a765da3a0f8436358349f7d6"
+      },
+      {
+        "version": 60,
+        "forkPath": "migrations/0060_relay_admin_direct_actions.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0055_relay_admin_direct_actions.sql",
+        "sha384": "4a6dff9da91abd69218d07c30c2ed32a2d52d905083a6694644295422061737ae9341cfaa76101a05819bd022c2ae4f3"
+      },
+      {
+        "version": 61,
+        "forkPath": "migrations/0061_personal_read_state.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0056_personal_read_state.sql",
+        "sha384": "f9b6824b395e1a120b551f6dbddfa24923f3a42ff4860f403687cb0d34eb93664f9d778ff28334eb6602b5cd2547b522"
+      },
+      {
+        "version": 62,
+        "forkPath": "migrations/0062_personal_read_started_at.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0057_personal_read_started_at.sql",
+        "sha384": "9d5038ffc8e9cbc244164bd0b614f5050c6f6dcd111fdd35357038c751e8213d44d959fb168a8aecc6854f982800aa13"
+      },
+      {
+        "version": 63,
+        "forkPath": "migrations/0063_personal_read_through_message.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0058_personal_read_through_message.sql",
+        "sha384": "32b6817d8e7731022b7874426046b6f3a62051557bb0354a2615cf6d01c7316471cd418a194fda8b6f4846634397cf6e"
+      },
+      {
+        "version": 64,
+        "forkPath": "migrations/0064_push_rollback_gate.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0059_push_rollback_gate.sql",
+        "sha384": "ce3afd86480ded9acf88116b6cc7d22f16156cc7964fb74cf338b7c206b1e0e22455a24a9f10a5b9564cb15d61c4354d"
+      },
+      {
+        "version": 65,
+        "forkPath": "migrations/0065_push_single_application.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0060_push_single_application.sql",
+        "sha384": "10149f8eeda1289304c336a907ef8892fa47a729dda95923e442643ecd3c317c7e556f600b8f5271a0289e60012f783d"
+      },
+      {
+        "version": 66,
+        "forkPath": "migrations/0066_channel_labels.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0061_channel_labels.sql",
+        "sha384": "d584af4ed17070c20c32af2522b4a3367ac9d63058f2e7b516cd1c769b051b897f0a5d3a43fa70165aafe5d494824fe9"
+      },
+      {
+        "version": 67,
+        "forkPath": "migrations/0067_system_channel_type.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0062_system_channel_type.sql",
+        "sha384": "f154368d05b20959c1a276115c3bfe43517afa194192604fbaca4e97c58613dea1e463e33bc0b0f2be29551572e35995"
+      },
+      {
+        "version": 68,
+        "forkPath": "migrations/0068_retire_push_match_trigger.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0063_retire_push_match_trigger.sql",
+        "sha384": "a4156e039f95b5bcef7bd87d1bdf764a87eb272072dfe59f90be5a62b64eaf5c51cc5c14c14a51bb347e0cc407436ed7"
+      },
+      {
+        "version": 69,
+        "forkPath": "migrations/0069_profile_name_fields.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0064_profile_name_fields.sql",
+        "sha384": "5a618efc012b8fcac69d892d90a4106f9cbbfc2dd6253f2dae17d21ffb4f5bc129ee767ba0b1e5f30c8aa116b8d56078"
+      },
+      {
+        "version": 70,
+        "forkPath": "migrations/0070_retire_channel_ttl_trigger.sql",
+        "owner": "upstream",
+        "upstreamPath": "migrations/0065_retire_channel_ttl_trigger.sql",
+        "sha384": "2440f69b41932348984cc9295fb3a3b234aa9c43b69a289658f6466f711984c63b5bfaa797f72dfc5a191ea0c6e836a6"
+      }
+    ]
+  },
   "budgets": {
     "modifiedUpstreamProductionSourceFiles": 400,
     "modifiedUpstreamFiles": 600,
@@ -318,13 +535,20 @@
   ],
   "deltas": [
     {
-      "classification": "retain-generic",
+      "classification": "drop/upstream-present",
       "owner": "Buzz integration maintainers",
       "purpose": "Keep the development and integration object-store dependency on MinIO's public multi-architecture registry after the former Docker Hub image paths stopped serving anonymous pulls.",
-      "upstreamStatus": "Generic dependency-registry correction discovered by hosted integration CI; not submitted upstream.",
+      "upstreamStatus": "Upstream-present: block/buzz #8023 (pinned Silo images) supersedes the MinIO registry move.",
       "removalCondition": "Remove when block/buzz uses an equivalent available MinIO registry or replaces this development dependency.",
-      "paths": [
-        "docker-compose.yml"
+      "paths": [],
+      "upstreamPresentAtSync": [
+        {
+          "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+          "droppedPaths": [
+            "docker-compose.yml"
+          ],
+          "reason": "Upstream #8023 replaced MinIO with pinned pgsty/silo images; the fork registry change has no target."
+        }
       ]
     },
     {
@@ -338,7 +562,12 @@
         "crates/buzz-db/src/store/channel_event_sequence.rs",
         "crates/buzz-db/src/store/channel_event_sequence/tests.rs",
         "crates/buzz-relay/src/api/bridge/channel_event_sequence.rs",
-        "migrations/0044_channel_event_sequence.sql"
+        "migrations/0044_channel_event_sequence.sql",
+        "schema/functions/assign_channel_event_sequence.sql",
+        "schema/tables/public/channel_event_heads.sql",
+        "schema/tables/public/events.sql",
+        "schema/triggers/channel_event_heads.sql",
+        "schema/triggers/events.sql"
       ]
     },
     {
@@ -356,7 +585,11 @@
         "crates/buzz-db/src/store/user_stop/tests.rs",
         "crates/buzz-relay/src/api/bridge.rs",
         "crates/buzz-relay/src/api/bridge/user_stop.rs",
-        "migrations/0043_user_stop_events.sql"
+        "migrations/0043_user_stop_events.sql",
+        "schema/functions/retain_user_stop_event.sql",
+        "schema/functions/user_stop_event_root.sql",
+        "schema/tables/public/user_stop_events.sql",
+        "schema/triggers/user_stop_events.sql"
       ]
     },
     {
@@ -373,7 +606,9 @@
         "crates/buzz-acp/src/local_publication.rs",
         "crates/buzz-acp/src/pool.rs",
         "crates/buzz-acp/src/queue.rs",
+        "crates/buzz-acp/src/queue/conversation.rs",
         "crates/buzz-acp/src/relay.rs",
+        "crates/buzz-acp/src/runtime.rs",
         "crates/buzz-sdk/src/builders.rs"
       ]
     },
@@ -529,8 +764,16 @@
         "desktop/src/features/onboarding/machineOnboarding.test.mjs",
         "desktop/src/features/onboarding/machineOnboarding.ts",
         "desktop/src/features/onboarding/ui/MachineOnboardingFlow.tsx",
-        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs",
-        "desktop/tests/e2e/harness-management.spec.ts"
+        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs"
+      ],
+      "upstreamPresentAtSync": [
+        {
+          "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+          "droppedPaths": [
+            "desktop/tests/e2e/harness-management.spec.ts"
+          ],
+          "reason": "Upstream #7528 deleted the F8 onboarding e2e the fork had edited; the D8 recovered-identity coverage needs a new onboarding spec."
+        }
       ]
     },
     {
@@ -551,6 +794,7 @@
         "docs/kiingo-fork-minimization-hard-cutover-plan-2026-08-11.md",
         "docs/kiingo-upstream-candidate-ledger-2026-08-11.md",
         "scripts/check-kiingo-fork-boundary.mjs",
+        "scripts/check-kiingo-migration-ledger.mjs",
         "scripts/rehearse-upstream-sync.mjs",
         "scripts/rehearse-upstream-sync.test.mjs"
       ]
@@ -573,6 +817,7 @@
         "desktop/src-tauri/src/managed_agents/config_bridge/reader_tests.rs",
         "desktop/src-tauri/src/managed_agents/discovery.rs",
         "desktop/src-tauri/src/managed_agents/discovery/auth_status_cache.rs",
+        "desktop/src-tauri/src/managed_agents/discovery/catalog.rs",
         "desktop/src-tauri/src/managed_agents/discovery/login_shell.rs",
         "desktop/src-tauri/src/managed_agents/discovery/login_shell_spawn_probe.rs",
         "desktop/src-tauri/src/managed_agents/discovery/runtime_metadata.rs",
@@ -663,13 +908,21 @@
         "mobile/lib/shared/relay/nostr_models.dart",
         "mobile/test/features/channels/agent_status_test.dart",
         "schema/schema.sql",
+        "schema/tables/public/managed_publication_receipts.sql",
+        "schema/tables/public/managed_publication_scopes.sql",
+        "schema/tables/public/managed_publications.sql",
+        "schema/tables/public/managed_runtime_issuers.sql",
+        "schema/triggers/managed_publication_receipts.sql",
+        "schema/triggers/managed_publication_scopes.sql",
+        "schema/triggers/managed_publications.sql",
+        "schema/triggers/managed_runtime_issuers.sql",
         "scripts/reconcile-schema-after-pgschema.sql"
       ]
     },
     {
       "classification": "retain-generic",
       "owner": "Buzz reliability maintainers",
-      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised; and keep relay-signed kind:40099 system events (dm_created) out of the Home inbox DM context, which has no system-row renderer and showed their JSON as chat; and export each agent turn's reply destination (BUZZ_TURN_CONTEXT_FILE) so `buzz messages send` in the turn's channel replies in the triggering thread by default, with --top-level to opt out; and refuse further chat sends to the turn's channel after the agent @mentions someone other than itself and the turn's triggering members (a floor handoff recorded beside the turn file), unless --after-handoff is passed, so an agent cannot ask a question and post the conclusion in the same turn; parallel sends in one turn serialize the handoff check, send, and marker write on an advisory lock file in the turn directory; and carry a saved agent definition's access (who can send instructions) to its deployed instances still on the definition's previous access, through the instance update command so the running agent restarts on the new gate, and let the access people picker add a pasted npub or hex key whatever the profile search returns, with the member picker's search page size; and keep Home inbox thread context failures per message (reuse ancestors already in the channel window, retry a failed context fetch once, render an inline placeholder for a deleted or unreadable root/ancestor and a quiet retry note for replies) instead of a page-level error banner, and refresh channel rosters on every live kind:40099 membership row (joined/left/removed/added) for all member channels, not only the open channel screen, with the members sidebar revalidating a cached roster on open.",
+      "purpose": "Generic onboarding and agent-reliability fixes found while exercising a closed Kiingo relay: keep the relay's rejection reason on a latched-terminal session so onboarding shows membership denial instead of a generic server error; re-sign retained agent heads that aged out of the relay window; stop retrying stale status publications; optionally assert the agent's display name; publish an agent's final text when it ends a channel turn without posting (relay-verified, never double-posts); ignore agent channel messages addressed to another agent; repair missing DM discovery metadata on re-open; open a fresh DM when the opener's membership was revoked (e.g. identity rotation) instead of returning a sealed one; an optional hot-reloaded respond-to allowlist file; NIP-10 parent-author notification for unaddressed CLI replies; an opt-in allowlist-in-DMs rule that admits allowlisted authors only when every DM participant is trusted; and full-access mode mapping so bypassPermissions reaches adapters whose full-access mode has a different id (codex-acp agent-full-access), with a warning when a requested mode is not advertised; and keep relay-signed kind:40099 system events (dm_created) out of the Home inbox DM context, which has no system-row renderer and showed their JSON as chat; and export each agent turn's reply destination (BUZZ_TURN_CONTEXT_FILE) so `buzz messages send` in the turn's channel replies in the triggering thread by default, with --top-level to opt out; and refuse further chat sends to the turn's channel after the agent @mentions someone other than itself and the turn's triggering members (a floor handoff recorded beside the turn file), unless --after-handoff is passed, so an agent cannot ask a question and post the conclusion in the same turn; parallel sends in one turn serialize the handoff check, send, and marker write on an advisory lock file in the turn directory; and carry a saved agent definition's access (who can send instructions) to its deployed instances still on the definition's previous access, through the instance update command so the running agent restarts on the new gate; and keep Home inbox thread context failures per message (reuse ancestors already in the channel window, retry a failed context fetch once, render an inline placeholder for a deleted or unreadable root/ancestor and a quiet retry note for replies) instead of a page-level error banner, and refresh channel rosters on every live kind:40099 membership row (joined/left/removed/added) for all member channels, not only the open channel screen, with the members sidebar revalidating a cached roster on open.",
       "upstreamStatus": "Upstream candidates; each fix is self-contained and generic, to be proposed to block/buzz.",
       "removalCondition": "Remove each path once block/buzz ships an equivalent fix.",
       "paths": [
@@ -692,9 +945,6 @@
         "desktop/src-tauri/src/commands/personas/update/access_propagation_tests.rs",
         "desktop/src-tauri/src/managed_agents/persona_events/tests.rs",
         "desktop/src-tauri/src/managed_agents/types/requests.rs",
-        "desktop/src/features/agents/lib/respondToAllowlist.test.mjs",
-        "desktop/src/features/agents/lib/respondToAllowlist.ts",
-        "desktop/src/features/agents/ui/RespondToField.tsx",
         "desktop/src/features/agents/ui/respondToFieldContract.test.mjs",
         "desktop/src/features/channels/membershipSystemEvents.test.mjs",
         "desktop/src/features/channels/membershipSystemEvents.ts",
@@ -711,23 +961,43 @@
         "desktop/src/features/home/useInboxThreadContext.ts",
         "desktop/src/shared/api/relayClientSession.ts",
         "desktop/tests/e2e/messaging.spec.ts"
+      ],
+      "upstreamPresentAtSync": [
+        {
+          "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+          "droppedPaths": [
+            "desktop/src/features/agents/lib/respondToAllowlist.test.mjs",
+            "desktop/src/features/agents/lib/respondToAllowlist.ts",
+            "desktop/src/features/agents/ui/RespondToField.tsx"
+          ],
+          "reason": "Upstream #7489 ships the same pasted npub/hex access picker (byte-identical respondToAllowlist files)."
+        }
       ]
     },
     {
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
-      "purpose": "Relay support for agent guest access notifications: stored, global, owner-addressed kinds 46040 (approval requested), 46041 (approval resolved) and 46042 (guest-access alert) with strict envelope validation (one hex p tag, agent tag, correlation id, status/severity enums, short content, no h tag); p-gated reads at the filter, result and live fan-out layers (only the addressed owner can read them, including by id); and push eligibility for 46040/46042 (relay NIP-PL push kinds, an additive push-match trigger migration, the activation backfill) so approval requests wake the owner's phone. The read gate now derives from RESULT_GATED_KINDS instead of hard-coded kinds.",
+      "purpose": "Relay support for agent guest access notifications: stored, global, owner-addressed kinds 46040 (approval requested), 46041 (approval resolved) and 46042 (guest-access alert) with strict envelope validation (one hex p tag, agent tag, correlation id, status/severity enums, short content, no h tag); p-gated reads at the filter, result and live fan-out layers (only the addressed owner can read them, including by id); and push eligibility for 46040/46042 (relay push kinds under buzz-push-v1, the application push-match allowlist PUSH_MATCH_KINDS that replaced the retired trigger, and fork migration 0045 retained as applied history) so approval requests wake the owner's phone. The read gate now derives from RESULT_GATED_KINDS instead of hard-coded kinds.",
       "upstreamStatus": "Generic notification kinds with no deployment-specific behaviour; not yet proposed upstream.",
       "removalCondition": "Remove when block/buzz ships owner-addressed approval notification kinds with private reads and push eligibility.",
       "paths": [
         "crates/buzz-core/src/filter.rs",
-        "crates/buzz-db/src/store/push.rs",
+        "crates/buzz-db/src/store/event_follow_up.rs",
         "crates/buzz-relay/src/handlers/guest_notification.rs",
         "crates/buzz-relay/src/handlers/mod.rs",
         "crates/buzz-relay/src/handlers/push_lease.rs",
         "crates/buzz-relay/src/handlers/req.rs",
         "crates/buzz-relay/src/push_runtime.rs",
         "migrations/0045_push_guest_notification_kinds.sql"
+      ],
+      "upstreamPresentAtSync": [
+        {
+          "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+          "droppedPaths": [
+            "crates/buzz-db/src/store/push.rs"
+          ],
+          "reason": "Upstream #8178 removed the activation backfill the fork extended; 46040/46042 push eligibility now lives in event_follow_up::PUSH_MATCH_KINDS."
+        }
       ]
     },
     {
@@ -739,20 +1009,23 @@
       "paths": [
         "crates/buzz-acp/src/agent_guards.rs",
         "crates/buzz-acp/src/dm_addressing.rs",
-        "deny.toml",
         "crates/buzz-acp/src/guest_route.rs",
         "crates/buzz-acp/src/guest_runtime.rs",
         "crates/buzz-acp/src/guest_runtime_tests.rs",
+        "crates/buzz-acp/src/inbound_author_gate/trust_screen.rs",
+        "crates/buzz-acp/src/listener_trust.rs",
         "crates/buzz-acp/src/provenance.rs",
+        "crates/buzz-acp/src/scope.rs",
         "crates/buzz-acp/src/trust.rs",
         "crates/buzz-acp/tests/e2e_guest_routing.rs",
         "crates/buzz-acp/tests/fixtures/fake_acp_agent.py",
         "crates/buzz-cli/src/client.rs",
-        "crates/buzz-cli/src/commands/feed.rs",
         "crates/buzz-cli/src/commands/dm_mentions.rs",
+        "crates/buzz-cli/src/commands/feed.rs",
         "crates/buzz-cli/src/commands/hosted_quarantine.rs",
         "crates/buzz-cli/src/commands/outbound_classify.rs",
         "crates/buzz-sdk/src/agent_relay.rs",
+        "deny.toml",
         "desktop/src-tauri/build.rs",
         "desktop/src-tauri/src/managed_agents/access_policy.rs",
         "desktop/src-tauri/src/managed_agents/reserved_env_keys.rs"
@@ -868,7 +1141,9 @@
       "purpose": "Discover registered Visual C++ installations instead of assuming a Visual Studio release-year directory, while preserving installed MSVC, default toolset, Windows SDK and CMake identity in the native desktop cache fingerprint.",
       "upstreamStatus": "Generic Windows build-cache portability fix; candidate for upstream.",
       "removalCondition": "Remove when block/buzz discovers registered Visual C++ installations for its native desktop cache identity.",
-      "paths": ["scripts/desktop-native-toolchain-id.sh"]
+      "paths": [
+        "scripts/desktop-native-toolchain-id.sh"
+      ]
     },
     {
       "id": "kiingo-spot-only-static-ci",
@@ -878,6 +1153,10 @@
       "removalCondition": "Remove when equivalent externally owned Kiingo source/build/publication workflows preserve the same outputs and immutable source/profile custody.",
       "paths": [
         ".github/kiingo-spot-ci.json",
+        ".github/workflows/_ci-clients.yml",
+        ".github/workflows/_ci-desktop.yml",
+        ".github/workflows/_ci-rust.yml",
+        ".github/workflows/_ci-security.yml",
         ".github/workflows/auto-tag-on-release-pr-merge.yml",
         ".github/workflows/benchmark-harbor.yml",
         ".github/workflows/desktop-release-cache-proof.yml",
@@ -886,6 +1165,7 @@
         ".github/workflows/linux-canary.yml",
         ".github/workflows/macos-intel-canary.yml",
         ".github/workflows/mesh-lifecycle.yml",
+        ".github/workflows/minio-image.yml",
         ".github/workflows/mobile-release-candidate.yml",
         ".github/workflows/promote-oss-desktop-release.yml",
         ".github/workflows/push-gateway-helm-chart.yml",
@@ -917,12 +1197,14 @@
         "crates/buzz-pubsub/src/error.rs",
         "crates/buzz-pubsub/src/lib.rs",
         "crates/buzz-pubsub/src/nip98_replay.rs",
+        "crates/buzz-pubsub/src/nip_fi_command_replay.rs",
         "crates/buzz-pubsub/src/presence.rs",
         "crates/buzz-pubsub/src/publisher.rs",
         "crates/buzz-pubsub/src/rate_limiter.rs",
         "crates/buzz-pubsub/src/subscriber.rs",
         "crates/buzz-pubsub/src/transport.rs",
         "crates/buzz-pubsub/src/writer.rs",
+        "crates/buzz-relay/src/api/mod.rs",
         "crates/buzz-relay/src/router.rs"
       ]
     },
@@ -989,6 +1271,7 @@
       "paths": [
         "mobile/lib/features/activity/activity_page.dart",
         "mobile/lib/shared/guest_access/guest_access_client.dart",
+        "mobile/lib/shared/guest_access/guest_access_icons.dart",
         "mobile/lib/shared/guest_access/guest_approval.dart",
         "mobile/lib/shared/guest_access/guest_approval_decision.dart",
         "mobile/lib/shared/guest_access/guest_approval_sheet.dart",
@@ -1027,6 +1310,7 @@
         "mobile/lib/shared/hosted_agents/hosted_agent_create_flow.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_deploy_request.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_errors.dart",
+        "mobile/lib/shared/hosted_agents/hosted_agent_icons.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_identity.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_list.dart",
         "mobile/lib/shared/hosted_agents/hosted_agent_proofs.dart",
@@ -1065,6 +1349,7 @@
         "mobile/lib/shared/deeplink/deep_link.dart",
         "mobile/lib/shared/deeplink/pending_deep_link_provider.dart",
         "mobile/lib/shared/push/push_bridge.dart",
+        "mobile/test/features/channels/channel_detail_page_test.dart",
         "mobile/test/shared/push/push_bridge_test.dart"
       ]
     },
@@ -1076,6 +1361,45 @@
       "removalCondition": "Move with the TestFlight script when Kiingo iOS releases move to a Kiingo release pipeline.",
       "paths": [
         "scripts/kiingo-ios-assets/KiingoBuzzAppIcon-1024.png"
+      ]
+    },
+    {
+      "id": "kiingo-migration-ledger",
+      "classification": "retain-generic",
+      "owner": "Kiingo platform engineering (relay migrations)",
+      "purpose": "Fork-numbered relay migration history. The fork's production-applied 0041-0045 keep their versions; upstream migrations above version 40 are renamed byte for byte to the next free fork versions (this sync: upstream 0041-0065 to 0046-0070), recorded with SHA-384 in migrationLedger and enforced by scripts/check-kiingo-migration-ledger.mjs. Upstream test literals and docs that name those versions are shifted with them.",
+      "upstreamStatus": "Kiingo-specific consequence of fork migrations reaching production before upstream used those numbers; not proposed upstream.",
+      "removalCondition": "Remove only if the production ledger is rewritten to upstream numbering (risk analysis option b1) or upstream adopts the fork's 0041-0045.",
+      "paths": [
+        "crates/buzz-db/src/runtime/follow_up_retirement_tests.rs",
+        "crates/buzz-db/src/runtime/tests/thread_window_postgres_tests.rs",
+        "crates/buzz-db/src/store/event_follow_up_postgres_tests.rs",
+        "docs/thread-window-deployment.md",
+        "migrations/0046_nip_fi_identity_foundation.sql",
+        "migrations/0047_nip_fi_authorization_foundation.sql",
+        "migrations/0048_push_gateway_dogfood_profile.sql",
+        "migrations/0049_drop_nip_fi_ledger.sql",
+        "migrations/0050_retain_push_revocation_tombstones.sql",
+        "migrations/0051_storage_accounting_snapshots.sql",
+        "migrations/0052_relay_admin_action_target.sql",
+        "migrations/0053_audit_hash_version.sql",
+        "migrations/0054_thread_window_index.sql",
+        "migrations/0055_operator_listener_mentions.sql",
+        "migrations/0056_owner_community_deletion_admission.sql",
+        "migrations/0057_channel_artifacts.sql",
+        "migrations/0058_owner_deletion_auto_approval.sql",
+        "migrations/0059_owner_deletion_quota_reservation.sql",
+        "migrations/0060_relay_admin_direct_actions.sql",
+        "migrations/0061_personal_read_state.sql",
+        "migrations/0062_personal_read_started_at.sql",
+        "migrations/0063_personal_read_through_message.sql",
+        "migrations/0064_push_rollback_gate.sql",
+        "migrations/0065_push_single_application.sql",
+        "migrations/0066_channel_labels.sql",
+        "migrations/0067_system_channel_type.sql",
+        "migrations/0068_retire_push_match_trigger.sql",
+        "migrations/0069_profile_name_fields.sql",
+        "migrations/0070_retire_channel_ttl_trigger.sql"
       ]
     },
     {
@@ -1146,154 +1470,6 @@
       ]
     },
     {
-      "classification": "drop/upstream-present",
-      "owner": "Buzz push maintainers",
-      "purpose": "Exact upstream iOS build fixes needed to archive the Kiingo TestFlight build with Xcode 27.0 (the only Xcode on the release Mac): b270437a (NotificationService clears inherited CocoaPods linker flags; its CI lane change is not taken because fork runners only admit the current workflow), 46159fcf (Podfile raises generated pod deployment targets to iOS 16; lockfile checksum is the SHA-1 of the fork Podfile) and 73962435 (BuzzPushKit signs and verifies Nostr Schnorr signatures through vendored, unmodified Bitcoin Core libsecp256k1 v0.8.0 instead of swift-secp256k1 0.21.1, which Xcode 27 cannot compile). Upstream-only files from 73962435 (notification cache and avatar loader) are not taken, SwiftDraw is not added, and the workspace Package.resolved is removed because no remote Swift package remains.",
-      "upstreamStatus": "Present upstream as b270437a, 46159fcf and 73962435; identical content apart from the conflict resolutions named in the purpose.",
-      "removalCondition": "Drop on the next upstream sync that includes these commits.",
-      "paths": [
-        "mobile/ios/BuzzPushKit/Package.swift",
-        "mobile/ios/BuzzPushKit/Sources/BuzzPushKit/NostrHTTPAuth.swift",
-        "mobile/ios/BuzzPushKit/Sources/BuzzPushKit/NostrSchnorr.swift",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/README.md",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/include/CSecp256k1.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/include/module.modulemap",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/COPYING",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/include/secp256k1.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/include/secp256k1_ecdh.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/include/secp256k1_ellswift.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/include/secp256k1_extrakeys.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/include/secp256k1_musig.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/include/secp256k1_preallocated.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/include/secp256k1_recovery.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/include/secp256k1_schnorrsig.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/include/secp256k1_silentpayments.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/CMakeLists.txt",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/asm/field_10x26_arm.s",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/assumptions.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/bench.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/bench.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/bench_ecmult.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/bench_internal.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/checkmem.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ctime_tests.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecdsa.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecdsa_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/eckey.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/eckey_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult_compute_table.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult_compute_table_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult_const.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult_const_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult_gen.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult_gen_compute_table.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult_gen_compute_table_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult_gen_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/ecmult_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/field.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/field_10x26.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/field_10x26_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/field_5x52.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/field_5x52_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/field_5x52_int128_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/field_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/group.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/group_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/hash.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/hash_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/hsort.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/hsort_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/int128.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/int128_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/int128_native.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/int128_native_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/int128_struct.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/int128_struct_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modinv32.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modinv32_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modinv64.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modinv64_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ecdh/Makefile.am.include",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ecdh/bench_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ecdh/main_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ecdh/tests_exhaustive_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ecdh/tests_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ellswift/Makefile.am.include",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ellswift/bench_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ellswift/main_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ellswift/tests_exhaustive_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/ellswift/tests_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/extrakeys/Makefile.am.include",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/extrakeys/main_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/extrakeys/tests_exhaustive_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/extrakeys/tests_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/musig/Makefile.am.include",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/musig/keyagg.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/musig/keyagg_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/musig/main_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/musig/session.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/musig/session_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/musig/tests_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/musig/vectors.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/recovery/Makefile.am.include",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/recovery/bench_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/recovery/main_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/recovery/tests_exhaustive_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/recovery/tests_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/schnorrsig/Makefile.am.include",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/schnorrsig/bench_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/schnorrsig/main_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/schnorrsig/tests_exhaustive_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/schnorrsig/tests_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/silentpayments/Makefile.am.include",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/silentpayments/bench_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/silentpayments/bip352_send_and_receive_test_vectors.json",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/silentpayments/main_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/silentpayments/tests_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/modules/silentpayments/vectors.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/precompute_ecmult.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/precompute_ecmult_gen.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/precomputed_ecmult.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/precomputed_ecmult.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/precomputed_ecmult_gen.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/precomputed_ecmult_gen.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scalar.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scalar_4x64.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scalar_4x64_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scalar_8x32.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scalar_8x32_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scalar_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scalar_low.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scalar_low_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scratch.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/scratch_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/secp256k1.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/selftest.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/testrand.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/testrand_impl.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/tests.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/tests_common.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/tests_exhaustive.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/testutil.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/unit_test.c",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/unit_test.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/util.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/util_local_visibility.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/wycheproof/WYCHEPROOF_COPYING",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/wycheproof/ecdh_secp256k1_test.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/wycheproof/ecdh_secp256k1_test.json",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/wycheproof/ecdsa_secp256k1_sha256_bitcoin_test.h",
-        "mobile/ios/BuzzPushKit/Sources/CSecp256k1/vendor/src/wycheproof/ecdsa_secp256k1_sha256_bitcoin_test.json",
-        "mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/BuzzPushPresentationCacheTests.swift",
-        "mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/CryptoFixtures/bip340.csv",
-        "mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/NostrSchnorrTests.swift",
-        "mobile/ios/Podfile",
-        "mobile/ios/Podfile.lock",
-        "mobile/ios/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved"
-      ]
-    },
-    {
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
       "purpose": "Mobile \"Review\" action on agent guest alerts (46042), matching desktop alertRoute.ts: the buzz-guest-alert-kind tag opens the owner digest (daily_digest), the request log (blocks, rate limits, budget, untagged) or org-admin guest safety (requester_suspended, org_pattern; non-admins stay on the inbox); agent_request_outcome has nothing to review.",
@@ -1317,21 +1493,9 @@
         "desktop/src/features/messages/ui/MessageDetailsDialog.tsx",
         "mobile/lib/features/channels/channel_detail_page.dart",
         "mobile/lib/features/channels/message_actions.dart",
-        "mobile/lib/features/channels/message_actions/message_action_popover.dart",
         "mobile/lib/features/channels/message_details_sheet.dart",
         "mobile/lib/features/channels/reply_details.dart",
         "mobile/test/features/channels/reply_details_test.dart"
-      ]
-    },
-    {
-      "classification": "drop/upstream-present",
-      "owner": "Buzz push maintainers",
-      "purpose": "Exact upstream mobile fix 4af2324d8 (block/buzz #7745): the relay configuration depends only on the active community's id, relay URL and signing key, so push lease bookkeeping (reserving a lease generation) no longer rebuilds the relay session. Without it, enabling push on the TestFlight build put the session into a reconnect loop (avatar and inbox flashing) and the kind-30350 lease never published (observed in production on 2026-10-17).",
-      "upstreamStatus": "Present upstream as 4af2324d8; cherry-picked unchanged.",
-      "removalCondition": "Drop on the next upstream sync that includes 4af2324d8.",
-      "paths": [
-        "mobile/lib/shared/relay/relay_provider.dart",
-        "mobile/test/shared/community/push_relay_config_regression_test.dart"
       ]
     },
     {
@@ -1354,45 +1518,30 @@
       "paths": [
         "crates/buzz-db/src/store/channel_members.rs"
       ]
-    },
-    {
-      "id": "upstream-ci-prelanding",
-      "classification": "drop/upstream-present",
-      "owner": "Kiingo fork maintainers",
-      "purpose": "Upstream CI workflow files and their CI-support scripts, hermit tool pins and nextest config, landed on the fork ahead of the upstream sync (#202) so the sync PR's own workflows match main and Kiingo's Spot runner admission (public_workflow_not_current) can run its CI. Content is upstream's from the sync branch, with Kiingo's Spot-only, no-test policy re-applied and upstream-only GitHub-hosted jobs skipped on Kiingo/buzz.",
-      "upstreamStatus": "Upstream-present after the sync; identical to the merged upstream snapshot.",
-      "removalCondition": "Remove this delta in the upstream sync (#202), which moves upstreamSnapshot past these files.",
-      "paths": [
-        ".config/nextest.toml",
-        ".github/ci/minio/Dockerfile",
-        ".github/ci/minio/README.md",
-        ".github/ci/minio/smoke-test.sh",
-        ".github/scripts/codex-security-review.js",
-        ".github/scripts/codex-security-review.test.js",
-        ".github/workflows/_ci-clients.yml",
-        ".github/workflows/_ci-desktop-macos.yml",
-        ".github/workflows/_ci-desktop.yml",
-        ".github/workflows/_ci-relay.yml",
-        ".github/workflows/_ci-rust.yml",
-        ".github/workflows/_ci-security.yml",
-        ".github/workflows/minio-image.yml",
-        "bin/.actionlint-1.7.12.pkg",
-        "bin/.uv-0.12.21.pkg",
-        "bin/actionlint",
-        "bin/hermit.hcl",
-        "bin/uv",
-        "bin/uvx",
-        "scripts/check-postgres-test-discovery.py",
-        "scripts/ci-apt-retry.sh",
-        "scripts/ci-runtime-selection.mjs",
-        "scripts/generate-macos-icon.py",
-        "scripts/macos-icon.sh",
-        "scripts/postgres-test-packages.sh",
-        "scripts/postgres-test-run.sh"
-      ]
     }
   ],
   "budgetAmendments": [
+    {
+      "id": "upstream-sync-97e1f6a0",
+      "baseline": "599d88ec385efb052850caf07f9810e9ead87bdf",
+      "upstreamSnapshot": "97e1f6a0828d97d0031e2a31402554b679bf1146",
+      "previousUpstreamSnapshot": "eed74bde2f4797714335ac10c56c0b0244c1def4",
+      "reason": "Fork-wide upstream sync re-baselines every metric on block/buzz 97e1f6a0. Upstream rewrote seams the fork patches, so re-ports add newly modified upstream files: the CI split into _ci-*.yml (Spot-only, test-free), the minio-image hosted-runner guard, the ACP per-thread SessionScope trust lane and runtime field, the PUSH_MATCH_KINDS allowlist, the NIP-FI replay writer, the observer-owner continuity gate, discovery/catalog.rs cfg(unix), the ed25519-dalek =3.0.0 pin bump, and one upstream mobile test cast. Renamed migrations count as R100, not M. Upstream-present paths are dropped: D0 docker-compose.yml, D8 harness-management.spec.ts, D12 respondToAllowlist and RespondToField, D13 push.rs. Changed lines and hunks fall, and both limits ratchet down to the measured values. Exact measured composition; no slack, wildcard path or checker exception; forbidden business-logic budget remains zero.",
+      "policyApproval": "Ross Hartmann approved the raised limits (modified upstream files 262 to 277, production-source files 153 to 156) on 2026-10-16, relayed by the main coordinating session.",
+      "previous": {
+        "modifiedUpstreamProductionSourceFiles": 153,
+        "modifiedUpstreamFiles": 265,
+        "changedUpstreamProductionSourceLines": 10588,
+        "upstreamProductionSourceDiffHunks": 1167,
+        "kiingoSpecificBusinessLogicLinesInUpstreamProductionSource": 0
+      },
+      "qualifiedComposition": {
+        "modifiedUpstreamProductionSourceFiles": 156,
+        "modifiedUpstreamFiles": 277,
+        "changedUpstreamProductionSourceLines": 9577,
+        "upstreamProductionSourceDiffHunks": 1163
+      }
+    },
     {
       "id": "mobile-hosted-agents",
       "baseline": "b743da9a28697cb336218065579a1e4f22af9f00",
@@ -1478,13 +1627,6 @@
       }
     },
     {
-      "id": "ios-xcode27-upstream-build-fixes",
-      "baseline": "69c1515aaeab014898ec9f7d1d996b9327c9bf26",
-      "reason": "Five newly modified upstream iOS files from picking upstream b270437a, 46159fcf and 73962435 so the Kiingo TestFlight archive builds with Xcode 27.0: BuzzPushKit Package.swift, NostrHTTPAuth.swift and BuzzPushPresentationCacheTests.swift, Podfile and Podfile.lock. Added vendored files and the removed Package.resolved do not count. Production-source files, lines, hunks and zero-business-logic budgets remain unchanged. No wildcard, checker exception or unused allowance.",
-      "previousModifiedUpstreamFiles": 266,
-      "qualifiedModifiedUpstreamFiles": 271
-    },
-    {
       "id": "reply-details-menu",
       "baseline": "a55a1127432b39a4550c4aeae0b7b93d17c03219",
       "reason": "Message Details on desktop and mobile, and hiding Kiingo's retired mission notices (Ross, 2026-10-17). Four newly modified upstream files: desktop MessageActionBar.tsx (Details item, right-click opens More actions), mobile message_actions.dart, message_action_popover.dart and channel_detail_page.dart; plus the already-modified formatTimelineMessages.ts (retired-notice filter). Production source: one new file, 59 lines, 12 hunks, no Kiingo business logic. Everything else is added files or already-classified paths. No wildcard, checker exception or unused allowance.",
@@ -1497,40 +1639,6 @@
       "qualified": {
         "modifiedUpstreamProductionSourceFiles": 155,
         "modifiedUpstreamFiles": 275,
-        "changedUpstreamProductionSourceLines": 10671,
-        "upstreamProductionSourceDiffHunks": 1187
-      }
-    },
-    {
-      "id": "upstream-7745-relay-session-stable",
-      "baseline": "4667db572f88268826a89a60debaa5e7f3c03981",
-      "reason": "Unchanged cherry-pick of upstream 4af2324d8 (block/buzz #7745) so enabling push no longer reconnects the relay session and the kind-30350 lease can publish. One newly modified upstream file (mobile/lib/shared/relay/relay_provider.dart, classified drop/upstream-present, so production-source budgets are unchanged) plus the upstream regression test as an added file. No wildcard, checker exception or unused allowance.",
-      "previous": {
-        "modifiedUpstreamProductionSourceFiles": 155,
-        "modifiedUpstreamFiles": 275,
-        "changedUpstreamProductionSourceLines": 10671,
-        "upstreamProductionSourceDiffHunks": 1187
-      },
-      "qualified": {
-        "modifiedUpstreamProductionSourceFiles": 155,
-        "modifiedUpstreamFiles": 276,
-        "changedUpstreamProductionSourceLines": 10671,
-        "upstreamProductionSourceDiffHunks": 1187
-      }
-    },
-    {
-      "id": "media-cache-scope-by-value",
-      "baseline": "e6157f29ad24b8a66c3fb51630b3eda24fe6c6af",
-      "reason": "Value-based media image cache identity so relay-config rebuilds stop re-downloading every visible image (7.7 MB avatar per reconnect, 2026-10-17). One newly modified upstream file: mobile/lib/shared/relay/media_auth.dart (cacheScope plus value ==/hashCode on MediaGetAuthService, 13 lines); MediaImageProvider is unchanged because it already compares the auth service. Tests are a new fork-owned file. Within the 277 modified-upstream-file budget Ross approved (2026-10-17); production-source budgets unchanged. No wildcard, checker exception or unused allowance.",
-      "previous": {
-        "modifiedUpstreamProductionSourceFiles": 155,
-        "modifiedUpstreamFiles": 276,
-        "changedUpstreamProductionSourceLines": 10671,
-        "upstreamProductionSourceDiffHunks": 1187
-      },
-      "qualified": {
-        "modifiedUpstreamProductionSourceFiles": 155,
-        "modifiedUpstreamFiles": 277,
         "changedUpstreamProductionSourceLines": 10671,
         "upstreamProductionSourceDiffHunks": 1187
       }

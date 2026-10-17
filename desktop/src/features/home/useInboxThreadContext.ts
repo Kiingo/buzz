@@ -69,7 +69,12 @@ export function useInboxThreadContext(
     string[]
   >([]);
   const [hasRepliesLoadError, setHasRepliesLoadError] = React.useState(false);
-  const [isLoading, setIsLoading] = React.useState(false);
+  // Readiness belongs to the selection whose context actually settled. A
+  // boolean set in the effect reports false for the first render of a new
+  // selection, allowing the scroll owner to center before its rows arrive.
+  const [settledEvent, setSettledEvent] = React.useState<RelayEvent | null>(
+    null,
+  );
 
   const selectedEvent = React.useMemo(
     () => (item ? relayEventFromFeedItem(item) : null),
@@ -108,7 +113,7 @@ export function useInboxThreadContext(
       setFetchedEvents([]);
       setUnavailableEventIds([]);
       setHasRepliesLoadError(false);
-      setIsLoading(false);
+      setSettledEvent(null);
       return () => {
         isCancelled = true;
       };
@@ -123,7 +128,7 @@ export function useInboxThreadContext(
       selectedThreadRootId: threadRootId,
     };
 
-    setIsLoading(true);
+    setSettledEvent(null);
     setHasRepliesLoadError(false);
     setUnavailableEventIds([]);
 
@@ -165,7 +170,7 @@ export function useInboxThreadContext(
       })
       .finally(() => {
         if (!isCancelled) {
-          setIsLoading(false);
+          setSettledEvent(targetEvent);
         }
       });
 
@@ -353,7 +358,9 @@ export function useInboxThreadContext(
       ? options.hasChannelLoadError === true
       : hasRepliesLoadError,
     retry,
-    isLoading: fullChannel ? options.isChannelLoading === true : isLoading,
+    isLoading: fullChannel
+      ? options.isChannelLoading === true
+      : selectedEvent !== null && settledEvent !== selectedEvent,
     structuralEvents,
     refreshStructuralEvents,
     reactionEvents,

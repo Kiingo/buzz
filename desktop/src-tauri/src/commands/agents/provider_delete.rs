@@ -3,7 +3,8 @@ use tauri::{AppHandle, Manager};
 use crate::{
     app_state::AppState,
     managed_agents::{
-        current_instance_id, load_managed_agents,
+        bestie_assignment::recover_pending_assignment_cleanup,
+        current_instance_id, load_managed_agents, managed_agents_base_dir,
         provider_delete::{
             build_provider_delete_owner_proof, community_id_from_relay, prepare_provider_delete,
         },
@@ -94,6 +95,13 @@ pub(super) async fn delete_managed_agent(
                 .lock()
                 .map_err(|error| error.to_string())?;
             let mut records = load_managed_agents(&app)?;
+            // Finish any Bestie-assignment cleanup an interrupted delete left
+            // behind before this delete starts its own.
+            recover_pending_assignment_cleanup(&managed_agents_base_dir(&app)?, |pending| {
+                records
+                    .iter()
+                    .any(|record| record.pubkey.eq_ignore_ascii_case(pending))
+            })?;
             let mut runtimes = state
                 .managed_agent_processes
                 .lock()
@@ -231,14 +239,19 @@ pub(super) async fn delete_managed_agent(
                 }
             }
 
-            let current = records
-                .iter_mut()
-                .find(|record| record.pubkey == pubkey)
-                .ok_or_else(|| format!("agent {pubkey} not found"))?;
-            stop_managed_agent_process(&app, current, &mut runtimes)?;
-            state.clear_agent_session_caches(&pubkey);
-            records.retain(|record| record.pubkey != pubkey);
-            save_managed_agents(&app, &records)?;
+            // Clear the agent's Bestie assignments under a recovery journal so
+            // a crash mid-delete restores or finishes them on the next start.
+            let base_dir = managed_agents_base_dir(&app)?;
+            super::run_managed_agent_deletion(&base_dir, &pubkey, &mut records, |records| {
+                let current = records
+                    .iter_mut()
+                    .find(|record| record.pubkey == pubkey)
+                    .ok_or_else(|| format!("agent {pubkey} not found"))?;
+                stop_managed_agent_process(&app, current, &mut runtimes)?;
+                state.clear_agent_session_caches(&pubkey);
+                records.retain(|record| record.pubkey != pubkey);
+                save_managed_agents(&app, records)
+            })?;
             crate::managed_agents::delete_agent_key(&pubkey);
             tombstone_managed_agent_pending(&app, &state, &pubkey);
         }
