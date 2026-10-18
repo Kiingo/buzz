@@ -52,6 +52,13 @@ class Community {
     required this.addedAt,
   });
 
+  /// Whether a newly added community starts with push notifications on.
+  /// Off unless the build sets `BUZZ_PUSH_DEFAULT_ON=true`; turning it on
+  /// still asks iOS for notification permission when registration starts.
+  static const pushNotificationsDefaultOn = bool.fromEnvironment(
+    'BUZZ_PUSH_DEFAULT_ON',
+  );
+
   factory Community.create({
     required String name,
     required String relayUrl,
@@ -68,6 +75,7 @@ class Community {
       pubkey: pubkey,
       nsec: nsec,
       sensitiveActionPolicy: sensitiveActionPolicy,
+      pushNotificationsEnabled: pushNotificationsDefaultOn,
       pushLeaseInstallationId: _newPushLeaseInstallationId(),
       starterSetupIncomplete: starterSetupIncomplete,
       addedAt: DateTime.now(),

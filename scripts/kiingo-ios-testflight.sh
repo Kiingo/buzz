@@ -23,6 +23,9 @@
 #   [--guest-route-url https://api.kiingo.com/api/buzz-guest/v1]
 #   [--display-name "Kiingo Buzz"] [--version 0.1.0] [--no-upload]
 #
+# Kiingo builds turn push notifications on for newly added communities
+# (BUZZ_PUSH_DEFAULT_ON); iOS still asks for permission on first launch.
+#
 # The guest route (default shown) lets the app review agent guest-access
 # approvals in place instead of sending the owner to desktop.
 #
@@ -140,6 +143,7 @@ flutter build ios --release --config-only \
   --build-number "$build_number" "${version_args[@]}" \
   --dart-define=BUZZ_RELAY_URL="$relay_url" \
   --dart-define=BUZZ_PUSH_GATEWAY_URL="$gateway_url" \
+  --dart-define=BUZZ_PUSH_DEFAULT_ON=true \
   --dart-define=BUZZ_GUEST_ROUTE_URL="$guest_route_url" \
   --dart-define=BUZZ_HOSTED_AGENTS_URL="$hosted_agents_url" \
   --dart-define=BUZZ_HOSTED_AGENTS_CATALOG_KEY="$hosted_agents_catalog_key" \
