@@ -1530,6 +1530,23 @@
         "mobile/lib/shared/community/community.dart",
         "mobile/test/shared/community/push_default_on_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "paths": [
+        "desktop/src/features/channels/ui/BotActivityBar.tsx",
+        "desktop/src/features/channels/ui/ChannelComposerActivityAccessory.tsx",
+        "desktop/src/features/channels/ui/ChannelPane.helpers.ts",
+        "desktop/src/features/channels/ui/ChannelPane.tsx",
+        "desktop/src/features/messages/lib/typingStatus.test.mjs",
+        "desktop/src/features/messages/lib/typingStatus.ts",
+        "desktop/src/features/messages/ui/TypingIndicatorRow.tsx",
+        "desktop/src/features/messages/useChannelTyping.ts"
+      ],
+      "purpose": "Typing status phases on desktop: reads the optional {\"v\":1,\"phase\":...} content of kind:20002 typing events and shows the sender's status line in the typing slot for DMs, channels and threads (starting up, warming up a session, reconnecting, working, typing). Unknown or malformed payloads stay plain typing, \"idle\" ends that sender's typing at once, and a reported phase wins over the local transcript headline in the bot activity row. Kiingo M-4017.",
+      "removalCondition": "Drop when upstream reads typing status phases on desktop, or Kiingo agents stop sending phases.",
+      "upstreamStatus": "Generic typing-status extension (backward-compatible content field); not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
