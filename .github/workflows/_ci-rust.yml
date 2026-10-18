@@ -111,7 +111,10 @@ jobs:
     # Windows runners are slow and this compiles the workspace + Tauri crate
     # cold across four steps; budget generously.
     timeout-minutes: 45
-    if: inputs.lane == 'required' && (github.event_name == 'push' || inputs.rust || inputs.desktop_rust)
+    # TEMPORARY (Kiingo M-4109): Kiingo's Windows runner admission does not yet
+    # admit this job from the reusable workflow, so it is skipped on
+    # Kiingo/buzz. Remove the repository guard once M-4109 lands.
+    if: github.repository != 'Kiingo/buzz' && inputs.lane == 'required' && (github.event_name == 'push' || inputs.rust || inputs.desktop_rust)
     permissions:
       contents: read
     env:

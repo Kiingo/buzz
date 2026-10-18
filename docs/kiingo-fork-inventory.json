@@ -542,6 +542,7 @@
       "paths": [
         ".github/workflows/ci.yml",
         ".github/workflows/upstream-sync-rehearsal.yml",
+        "docs/implementation-plans/M-4108-workflow-token-permissions.md",
         "docs/implementation-plans/buzz-durable-conversation-reliability.md",
         "docs/implementation-plans/m-92-windows-sidecar-preflight.md",
         "docs/implementation-plans/m3827-native-publication-retry.md",
@@ -868,7 +869,9 @@
       "purpose": "Discover registered Visual C++ installations instead of assuming a Visual Studio release-year directory, while preserving installed MSVC, default toolset, Windows SDK and CMake identity in the native desktop cache fingerprint.",
       "upstreamStatus": "Generic Windows build-cache portability fix; candidate for upstream.",
       "removalCondition": "Remove when block/buzz discovers registered Visual C++ installations for its native desktop cache identity.",
-      "paths": ["scripts/desktop-native-toolchain-id.sh"]
+      "paths": [
+        "scripts/desktop-native-toolchain-id.sh"
+      ]
     },
     {
       "id": "kiingo-spot-only-static-ci",
