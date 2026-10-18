@@ -1530,6 +1530,18 @@
         "mobile/lib/shared/community/community.dart",
         "mobile/test/shared/community/push_default_on_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "paths": [
+        "mobile/lib/features/channels/channel_typing_indicator.dart",
+        "mobile/lib/features/channels/channel_typing_provider.dart",
+        "mobile/test/features/channels/channel_typing_provider_test.dart"
+      ],
+      "purpose": "Typing status phases on mobile: reads the optional {\"v\":1,\"phase\":...} content of kind:20002 typing events and shows the sender's status line (starting up, warming up a session, reconnecting, working, typing); unknown or malformed payloads stay plain typing and \"idle\" ends that sender's typing at once. Typing and the replies that clear it are keyed by the reply e-tag, matching desktop. Kiingo M-4017.",
+      "removalCondition": "Drop when upstream reads typing status phases and scopes mobile typing by the reply tag, or Kiingo agents stop sending phases.",
+      "upstreamStatus": "Generic typing-status extension (backward-compatible content field); not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
