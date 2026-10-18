@@ -45,7 +45,7 @@ class ChannelTypingIndicator extends ConsumerWidget {
       for (final entry in entries) labels[entry.pubkey.toLowerCase()]!,
     ];
     final text = switch (names.length) {
-      1 => '${names[0]} is typing…',
+      1 => '${names[0]} ${typingPhaseSentence(entries.first.phase)}',
       2 => '${names[0]} and ${names[1]} are typing…',
       _ => '${names[0]} and ${names.length - 1} others are typing…',
     };
