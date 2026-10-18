@@ -33,6 +33,10 @@ fork branch.
 8. Re-run the boundary guard and rehearsal against the final reviewed commit.
 9. Open or update the Kiingo pull request with the upstream commit merged,
    conflict decisions, exact checks, and any operational migration notes.
+   Dispatch Kiingo/kiingo `Buzz production` with `action: preflight` and
+   `buzz_revision` set to the sync head, and require it green before merging a
+   sync PR (Kiingo M-4127): it runs the deploy-production source and schema
+   guards and `helm template` of both charts with Kiingo's values and overlay.
 10. Merge through the normal protected-branch workflow. Production images must
    be built from the reviewed merge commit and pinned by digest.
 
