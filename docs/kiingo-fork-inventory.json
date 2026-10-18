@@ -1559,6 +1559,19 @@
       "purpose": "Typing status phases on mobile: reads the optional {\"v\":1,\"phase\":...} content of kind:20002 typing events and shows the sender's status line (starting up, warming up a session, reconnecting, working, typing); unknown or malformed payloads stay plain typing and \"idle\" ends that sender's typing at once. Typing and the replies that clear it are keyed by the reply e-tag, matching desktop. Kiingo M-4017.",
       "removalCondition": "Drop when upstream reads typing status phases and scopes mobile typing by the reply tag, or Kiingo agents stop sending phases.",
       "upstreamStatus": "Generic typing-status extension (backward-compatible content field); not yet submitted to block/buzz."
+    },
+    {
+      "classification": "drop/upstream-present",
+      "owner": "Buzz mobile maintainers",
+      "purpose": "Cherry-pick of upstream block/buzz bf8b356f3 (#8407): opening a channel on iOS 27 terminated the app (CALayerInvalidGeometry) because an unbounded reversed timeline sent Infinity to the native navigation bar. Uses the finite viewport depth and rejects non-finite offsets natively. Shipped ahead of the next sync for Kiingo TestFlight build 4 (M-4017).",
+      "upstreamStatus": "Upstream-present: block/buzz bf8b356f3 (#8407), landed after snapshot 97e1f6a0.",
+      "removalCondition": "Drop at the next upstream sync whose snapshot includes block/buzz #8407; these paths then match upstream.",
+      "paths": [
+        "mobile/ios/Runner/IosNavigationBar.swift",
+        "mobile/ios/RunnerTests/RunnerTests.swift",
+        "mobile/lib/shared/widgets/frosted_scaffold.dart",
+        "mobile/test/shared/widgets/frosted_scaffold_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [
