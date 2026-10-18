@@ -76,7 +76,7 @@ class _AgentRow extends HookConsumerWidget {
 
     return AppListRow(
       key: ValueKey('guest-agent-${agent.guestEndpointId}'),
-      icon: LucideIcons.bot,
+      icon: BuzzIcons.bot,
       title: name,
       subtitle:
           '${respondToSummary(agent.respondTo)} Last seen '

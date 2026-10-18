@@ -101,7 +101,7 @@ async fn migration_and_atomic_stop_index_preserve_signed_evidence_without_chat_r
     db.insert_event(community, &chat, Some(channel))
         .await
         .unwrap();
-    db.soft_delete_event(community, old_stop.id.as_bytes())
+    db.soft_delete_event_and_update_thread(community, old_stop.id.as_bytes(), None, None)
         .await
         .unwrap();
     let before: Vec<serde_json::Value> =
@@ -160,8 +160,14 @@ async fn migration_and_atomic_stop_index_preserve_signed_evidence_without_chat_r
 
     // An insert rolled back before acceptance leaves no recovery evidence.
     let rolled_back = signed(&keys, channel, &root, "nostr:npub1abc !cancel", 1788968184);
-    let mut tx = pool.begin().await.unwrap();
-    crate::event::insert_event_in_transaction(&mut tx, community, &rolled_back, Some(channel))
+    let mut tx = crate::begin_community_event_write_transaction(
+        &pool,
+        community,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await
+    .unwrap();
+    crate::event::insert_event_in_transaction(&mut tx, &rolled_back, Some(channel))
         .await
         .unwrap();
     let visible: i64 = sqlx::query_scalar(
@@ -178,8 +184,14 @@ async fn migration_and_atomic_stop_index_preserve_signed_evidence_without_chat_r
     // Later committed, older-authored Stops remain directly queryable. There is
     // no timestamp/high-water checkpoint capable of skipping their transaction.
     let late = signed(&keys, channel, &root, "!cancel nostr:npub1abc", 1788968100);
-    let mut delayed_tx = pool.begin().await.unwrap();
-    crate::event::insert_event_in_transaction(&mut delayed_tx, community, &late, Some(channel))
+    let mut delayed_tx = crate::begin_community_event_write_transaction(
+        &pool,
+        community,
+        crate::observability::WriterOperation::EventWrite,
+    )
+    .await
+    .unwrap();
+    crate::event::insert_event_in_transaction(&mut delayed_tx, &late, Some(channel))
         .await
         .unwrap();
     let fresh = signed(&keys, channel, &root, "\t!cancel\n", 1788968200);

@@ -47,7 +47,7 @@ pub(crate) async fn reconcile_on_workspace_apply(
     };
 
     for pubkey in targets {
-        if let Err(error) = super::deploy_to_provider(app, state, &pubkey, None, None).await {
+        if let Err(error) = super::deploy_to_provider(app, state, &pubkey, None, None, None).await {
             return Err(format!(
                 "provider access reconciliation failed for agent {pubkey}: {error}"
             ));

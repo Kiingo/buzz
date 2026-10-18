@@ -248,12 +248,15 @@ mod tests {
     }
 
     fn batch(event: nostr::Event) -> FlushBatch {
+        let channel_id = Uuid::new_v4();
         FlushBatch {
-            channel_id: Uuid::new_v4(),
+            channel_id,
+            scope: crate::scope::SessionScope::Conversation { channel_id },
             events: vec![BatchEvent {
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edit: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -324,6 +327,7 @@ mod tests {
                 event: message(keys, None, None),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
+                edit: None,
             });
         }
         assert_eq!(

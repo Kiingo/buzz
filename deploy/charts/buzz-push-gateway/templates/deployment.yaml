@@ -3,6 +3,14 @@ kind: Deployment
 metadata:
   name: {{ include "push.name" . }}
   labels: {{- include "push.runtimeLabels" . | nindent 4 }}
+  {{- $annotations := deepCopy .Values.deploymentAnnotations }}
+  {{- if not .Values.networkPolicy.enabled }}
+  {{- $_ := set $annotations "buzz.block.xyz/release-namespace" .Release.Namespace }}
+  {{- $_ := set $annotations "buzz.block.xyz/external-network-policy" .Values.networkPolicy.externalPolicyName }}
+  {{- end }}
+  {{- with $annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy: { type: RollingUpdate, rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } }
@@ -11,9 +19,18 @@ spec:
   template:
     metadata:
       labels: {{- include "push.runtimeLabels" . | nindent 8 }}
+      {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 60
+      {{- with .Values.serviceAccountName }}
+      serviceAccountName: {{ . | quote }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: { type: RuntimeDefault } }
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets: {{ toYaml . | nindent 8 }}
@@ -29,19 +46,19 @@ spec:
           env:
             - { name: BUZZ_PUSH_BIND_ADDR, value: "0.0.0.0:8080" }
             - { name: BUZZ_PUSH_HEALTH_ADDR, value: "0.0.0.0:8081" }
-            - { name: BUZZ_PUSH_PUBLIC_DELIVERY_URL, value: {{ .Values.publicDeliveryUrl | quote }} }
+            {{/* Schema bounds this integer; normalize YAML numbers before quote can emit scientific notation. */}}
             - { name: BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS, value: {{ .Values.maxGrantLifetimeSeconds | int64 | quote }} }
             - { name: BUZZ_PUSH_APP_ATTEST_ROOT_CERT_PATH, value: /run/buzz/app-attest/root.pem }
-            - { name: BUZZ_PUSH_DOGFOOD_APP_ATTEST_APP_ID, value: {{ .Values.profiles.dogfood.appAttestAppId | quote }} }
-            - { name: BUZZ_PUSH_DOGFOOD_APNS_TOPIC, value: {{ .Values.profiles.dogfood.apnsTopic | quote }} }
-            - { name: BUZZ_PUSH_DOGFOOD_APNS_ENVIRONMENT, value: {{ .Values.profiles.dogfood.apnsEnvironment | quote }} }
-            {{- if eq (.Values.profiles.dogfood.apnsAuth | default "certificate") "token" }}
-            - { name: BUZZ_PUSH_DOGFOOD_APNS_AUTH, value: token }
-            - { name: BUZZ_PUSH_DOGFOOD_APNS_KEY_PATH, value: /run/buzz/apns-dogfood/auth-key.p8 }
-            - { name: BUZZ_PUSH_DOGFOOD_APNS_KEY_ID, value: {{ required "profiles.dogfood.apnsToken.keyId is required for token auth" .Values.profiles.dogfood.apnsToken.keyId | quote }} }
-            - { name: BUZZ_PUSH_DOGFOOD_APNS_TEAM_ID, value: {{ required "profiles.dogfood.apnsToken.teamId is required for token auth" .Values.profiles.dogfood.apnsToken.teamId | quote }} }
+            - { name: BUZZ_PUSH_APP_ATTEST_APP_ID, value: {{ .Values.application.appAttestAppId | quote }} }
+            - { name: BUZZ_PUSH_APNS_TOPIC, value: {{ .Values.application.apnsTopic | quote }} }
+            - { name: BUZZ_PUSH_APNS_ENVIRONMENT, value: {{ .Values.application.apnsEnvironment | quote }} }
+            {{- if eq (.Values.application.apnsAuth | default "certificate") "token" }}
+            - { name: BUZZ_PUSH_APNS_AUTH, value: token }
+            - { name: BUZZ_PUSH_APNS_KEY_PATH, value: /run/buzz/apns/auth-key.p8 }
+            - { name: BUZZ_PUSH_APNS_KEY_ID, value: {{ required "application.apnsToken.keyId is required for token auth" .Values.application.apnsToken.keyId | quote }} }
+            - { name: BUZZ_PUSH_APNS_TEAM_ID, value: {{ required "application.apnsToken.teamId is required for token auth" .Values.application.apnsToken.teamId | quote }} }
             {{- else }}
-            - { name: BUZZ_PUSH_DOGFOOD_APNS_CERT_PATH, value: /run/buzz/apns-dogfood/identity.pem }
+            - { name: BUZZ_PUSH_APNS_CERT_PATH, value: /run/buzz/apns/identity.pem }
             {{- end }}
             {{- range $name := list "DATABASE_URL" "BUZZ_PUSH_GRANT_KEYS" "BUZZ_PUSH_TOKEN_KEYS" }}
             - name: {{ $name }}
@@ -49,7 +66,7 @@ spec:
             {{- end }}
           volumeMounts:
             - { name: app-attest-root, mountPath: /run/buzz/app-attest, readOnly: true }
-            - { name: apns-dogfood, mountPath: /run/buzz/apns-dogfood, readOnly: true }
+            - { name: apns, mountPath: /run/buzz/apns, readOnly: true }
           livenessProbe: { httpGet: { path: /_liveness, port: health }, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3 }
           readinessProbe: { httpGet: { path: /_readiness, port: health }, periodSeconds: 5, timeoutSeconds: 3, failureThreshold: 3 }
           startupProbe: { httpGet: { path: /_liveness, port: health }, periodSeconds: 2, failureThreshold: 60 }
@@ -57,11 +74,11 @@ spec:
       volumes:
         - name: app-attest-root
           secret: { secretName: {{ .Values.appAttestRoot.secretName }}, items: [{ key: {{ .Values.appAttestRoot.secretKey }}, path: root.pem }] }
-        - name: apns-dogfood
-          {{- if eq (.Values.profiles.dogfood.apnsAuth | default "certificate") "token" }}
-          secret: { secretName: {{ .Values.profiles.dogfood.apnsToken.secretName }}, defaultMode: 0400, items: [{ key: {{ .Values.profiles.dogfood.apnsToken.secretKey }}, path: auth-key.p8 }] }
+        - name: apns
+          {{- if eq (.Values.application.apnsAuth | default "certificate") "token" }}
+          secret: { secretName: {{ .Values.application.apnsToken.secretName }}, defaultMode: 0400, items: [{ key: {{ .Values.application.apnsToken.secretKey }}, path: auth-key.p8 }] }
           {{- else }}
-          secret: { secretName: {{ .Values.profiles.dogfood.apnsCert.secretName }}, defaultMode: 0400, items: [{ key: {{ .Values.profiles.dogfood.apnsCert.secretKey }}, path: identity.pem }] }
+          secret: { secretName: {{ .Values.application.apnsCert.secretName }}, defaultMode: 0400, items: [{ key: {{ .Values.application.apnsCert.secretKey }}, path: identity.pem }] }
           {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}

@@ -24,6 +24,7 @@ use buzz_core::invite::{
 use buzz_datastore_tracing::datastore_span;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row as _};
+use uuid::Uuid;
 
 use crate::error::Result;
 use crate::{CommunityId, Db};
@@ -116,10 +117,12 @@ pub async fn mint_relay_invite(
     // community-scoped database write. The trigger remains the final backstop,
     // but this typed guard keeps a quiescing community from surfacing as an
     // opaque SQLSTATE/HTTP 500 at the API boundary.
-    let mut tx = pool.begin().await?;
-    crate::deletion::DeletionStore::new(pool.clone())
-        .guard_transaction(&mut tx, community)
-        .await?;
+    let mut tx = crate::begin_community_write_transaction(
+        pool,
+        community,
+        crate::observability::WriterOperation::Authorization,
+    )
+    .await?;
     let row = sqlx::query(
         "INSERT INTO relay_invites (community_id, token_hash, max_uses, expires_at, created_by) \
          VALUES ($1, $2, $3, $4, $5) \
@@ -130,7 +133,7 @@ pub async fn mint_relay_invite(
     .bind(max_uses)
     .bind(expires_at)
     .bind(created_by)
-    .fetch_one(&mut *tx)
+    .fetch_one(tx.conn())
     .await?;
     tx.commit().await?;
 
@@ -172,22 +175,59 @@ const RETENTION_SWEEP_BATCH_SIZE: i64 = 1_000;
 /// expiry index makes old rows drain first without turning cleanup into an
 /// unbounded transaction.
 pub async fn reap_expired_relay_invites(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64> {
-    let result = sqlx::query(
-        "DELETE FROM relay_invites \
-         WHERE (community_id, id) IN (\
-             SELECT community_id, id FROM relay_invites \
-             WHERE expires_at < $1 \
-               AND community_write_allowed(community_id) \
-             ORDER BY expires_at \
-             LIMIT $2\
-         )",
+    let mut connection = crate::observability::acquire_writer(
+        pool,
+        crate::observability::WriterOperation::Maintenance,
+    )
+    .await?;
+    // Keep the original global expiry order and 1,000-row ceiling. The state
+    // read only narrows candidates; admission below is the write authority.
+    // Exclude fenced tenants so they cannot fill the LIMIT page.
+    let candidates = sqlx::query(
+        "SELECT invite.community_id, invite.id FROM relay_invites invite \
+         JOIN communities community ON community.id = invite.community_id \
+         WHERE invite.expires_at < $1 AND community.deletion_state = 'active' \
+           AND community.deleted_at IS NULL \
+         ORDER BY invite.expires_at LIMIT $2",
     )
     .bind(cutoff)
     .bind(RETENTION_SWEEP_BATCH_SIZE)
-    .execute(pool)
+    .fetch_all(&mut *connection)
     .await?;
+    drop(connection);
 
-    Ok(result.rows_affected())
+    let mut ordered_communities = Vec::new();
+    let mut ids_by_community = std::collections::HashMap::<Uuid, Vec<Uuid>>::new();
+    for row in candidates {
+        let community: Uuid = row.try_get("community_id")?;
+        let id: Uuid = row.try_get("id")?;
+        if !ids_by_community.contains_key(&community) {
+            ordered_communities.push(community);
+        }
+        ids_by_community.entry(community).or_default().push(id);
+    }
+
+    let ids_by_community = &ids_by_community;
+    let deleted = crate::sweep_admitted_communities(
+        pool,
+        ordered_communities,
+        crate::observability::WriterOperation::Maintenance,
+        "relay_invite_reap",
+        |id, mut tx| async move {
+            let result = sqlx::query(
+                "DELETE FROM relay_invites WHERE community_id = $1 AND id = ANY($2) AND expires_at < $3",
+            )
+            .bind(id)
+            .bind(&ids_by_community[&id])
+            .bind(cutoff)
+            .execute(tx.conn())
+            .await?;
+            tx.commit().await?;
+            Ok(result.rows_affected())
+        },
+    )
+    .await;
+    Ok(deleted.into_iter().sum())
 }
 
 /// Atomically claim a v2 relay invite.
@@ -216,7 +256,12 @@ pub async fn claim_relay_invite(
     claimer_pubkey: &str,
     policy_version: Option<&str>,
 ) -> Result<ClaimOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::begin_community_write_transaction(
+        pool,
+        community,
+        crate::observability::WriterOperation::Authorization,
+    )
+    .await?;
 
     // 2. SELECT FOR UPDATE — lock the invite row for the duration of this txn.
     let row = sqlx::query(
@@ -227,7 +272,7 @@ pub async fn claim_relay_invite(
     )
     .bind(community.as_uuid())
     .bind(token_hash)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(tx.conn())
     .await?;
 
     // 3. No matching invite.
@@ -264,7 +309,7 @@ pub async fn claim_relay_invite(
         sqlx::query("SELECT 1 FROM relay_members WHERE community_id = $1 AND pubkey = $2")
             .bind(community.as_uuid())
             .bind(claimer_pubkey)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(tx.conn())
             .await?;
 
     if existing.is_some() {
@@ -277,7 +322,7 @@ pub async fn claim_relay_invite(
             .bind(community.as_uuid())
             .bind(claimer_pubkey)
             .bind(version)
-            .execute(&mut *tx)
+            .execute(tx.conn())
             .await?;
         }
         tx.commit().await?;
@@ -319,7 +364,7 @@ pub async fn claim_relay_invite(
     )
     .bind(community.as_uuid())
     .bind(claimer_pubkey)
-    .execute(&mut *tx)
+    .execute(tx.conn())
     .await?
     .rows_affected()
         > 0;
@@ -334,7 +379,7 @@ pub async fn claim_relay_invite(
         .bind(community.as_uuid())
         .bind(claimer_pubkey)
         .bind(version)
-        .execute(&mut *tx)
+        .execute(tx.conn())
         .await?;
     }
 
@@ -359,7 +404,7 @@ pub async fn claim_relay_invite(
         .bind(new_use_count)
         .bind(community.as_uuid())
         .bind(invite_id)
-        .execute(&mut *tx)
+        .execute(tx.conn())
         .await?;
 
     // 11. Commit.
@@ -429,29 +474,21 @@ impl Db {
 }
 
 #[cfg(test)]
-mod tests {
+mod postgres_tests {
     use super::*;
     use crate::relay_members::is_relay_member;
     use sha2::Digest;
     use sqlx::PgPool;
     use uuid::Uuid;
 
-    const TEST_DB_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1
-
     async fn setup_pool() -> PgPool {
-        PgPool::connect(&test_database_url())
+        PgPool::connect(&crate::test_support::database_url())
             .await
             .expect("connect to test DB")
     }
 
-    fn test_database_url() -> String {
-        std::env::var("BUZZ_TEST_DATABASE_URL")
-            .or_else(|_| std::env::var("DATABASE_URL"))
-            .unwrap_or_else(|_| TEST_DB_URL.to_owned())
-    }
-
     async fn create_scratch_database(prefix: &str) -> (PgPool, String, String) {
-        let admin_url = test_database_url();
+        let admin_url = crate::test_support::database_url();
         let admin = PgPool::connect(&admin_url)
             .await
             .expect("connect to test database server");

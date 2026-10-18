@@ -28,7 +28,7 @@ class _WhereItRunsSection extends StatelessWidget {
                 child: Row(
                   children: [
                     Icon(
-                      LucideIcons.cloud,
+                      HostedAgentIcons.cloud,
                       size: 20,
                       color: context.colors.onSurface,
                     ),
@@ -40,7 +40,7 @@ class _WhereItRunsSection extends StatelessWidget {
                       ),
                     ),
                     Icon(
-                      LucideIcons.check,
+                      BuzzIcons.check,
                       size: 18,
                       color: context.colors.primary,
                     ),

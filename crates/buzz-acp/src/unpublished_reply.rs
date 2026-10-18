@@ -236,6 +236,7 @@ pub(crate) async fn deliver(
         &[],
         false,
         &[],
+        &[],
     )
     .map_err(|e| e.to_string())
     .and_then(|builder| {
@@ -302,10 +303,14 @@ mod tests {
     fn batch(channel: Uuid, event: nostr::Event) -> FlushBatch {
         FlushBatch {
             channel_id: channel,
+            scope: crate::scope::SessionScope::Conversation {
+                channel_id: channel,
+            },
             events: vec![BatchEvent {
                 event,
                 prompt_tag: "test".to_string(),
                 received_at: Instant::now(),
+                edit: None,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -407,7 +412,9 @@ mod tests {
         let text = "é".repeat(MAX_CONTENT_BYTES);
         let reply = plan(&batch(channel, trigger), false, &text).unwrap();
         assert!(reply.content.len() <= MAX_CONTENT_BYTES);
-        assert!(buzz_sdk::build_message(channel, &reply.content, None, &[], false, &[]).is_ok());
+        assert!(
+            buzz_sdk::build_message(channel, &reply.content, None, &[], false, &[], &[]).is_ok()
+        );
     }
 
     #[test]

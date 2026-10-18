@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../shared/hosted_agents/hosted_agent_client.dart';
 import '../../shared/hosted_agents/hosted_agent_controller.dart';
@@ -14,6 +13,7 @@ import '../../shared/hosted_agents/hosted_agent_list.dart';
 import '../../shared/hosted_agents/hosted_agent_snapshot.dart';
 import '../../shared/hosted_agents/hosted_agent_store.dart';
 import '../../shared/hosted_agents/owned_agents_provider.dart';
+import '../../shared/theme/buzz_icons.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/app_list.dart';
 import '../../shared/widgets/app_list_card.dart';
@@ -66,7 +66,7 @@ class HostedAgentsPage extends ConsumerWidget {
             IconButton(
               key: const ValueKey('hosted-agents-new'),
               tooltip: 'New agent',
-              icon: const Icon(LucideIcons.plus),
+              icon: const Icon(BuzzIcons.plus),
               onPressed: () => unawaited(openCreate()),
             ),
         ],

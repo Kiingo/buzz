@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../theme/buzz_icons.dart';
 import '../../theme/theme.dart';
 import '../../widgets/buzz_loading_indicator.dart';
 import 'guest_owner_providers.dart';
@@ -56,7 +56,7 @@ class GuestOwnerListState<T> extends StatelessWidget {
             const SizedBox(height: Grid.xxs),
             OutlinedButton.icon(
               onPressed: onRetry,
-              icon: const Icon(LucideIcons.refreshCw, size: 16),
+              icon: const Icon(BuzzIcons.refreshCw, size: 16),
               label: const Text('Try again'),
             ),
           ],

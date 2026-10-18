@@ -39,8 +39,8 @@ pub(super) async fn prepare_provider_backend(
 /// Refuse a desktop-only shared-compute selection before a non-owning remote
 /// record is persisted. Provider-owned backends reach this point only after a
 /// platform-verified probe and therefore do not use Buzz's desktop mesh.
-pub(super) fn validate_remote_execution_profile(
-    app: &AppHandle,
+pub(super) fn validate_remote_execution_profile<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     input: &CreateManagedAgentRequest,
     provider_owns_execution_profile: bool,
 ) -> Result<(), String> {

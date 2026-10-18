@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../shared/hosted_agents/canonical_json.dart';
@@ -14,10 +13,12 @@ import '../../shared/hosted_agents/hosted_agent_client.dart';
 import '../../shared/hosted_agents/hosted_agent_controller.dart';
 import '../../shared/hosted_agents/hosted_agent_deploy_request.dart';
 import '../../shared/hosted_agents/hosted_agent_errors.dart';
+import '../../shared/hosted_agents/hosted_agent_icons.dart';
 import '../../shared/hosted_agents/hosted_agent_list.dart';
 import '../../shared/hosted_agents/hosted_agent_responses.dart';
 import '../../shared/hosted_agents/hosted_agent_snapshot.dart';
 import '../../shared/hosted_agents/provider_config_schema.dart';
+import '../../shared/theme/buzz_icons.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/app_list_card.dart';
 import '../../shared/widgets/buzz_loading_indicator.dart';
@@ -90,7 +91,7 @@ class _CatalogError extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              LucideIcons.cloudOff,
+              HostedAgentIcons.cloudOff,
               size: 36,
               color: context.colors.onSurfaceVariant,
             ),

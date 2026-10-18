@@ -252,6 +252,21 @@ if (contaminated.length) {
   );
 }
 
+// The migration ledger keeps renumbered upstream migrations byte-identical
+// and rejects duplicate sqlx versions; it is part of the same boundary.
+let migrationLedger;
+try {
+  migrationLedger = JSON.parse(
+    execFileSync(process.execPath, ["scripts/check-kiingo-migration-ledger.mjs"], {
+      encoding: "utf8",
+      env: { ...process.env, BUZZ_UPSTREAM_REF: snapshotRef },
+      stdio: ["ignore", "pipe", "inherit"],
+    }),
+  );
+} catch {
+  fail("migration ledger check failed");
+}
+
 process.stdout.write(
   `${JSON.stringify({
     upstreamSnapshot: snapshotRef,
@@ -267,5 +282,6 @@ process.stdout.write(
     classifiedFiles: inventoryPaths.size,
     stableOwnershipBoundaries: inventory.ownershipBoundaries.length,
     kiingoProductionContamination: 0,
+    migrationLedger,
   })}\n`,
 );
