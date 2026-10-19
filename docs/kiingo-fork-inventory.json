@@ -1585,6 +1585,16 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz agent harness maintainers",
+      "paths": [
+        "crates/buzz-acp/src/agent_dm_markers.rs"
+      ],
+      "purpose": "Quiet agent DM markers (docs/agent-dm-markers.md: buzz-mirror, buzz-session, buzz-sessions, buzz-question-state) are left out of an agent's DM conversation context: they are agent-signed presentation for people (mirrored history from other surfaces, session dividers and listings, question-card state), never prompt input. One filter hook in pool.rs parse_nostr_dm_response. Kiingo W6.",
+      "removalCondition": "Drop when upstream excludes presentation-only agent DM markers from prompt context, or Kiingo agents stop publishing them.",
+      "upstreamStatus": "Generic, provider-neutral; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz messaging maintainers",
       "purpose": "Desktop rendering of agent DM markers v1 (docs/agent-dm-markers.md), honoured only in DM channels on events signed by a DM member: strict parsers for every marker; mirrored history (buzz-mirror) shown as the requester only when the claimed pubkey is 64-hex, not the signer, a known DM member and the signer is an agent, otherwise as the signer with \"Relayed by\", with a via-surface badge whose tooltip gives the original time and subject, and with edit/delete still keyed to the signer; quiet markers (mirrors, session dividers, sessions listings, question state) kept out of live unread, mentions, DM alerts, notifications and home activity in useLiveChannelUpdates, the inactive-community unread observer, the in-channel unread divider and native unread catch-up, while still advancing recency; full-width session dividers; question-state events render no row; a DM-header sessions picker for 1:1 agent DMs (reuses a listing under 2 minutes old, else sends /sessions and waits 15 s; New session and Load with optional catch-up confirm first); question cards (tap-to-send or select-then-send, Other text, Answered/Closed states) that send buzz-answer tags; and up to three buzz-action buttons that send send_text with [buzz-action-ref, ref] and disable after a successful tap. Upstream files carry one-line hooks; the logic lives under desktop/src/features/agent-dm and src-tauri agent_dm_quiet.rs. Kiingo W6.",
       "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz.",
