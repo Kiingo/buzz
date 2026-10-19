@@ -9,9 +9,11 @@
 //! confirm button invokes, once per invocation, with a fresh request id and a
 //! fresh single-use proof.
 //!
-//! The provider API base and its provider id are build-time configuration
-//! (`BUZZ_BUILD_HOSTED_AGENTS_URL`, `BUZZ_BUILD_HOSTED_PROVIDER_ID`), with
-//! runtime overrides for development. Builds without them hide the feature.
+//! The provider API base and its provider id are build-time configuration:
+//! `BUZZ_BUILD_HOSTED_AGENTS_URL` and `BUZZ_BUILD_HOSTED_PROVIDER_ID`, or the
+//! release composition's `BUZZ_HOSTED_API_BASE_URL` and `BUZZ_PROVIDER_ID`
+//! when those are unset, with runtime overrides for development. A build that
+//! has no API base or no provider id hides the feature.
 
 mod request;
 
@@ -31,12 +33,15 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(20);
 const REBIND_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
-fn configured(runtime: &str, build: Option<&'static str>) -> Option<String> {
+/// The first non-empty value: the runtime override, then each build-time
+/// value in order.
+fn configured(runtime: &str, build: &[Option<&'static str>]) -> Option<String> {
     std::env::var(runtime)
         .ok()
-        .or_else(|| build.map(str::to_string))
+        .into_iter()
+        .chain(build.iter().flatten().map(|value| (*value).to_string()))
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+        .find(|value| !value.is_empty())
 }
 
 struct Route {
@@ -47,12 +52,18 @@ struct Route {
 fn route() -> Option<Route> {
     let base_url = configured(
         "BUZZ_DESKTOP_HOSTED_AGENTS_URL",
-        option_env!("BUZZ_BUILD_HOSTED_AGENTS_URL"),
+        &[
+            option_env!("BUZZ_BUILD_HOSTED_AGENTS_URL"),
+            option_env!("BUZZ_HOSTED_API_BASE_URL"),
+        ],
     )
     .filter(|url| acceptable_base_url(url))?;
     let provider_id = configured(
         "BUZZ_DESKTOP_HOSTED_PROVIDER_ID",
-        option_env!("BUZZ_BUILD_HOSTED_PROVIDER_ID"),
+        &[
+            option_env!("BUZZ_BUILD_HOSTED_PROVIDER_ID"),
+            option_env!("BUZZ_PROVIDER_ID"),
+        ],
     )
     .filter(|id| {
         id.len() <= 64
