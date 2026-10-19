@@ -69,10 +69,10 @@ use deep_link::{
     PendingNavigationDeepLinks,
 };
 use extensions::{
-    abort_identity_rotation, acknowledge_pending_identity_rotation,
-    identity_rotation_renderer_continuity, identity_rotation_status,
-    inspect_identity_rotation_handoff, run_identity_rotation, take_pending_identity_rotation,
-    IdentityRotationExtensionState,
+    abort_identity_rotation, acknowledge_pending_identity_rotation, hosted_owner_relink_available,
+    hosted_owner_relink_list, hosted_owner_relink_rebind, identity_rotation_renderer_continuity,
+    identity_rotation_status, inspect_identity_rotation_handoff, run_identity_rotation,
+    take_pending_identity_rotation, IdentityRotationExtensionState,
 };
 use huddle::{
     add_agent_to_huddle,
@@ -558,6 +558,9 @@ pub fn run() {
             inspect_identity_rotation_handoff,
             run_identity_rotation,
             abort_identity_rotation,
+            hosted_owner_relink_available,
+            hosted_owner_relink_list,
+            hosted_owner_relink_rebind,
             start_builderlab_login,
             cancel_builderlab_login,
             get_builderlab_auth,

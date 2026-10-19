@@ -4,6 +4,7 @@ import 'hosted_agent_client.dart';
 import 'hosted_agent_controller.dart';
 import 'hosted_agent_errors.dart';
 import 'hosted_agent_snapshot.dart';
+import 'hosted_owner_rebind.dart';
 
 /// Lifecycle actions the phone offers.
 enum HostedAgentAction {
@@ -155,6 +156,37 @@ class HostedAgentList extends AsyncNotifier<List<HostedAgentSnapshot>> {
       ]);
     }
     return warning;
+  }
+
+  /// The signed-in owner key, or `null` when this device can't sign.
+  String? currentOwnerPublicKey() {
+    try {
+      return ref.read(hostedAgentClientProvider)?.ownerPublicKey();
+    } on HostedAgentException {
+      return null;
+    }
+  }
+
+  /// Re-link [selected] to the signed-in key, then refresh the list so each
+  /// agent shows the owner key the API now holds. Only the owner's confirm
+  /// tap calls this.
+  Future<List<HostedRebindOutcome>> rebindOwnerKey(
+    List<HostedAgentSnapshot> selected,
+  ) async {
+    final client = _client();
+    final catalog = await ref.read(hostedAgentCatalogProvider.future);
+    final outcomes = await client.rebindOwnerKey(
+      catalog: catalog,
+      selected: selected,
+    );
+    try {
+      await refresh();
+    } on Object {
+      // The re-link already happened; a failed re-list keeps the previous
+      // list and the owner can pull to refresh. Never report it as a failed
+      // re-link.
+    }
+    return outcomes;
   }
 
   /// The newest snapshot for [providerAgentId] in the current list.

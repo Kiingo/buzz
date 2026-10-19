@@ -15,6 +15,7 @@ import 'hosted_agent_errors.dart';
 import 'hosted_agent_proofs.dart';
 import 'hosted_agent_responses.dart';
 import 'hosted_agent_snapshot.dart';
+import 'hosted_owner_rebind.dart';
 
 const _maxResponseBytes = 2 * 1024 * 1024;
 
@@ -273,6 +274,49 @@ class HostedAgentClient implements HostedAgentProvisioner {
     providerAgentId: providerAgentId,
     fields: {'expected_profile_revision': expectedRevision, 'action': action},
   );
+
+  /// Re-link [selected] agents to the signed-in key. Called only from the
+  /// owner's confirm tap: every call is one new request id and one new
+  /// single-use proof, with an attestation for each selected agent and no
+  /// other. Nothing here retries; a retry is another tap and another call.
+  Future<List<HostedRebindOutcome>> rebindOwnerKey({
+    required HostedAgentCatalog catalog,
+    required List<HostedAgentSnapshot> selected,
+  }) async {
+    final secret = ownerSecretHex();
+    final requestId = const Uuid().v4();
+    final body = buildHostedRebindBody(
+      ownerSecretHex: secret,
+      requestId: requestId,
+      selected: selected,
+    );
+    final proof = buildRebindOwnerKeyProof(
+      ownerSecretHex: secret,
+      providerId: catalog.providerId,
+      requestId: requestId,
+      communityId: route.communityId,
+      payloadSha256: hostedRebindPayloadSha256(body),
+    );
+    final (status, response) = await _send(
+      'POST',
+      '/owner/agents/rebind-owner-key',
+      timeout: const Duration(seconds: 60),
+      body: {...body, 'owner_proof': proof},
+    );
+    if (!_ok(status)) {
+      throw hostedAgentFailure(
+        response,
+        status: status,
+        fallbackCode: 'rebind_failed',
+      );
+    }
+    return parseHostedRebindResponse(
+      response,
+      requestId: requestId,
+      ownerPublicKey: ownerPublicKey(),
+      requested: selected,
+    );
+  }
 
   /// One owner write. The request id is fixed for the operation, so a retry
   /// after a lost answer is idempotent on the API; each attempt signs a fresh

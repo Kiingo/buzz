@@ -12,6 +12,7 @@ import '../../shared/hosted_agents/hosted_agent_errors.dart';
 import '../../shared/hosted_agents/hosted_agent_list.dart';
 import '../../shared/hosted_agents/hosted_agent_snapshot.dart';
 import '../../shared/hosted_agents/hosted_agent_store.dart';
+import '../../shared/hosted_agents/hosted_owner_rebind.dart';
 import '../../shared/hosted_agents/owned_agents_provider.dart';
 import '../../shared/theme/buzz_icons.dart';
 import '../../shared/theme/theme.dart';
@@ -25,6 +26,8 @@ import 'hosted_agent_create_page.dart';
 part 'hosted_agents_page/agent_actions.dart';
 part 'hosted_agents_page/agent_detail_sheet.dart';
 part 'hosted_agents_page/agent_sections.dart';
+part 'hosted_agents_page/relink_prompt.dart';
+part 'hosted_agents_page/relink_sheet.dart';
 
 /// The owner's agents: every hosted agent with live state and full
 /// management (including those created on desktop), the other agents they
@@ -107,6 +110,7 @@ class _AgentsBody extends ConsumerWidget {
           Grid.lg,
         ),
         children: [
+          _RelinkPrompt(agents: hosted),
           _HostedSection(agents: hosted, onCreate: onCreate),
           const SizedBox(height: Grid.sm),
           _OtherAgentsSection(

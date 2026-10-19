@@ -7,19 +7,25 @@ import {
   LinkAccountForm,
 } from "./LinkAccountForm";
 import { GuestSafetyCard } from "./admin/GuestSafetyCard";
+import { HostedOwnerRelinkCard } from "@/features/hosted-owner-relink/ui/HostedOwnerRelinkCard";
 
 /**
  * Profile settings: link this Buzz identity to the user's org account, then
- * (for org admins only) the agent guest safety card. Both live here so the
+ * (for org admins only) the agent guest safety card, then the offer to
+ * re-link hosted agents still linked to an earlier key. All live here so the
  * upstream settings panel carries a single mount point.
  */
 export function AccountLinkCard() {
   const enabled = useGuestAccessEnabled();
-  if (!enabled) return null;
   return (
     <>
-      <AccountLinkSection />
-      <GuestSafetyCard />
+      {enabled ? (
+        <>
+          <AccountLinkSection />
+          <GuestSafetyCard />
+        </>
+      ) : null}
+      <HostedOwnerRelinkCard />
     </>
   );
 }

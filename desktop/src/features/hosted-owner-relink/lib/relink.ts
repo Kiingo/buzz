@@ -1,0 +1,225 @@
+/** One hosted agent with the owner key its provider holds. */
+export type HostedOwnerAgent = {
+  providerAgentId: string;
+  agentPublicKey: string;
+  displayName: string;
+  /** Owner key the provider holds, or null when it did not say. */
+  ownerPublicKey: string | null;
+  deleted: boolean;
+};
+
+export type HostedOwnerAgents = {
+  currentOwnerPublicKey: string;
+  agents: HostedOwnerAgent[];
+};
+
+/** One agent's re-link result, as the native command returns it. */
+export type RebindResult = {
+  providerAgentId: string;
+  outcome: "rebound" | "already_current" | "rejected";
+  /** Reject code without the `buzz_hosted_` prefix. */
+  code: string | null;
+};
+
+/** Most agents one re-link request may name. */
+export const MAX_REBIND_AGENTS = 20;
+
+const lower = (value: string) => value.toLowerCase();
+
+/**
+ * Agents still linked to an earlier owner key: the provider names an owner
+ * key and it is not the current one. An agent whose owner key the provider
+ * did not report (null) is not offered, and neither is a deleted one.
+ */
+export function staleAgents(view: HostedOwnerAgents): HostedOwnerAgent[] {
+  const current = lower(view.currentOwnerPublicKey);
+  return view.agents.filter(
+    (agent) =>
+      !agent.deleted &&
+      agent.ownerPublicKey !== null &&
+      lower(agent.ownerPublicKey) !== current,
+  );
+}
+
+/** Agents the provider already holds under the current key. */
+export function currentAgents(view: HostedOwnerAgents): HostedOwnerAgent[] {
+  const current = lower(view.currentOwnerPublicKey);
+  return view.agents.filter(
+    (agent) =>
+      !agent.deleted &&
+      agent.ownerPublicKey !== null &&
+      lower(agent.ownerPublicKey) === current,
+  );
+}
+
+/** Reject codes a new request (fresh id and proof) may clear. */
+export function isRetryableCode(code: string | null): boolean {
+  return (
+    code === "profile_revision_conflict" ||
+    code === "rebind_failed" ||
+    code === "result_missing"
+  );
+}
+
+export function isRetryable(result: RebindResult | undefined): boolean {
+  return result?.outcome === "rejected" && isRetryableCode(result.code);
+}
+
+/** One short sentence for an agent that was not re-linked. */
+export function describeRejection(code: string | null): string {
+  switch (code) {
+    case "endpoint_not_found":
+      return "This agent no longer exists on the hosted service.";
+    case "agent_key_mismatch":
+      return "The agent's key didn't match; refresh and try again.";
+    case "owner_attestation_invalid":
+      return "The hosted service didn't accept your approval for this agent.";
+    case "previous_owner_not_revoked":
+      return "Your old key is still active, so this agent stays linked to it.";
+    case "identity_unreadable":
+      return "The agent's identity couldn't be read; contact support.";
+    case "rotation_in_progress":
+      return "A key change is still in progress; finish it, then try again.";
+    case "profile_revision_conflict":
+      return "The agent changed while it was being re-linked; retry.";
+    case "rebind_failed":
+      return "Re-linking didn't finish; retry.";
+    case "result_missing":
+      return "The hosted service did not report this agent; retry.";
+    default:
+      return "This agent couldn't be re-linked.";
+  }
+}
+
+/** Plain words for one agent's result. */
+export function describeOutcome(result: RebindResult): string {
+  switch (result.outcome) {
+    case "rebound":
+      return "Re-linked";
+    case "already_current":
+      return "Already linked";
+    default:
+      return describeRejection(result.code);
+  }
+}
+
+/** A failure of the whole request: its code and HTTP status, if any. */
+export class RelinkRequestError extends Error {
+  readonly code: string;
+  readonly status: number | null;
+  readonly correlationId: string | null;
+
+  constructor(
+    code: string,
+    status: number | null,
+    correlationId: string | null,
+  ) {
+    super(describeRequestError(code));
+    this.name = "RelinkRequestError";
+    this.code = code;
+    this.status = status;
+    this.correlationId = correlationId;
+  }
+}
+
+/** One sentence for a failure of the whole request. */
+export function describeRequestError(code: string): string {
+  switch (code.replace(/^buzz_hosted_/, "")) {
+    case "rebind_invalid":
+    case "rebind_selection_invalid":
+      return "The re-link request wasn't accepted; update Buzz and try again.";
+    case "owner_proof_invalid":
+      return "Your signature wasn't accepted; check this computer's date and time, then try again.";
+    case "owner_proof_replayed":
+      return "That request was already used; try again.";
+    case "owner_not_linked":
+      return "Your current key isn't linked to your account yet; link it, then try again.";
+    case "owner_ambiguous":
+      return "More than one account matches your key; contact support.";
+    case "scope_unconfigured":
+      return "Re-linking isn't available for this community yet.";
+    case "provisioning_keys_unconfigured":
+    case "provisioning_keys_invalid":
+      return "The hosted service can't re-link agents right now; try again later.";
+    case "database_unavailable":
+      return "The hosted service is temporarily unavailable; try again in a moment.";
+    case "hosted_agents_unreachable":
+    case "hosted_agents_timeout":
+      return "Couldn't reach the hosted service; check your connection and try again.";
+    case "rate_limited":
+      return "Too many requests; wait a moment and try again.";
+    case "response_invalid":
+    case "response_too_large":
+      return "The hosted service sent an answer Buzz doesn't understand.";
+    case "hosted_relink_unavailable":
+      return "Re-linking isn't available in this build or community.";
+    default:
+      return "The hosted service couldn't complete this request; try again.";
+  }
+}
+
+/** Parse a native command rejection (`{status, error, correlation_id}`). */
+export function toRelinkRequestError(error: unknown): RelinkRequestError {
+  if (error instanceof RelinkRequestError) return error;
+  const text =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  try {
+    const parsed = JSON.parse(text) as {
+      status?: unknown;
+      error?: unknown;
+      correlation_id?: unknown;
+    };
+    if (parsed && typeof parsed.error === "string") {
+      return new RelinkRequestError(
+        parsed.error,
+        typeof parsed.status === "number" ? parsed.status : null,
+        typeof parsed.correlation_id === "string"
+          ? parsed.correlation_id
+          : null,
+      );
+    }
+  } catch {
+    // Not a structured error.
+  }
+  return new RelinkRequestError("request_failed", null, null);
+}
+
+/**
+ * Agents the owner can still choose: not yet sent, or sent and retryable.
+ * Agents already re-linked, already current, or rejected for good are not
+ * offered again.
+ */
+export function selectableAgents(
+  stale: HostedOwnerAgent[],
+  results: Record<string, RebindResult>,
+): HostedOwnerAgent[] {
+  return stale.filter((agent) => {
+    const result = results[agent.providerAgentId];
+    return result === undefined || isRetryable(result);
+  });
+}
+
+/** The agents the confirm button would send: selected and selectable. */
+export function agentsToSend(
+  stale: HostedOwnerAgent[],
+  selected: ReadonlySet<string>,
+  results: Record<string, RebindResult>,
+): HostedOwnerAgent[] {
+  return selectableAgents(stale, results).filter((agent) =>
+    selected.has(agent.providerAgentId),
+  );
+}
+
+/** Fold one response into the results so far. */
+export function mergeResults(
+  previous: Record<string, RebindResult>,
+  next: RebindResult[],
+): Record<string, RebindResult> {
+  const merged = { ...previous };
+  for (const result of next) merged[result.providerAgentId] = result;
+  return merged;
+}

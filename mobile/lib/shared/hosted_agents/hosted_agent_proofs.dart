@@ -133,3 +133,33 @@ Map<String, dynamic> buildOwnerWriteProof({
     ],
   );
 }
+
+/// Proof for re-linking agents to the signed-in owner key:
+/// `action=rebind_owner_key`, `provider`, `request`, an empty `agent` (the
+/// request names its agents in the body), `community`, `payload` (SHA-256 of
+/// the canonical body without the proof) and `expires`. Signed by the current
+/// key; the API burns it, so every attempt needs a new one.
+Map<String, dynamic> buildRebindOwnerKeyProof({
+  required String ownerSecretHex,
+  required String providerId,
+  required String requestId,
+  required String communityId,
+  required String payloadSha256,
+  DateTime? now,
+}) {
+  final createdAt = _nowSeconds(now);
+  return _signProof(
+    ownerSecretHex: ownerSecretHex,
+    content: hostedOwnerManagementProofContent,
+    createdAt: createdAt,
+    tags: [
+      ['action', 'rebind_owner_key'],
+      ['provider', providerId],
+      ['request', requestId],
+      ['agent', ''],
+      ['community', communityId],
+      ['payload', payloadSha256],
+      ['expires', '${createdAt + hostedOwnerProofTtlSeconds}'],
+    ],
+  );
+}
