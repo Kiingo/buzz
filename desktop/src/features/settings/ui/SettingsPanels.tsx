@@ -78,6 +78,7 @@ import {
 import { SegmentedControl } from "@/shared/ui/segmented-control";
 import { ProfileSettingsCard } from "./ProfileSettingsCard";
 import { AccountLinkCard } from "@/features/guest-access/ui/AccountLinkCard";
+import { KeyReplacementCard } from "@/features/key-replacement/ui/KeyReplacementCard";
 import { RemoteSignerSettingsCard } from "@/features/remote-signer/ui/RemoteSignerSettingsCard";
 import { remoteSignerSettingsSection } from "@/features/remote-signer/ui/remoteSignerSettingsSection";
 import { UpdateChecker } from "../UpdateChecker";
@@ -818,6 +819,7 @@ export function renderSettingsSection(
             fallbackDisplayName={props.fallbackDisplayName}
           />
           <AccountLinkCard />
+          <KeyReplacementCard />
         </>
       );
     case "notifications":

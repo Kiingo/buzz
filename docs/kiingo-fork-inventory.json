@@ -614,6 +614,22 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz identity maintainers",
+      "purpose": "Desktop \"Confirm key replacement\": a relay owner or admin whose earlier key was revoked records, once and only on an explicit confirm, that the current key replaced it, so the relay can move that key's agents (guarded owner reassignment on NIP-IA archive evidence). A native extension offers the control only when all three hold: the newest relay-signed kind 13534 snapshot (signer checked against NIP-11 self) gives the signed-in key role owner or admin; the hosted provider's read-only POST /owner/key-replacement (list-shaped kind-27236 buzz-provider-owner-v1 proof, action=key_replacement, provider, request, community, expires; answer bound to request id and current key) names a replaced key; and the relay-signed kind 13535 snapshot does not list that key. The confirm dialog names both keys (short and full npub); the confirm command re-checks every condition, requires the provider to still name the key the owner confirmed, then signs exactly one kind 9035 archive (\"-\", p=old key, reason=rotated, replaced-by=the signer) through the existing builder and publishes it, then re-reads the relay-signed 13535 snapshot and 8002 delta and reports confirmed or not; a read-only re-check is offered. Mounted in Profile settings; API base and provider id use the same build configuration as the hosted re-link (BUZZ_BUILD_HOSTED_AGENTS_URL / BUZZ_BUILD_HOSTED_PROVIDER_ID or the composition's BUZZ_HOSTED_API_BASE_URL / BUZZ_PROVIDER_ID), hidden when unset. Hooks: one extension module plus re-export, one use line and three command registrations in lib.rs, one import and one element in SettingsPanels.tsx.",
+      "upstreamStatus": "Provider-neutral NIP-IA client over a hosted provider lookup; not submitted to block/buzz.",
+      "removalCondition": "Drop when key rotation always publishes the replacement archive itself, or the relay links rotated keys without an owner action.",
+      "paths": [
+        "desktop/src-tauri/src/extensions/key_replacement/logic.rs",
+        "desktop/src-tauri/src/extensions/key_replacement/logic_tests.rs",
+        "desktop/src-tauri/src/extensions/key_replacement/mod.rs",
+        "desktop/src/features/key-replacement/lib/keyReplacement.test.mjs",
+        "desktop/src/features/key-replacement/lib/keyReplacement.ts",
+        "desktop/src/features/key-replacement/lib/offer.ts",
+        "desktop/src/features/key-replacement/ui/KeyReplacementCard.tsx"
+      ]
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz CLI maintainers",
       "purpose": "Canonical direct-message inventory from existing kind:39000 metadata with exact participant scoping.",
       "upstreamStatus": "submitted as block/buzz PR #7030",

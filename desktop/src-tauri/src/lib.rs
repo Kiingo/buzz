@@ -74,6 +74,7 @@ use extensions::{
     inspect_identity_rotation_handoff, run_identity_rotation, take_pending_identity_rotation,
     IdentityRotationExtensionState,
 };
+use extensions::{confirm_key_replacement, key_replacement_confirmed, key_replacement_status};
 use huddle::{
     add_agent_to_huddle,
     audio_output::{get_audio_output_device, list_audio_output_devices, set_audio_output_device},
@@ -552,6 +553,9 @@ pub fn run() {
             take_pending_entity_deep_link,
             acknowledge_pending_entity_deep_link,
             take_pending_identity_rotation,
+            key_replacement_status,
+            confirm_key_replacement,
+            key_replacement_confirmed,
             acknowledge_pending_identity_rotation,
             identity_rotation_renderer_continuity,
             identity_rotation_status,
