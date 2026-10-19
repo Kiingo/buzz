@@ -1572,6 +1572,26 @@
         "mobile/lib/shared/widgets/frosted_scaffold.dart",
         "mobile/test/shared/widgets/frosted_scaffold_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "paths": [
+        "docs/agent-dm-markers.md"
+      ],
+      "purpose": "Agent DM markers v1: the shared tag contract between agent runtimes and the desktop/mobile clients for 1:1 agent DMs. Agent-signed mirrored history from other surfaces (buzz-mirror, quiet kind 40002 with no p tag), session dividers and listings (buzz-session, buzz-sessions) with the /sessions, /new and /sessions load commands, question cards (buzz-question, buzz-question-state, buzz-answer) and action buttons (buzz-action). Kiingo W6 (one agent, one conversation, one native session).",
+      "removalCondition": "Drop when upstream defines equivalent agent DM markers or Kiingo agents stop publishing them.",
+      "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz agent harness maintainers",
+      "paths": [
+        "crates/buzz-acp/src/agent_dm_markers.rs"
+      ],
+      "purpose": "Quiet agent DM markers (docs/agent-dm-markers.md: buzz-mirror, buzz-session, buzz-sessions, buzz-question-state) are left out of an agent's DM conversation context: they are agent-signed presentation for people (mirrored history from other surfaces, session dividers and listings, question-card state), never prompt input. One filter hook in pool.rs parse_nostr_dm_response. Kiingo W6.",
+      "removalCondition": "Drop when upstream excludes presentation-only agent DM markers from prompt context, or Kiingo agents stop publishing them.",
+      "upstreamStatus": "Generic, provider-neutral; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
