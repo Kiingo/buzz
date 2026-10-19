@@ -34,7 +34,7 @@ use crate::commands::{
 };
 use crate::relay::{query_relay_at, submit_event_at_with_keys};
 
-pub(crate) use logic::{ArchiveState, Replacement};
+pub(crate) use logic::{ArchiveState, LookupAnswer, RemovalStep, Replacement};
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -114,7 +114,7 @@ async fn lookup_replacement(
     route: &Route,
     keys: &nostr::Keys,
     community_id: &str,
-) -> Result<Option<Replacement>, String> {
+) -> Result<LookupAnswer, String> {
     let request_id = uuid::Uuid::new_v4().to_string();
     let body = logic::build_lookup_request(
         keys,
@@ -168,13 +168,13 @@ async fn relay_self(state: &AppState, target: &RelayTarget) -> Result<String, St
         .ok_or_else(|| error("relay_identity_unavailable"))
 }
 
-async fn is_relay_admin(
+/// The relay's membership snapshot events, filtered to its own identity.
+async fn relay_members(
     state: &AppState,
     target: &RelayTarget,
     relay_self: &str,
-    pubkey: &str,
-) -> Result<bool, String> {
-    let events = query_relay_at(
+) -> Result<Vec<nostr::Event>, String> {
+    query_relay_at(
         state,
         &target.api_base_url,
         &[json!({
@@ -184,8 +184,7 @@ async fn is_relay_admin(
         })],
     )
     .await
-    .map_err(|_| error("relay_unreachable"))?;
-    Ok(logic::is_relay_admin(&events, relay_self, pubkey))
+    .map_err(|_| error("relay_unreachable"))
 }
 
 async fn archive_state(
@@ -224,6 +223,9 @@ pub struct KeyReplacementStatus {
     pub offer: bool,
     pub current_public_key: String,
     pub replacement: Option<Replacement>,
+    /// The "Remove old owner key" step, when the provider names a retired
+    /// relay owner key.
+    pub removal: Option<RemovalStep>,
 }
 
 /// Check the three conditions. Read-only: the provider lookup signs a
@@ -242,14 +244,22 @@ pub async fn key_replacement_status(
     let keys = state.signing_keys()?;
     let current = keys.public_key().to_hex();
     let relay_self = relay_self(&state, &target).await?;
-    if !is_relay_admin(&state, &target, &relay_self, &current).await? {
+    let members = relay_members(&state, &target, &relay_self).await?;
+    if !logic::is_relay_admin(&members, &relay_self, &current) {
         return Ok(KeyReplacementStatus {
             offer: false,
             current_public_key: current,
             replacement: None,
+            removal: None,
         });
     }
-    let replacement = lookup_replacement(&route, &keys, &community_id).await?;
+    let answer = lookup_replacement(&route, &keys, &community_id).await?;
+    let removal = logic::removal_step(
+        answer.retired_relay_owner.as_deref(),
+        &current,
+        logic::relay_members_snapshot(&members, &relay_self),
+    );
+    let replacement = answer.replacement;
     let archive = match &replacement {
         Some(found) => {
             archive_state(
@@ -267,6 +277,7 @@ pub async fn key_replacement_status(
         offer: logic::should_offer(true, replacement.as_ref(), archive),
         current_public_key: current,
         replacement,
+        removal,
     })
 }
 
@@ -299,11 +310,13 @@ pub async fn confirm_key_replacement(
     let keys = state.signing_keys()?;
     let current = keys.public_key().to_hex();
     let relay_self = relay_self(&state, &target).await?;
-    if !is_relay_admin(&state, &target, &relay_self, &current).await? {
+    let members = relay_members(&state, &target, &relay_self).await?;
+    if !logic::is_relay_admin(&members, &relay_self, &current) {
         return Err(error("key_replacement_not_admin"));
     }
     let replacement = lookup_replacement(&route, &keys, &community_id)
         .await?
+        .replacement
         .ok_or_else(|| error("key_replacement_none"))?;
     let old = replacement.old_public_key;
     if !old.eq_ignore_ascii_case(expected_old_public_key.trim()) {
@@ -362,4 +375,100 @@ pub async fn key_replacement_confirmed(
         archive_state(&state, &target, &relay_self, &old, &current).await?
             == ArchiveState::ArchivedReplacedBy,
     )
+}
+
+/// Result of the one remove-member request.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemovalOutcome {
+    pub accepted: bool,
+    pub message: String,
+    /// The relay's membership snapshot no longer lists the key.
+    pub removed: bool,
+}
+
+/// Remove the retired relay owner key from the relay, as the relay owner.
+/// Only the owner's confirm tap on the "Remove old owner key" step calls this.
+/// Every check runs again: the provider must still name exactly
+/// `expected_public_key`, it must not be the signed-in key, the signed-in key
+/// must be the relay owner, and the relay must still list that key as a
+/// non-owner member. Otherwise nothing is signed. Then exactly one kind 9031
+/// naming that key is signed and published, and membership is re-read.
+#[tauri::command]
+pub async fn remove_old_owner_key(
+    expected_public_key: String,
+    state: State<'_, AppState>,
+) -> Result<RemovalOutcome, String> {
+    let route = route().ok_or_else(|| error("key_replacement_unavailable"))?;
+    let target = capture_relay_target(&state);
+    let community_id = community_id_for_relay(&target.ws_url);
+    if community_id.is_empty() {
+        return Err(error("key_replacement_unavailable"));
+    }
+    let keys = state.signing_keys()?;
+    let current = keys.public_key().to_hex();
+    let relay_self = relay_self(&state, &target).await?;
+    let members = relay_members(&state, &target, &relay_self).await?;
+    if !logic::is_relay_admin(&members, &relay_self, &current) {
+        return Err(error("removal_not_owner"));
+    }
+    let answer = lookup_replacement(&route, &keys, &community_id).await?;
+    let step = logic::removal_step(
+        answer.retired_relay_owner.as_deref(),
+        &current,
+        logic::relay_members_snapshot(&members, &relay_self),
+    )
+    .ok_or_else(|| error("removal_none"))?;
+    if !step
+        .public_key
+        .eq_ignore_ascii_case(expected_public_key.trim())
+    {
+        return Err(error("removal_changed"));
+    }
+    if let Some(reason) = step.reason {
+        return Err(error(&format!("removal_{reason}")));
+    }
+
+    let builder = crate::events::build_relay_admin_remove(&step.public_key)
+        .map_err(|_| error("removal_request_invalid"))?;
+    let response = submit_event_at_with_keys(builder, &state, &target.api_base_url, &keys).await?;
+    // The removal is already submitted; a failed re-read reports "not
+    // confirmed yet" and the owner can check again.
+    let removed = response.accepted
+        && is_removed(&state, &target, &relay_self, &step.public_key)
+            .await
+            .unwrap_or(false);
+    Ok(RemovalOutcome {
+        accepted: response.accepted,
+        message: response.message,
+        removed,
+    })
+}
+
+async fn is_removed(
+    state: &AppState,
+    target: &RelayTarget,
+    relay_self: &str,
+    public_key: &str,
+) -> Result<bool, String> {
+    let members = relay_members(state, target, relay_self).await?;
+    let snapshot = logic::relay_members_snapshot(&members, relay_self)
+        .ok_or_else(|| error("relay_unreachable"))?;
+    Ok(logic::relay_role(snapshot, public_key).is_none())
+}
+
+/// Re-read whether the relay's membership snapshot still lists
+/// `public_key`. Read-only; signs nothing.
+#[tauri::command]
+pub async fn old_owner_key_removed(
+    public_key: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let key = public_key.trim().to_ascii_lowercase();
+    if key.len() != 64 || !key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(error("removal_changed"));
+    }
+    let target = capture_relay_target(&state);
+    let relay_self = relay_self(&state, &target).await?;
+    is_removed(&state, &target, &relay_self, &key).await
 }

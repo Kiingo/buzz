@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
 import {
+  describeRemovalOutcome,
+  describeRemovalReason,
   describeKeyReplacementError,
   describeOutcome,
   KeyReplacementError,
@@ -9,7 +11,7 @@ import {
   setKeyReplacementTransportForTests,
   toKeyReplacementError,
 } from "./keyReplacement.ts";
-import { offeredReplacement } from "./offer.ts";
+import { offeredRemoval, offeredReplacement } from "./offer.ts";
 
 const OLD = "6d".padEnd(64, "1");
 const CURRENT = "3f".padEnd(64, "2");
@@ -137,4 +139,115 @@ test("the re-read is read-only and reports the relay's answer", async () => {
   });
   assert.equal(await keyReplacementApi.confirmed(OLD), false);
   assert.deepEqual(seen, [OLD]);
+});
+
+const RETIRED = "4d".padEnd(64, "3");
+
+const withRemoval = (removal) => ({
+  offer: false,
+  currentPublicKey: CURRENT,
+  replacement: null,
+  removal,
+});
+
+test("the removal step appears only when the provider names a retired key", () => {
+  assert.equal(offeredRemoval(withRemoval(null)), null);
+  assert.equal(offeredRemoval(undefined), null);
+  assert.deepEqual(
+    offeredRemoval(
+      withRemoval({
+        publicKey: RETIRED.toUpperCase(),
+        removable: true,
+        reason: null,
+      }),
+    ),
+    { publicKey: RETIRED, removable: true, reason: null },
+  );
+  // A malformed key is never offered.
+  assert.equal(
+    offeredRemoval(
+      withRemoval({ publicKey: "xyz", removable: true, reason: null }),
+    ),
+    null,
+  );
+});
+
+test("the removal step fails closed with a reason", () => {
+  // The signed-in key itself is never removable, whatever the native side says.
+  assert.deepEqual(
+    offeredRemoval(
+      withRemoval({ publicKey: CURRENT, removable: true, reason: null }),
+    ),
+    { publicKey: CURRENT, removable: false, reason: "is_current_key" },
+  );
+  for (const reason of ["not_owner", "not_a_member", "is_owner"]) {
+    const step = offeredRemoval(
+      withRemoval({ publicKey: RETIRED, removable: false, reason }),
+    );
+    assert.equal(step.removable, false, reason);
+    assert.equal(step.reason, reason);
+    const text = describeRemovalReason(reason);
+    assert.notEqual(text, describeKeyReplacementError("unknown"), reason);
+    assert.equal(text.split(".").length, 2, `${reason}: one sentence`);
+  }
+  // Inconsistent native answers are disabled, not enabled.
+  assert.equal(
+    offeredRemoval(
+      withRemoval({ publicKey: RETIRED, removable: true, reason: "not_owner" }),
+    ).removable,
+    false,
+  );
+  assert.deepEqual(
+    offeredRemoval(
+      withRemoval({ publicKey: RETIRED, removable: false, reason: null }),
+    ),
+    { publicKey: RETIRED, removable: false, reason: "not_owner" },
+  );
+});
+
+test("remove sends exactly the displayed key, once", async () => {
+  const calls = [];
+  restore = setKeyReplacementTransportForTests({
+    remove: async (expected) => {
+      calls.push(expected);
+      return { accepted: true, message: "", removed: true };
+    },
+  });
+  const outcome = await keyReplacementApi.remove(RETIRED);
+  assert.deepEqual(calls, [RETIRED]);
+  assert.match(describeRemovalOutcome(outcome), /^Removed/);
+});
+
+test("a malformed removal target never reaches the native signer", async () => {
+  let called = false;
+  restore = setKeyReplacementTransportForTests({
+    remove: async () => {
+      called = true;
+      return { accepted: true, message: "", removed: true };
+    },
+  });
+  await assert.rejects(keyReplacementApi.remove(""), KeyReplacementError);
+  await assert.rejects(keyReplacementApi.remove("zz"), KeyReplacementError);
+  assert.equal(called, false);
+});
+
+test("a native removal refusal is one error, not a retry", async () => {
+  let calls = 0;
+  restore = setKeyReplacementTransportForTests({
+    remove: async () => {
+      calls += 1;
+      throw new Error('{"error":"removal_changed"}');
+    },
+  });
+  await assert.rejects(
+    keyReplacementApi.remove(RETIRED),
+    (error) =>
+      error instanceof KeyReplacementError &&
+      /nothing was signed/.test(error.message),
+  );
+  assert.equal(calls, 1);
+  assert.match(
+    describeRemovalOutcome({ accepted: true, message: "", removed: false }),
+    /check again/,
+  );
 });

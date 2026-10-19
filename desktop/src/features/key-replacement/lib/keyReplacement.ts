@@ -1,9 +1,23 @@
 import { invokeTauri } from "@/shared/api/tauri";
 
+/** Shared by both Profile settings steps so one check serves both. */
+export const keyReplacementStatusQueryKey = [
+  "key-replacement",
+  "status",
+] as const;
+
 /** The earlier key the hosted service verified for the same person. */
 export type Replacement = {
   oldPublicKey: string;
   revokedAt: string | null;
+};
+
+/** The "Remove old owner key" step, as the native check decided it. */
+export type RemovalStep = {
+  publicKey: string;
+  removable: boolean;
+  /** `is_current_key`, `not_owner`, `not_a_member` or `is_owner`. */
+  reason: string | null;
 };
 
 /** Whether to offer "Confirm key replacement", and for which keys. */
@@ -11,6 +25,14 @@ export type KeyReplacementStatus = {
   offer: boolean;
   currentPublicKey: string;
   replacement: Replacement | null;
+  removal: RemovalStep | null;
+};
+
+/** Result of the one remove-member request. */
+export type RemovalOutcome = {
+  accepted: boolean;
+  message: string;
+  removed: boolean;
 };
 
 /** Result of the one archive request. */
@@ -24,6 +46,8 @@ type Transport = {
   status: () => Promise<KeyReplacementStatus>;
   confirm: (expectedOldPublicKey: string) => Promise<KeyReplacementOutcome>;
   confirmed: (oldPublicKey: string) => Promise<boolean>;
+  remove: (expectedPublicKey: string) => Promise<RemovalOutcome>;
+  removed: (publicKey: string) => Promise<boolean>;
 };
 
 const tauriTransport: Transport = {
@@ -34,6 +58,10 @@ const tauriTransport: Transport = {
     }),
   confirmed: (oldPublicKey) =>
     invokeTauri<boolean>("key_replacement_confirmed", { oldPublicKey }),
+  remove: (expectedPublicKey) =>
+    invokeTauri<RemovalOutcome>("remove_old_owner_key", { expectedPublicKey }),
+  removed: (publicKey) =>
+    invokeTauri<boolean>("old_owner_key_removed", { publicKey }),
 };
 
 let transport: Transport = tauriTransport;
@@ -89,6 +117,18 @@ export function describeKeyReplacementError(code: string): string {
       return "The earlier key on record changed, so nothing was signed; check again.";
     case "key_replacement_already_archived":
       return "The relay already archived that key without your current key as its replacement; contact support.";
+    case "removal_not_owner":
+      return "Only the relay owner can remove the old owner key.";
+    case "removal_none":
+      return "There is no old owner key to remove.";
+    case "removal_changed":
+      return "The old owner key on record changed, so nothing was signed; check again.";
+    case "removal_is_current_key":
+      return "That key is the one you're signed in with, so it can't be removed here.";
+    case "removal_not_a_member":
+      return "The relay no longer lists that key as a member.";
+    case "removal_is_owner":
+      return "The relay still lists that key as an owner, so it can't be removed here.";
     case "relay_unreachable":
     case "relay_identity_unavailable":
       return "Couldn't reach the relay; check your connection and try again.";
@@ -158,4 +198,47 @@ export const keyReplacementApi = {
       throw toKeyReplacementError(error);
     }
   },
+
+  /**
+   * Remove exactly `expectedPublicKey` from the relay. Only the "Remove old
+   * owner key" confirm button calls this; the native side re-checks every
+   * condition and signs nothing if any disagrees.
+   */
+  remove: async (expectedPublicKey: string) => {
+    if (!/^[0-9a-f]{64}$/i.test(expectedPublicKey)) {
+      throw new KeyReplacementError("removal_changed");
+    }
+    try {
+      return await transport.remove(expectedPublicKey);
+    } catch (error) {
+      throw toKeyReplacementError(error);
+    }
+  },
+
+  /** Re-read whether the relay still lists the key; read-only. */
+  removed: async (publicKey: string) => {
+    try {
+      return await transport.removed(publicKey);
+    } catch (error) {
+      throw toKeyReplacementError(error);
+    }
+  },
 };
+
+/** Why the removal step is disabled, in one sentence. */
+export function describeRemovalReason(reason: string | null): string | null {
+  return reason ? describeKeyReplacementError(`removal_${reason}`) : null;
+}
+
+/** Plain words for the result of the remove-member request. */
+export function describeRemovalOutcome(outcome: RemovalOutcome): string {
+  if (outcome.removed) {
+    return "Removed: the relay no longer lists the old owner key.";
+  }
+  if (outcome.accepted) {
+    return "The relay accepted the request, but it still lists the key; check again in a moment.";
+  }
+  return outcome.message
+    ? `The relay didn't accept the request: ${outcome.message}`
+    : "The relay didn't accept the request.";
+}

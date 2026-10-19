@@ -16,12 +16,11 @@ import {
 import {
   describeOutcome,
   keyReplacementApi,
+  keyReplacementStatusQueryKey as statusQueryKey,
   toKeyReplacementError,
   type KeyReplacementOutcome,
 } from "../lib/keyReplacement";
 import { offeredReplacement } from "../lib/offer";
-
-const statusQueryKey = ["key-replacement", "status"] as const;
 
 /**
  * Profile settings: lets a relay owner or admin confirm, once, that their

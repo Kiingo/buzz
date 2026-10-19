@@ -72,12 +72,33 @@ pub(crate) struct Replacement {
     pub(crate) revoked_at: Option<String>,
 }
 
+/// The hosted lookup answer for the signed-in key.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct LookupAnswer {
+    pub(crate) replacement: Option<Replacement>,
+    /// A relay owner key this person retired, named only for the key the
+    /// service verified as its successor.
+    pub(crate) retired_relay_owner: Option<String>,
+}
+
+fn optional_hex_key(body: &Value, field: &str) -> Result<Option<String>, String> {
+    match body.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(str::to_ascii_lowercase)
+            .filter(|key| is_hex64(key))
+            .map(Some)
+            .ok_or_else(|| "response_invalid".to_string()),
+    }
+}
+
 /// Parse a lookup answer to `request_id` for `current_public_key`.
 pub(super) fn parse_lookup_response(
     body: &Value,
     request_id: &str,
     current_public_key: &str,
-) -> Result<Option<Replacement>, String> {
+) -> Result<LookupAnswer, String> {
     let owner_matches = body
         .get("owner_public_key")
         .and_then(Value::as_str)
@@ -88,15 +109,10 @@ pub(super) fn parse_lookup_response(
     {
         return Err("response_invalid".into());
     }
-    match body.get("replacement") {
-        None | Some(Value::Null) => Ok(None),
+    let replacement = match body.get("replacement") {
+        None | Some(Value::Null) => None,
         Some(replacement) => {
-            let old = replacement
-                .get("old_public_key")
-                .and_then(Value::as_str)
-                .map(str::to_ascii_lowercase)
-                .filter(|old| is_hex64(old))
-                .ok_or("response_invalid")?;
+            let old = optional_hex_key(replacement, "old_public_key")?.ok_or("response_invalid")?;
             if old.eq_ignore_ascii_case(current_public_key) {
                 return Err("response_invalid".into());
             }
@@ -105,12 +121,18 @@ pub(super) fn parse_lookup_response(
                 .and_then(Value::as_str)
                 .filter(|value| value.len() <= 64 && !value.chars().any(char::is_control))
                 .map(str::to_string);
-            Ok(Some(Replacement {
+            Some(Replacement {
                 old_public_key: old,
                 revoked_at,
-            }))
+            })
         }
-    }
+    };
+    Ok(LookupAnswer {
+        replacement,
+        // Kept even when it names the signed-in key: the removal step then
+        // shows disabled with a reason instead of disappearing silently.
+        retired_relay_owner: optional_hex_key(body, "retired_relay_owner_public_key")?,
+    })
 }
 
 /// `pubkey`'s role in a relay membership snapshot (`member` tags, then the
@@ -151,9 +173,11 @@ pub(super) fn relay_role(snapshot: &Event, pubkey: &str) -> Option<String> {
     None
 }
 
-/// Whether `pubkey` is a relay owner or admin according to the newest
-/// membership snapshot signed by the relay identity `relay_self`.
-pub(super) fn is_relay_admin(events: &[Event], relay_self: &str, pubkey: &str) -> bool {
+/// The newest membership snapshot signed by the relay identity `relay_self`.
+pub(super) fn relay_members_snapshot<'a>(
+    events: &'a [Event],
+    relay_self: &str,
+) -> Option<&'a Event> {
     events
         .iter()
         .filter(|event| {
@@ -162,8 +186,54 @@ pub(super) fn is_relay_admin(events: &[Event], relay_self: &str, pubkey: &str) -
                 && event.verify().is_ok()
         })
         .max_by_key(|event| event.created_at)
+}
+
+/// Whether `pubkey` is a relay owner or admin according to the newest
+/// membership snapshot signed by the relay identity `relay_self`.
+pub(super) fn is_relay_admin(events: &[Event], relay_self: &str, pubkey: &str) -> bool {
+    relay_members_snapshot(events, relay_self)
         .and_then(|snapshot| relay_role(snapshot, pubkey))
         .is_some_and(|role| role == "owner" || role == "admin")
+}
+
+/// The "Remove old owner key" step: which key, and whether it may run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RemovalStep {
+    pub(crate) public_key: String,
+    pub(crate) removable: bool,
+    /// Why it may not run: `is_current_key`, `not_owner`, `not_a_member`
+    /// or `is_owner`.
+    pub(crate) reason: Option<String>,
+}
+
+/// Decide the removal step from the hosted value and the relay-signed
+/// membership snapshot. No hosted value: no step. Otherwise every check must
+/// agree, or the step is shown disabled with the first reason that failed.
+pub(super) fn removal_step(
+    retired: Option<&str>,
+    current: &str,
+    snapshot: Option<&Event>,
+) -> Option<RemovalStep> {
+    let retired = retired?.to_ascii_lowercase();
+    let current_role = snapshot.and_then(|snapshot| relay_role(snapshot, current));
+    let retired_role = snapshot.and_then(|snapshot| relay_role(snapshot, &retired));
+    let reason = if retired.eq_ignore_ascii_case(current) {
+        Some("is_current_key")
+    } else if current_role.as_deref() != Some("owner") {
+        Some("not_owner")
+    } else if retired_role.is_none() {
+        Some("not_a_member")
+    } else if retired_role.as_deref() == Some("owner") {
+        Some("is_owner")
+    } else {
+        None
+    };
+    Some(RemovalStep {
+        public_key: retired,
+        removable: reason.is_none(),
+        reason: reason.map(str::to_string),
+    })
 }
 
 /// What the relay says about the old key.

@@ -19,3 +19,25 @@ export function offeredReplacement(
   }
   return { old, current };
 }
+
+/**
+ * The removal step to show, or null when the provider names no retired key.
+ * A malformed key or one equal to the signed-in key is shown disabled, so
+ * the step never targets a key it should not.
+ */
+export function offeredRemoval(
+  status: KeyReplacementStatus | undefined,
+): { publicKey: string; removable: boolean; reason: string | null } | null {
+  const removal = status?.removal;
+  if (!status || !removal) return null;
+  const key = removal.publicKey.toLowerCase();
+  if (!HEX_64.test(key)) return null;
+  if (key === status.currentPublicKey.toLowerCase()) {
+    return { publicKey: key, removable: false, reason: "is_current_key" };
+  }
+  return {
+    publicKey: key,
+    removable: removal.removable && removal.reason === null,
+    reason: removal.reason ?? (removal.removable ? null : "not_owner"),
+  };
+}
