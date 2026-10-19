@@ -132,8 +132,12 @@ Buttons under an agent message, for example "Retry" or "Continue on another
 model" after a visible failure.
 
 - On an agent-signed kind 9 message, up to 3:
-  `["buzz-action", <action_id>, <label>, <send_text>, <primary|secondary>]`
+  `["buzz-action", <action_id>, <label>, <send_text>, <primary|secondary>, <ref>]`
+  - `ref` is an opaque string (at most 512 characters) minted by the agent
+    runtime for this exact action.
 - A tap sends one user-signed kind 9 top-level message with content
-  `send_text` and `["buzz-action-ref", <message_event_id>, <action_id>]`.
-  The agent runtime recognises `send_text`; the button carries no authority of
-  its own.
+  `send_text` and `["buzz-action-ref", <ref>]`. The agent runtime acts only on
+  a ref it minted, from the person it was minted for; typed text without the
+  ref is an ordinary message. The button carries no authority of its own.
+- After a successful tap the client disables every button on that message.
+  The runtime acknowledges an applied action without a chat reply.
