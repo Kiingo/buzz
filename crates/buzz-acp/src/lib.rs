@@ -5,6 +5,7 @@ mod git;
 mod git_runtime_tests;
 
 mod acp;
+mod agent_dm_markers;
 mod agent_guards;
 mod config;
 mod dm_addressing;
