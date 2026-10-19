@@ -1306,8 +1306,10 @@ pub struct AppState {
     pub media_uploads_in_flight: Arc<DashMap<ScopedPubkeyKey, u32>>,
     /// Cache for observer agent-owner authorization (kind 24200).
     /// Key: (community_id, agent_pubkey_bytes, owner_pubkey_bytes). Value: is_owner.
-    /// `agent_owner_pubkey` is immutable inside one community, so a long TTL
-    /// (5 min) is safe once the community label is part of the key.
+    /// `agent_owner_pubkey` changes only through the guarded owner-key
+    /// rotation path, which invalidates this pod's entries; other pods' stale
+    /// entries are bounded by the TTL (5 min), and the old owner of a rotated
+    /// key is no longer a relay member.
     /// Prevents repeated DB lookups from bursty observer traffic, and lets
     /// `materialize_nip_oa_owner` skip its writes for a known mapping. Sized
     /// for every concurrently active agent so per-request HTTP agents hit.

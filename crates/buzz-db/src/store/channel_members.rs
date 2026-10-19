@@ -813,9 +813,12 @@ pub async fn add_member(
 /// The `is_agent_owner` lookup deliberately runs *before* the transaction opens:
 /// it borrows a second connection from `pool`, and issuing it while holding the
 /// lock could deadlock against ourselves on a small pool. That is safe because
-/// `agent_owner_pubkey` is immutable — [`crate::user::set_agent_owner`] only
-/// updates it when it `IS NULL` (first-mint-wins), so its value cannot change
-/// under us and needs no serialization.
+/// `agent_owner_pubkey` is effectively immutable: [`crate::user::set_agent_owner`]
+/// only updates it when it `IS NULL` (first-mint-wins), and the only other
+/// writer, [`crate::agent_owner_reassignment`], moves it away from an owner
+/// only after that owner left the relay roster with a signed key rotation. A
+/// concurrent move can therefore only make a stale read favor a rotated-out
+/// key, never grant a new actor rights.
 pub async fn remove_member(
     pool: &PgPool,
     community_id: CommunityId,
@@ -825,7 +828,7 @@ pub async fn remove_member(
 ) -> Result<()> {
     let is_self_remove = pubkey == actor_pubkey;
 
-    // Immutable, and must not be queried while holding the lock (second pool
+    // Effectively immutable (see above), and must not be queried while holding the lock (second pool
     // connection). Resolved up front so every *mutable* authorization read can
     // sit behind the serialization point below.
     let actor_is_agent_owner = if is_self_remove {

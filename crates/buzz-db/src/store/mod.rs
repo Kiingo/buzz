@@ -28,6 +28,8 @@ pub(crate) mod event_follow_up;
 #[cfg(test)]
 mod event_follow_up_postgres_tests;
 
+/// Guarded agent owner reassignment after an owner-key rotation.
+pub mod agent_owner_reassignment;
 /// Home feed queries.
 pub mod feed;
 /// Git repository name registry (NIP-34 kind:30617).

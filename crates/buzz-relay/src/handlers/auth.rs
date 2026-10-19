@@ -203,7 +203,8 @@ pub(crate) async fn final_admission_denial(
 
 /// Owner to record on an admitted socket: the proven NIP-OA owner, else the
 /// stored `users.agent_owner_pubkey` (first-write-wins, so fixed for the
-/// socket's life). Revoking that owner then closes the socket with no
+/// socket's life; a guarded owner-key rotation can move it later, and the
+/// owned-agent sweep in `revoke_live_access` still reaches this socket). Revoking that owner then closes the socket with no
 /// database read. A failed read refuses admission.
 pub(crate) async fn admitted_owner(
     state: &AppState,

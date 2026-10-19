@@ -593,6 +593,13 @@ fn p0_pool_acquisitions_use_typed_operation_pairs_without_other() {
     let relay_api = include_str!("../../buzz-relay/src/api/mod.rs");
     assert!(relay_api.contains(".ensure_user_for_authorization("));
     assert!(relay_api.contains(".set_agent_owner_for_authorization("));
+    let owner_reassignment = include_str!("../src/store/agent_owner_reassignment.rs");
+    assert!(owner_reassignment.contains("begin_community_write_transaction("));
+    assert!(owner_reassignment.contains("WriterOperation::Authorization"));
+    assert!(owner_reassignment.contains("FOR UPDATE"));
+    let owner_rotation = include_str!("../../buzz-relay/src/api/agent_owner_rotation.rs");
+    assert!(owner_rotation.contains(".reassign_agent_owner_after_rotation("));
+    assert!(relay_api.contains("agent_owner_rotation::reassign_rotated_owner("));
 
     for (domain, source) in [
         (

@@ -217,6 +217,12 @@
         "owner": "upstream",
         "upstreamPath": "migrations/0065_retire_channel_ttl_trigger.sql",
         "sha384": "2440f69b41932348984cc9295fb3a3b234aa9c43b69a289658f6466f711984c63b5bfaa797f72dfc5a191ea0c6e836a6"
+      },
+      {
+        "version": 71,
+        "forkPath": "migrations/0071_agent_owner_reassignments.sql",
+        "owner": "kiingo",
+        "sha384": "113f7bbd55b50b820502ff6d4493e081a2552fd0789cc2f39e5ee11b3b9aac8cc87c11cfe226f06a15dc45a0ef754a30"
       }
     ]
   },
@@ -1572,6 +1578,24 @@
         "mobile/lib/shared/widgets/frosted_scaffold.dart",
         "mobile/test/shared/widgets/frosted_scaffold_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz relay maintainers",
+      "paths": [
+        "crates/buzz-audit/src/action.rs",
+        "crates/buzz-db/src/store/agent_owner_reassignment.rs",
+        "crates/buzz-db/src/store/agent_owner_reassignment/tests.rs",
+        "crates/buzz-db/tests/observability_source.rs",
+        "crates/buzz-relay/src/api/agent_owner_rotation.rs",
+        "crates/buzz-relay/src/handlers/auth.rs",
+        "migrations/0071_agent_owner_reassignments.sql",
+        "schema/tables/public/agent_owner_reassignments.sql",
+        "schema/triggers/agent_owner_reassignments.sql"
+      ],
+      "purpose": "Guarded agent owner reassignment after an owner-key rotation. users.agent_owner_pubkey stays first-write-wins; when an agent proves a NIP-OA owner different from the recorded one, the relay moves the link only if, under row locks in one community write transaction, the new owner is a current relay member, the recorded owner is no longer a member, and a NIP-IA archive of the recorded owner names the new owner in replaced-by and was signed by the recorded key itself (consent self, actor = old key) or by a relay owner/admin (consent admin). Membership alone never moves an owner; owner-consent archives are refused. Every move writes an agent_owner_reassignments row (agent, old key, new key, evidence, archive actor, archive request id) in the same transaction (migration 0071, fenced, purged with the community) plus an AgentOwnerReassigned hash-chain audit entry. The pod-local observer-owner and restriction caches are refreshed; comments that called the owner immutable now name the guarded path. Hooks: one call in materialize_nip_oa_owner, module registration, the deletion table inventory, the pgschema fence reconciliation, and the migration-surface tests.",
+      "upstreamStatus": "Generic owner-key rotation support built on upstream NIP-IA archives and NIP-OA; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream supports moving an agent's recorded owner after a verified owner-key rotation, or owner links stop being first-write-wins."
     }
   ],
   "budgetAmendments": [

@@ -65,12 +65,12 @@ pub(crate) use runtime::{
     sweep_admitted_communities, ReadSessionInner, RouteDecision, RoutePredicate,
 };
 pub use store::{
-    admin_moderation, allowlist, api_token, archived_identities, artifact, channel,
-    channel_event_sequence, channel_members, community, deletion, dm, event, feed, git_repo,
-    managed_publication, moderation, operator_listener, partition, personal_read, product_feedback,
-    push, reaction, read_state, relay_admin_actions, relay_invite, relay_members, relay_operators,
-    reminder, replaceable, storage_accounting, thread, thread_window, usage, user, user_stop,
-    workflow,
+    admin_moderation, agent_owner_reassignment, allowlist, api_token, archived_identities,
+    artifact, channel, channel_event_sequence, channel_members, community, deletion, dm, event,
+    feed, git_repo, managed_publication, moderation, operator_listener, partition, personal_read,
+    product_feedback, push, reaction, read_state, relay_admin_actions, relay_invite, relay_members,
+    relay_operators, reminder, replaceable, storage_accounting, thread, thread_window, usage, user,
+    user_stop, workflow,
 };
 
 pub use allowlist::AllowlistEntry;
