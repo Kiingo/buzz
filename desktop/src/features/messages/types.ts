@@ -49,4 +49,8 @@ export type TimelineMessage = {
   kind?: number;
   tags?: string[][];
   reactions?: TimelineReaction[];
+  /** True when this DM row's agent DM markers are honoured (docs/agent-dm-markers.md). */
+  agentDmMarkers?: boolean;
+  /** Projected state of an honoured agent question card. */
+  agentDmQuestionState?: "open" | "answered" | "closed";
 };

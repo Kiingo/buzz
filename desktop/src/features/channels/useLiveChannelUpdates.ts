@@ -29,6 +29,7 @@ import {
   type TrailingDebounce,
 } from "@/shared/lib/trailingDebounce";
 
+import { isAgentDmQuietEvent } from "@/features/agent-dm/lib/quiet";
 import { isDmNotifiableKind } from "./isDmNotifiableKind";
 import { refreshChannelsWhenIdle } from "./refreshChannelsWhenIdle";
 
@@ -271,10 +272,15 @@ export function useLiveChannelUpdates(
     }
 
     const isDmChannel = dmChannelMap.has(channelId);
+    // Quiet agent DM markers (mirrors, session dividers, listings, question
+    // state) may advance recency but never notify, mention or mark unread.
+    const isQuietEvent =
+      isDmChannel && isAgentDmQuietEvent(event, dmChannelMap.get(channelId));
     // Mention kinds are already in the channel stream. Keep Home's narrower
     // kind/recipient policy without opening a second REQ for every channel.
     if (
       options.onLiveMention &&
+      !isQuietEvent &&
       HOME_MENTION_EVENT_KINDS.some((kind) => kind === event.kind) &&
       isExternalMentionEvent(event, normalizedCurrentPubkey) &&
       hasMentionForEvent(event, normalizedCurrentPubkey) &&
@@ -310,6 +316,7 @@ export function useLiveChannelUpdates(
     // reactions / edits / system messages aren't "new content".
     const isExternalTriggerEvent =
       isUnreadTriggerKind &&
+      !isQuietEvent &&
       (normalizedCurrentPubkey.length === 0 ||
         event.pubkey.toLowerCase() !== normalizedCurrentPubkey);
     const isFirstNotificationDelivery =
@@ -324,7 +331,7 @@ export function useLiveChannelUpdates(
     // DM alerts and every other notification side effect share this delivery
     // decision, preventing a replayed event from escaping through a second
     // callback path.
-    handleDmEvent(event, isFirstNotificationDelivery);
+    if (!isQuietEvent) handleDmEvent(event, isFirstNotificationDelivery);
 
     if (isExternalTriggerEvent && isFirstNotificationDelivery) {
       const shouldNotify = shouldNotifyForEvent(

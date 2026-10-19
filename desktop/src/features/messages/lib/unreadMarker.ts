@@ -1,4 +1,5 @@
 import type { TimelineMessage } from "@/features/messages/types";
+import { isAgentDmQuietMessage } from "@/features/agent-dm/lib/quiet";
 
 /**
  * Identifies the first unread top-level channel message relative to a read
@@ -51,7 +52,7 @@ export function computeChannelUnreadMarker(
   let unreadCount = 0;
 
   for (const message of messages) {
-    if (message.parentId) {
+    if (message.parentId || isAgentDmQuietMessage(message)) {
       continue;
     }
     if (

@@ -1582,6 +1582,41 @@
       "purpose": "Agent DM markers v1: the shared tag contract between agent runtimes and the desktop/mobile clients for 1:1 agent DMs. Agent-signed mirrored history from other surfaces (buzz-mirror, quiet kind 40002 with no p tag), session dividers and listings (buzz-session, buzz-sessions) with the /sessions, /new and /sessions load commands, question cards (buzz-question, buzz-question-state, buzz-answer) and action buttons (buzz-action). Kiingo W6 (one agent, one conversation, one native session).",
       "removalCondition": "Drop when upstream defines equivalent agent DM markers or Kiingo agents stop publishing them.",
       "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "purpose": "Desktop rendering of agent DM markers v1 (docs/agent-dm-markers.md), honoured only in DM channels on events signed by a DM member: strict parsers for every marker; mirrored history (buzz-mirror) shown as the requester only when the claimed pubkey is 64-hex, not the signer, a known DM member and the signer is an agent, otherwise as the signer with \"Relayed by\", with a via-surface badge whose tooltip gives the original time and subject, and with edit/delete still keyed to the signer; quiet markers (mirrors, session dividers, sessions listings, question state) kept out of live unread, mentions, DM alerts, notifications and home activity in useLiveChannelUpdates, the inactive-community unread observer, the in-channel unread divider and native unread catch-up, while still advancing recency; full-width session dividers; question-state events render no row; a DM-header sessions picker for 1:1 agent DMs (reuses a listing under 2 minutes old, else sends /sessions and waits 15 s; New session and Load with optional catch-up confirm first); question cards (tap-to-send or select-then-send, Other text, Answered/Closed states) that send buzz-answer tags; and up to three buzz-action buttons that send send_text with [buzz-action-ref, ref] and disable after a successful tap. Upstream files carry one-line hooks; the logic lives under desktop/src/features/agent-dm and src-tauri agent_dm_quiet.rs. Kiingo W6.",
+      "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream renders equivalent agent DM markers or agents stop publishing them.",
+      "paths": [
+        "desktop/src-tauri/src/agent_dm_quiet.rs",
+        "desktop/src-tauri/src/unread_catch_up.rs",
+        "desktop/src/features/agent-dm/lib/answer.test.mjs",
+        "desktop/src/features/agent-dm/lib/answer.ts",
+        "desktop/src/features/agent-dm/lib/markers.test.mjs",
+        "desktop/src/features/agent-dm/lib/markers.ts",
+        "desktop/src/features/agent-dm/lib/quiet.test.mjs",
+        "desktop/src/features/agent-dm/lib/quiet.ts",
+        "desktop/src/features/agent-dm/lib/registry.ts",
+        "desktop/src/features/agent-dm/lib/send.ts",
+        "desktop/src/features/agent-dm/lib/sessionsPicker.test.mjs",
+        "desktop/src/features/agent-dm/lib/sessionsPicker.ts",
+        "desktop/src/features/agent-dm/lib/timeline.test.mjs",
+        "desktop/src/features/agent-dm/lib/timeline.ts",
+        "desktop/src/features/agent-dm/ui/AgentActionButtons.tsx",
+        "desktop/src/features/agent-dm/ui/AgentDmMessageExtras.tsx",
+        "desktop/src/features/agent-dm/ui/AgentMirrorMarker.tsx",
+        "desktop/src/features/agent-dm/ui/AgentQuestionCard.tsx",
+        "desktop/src/features/agent-dm/ui/AgentSessionDivider.tsx",
+        "desktop/src/features/agent-dm/ui/AgentSessionsListing.tsx",
+        "desktop/src/features/agent-dm/ui/AgentSessionsPicker.tsx",
+        "desktop/src/features/channels/ui/ChannelScreenHeader.tsx",
+        "desktop/src/features/communities/communityUnreadObserver.ts",
+        "desktop/src/features/messages/lib/canManageMessage.ts",
+        "desktop/src/features/messages/lib/unreadMarker.ts",
+        "desktop/src/features/messages/types.ts"
+      ]
     }
   ],
   "budgetAmendments": [

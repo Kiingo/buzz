@@ -3,6 +3,7 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { ownsAuthorAgent } from "@/features/profile/lib/identity";
+import { agentDmManagePubkey } from "@/features/agent-dm/lib/timeline";
 
 /**
  * Returns true when the current user may edit or delete `message`.
@@ -20,11 +21,12 @@ export function canManageMessageForCurrentUser(
   profiles: UserProfileLookup | undefined,
 ): boolean {
   if (message.kind === KIND_HUDDLE_STARTED) return false;
-  if (!currentPubkey || !message.pubkey) return false;
-  if (normalizePubkey(message.pubkey) === normalizePubkey(currentPubkey))
+  const authorPubkey = agentDmManagePubkey(message);
+  if (!currentPubkey || !authorPubkey) return false;
+  if (normalizePubkey(authorPubkey) === normalizePubkey(currentPubkey))
     return true;
   return ownsAuthorAgent(
-    profiles?.[normalizePubkey(message.pubkey)],
+    profiles?.[normalizePubkey(authorPubkey)],
     currentPubkey,
   );
 }

@@ -292,6 +292,8 @@ fn classify_batch(
         let mut max_trigger = 0;
         for event in item.events {
             if event.pubkey.eq_ignore_ascii_case(&self_pubkey)
+                || (item.channel.channel_type == "dm"
+                    && crate::agent_dm_quiet::is_quiet_agent_dm_event(event.kind, &event.tags))
                 || item
                     .channel
                     .read_at
@@ -584,6 +586,58 @@ mod tests {
             ["broadcast"]
         );
         assert_eq!(*max_trigger, 12);
+    }
+
+    #[test]
+    fn quiet_agent_dm_markers_never_count_as_dm_unread() {
+        let req = request();
+        let agent = "a".repeat(64);
+        let mut mirror = event(
+            "mirror",
+            &agent,
+            11,
+            &[
+                &["h", "dm"],
+                &["buzz-mirror", "email", "msg-1", "1760000000"],
+                &["buzz-mirror-author", "agent", "", ""],
+            ],
+        );
+        mirror.kind = 40002;
+        let mut divider = event(
+            "divider",
+            &agent,
+            12,
+            &[&["h", "dm"], &["buzz-session", "new", ""]],
+        );
+        divider.kind = 40002;
+        let reply = event("reply", &agent, 13, &[&["h", "dm"]]);
+        let fetched = vec![FetchedChannel {
+            order: 0,
+            channel: CatchUpChannel {
+                id: "dm".into(),
+                channel_type: "dm".into(),
+                name: "Agent".into(),
+                read_at: Some(10),
+            },
+            events: vec![mirror, divider, reply],
+        }];
+        let result = classify_batch(&req, fetched, &HashMap::new());
+        let ChannelResult::Success {
+            observed_events,
+            max_trigger,
+            ..
+        } = &result[0]
+        else {
+            panic!("expected success")
+        };
+        assert_eq!(
+            observed_events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            ["reply"]
+        );
+        assert_eq!(*max_trigger, 13);
     }
 
     /// Pins the SERIALIZED wire contract against `tauriUnreadCatchUp.ts`.

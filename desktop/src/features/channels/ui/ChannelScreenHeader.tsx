@@ -15,6 +15,7 @@ import {
   scaleProfileAvatarStatusGeometry,
 } from "@/features/profile/ui/ProfileAvatarWithStatus";
 import { AgentManagementMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
+import { AgentSessionsPicker } from "@/features/agent-dm/ui/AgentSessionsPicker";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { UserNameIndicators } from "@/features/user-status/ui/UserNameIndicators";
 import { Button } from "@/shared/ui/button";
@@ -127,9 +128,18 @@ export function ChannelScreenHeader({
   ) : (
     headerEndActions
   );
+  const sessionsPicker =
+    activeChannel?.channelType === "dm" && !isGroupDm && activeDmParticipant ? (
+      <AgentSessionsPicker
+        agentPubkey={activeDmParticipant.pubkey}
+        channel={activeChannel}
+        isAgentHint={activeDmParticipant.isAgent === true}
+      />
+    ) : null;
   const actions =
     terminalButton || channelActions ? (
       <div className="flex items-center gap-1">
+        {sessionsPicker}
         {terminalButton}
         {channelActions}
       </div>

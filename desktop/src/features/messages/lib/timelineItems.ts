@@ -21,6 +21,7 @@ import {
   KIND_SYSTEM_MESSAGE,
   KIND_AGENT_STATUS,
 } from "@/shared/constants/kinds";
+import { isAgentSessionDividerMessage } from "@/features/agent-dm/lib/timeline";
 
 /**
  * One renderable row in the flattened timeline. Dividers carry no message and
@@ -226,7 +227,9 @@ export function buildTimelineItems(
     }
 
     const kind =
-      message.kind === KIND_SYSTEM_MESSAGE || message.kind === KIND_AGENT_STATUS
+      message.kind === KIND_SYSTEM_MESSAGE ||
+      message.kind === KIND_AGENT_STATUS ||
+      isAgentSessionDividerMessage(message)
         ? "system"
         : "message";
     if (kind === "system") {
