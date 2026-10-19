@@ -511,6 +511,14 @@ String _encodeRootIdSet(Set<String> values) => jsonEncode(values.toList());
 /// a part shares its parent's library.
 extension _ObservedUnreadRecording on ChannelsNotifier {
   void _recordUnreadEvent(Channel channel, NostrEvent event, String myPk) {
+    // Quiet agent DM events (mirrors, dividers, listings) are never unread.
+    if (isQuietAgentDmEvent(
+      event,
+      isDm: channel.isDm,
+      memberPubkeys: channel.participantPubkeys,
+    )) {
+      return;
+    }
     final isThreadedReply =
         event.threadReference.parentId != null && !_isBroadcastReply(event);
     final isHighPriority =

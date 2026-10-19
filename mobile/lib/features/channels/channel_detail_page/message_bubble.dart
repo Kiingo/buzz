@@ -51,18 +51,24 @@ class _MessageBubble extends HookConsumerWidget {
       ),
     );
     // Watch only this user's profile to avoid rebuilding on unrelated cache changes.
-    final pk = message.pubkey.toLowerCase();
+    // A mirrored requester message may show another DM member as its author;
+    // managing the message stays keyed to the signer.
+    final signerPk = message.pubkey.toLowerCase();
+    final pk = AgentDmScope.authorOf(context, message);
     final profile =
         ref.watch(userCacheProvider.select((cache) => cache[pk])) ??
         ref.read(userCacheProvider.notifier).get(pk);
+    final signerProfile = pk == signerPk
+        ? profile
+        : ref.watch(userCacheProvider.select((cache) => cache[signerPk]));
     final displayName = watchChannelIdentityLabel(ref, currentChannelId, pk);
     final isAgent =
         ref.watch(agentMentionPubkeysProvider(currentChannelId)).contains(pk) ||
         profile?.ownerPubkey != null;
     final canManageMessage =
-        currentPubkey?.toLowerCase() == pk ||
-        (profile?.ownerPubkey != null &&
-            profile?.ownerPubkey == currentPubkey?.toLowerCase());
+        currentPubkey?.toLowerCase() == signerPk ||
+        (signerProfile?.ownerPubkey != null &&
+            signerProfile?.ownerPubkey == currentPubkey?.toLowerCase());
 
     // Watch only profiles referenced by this message. A batched profile fetch
     // should not rebuild every visible message just because an unrelated user
@@ -270,7 +276,7 @@ class _MessageBubble extends HookConsumerWidget {
                                               onAuthorTap: () =>
                                                   showUserProfileSheet(
                                                     context,
-                                                    message.pubkey,
+                                                    pk,
                                                     names:
                                                         channelIdentityNamesProvider(
                                                           currentChannelId,
@@ -305,6 +311,7 @@ class _MessageBubble extends HookConsumerWidget {
                                         ],
                                       ),
                                     ),
+                                  ?AgentDmScope.mirrorMetaFor(context, message),
                                   AgentReplyHandoff(
                                     key: ValueKey(
                                       'reply-handoff-${message.id}',
@@ -386,6 +393,7 @@ class _MessageBubble extends HookConsumerWidget {
                                           ),
                                     ),
                                   ),
+                                  ?AgentDmScope.footerFor(context, message),
                                 ],
                               ),
                             ),
@@ -405,7 +413,7 @@ class _MessageBubble extends HookConsumerWidget {
                               excludeSemantics: true,
                               onTap: () => showUserProfileSheet(
                                 context,
-                                message.pubkey,
+                                pk,
                                 names: channelIdentityNamesProvider(
                                   currentChannelId,
                                 ),
@@ -413,14 +421,14 @@ class _MessageBubble extends HookConsumerWidget {
                               child: GestureDetector(
                                 onTap: () => showUserProfileSheet(
                                   context,
-                                  message.pubkey,
+                                  pk,
                                   names: channelIdentityNamesProvider(
                                     currentChannelId,
                                   ),
                                 ),
                                 child: _UserAvatar(
                                   profile: profile,
-                                  pubkey: message.pubkey,
+                                  pubkey: pk,
                                   isAgent: isAgent,
                                 ),
                               ),

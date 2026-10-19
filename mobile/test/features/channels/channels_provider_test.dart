@@ -10,6 +10,7 @@ import 'package:buzz/features/channels/channels_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
 import 'package:buzz/shared/read_state/read_state_provider.dart';
 
+part 'channels_provider_agent_dm_cases.dart';
 part 'channels_provider_live_cases.dart';
 part 'channels_provider_terminal_cases.dart';
 part 'channels_provider_readiness_cases.dart';
@@ -1718,6 +1719,7 @@ void main() {
   );
 
   _liveSubscriptionTests();
+  _agentDmQuietCases();
   _terminalSubscriptionTests();
 
   test('retains channel-list member snapshots for immediate reuse', () async {

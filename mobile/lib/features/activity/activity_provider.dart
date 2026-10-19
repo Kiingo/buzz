@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import '../../shared/agent_dm/agent_dm_quiet.dart';
 import '../../shared/guest_access/resolved_guest_approvals.dart';
 import '../../shared/relay/relay.dart';
 import '../channels/channel.dart';
@@ -12,6 +13,7 @@ import 'dm_resurface.dart';
 import 'feed_item.dart';
 import 'guest_notifications.dart';
 import 'inbox_item.dart';
+import 'quiet_feed_events.dart';
 
 typedef DmResurfaceAction = Future<String> Function(List<String> pubkeys);
 
@@ -336,6 +338,14 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
             channelMembersProvider(channelId).future,
           );
           if (generation != _subscriptionGeneration) return;
+          // A quiet agent DM event (mirrored history) never resurfaces a DM.
+          if (isQuietAgentDmEvent(
+            event,
+            isDm: true,
+            memberPubkeys: members.map((member) => member.pubkey),
+          )) {
+            return;
+          }
           final peers = dmPeerPubkeysFromMembers(
             members.map((member) => member.pubkey),
             myPk,
@@ -521,6 +531,9 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
     );
 
     const mentionKinds = {9, 40002, 1, 45001, 45003};
+    final isQuiet = quietAgentDmFeedFilter(
+      ref.read(channelsProvider).asData?.value ?? const <Channel>[],
+    );
     const needsActionKinds = {46010, 46011, 46012};
     const agentActivityKinds = {43001, 43002, 43003, 43004, 43005, 43006};
     final dmChannelIdSet = dmChannelIds.toSet();
@@ -555,7 +568,8 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
         (event) =>
             mentionKinds.contains(event.kind) &&
             isAddressedToMe(event) &&
-            isFromOther(event),
+            isFromOther(event) &&
+            !isQuiet(event),
       ),
       'mention',
     );
