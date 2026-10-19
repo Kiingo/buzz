@@ -1572,6 +1572,16 @@
         "mobile/lib/shared/widgets/frosted_scaffold.dart",
         "mobile/test/shared/widgets/frosted_scaffold_test.dart"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "paths": [
+        "docs/agent-dm-markers.md"
+      ],
+      "purpose": "Agent DM markers v1: the shared tag contract between agent runtimes and the desktop/mobile clients for 1:1 agent DMs. Agent-signed mirrored history from other surfaces (buzz-mirror, quiet kind 40002 with no p tag), session dividers and listings (buzz-session, buzz-sessions) with the /sessions, /new and /sessions load commands, question cards (buzz-question, buzz-question-state, buzz-answer) and action buttons (buzz-action). Kiingo W6 (one agent, one conversation, one native session).",
+      "removalCondition": "Drop when upstream defines equivalent agent DM markers or Kiingo agents stop publishing them.",
+      "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
