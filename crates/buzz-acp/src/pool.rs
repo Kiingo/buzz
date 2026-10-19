@@ -5138,6 +5138,9 @@ fn parse_nostr_dm_response(json: serde_json::Value, limit: u32) -> Option<Conver
 
     let mut messages: Vec<(u64, ContextMessage)> = events
         .iter()
+        // Quiet agent DM markers (mirrored history, session dividers) are
+        // presentation, never prompt context.
+        .filter(|ev| !crate::agent_dm_markers::is_quiet_agent_dm_marker(ev))
         .filter_map(|ev| {
             let ts = ev.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
             json_to_context_message(ev).map(|msg| (ts, msg))
@@ -5164,6 +5167,14 @@ fn parse_nostr_dm_response(json: serde_json::Value, limit: u32) -> Option<Conver
         total,
         truncated,
     })
+}
+
+#[cfg(test)]
+pub(crate) fn parse_nostr_dm_response_for_tests(
+    json: serde_json::Value,
+    limit: u32,
+) -> Option<ConversationContext> {
+    parse_nostr_dm_response(json, limit)
 }
 
 /// Return the batch for requeue only in Queue mode; drop it in Drop mode.

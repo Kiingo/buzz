@@ -1504,6 +1504,26 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz hosted-agent maintainers",
+      "purpose": "Owner-key re-link for hosted agents, desktop and mobile. After an owner rotates their Buzz key, a hosted provider can still hold their agents under the earlier key. The provider's POST /owner/agents/list answer now carries owner_public_key per agent; an agent is offered for re-link only when that key is present and differs from the signed-in key (null is never stale; deleted agents are skipped). The owner reviews the stale agents with checkboxes (all selected), and only their confirm tap signs: one fresh request id, one NIP-OA owner attestation (compact [\"auth\",owner,\"\",sig]) per selected agent and no other, and one fresh single-use kind-27236 buzz-provider-owner-v1 proof with exactly action=rebind_owner_key, provider, request, agent=\"\", community, payload (SHA-256 of the canonical body without the proof) and expires (5 minutes), sent to POST /owner/agents/rebind-owner-key. Nothing retries on its own; a retry is another tap that sends only the retryable agents (profile_revision_conflict, rebind_failed, or an agent the answer omitted) with a new request and proof. Answers are bound to the request id, the current owner key and exactly the requested agents; each agent's outcome is shown in plain words (Re-linked, Already linked, or a one-sentence reason) and whole-request errors as one sentence. Desktop signs and calls the API natively (provider-neutral extension; API base and provider id come from BUZZ_BUILD_HOSTED_AGENTS_URL / BUZZ_BUILD_HOSTED_PROVIDER_ID, falling back to the release composition's BUZZ_HOSTED_API_BASE_URL / BUZZ_PROVIDER_ID; hidden when either is unset) and shows the card in Profile settings through the existing AccountLinkCard mount; mobile adds it to the Agents page. Hooks: two extension re-exports and three command registrations in lib.rs/extensions/mod.rs, one part line pair plus one row in hosted_agents_page.dart, one optional field in the hosted snapshot, one client and list method, one proof builder.",
+      "upstreamStatus": "Provider-neutral client of a hosted provider route; not submitted to block/buzz.",
+      "removalCondition": "Drop when hosted providers re-link agents during key rotation without an owner action, or upstream ships an equivalent owner-key re-link flow.",
+      "paths": [
+        "desktop/src-tauri/src/extensions/hosted_owner_relink/mod.rs",
+        "desktop/src-tauri/src/extensions/hosted_owner_relink/request.rs",
+        "desktop/src-tauri/src/extensions/hosted_owner_relink/request_tests.rs",
+        "desktop/src/features/hosted-owner-relink/lib/client.ts",
+        "desktop/src/features/hosted-owner-relink/lib/relink.test.mjs",
+        "desktop/src/features/hosted-owner-relink/lib/relink.ts",
+        "desktop/src/features/hosted-owner-relink/ui/HostedOwnerRelinkCard.tsx",
+        "mobile/lib/features/agents/hosted_agents_page/relink_prompt.dart",
+        "mobile/lib/features/agents/hosted_agents_page/relink_sheet.dart",
+        "mobile/lib/shared/hosted_agents/hosted_owner_rebind.dart",
+        "mobile/test/shared/hosted_agents/hosted_owner_rebind_test.dart"
+      ]
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz mobile maintainers",
       "purpose": "Media image cache identity by value: MediaGetAuthService compares equal by cacheScope (relay base URL + signing public key, never the secret), so MediaImageProvider keys (which already compare the auth service) keep ImageCache hits when the service is rebuilt for the same relay and account. Without it every relay-config rebuild re-downloaded each visible image (a 7.7 MB avatar per reconnect in production, 2026-10-17). Relay or account switches still never share cached bytes. Tests live in a fork-owned file.",
       "upstreamStatus": "Generic fix written for upstream submission; not yet submitted to block/buzz.",
@@ -1578,23 +1598,23 @@
     },
     {
       "classification": "retain-generic",
-      "owner": "Buzz hosted-agent maintainers",
-      "purpose": "Owner-key re-link for hosted agents, desktop and mobile. After an owner rotates their Buzz key, a hosted provider can still hold their agents under the earlier key. The provider's POST /owner/agents/list answer now carries owner_public_key per agent; an agent is offered for re-link only when that key is present and differs from the signed-in key (null is never stale; deleted agents are skipped). The owner reviews the stale agents with checkboxes (all selected), and only their confirm tap signs: one fresh request id, one NIP-OA owner attestation (compact [\"auth\",owner,\"\",sig]) per selected agent and no other, and one fresh single-use kind-27236 buzz-provider-owner-v1 proof with exactly action=rebind_owner_key, provider, request, agent=\"\", community, payload (SHA-256 of the canonical body without the proof) and expires (5 minutes), sent to POST /owner/agents/rebind-owner-key. Nothing retries on its own; a retry is another tap that sends only the retryable agents (profile_revision_conflict, rebind_failed, or an agent the answer omitted) with a new request and proof. Answers are bound to the request id, the current owner key and exactly the requested agents; each agent's outcome is shown in plain words (Re-linked, Already linked, or a one-sentence reason) and whole-request errors as one sentence. Desktop signs and calls the API natively (provider-neutral extension; API base and provider id come from BUZZ_BUILD_HOSTED_AGENTS_URL / BUZZ_BUILD_HOSTED_PROVIDER_ID, falling back to the release composition's BUZZ_HOSTED_API_BASE_URL / BUZZ_PROVIDER_ID; hidden when either is unset) and shows the card in Profile settings through the existing AccountLinkCard mount; mobile adds it to the Agents page. Hooks: two extension re-exports and three command registrations in lib.rs/extensions/mod.rs, one part line pair plus one row in hosted_agents_page.dart, one optional field in the hosted snapshot, one client and list method, one proof builder.",
-      "upstreamStatus": "Provider-neutral client of a hosted provider route; not submitted to block/buzz.",
-      "removalCondition": "Drop when hosted providers re-link agents during key rotation without an owner action, or upstream ships an equivalent owner-key re-link flow.",
+      "owner": "Buzz messaging maintainers",
       "paths": [
-        "desktop/src-tauri/src/extensions/hosted_owner_relink/mod.rs",
-        "desktop/src-tauri/src/extensions/hosted_owner_relink/request.rs",
-        "desktop/src-tauri/src/extensions/hosted_owner_relink/request_tests.rs",
-        "desktop/src/features/hosted-owner-relink/lib/client.ts",
-        "desktop/src/features/hosted-owner-relink/lib/relink.test.mjs",
-        "desktop/src/features/hosted-owner-relink/lib/relink.ts",
-        "desktop/src/features/hosted-owner-relink/ui/HostedOwnerRelinkCard.tsx",
-        "mobile/lib/features/agents/hosted_agents_page/relink_prompt.dart",
-        "mobile/lib/features/agents/hosted_agents_page/relink_sheet.dart",
-        "mobile/lib/shared/hosted_agents/hosted_owner_rebind.dart",
-        "mobile/test/shared/hosted_agents/hosted_owner_rebind_test.dart"
-      ]
+        "docs/agent-dm-markers.md"
+      ],
+      "purpose": "Agent DM markers v1: the shared tag contract between agent runtimes and the desktop/mobile clients for 1:1 agent DMs. Agent-signed mirrored history from other surfaces (buzz-mirror, quiet kind 40002 with no p tag), session dividers and listings (buzz-session, buzz-sessions) with the /sessions, /new and /sessions load commands, question cards (buzz-question, buzz-question-state, buzz-answer) and action buttons (buzz-action). Kiingo W6 (one agent, one conversation, one native session).",
+      "removalCondition": "Drop when upstream defines equivalent agent DM markers or Kiingo agents stop publishing them.",
+      "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz agent harness maintainers",
+      "paths": [
+        "crates/buzz-acp/src/agent_dm_markers.rs"
+      ],
+      "purpose": "Quiet agent DM markers (docs/agent-dm-markers.md: buzz-mirror, buzz-session, buzz-sessions, buzz-question-state) are left out of an agent's DM conversation context: they are agent-signed presentation for people (mirrored history from other surfaces, session dividers and listings, question-card state), never prompt input. One filter hook in pool.rs parse_nostr_dm_response. Kiingo W6.",
+      "removalCondition": "Drop when upstream excludes presentation-only agent DM markers from prompt context, or Kiingo agents stop publishing them.",
+      "upstreamStatus": "Generic, provider-neutral; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
