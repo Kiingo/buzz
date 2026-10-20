@@ -400,6 +400,8 @@ class ChannelDetailsPage extends HookConsumerWidget {
               ),
             ),
           ),
+          if (counterpart != null && (counterpartProfile?.isAgent ?? false))
+            AgentDetailsCard(agentPubkey: counterpart),
           if (!isDirectDm)
             AppListCard(
               key: const ValueKey('channel-details-members-card'),
