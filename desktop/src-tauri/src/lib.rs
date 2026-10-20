@@ -69,6 +69,7 @@ use deep_link::{
     take_pending_navigation_deep_link, PendingCommunityDeepLinks, PendingEntityDeepLinks,
     PendingNavigationDeepLinks,
 };
+use extensions::agent_commands_fetch;
 use extensions::agent_session_controls_available;
 use extensions::{
     abort_identity_rotation, acknowledge_pending_identity_rotation, hosted_owner_relink_available,
@@ -558,6 +559,7 @@ pub fn run() {
             take_pending_entity_deep_link,
             acknowledge_pending_entity_deep_link,
             take_pending_identity_rotation,
+            agent_commands_fetch,
             key_replacement_status,
             confirm_key_replacement,
             key_replacement_confirmed,

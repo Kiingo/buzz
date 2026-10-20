@@ -3,9 +3,11 @@
 //! Concrete extension implementations live here so the upstream application
 //! shell needs only stable registration hooks.
 
+pub(crate) mod agent_commands;
 pub(crate) mod hosted_owner_relink;
 pub(crate) mod identity_rotation;
 
+pub(crate) use agent_commands::agent_commands_fetch;
 pub(crate) use hosted_owner_relink::{
     hosted_owner_relink_available, hosted_owner_relink_list, hosted_owner_relink_rebind,
 };
