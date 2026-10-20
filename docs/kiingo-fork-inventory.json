@@ -1151,6 +1151,23 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz messaging maintainers",
+      "purpose": "Desktop \"/\" command menu for agent DMs (Claude Code style). Only in a 1:1 DM whose other member is an agent (top-level composer; not edit, reply or thread), typing \"/\" at the start of the composer opens a menu filtered as you type (prefix then substring matches; arrows move, Tab/Enter choose, Esc closes; click chooses). The list comes from the guest route's GET /agents/<agent pubkey>/commands, signed natively with NIP-98 (kind 27235, u = exact URL, method GET) by the signed-in user with X-Buzz-Community, fetched lazily the first time the menu opens for an agent and cached per agent key with the ETag (If-None-Match revalidation at most once a minute; 304 keeps the list). The body is validated (contract_version 1, same agent key; session commands only new/sessions, skills with a bounded name and skill_id; skills shadowing a session command dropped); any error (403 identity_not_linked, 404 agent_not_found, timeout, invalid body) shows no menu and is not retried in a loop. Session commands appear only when listed and, when chosen, send /new or /sessions as the same plain message as before. Choosing a skill puts \"/<name> \" in the composer with its argument_hint shown until arguments are typed; on send, a listed skill invocation goes out as one user-signed kind 9 top-level message with content \"/<name> <args>\" and exactly one [\"buzz-skill\", skill_id, args] tag (args trimmed, at most 4000 characters, refused visibly when longer), addressed to the DM members like the composer; the composer and its draft clear only after a successful send. The cache is cleared in resetCommunityState(). Hooks: one module plus re-export in extensions/mod.rs, one use line and one command registration in lib.rs, and the menu, key handling, query update and skill send in MessageComposer.tsx.",
+      "upstreamStatus": "Generic mechanism configured by the build-time guest route URL; not yet proposed upstream.",
+      "removalCondition": "Remove when block/buzz ships agent slash commands or agents stop listing commands.",
+      "paths": [
+        "desktop/src-tauri/src/extensions/agent_commands/mod.rs",
+        "desktop/src/features/agent-dm/lib/slashCommands.test.mjs",
+        "desktop/src/features/agent-dm/lib/slashCommands.ts",
+        "desktop/src/features/agent-dm/lib/slashQuery.test.mjs",
+        "desktop/src/features/agent-dm/lib/slashQuery.ts",
+        "desktop/src/features/agent-dm/ui/AgentSlashCommandMenu.tsx",
+        "desktop/src/features/agent-dm/ui/useAgentSlashCommands.ts",
+        "desktop/src/features/messages/ui/MessageComposer.tsx"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
       "purpose": "Desktop rendering of agent DM markers v1 (docs/agent-dm-markers.md), honoured only in DM channels on events signed by a DM member: strict parsers for every marker; mirrored history (buzz-mirror) shown as the requester only when the claimed pubkey is 64-hex, not the signer, a known DM member and the signer is an agent, otherwise as the signer with \"Relayed by\", with a via-surface badge whose tooltip gives the original time and subject, and with edit/delete still keyed to the signer; quiet markers (mirrors, session dividers, sessions listings, question state) kept out of live unread, mentions, DM alerts, notifications and home activity in useLiveChannelUpdates, the inactive-community unread observer, the in-channel unread divider and native unread catch-up, while still advancing recency; full-width session dividers; question-state events render no row; a DM-header sessions picker for 1:1 agent DMs (reuses a listing under 2 minutes old, else sends /sessions and waits 15 s; New session and Load with optional catch-up confirm first); question cards (tap-to-send or select-then-send, Other text, Answered/Closed states) that send buzz-answer tags; and up to three buzz-action buttons that send send_text with [buzz-action-ref, ref] and disable after a successful tap. Upstream files carry one-line hooks; the logic lives under desktop/src/features/agent-dm and src-tauri agent_dm_quiet.rs. Kiingo W6.",
       "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz.",
       "removalCondition": "Drop when upstream renders equivalent agent DM markers or agents stop publishing them.",

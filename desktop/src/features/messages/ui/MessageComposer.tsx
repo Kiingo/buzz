@@ -67,6 +67,9 @@ import { useComposerLinkPreviews } from "./useComposerLinkPreviews";
 import { useAddressedAgentMentionRestore } from "./useAddressedAgentMentionRestore";
 import { scheduleSettleGatedAutoSubmit } from "./messageComposerAutoSubmit";
 import type { MessageComposerProps } from "./MessageComposer.types";
+import type { AgentSlashCommand } from "@/features/agent-dm/lib/slashCommands";
+import { AgentSlashCommandMenu } from "@/features/agent-dm/ui/AgentSlashCommandMenu";
+import { useAgentSlashCommands } from "@/features/agent-dm/ui/useAgentSlashCommands";
 function MessageComposerImpl({
   audienceContext = null,
   channelId = null,
@@ -150,6 +153,12 @@ function MessageComposerImpl({
   const channelLinks = useChannelLinks();
   const customEmoji = useCustomEmoji();
   const emojiAutocomplete = useEmojiAutocomplete(customEmoji);
+  const agentSlash = useAgentSlashCommands({
+    channelId,
+    enabled:
+      editTarget == null && replyTarget == null && audienceContext == null,
+    profiles,
+  });
   const notifyTyping = useTypingBroadcast(
     channelId,
     typingParentEventId,
@@ -253,7 +262,8 @@ function MessageComposerImpl({
   isAutocompleteOpenRef.current =
     mentions.isMentionOpen ||
     channelLinks.isChannelOpen ||
-    emojiAutocomplete.isEmojiAutocompleteOpen;
+    emojiAutocomplete.isEmojiAutocompleteOpen ||
+    agentSlash.isOpen;
   const submitMessageRef = React.useRef<() => void>(() => {});
   const composerScrollRef = React.useRef<HTMLDivElement>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
@@ -308,6 +318,7 @@ function MessageComposerImpl({
       mentions.updateMentionQuery(text, cursor);
       channelLinks.updateChannelQuery(text, cursor);
       emojiAutocomplete.updateEmojiQuery(text, cursor);
+      agentSlash.updateQuery(text, cursor);
       if (text.trim().length > 0) {
         notifyTyping();
       }
@@ -506,6 +517,14 @@ function MessageComposerImpl({
       richText.getPlainTextAndCursor,
     ],
   );
+  const chooseAgentSlashCommand = React.useCallback(
+    (command: AgentSlashCommand) =>
+      agentSlash.choose(command, {
+        applyEdit: applyAutocompleteEdit,
+        submit: () => submitMessageRef.current(),
+      }),
+    [agentSlash.choose, applyAutocompleteEdit],
+  );
   // ── Emoji insertion ─────────────────────────────────────────────────
   const insertEmoji = React.useCallback(
     (emoji: string) => {
@@ -632,6 +651,24 @@ function MessageComposerImpl({
     setIsSubmitLocked(true);
     onPreparingMentionSendChange?.(true);
     try {
+      if (
+        !hasMedia &&
+        capturedThreadContext === null &&
+        (await agentSlash.sendSkillIfInvoked(
+          richText.getPlainTextAndCursor().text,
+          () => {
+            setComposerContent("");
+            contentRef.current = "";
+            richText.clearContent();
+            mentions.clearMentions();
+            channelLinks.clearChannels();
+            emojiAutocomplete.clearEmojis();
+            if (effectiveDraftKey) drafts.clearDraft(effectiveDraftKey);
+          },
+        ))
+      ) {
+        return;
+      }
       const preparedLinkPreviews = getReadyLinkPreviewTags().some(
         (tag) => tag[1] === "none",
       )
@@ -659,9 +696,12 @@ function MessageComposerImpl({
       onPreparingMentionSendChange?.(false);
     }
   }, [
+    agentSlash.sendSkillIfInvoked,
     channelId,
     channelLinks.clearChannels,
+    contentRef,
     customEmoji,
+    drafts.clearDraft,
     drafts.loadDraft,
     emojiAutocomplete.clearEmojis,
     getLiveLinkPreviewCandidates,
@@ -676,6 +716,7 @@ function MessageComposerImpl({
     mentionSendFlow.sendMessageWithMentionFlow,
     mentions.clearMentions,
     richText.clearContent,
+    richText.getPlainTextAndCursor,
     richText.setContent,
     setComposerContent,
     setSpoileredAttachmentUrls,
@@ -726,6 +767,11 @@ function MessageComposerImpl({
   const handleEditorKeyDown = React.useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (handleAlwaysAddressShortcut(event)) return;
+      const slashResult = agentSlash.handleKeyDown(event);
+      if (slashResult.handled) {
+        if (slashResult.choice) chooseAgentSlashCommand(slashResult.choice);
+        return;
+      }
       // Let autocomplete handle keys first
       const emojiResult = emojiAutocomplete.handleEmojiKeyDown(event);
       if (emojiResult.handled) {
@@ -784,6 +830,8 @@ function MessageComposerImpl({
     },
     [
       handleAlwaysAddressShortcut,
+      agentSlash.handleKeyDown,
+      chooseAgentSlashCommand,
       emojiAutocomplete.handleEmojiKeyDown,
       applyEmojiInsert,
       channelLinks.handleChannelKeyDown,
@@ -896,6 +944,11 @@ function MessageComposerImpl({
                   preserveMention: true,
                 })
               }
+            />
+            <AgentSlashCommandMenu
+              composerOwnsFocus={composerOwnsFocus}
+              onChoose={chooseAgentSlashCommand}
+              slash={agentSlash}
             />
             {media.uploadState.status === "error" ? (
               <div className="mb-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
