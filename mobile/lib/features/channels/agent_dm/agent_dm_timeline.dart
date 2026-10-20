@@ -51,6 +51,7 @@ class AgentDmTimeline {
   final Set<String> _members;
   final Map<String, String> _signers;
   final Map<String, AgentDmMirror> _mirrors;
+  final Map<String, AgentDmCall> _calls;
   final Map<String, AgentDmSessionDivider> _dividers;
   final Map<String, AgentDmListingEvent> _listings;
   final Set<String> _hidden;
@@ -64,6 +65,7 @@ class AgentDmTimeline {
     required Set<String> members,
     required Map<String, String> signers,
     required Map<String, AgentDmMirror> mirrors,
+    Map<String, AgentDmCall> calls = const {},
     required Map<String, AgentDmSessionDivider> dividers,
     required Map<String, AgentDmListingEvent> listings,
     required Set<String> hidden,
@@ -75,6 +77,7 @@ class AgentDmTimeline {
   }) : _members = members,
        _signers = signers,
        _mirrors = mirrors,
+       _calls = calls,
        _dividers = dividers,
        _listings = listings,
        _hidden = hidden,
@@ -114,6 +117,7 @@ class AgentDmTimeline {
     final agents = {for (final pubkey in agentPubkeys) pubkey.toLowerCase()};
     final signers = <String, String>{};
     final mirrors = <String, AgentDmMirror>{};
+    final calls = <String, AgentDmCall>{};
     final dividers = <String, AgentDmSessionDivider>{};
     final listings = <String, AgentDmListingEvent>{};
     final hidden = <String>{};
@@ -133,6 +137,8 @@ class AgentDmTimeline {
         switch (marker) {
           case AgentDmQuietMarker.mirror:
             mirrors[event.id] = readAgentDmMirror(event.tags)!;
+            final call = readAgentDmCall(event.tags);
+            if (call != null) calls[event.id] = call;
           case AgentDmQuietMarker.sessionDivider:
             dividers[event.id] = readAgentDmSessionDivider(event.tags)!;
           case AgentDmQuietMarker.sessionsListing:
@@ -175,6 +181,7 @@ class AgentDmTimeline {
       members: Set.unmodifiable(members),
       signers: Map.unmodifiable(signers),
       mirrors: Map.unmodifiable(mirrors),
+      calls: Map.unmodifiable(calls),
       dividers: Map.unmodifiable(dividers),
       listings: Map.unmodifiable(listings),
       hidden: Set.unmodifiable(hidden),
@@ -188,6 +195,9 @@ class AgentDmTimeline {
 
   /// The mirror marker on message [id], or null.
   AgentDmMirror? mirrorOf(String id) => _mirrors[id];
+
+  /// The call card on message [id], or null.
+  AgentDmCall? callOf(String id) => _calls[id];
 
   /// The session divider on message [id], or null.
   AgentDmSessionDivider? dividerOf(String id) => _dividers[id];

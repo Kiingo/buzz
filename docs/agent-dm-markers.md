@@ -26,7 +26,7 @@ message) copied into the DM as history. It is never a reply and never a push.
 - `["h", <channel uuid>]`. No `p` tags. No `e` tags.
 - `["buzz-mirror", <surface>, <source_id>, <original_unix_seconds>]`
   - `surface` matches `^[a-z][a-z0-9_-]{0,31}$`. Known values: `email`,
-    `teams`, `sms`, `web`.
+    `teams`, `sms`, `web`, `voice`.
   - `source_id` is opaque (at most 256 characters); it identifies the original
     message on its surface.
   - `original_unix_seconds` is the original message's time.
@@ -44,11 +44,31 @@ Rendering:
   Otherwise shown as the signer with the label "Relayed by <signer name>"; a
   claimed name is never displayed as an author.
 - Badge: `email` → "via email", `teams` → "via Teams", `sms` → "via SMS",
-  `web` → "via web", anything else → "via <surface>". The tooltip or details
+  `web` → "via web", `voice` → "via voice call", anything else → "via
+  <surface>". The tooltip or details
   view gives the original time and, when present, the subject.
 - Quiet. Edits, deletion and moderation stay keyed to the signer; the agent
   deletes a mirror with an ordinary kind 5 deletion when the source's retention
   ends.
+
+### Call card: `buzz-call`
+
+One quiet mirror per voice call in the private DM, from the agent: the mirror
+tags with surface `voice` (the call id as `source_id`, the call's start as the
+time, role `agent`) plus exactly one
+
+- `["buzz-call", <inbound|outbound>, <duration_seconds>, <call_surface>]`
+  - `call_surface` matches the surface pattern (`web`, `tasks_ios`,
+    `link_ios`, `buzz_huddle`, ...).
+
+Content is the readable fallback, at most 8,000 characters (the transcript's
+tail is kept): `Call · N min`, a blank line, the summary, then a blank line,
+`Transcript` and the `You:` / `Voice:` / `Agent:` lines.
+
+Rendering: a collapsed card titled from the tag (`Call · N min`, at least one
+minute) with the summary; "Show transcript" expands everything after
+`Transcript`. A `voice` mirror without `buzz-call` (a spoken reply sent to
+chat) is an ordinary mirror badged "via voice call". Quiet like every mirror.
 
 ## 2. Session divider: `buzz-session`
 
