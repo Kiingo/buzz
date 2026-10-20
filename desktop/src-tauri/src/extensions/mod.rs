@@ -21,7 +21,9 @@ pub(crate) fn try_handle_deep_link(app: &tauri::AppHandle, url: &url::Url) -> bo
 }
 
 pub(crate) mod key_replacement;
+pub(crate) mod session_controls;
 pub(crate) use key_replacement::{
     confirm_key_replacement, key_replacement_confirmed, key_replacement_status,
     old_owner_key_removed, remove_old_owner_key,
 };
+pub(crate) use session_controls::agent_session_controls_available;
