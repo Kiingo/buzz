@@ -8,6 +8,7 @@ import 'package:buzz/shared/theme/buzz_icons.dart';
 
 import '../../shared/clipboard_utils.dart';
 import '../../shared/identity_names/identity_names_provider.dart';
+import 'agent_dm/agent_details_card.dart';
 import 'dm_channel_labels.dart';
 import '../../shared/mentions/agent_identity_provider.dart';
 import '../../shared/theme/theme.dart';
