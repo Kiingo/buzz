@@ -146,6 +146,7 @@ const SURFACE_LABELS: Record<string, string> = {
   teams: "via Teams",
   sms: "via SMS",
   web: "via web",
+  voice: "via voice call",
 };
 
 export function mirrorBadgeLabel(surface: string) {
@@ -167,6 +168,71 @@ export function mirrorDisplayAuthorPubkey(
   return isDmMember(channel, mirror.authorPubkey, false)
     ? mirror.authorPubkey
     : null;
+}
+
+// ── 1b. Call card ─────────────────────────────────────────────────────────
+
+export type AgentCallDirection = "inbound" | "outbound";
+
+export type AgentCall = {
+  direction: AgentCallDirection;
+  durationS: number;
+  /** Where the call happened, such as `web` or `buzz_huddle`. */
+  surface: string;
+};
+
+/**
+ * `["buzz-call", direction, durationS, surface]` on a `voice` mirror:
+ * exactly one such tag of exactly four elements. Anything else is not a call
+ * card and renders as the plain mirror.
+ */
+export function parseCall(tags: Tags): AgentCall | null {
+  const mirror = parseMirror(tags);
+  const calls = (tags ?? []).filter((tag) => tag[0] === "buzz-call");
+  if (mirror?.surface !== "voice" || calls.length !== 1) return null;
+  const tag = calls[0];
+  if (tag?.length !== 4) return null;
+  const [, direction, duration, surface] = tag;
+  if (
+    (direction !== "inbound" && direction !== "outbound") ||
+    !duration ||
+    !COUNT_RE.test(duration) ||
+    !surface ||
+    !SURFACE_RE.test(surface)
+  ) {
+    return null;
+  }
+  return { direction, durationS: Number(duration), surface };
+}
+
+/** "Call · N min", rounded and never below one minute. */
+export function callTitle(call: AgentCall) {
+  const minutes = Math.round(call.durationS / 60);
+  return `Call · ${minutes < 1 ? 1 : minutes} min`;
+}
+
+const TRANSCRIPT_HEADER = "\n\nTranscript\n";
+
+/**
+ * A call card's readable content split into the summary (the head without
+ * its own "Call · N min" line, since the card titles itself from the tag)
+ * and everything after `Transcript`.
+ */
+export function splitCallContent(content: string): {
+  summary: string;
+  transcript: string | null;
+} {
+  const at = content.indexOf(TRANSCRIPT_HEADER);
+  const head = at < 0 ? content : content.slice(0, at);
+  const transcript =
+    at < 0 ? null : content.slice(at + TRANSCRIPT_HEADER.length).trim();
+  const parts = head.split("\n\n");
+  const summary = (
+    parts.length > 1 && parts[0]?.startsWith("Call ·")
+      ? parts.slice(1).join("\n\n")
+      : head
+  ).trim();
+  return { summary, transcript: transcript ? transcript : null };
 }
 
 // ── 2. Session divider ────────────────────────────────────────────────────

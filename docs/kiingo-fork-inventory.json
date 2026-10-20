@@ -1655,6 +1655,31 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "purpose": "Desktop \"Agent\" section in an agent's profile panel for a viewer who has a 1:1 DM with that agent, matching the mobile details card (#233): About, Runs on (harness · model · effort, \"(pinned)\"), For you (the resolved model and effort, or a plain reason: connect your <harness> subscription, or not available with your connected accounts), Where (machine name, a connected machine, or hosted compute), Your session (title · N turns), Owner (display name, \"Your organization\" for an Organization principal), skills, Tools (MCP tools, full or standard trust), and an \"Edit agent\" row opened in the browser, https only, shown only when edit_url is set. Data comes from the guest route's GET /agents/<agent pubkey>/summary, signed natively with NIP-98 (kind 27235, exact URL, GET) by the signed-in user with X-Buzz-Community; the body is validated (contract_version 1, same agent key, agent name) and cached two minutes per agent, failures included, so a failure means no section and no retry loop. The cache is cleared in resetCommunityState(). Hooks: one module plus re-export in extensions/mod.rs, one use line and one command registration in lib.rs, one element in UserProfilePanelSections.tsx, and one reset line in useCommunityInit.ts.",
+      "upstreamStatus": "Generic mechanism configured by the build-time guest route URL; not yet proposed upstream.",
+      "removalCondition": "Remove when block/buzz shows hosted agent details or the guest route stops serving summaries.",
+      "paths": [
+        "desktop/src-tauri/src/extensions/agent_summary/mod.rs",
+        "desktop/src/features/agent-dm/lib/agentSummary.test.mjs",
+        "desktop/src/features/agent-dm/lib/agentSummary.ts",
+        "desktop/src/features/agent-dm/ui/AgentSummarySection.tsx",
+        "desktop/src/features/profile/ui/UserProfilePanelSections.tsx"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "purpose": "Desktop voice call card for agent DMs (contract B-B2, matching the mobile reader in #234): a quiet kind 40002 voice mirror (buzz-mirror surface voice, role agent) with exactly one [\"buzz-call\", inbound|outbound, duration seconds, surface] tag renders as a collapsed card titled \"Call · N min\" from the tag (rounded, at least one minute) with the direction and the summary from the content; \"Show transcript\" expands everything after the Transcript line. A voice mirror without a valid buzz-call tag is an ordinary mirror badged \"via voice call\". Call cards stay quiet like every mirror. The parser, title and content split live beside the other marker parsers; the timeline projection marks the row as a call.",
+      "upstreamStatus": "Generic, provider-neutral extension of the agent DM markers; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream renders equivalent call records or agents stop publishing buzz-call mirrors.",
+      "paths": [
+        "desktop/src/features/agent-dm/lib/callCard.test.mjs",
+        "desktop/src/features/agent-dm/ui/AgentCallCard.tsx"
+      ]
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz mobile maintainers",
       "purpose": "Media image cache identity by value: MediaGetAuthService compares equal by cacheScope (relay base URL + signing public key, never the secret), so MediaImageProvider keys (which already compare the auth service) keep ImageCache hits when the service is rebuilt for the same relay and account. Without it every relay-config rebuild re-downloaded each visible image (a 7.7 MB avatar per reconnect in production, 2026-10-17). Relay or account switches still never share cached bytes. Tests live in a fork-owned file.",
       "upstreamStatus": "Generic fix written for upstream submission; not yet submitted to block/buzz.",

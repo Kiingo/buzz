@@ -69,6 +69,7 @@ use deep_link::{
     take_pending_navigation_deep_link, PendingCommunityDeepLinks, PendingEntityDeepLinks,
     PendingNavigationDeepLinks,
 };
+use extensions::agent_summary_fetch;
 use extensions::{
     abort_identity_rotation, acknowledge_pending_identity_rotation, hosted_owner_relink_available,
     hosted_owner_relink_list, hosted_owner_relink_rebind, identity_rotation_renderer_continuity,
@@ -565,6 +566,7 @@ pub fn run() {
             acknowledge_pending_identity_rotation,
             identity_rotation_renderer_continuity,
             identity_rotation_status,
+            agent_summary_fetch,
             inspect_identity_rotation_handoff,
             run_identity_rotation,
             abort_identity_rotation,

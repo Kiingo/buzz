@@ -12,6 +12,7 @@ import {
   mirrorDisplayAuthorPubkey,
   parseActions,
   parseAnswerAskId,
+  parseCall,
   parseMirror,
   parseQuestion,
   parseQuestionState,
@@ -24,6 +25,7 @@ export type AgentDmQuestionState = "open" | AgentQuestionStateValue;
 
 export type AgentDmMessageKind =
   | "mirror"
+  | "call"
   | "divider"
   | "listing"
   | "question"
@@ -49,7 +51,8 @@ export function agentDmMessageKinds(
   if (!message.agentDmMarkers) return [];
   const tags = message.tags ?? [];
   if (message.kind === KIND_AGENT_DM_QUIET) {
-    if (parseMirror(tags)) return ["mirror"];
+    if (parseMirror(tags))
+      return parseCall(tags) ? ["mirror", "call"] : ["mirror"];
     if (parseSessionDivider(tags)) return ["divider"];
     if (parseSessionsListing(tags)) return ["listing"];
     return [];

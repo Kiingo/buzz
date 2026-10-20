@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import { OtherSetupAgentMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 import { useIsOtherSetupAgent } from "@/features/agents/useKnownAgentPubkeys";
 import { useAgentWorking } from "@/features/agents/agentWorkingSignal";
+import { AgentSummarySection } from "@/features/agent-dm/ui/AgentSummarySection";
 import { agentPresenceStartBlockReason } from "@/features/agents/lib/useAgentAvailability";
 import {
   getManagedAgentPrimaryActionLabel,
@@ -479,6 +480,7 @@ export function ProfileSummaryView({
         />
       ) : null}
 
+      {isBot && pubkey ? <AgentSummarySection agentPubkey={pubkey} /> : null}
       {showTabSection ? (
         <section className={cn(isBot ? "space-y-0" : "space-y-3")}>
           {showTabBar ? (

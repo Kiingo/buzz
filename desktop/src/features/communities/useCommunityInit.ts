@@ -40,6 +40,7 @@ import {
   restoreActiveAgentTurnsForCommunity,
 } from "@/features/agents/activeAgentTurnsStore";
 import { resetAgentWorkingSignal } from "@/features/agents/agentWorkingSignal";
+import { resetAgentSummaryCache } from "@/features/agent-dm/lib/agentSummary";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
 import { resetGuestAccessState } from "@/features/guest-access/lib/reset";
 import { resetAgentDmState } from "@/features/agent-dm/lib/registry";
@@ -86,6 +87,7 @@ async function resetCommunityState({
     resetAvatarPresentations();
   }
   resetSidebarRelayConnectionCardState();
+  resetAgentSummaryCache();
   resetMediaCaches();
   resetLinkPreviewMetadataCache();
   resetVideoPlayerState();
