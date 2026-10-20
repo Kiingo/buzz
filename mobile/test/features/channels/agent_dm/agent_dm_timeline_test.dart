@@ -1,0 +1,214 @@
+import 'package:buzz/features/channels/agent_dm/agent_dm_timeline.dart';
+import 'package:buzz/features/channels/timeline_message.dart';
+import 'package:buzz/shared/relay/relay.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+const _agent =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _me = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _outsider =
+    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+
+NostrEvent _event(
+  String id,
+  List<List<String>> markers, {
+  int kind = EventKind.streamMessageV2,
+  String signer = _agent,
+  int createdAt = 10,
+}) => NostrEvent(
+  id: id,
+  pubkey: signer,
+  createdAt: createdAt,
+  kind: kind,
+  tags: [
+    ['h', 'dm'],
+    ...markers,
+  ],
+  content: 'content $id',
+  sig: 'sig',
+);
+
+TimelineMessage _message(NostrEvent event) => TimelineMessage(
+  id: event.id,
+  pubkey: event.pubkey,
+  createdAt: event.createdAt,
+  content: event.content,
+  tags: event.tags,
+);
+
+AgentDmTimeline _build(List<NostrEvent> events, {bool isDm = true}) =>
+    AgentDmTimeline.build(
+      events: events,
+      isDm: isDm,
+      memberPubkeys: const [_agent, _me],
+      currentPubkey: _me,
+      agentPubkeys: const {_agent},
+    );
+
+const _question = [
+  ['buzz-question', 'ask-1'],
+  ['buzz-question-item', 'q1', 'Ship?', '', '0', '0'],
+  ['buzz-question-option', 'q1', 'Yes', ''],
+];
+
+void main() {
+  final mirror = _event('mirror', const [
+    ['buzz-mirror', 'email', 'm-1', '1700000000'],
+    ['buzz-mirror-author', 'requester', _me, 'Ross'],
+  ]);
+  final relayed = _event('relayed', const [
+    ['buzz-mirror', 'teams', 'm-2', '1700000000'],
+    ['buzz-mirror-author', 'requester', _outsider, 'Mallory'],
+  ]);
+  final divider = _event('divider', const [
+    ['buzz-session', 'load', 's-1'],
+  ]);
+  final listing = _event('listing', const [
+    ['buzz-sessions', ''],
+    ['buzz-session-item', 's-1', 'current', '1', '2', 'Now', '1', '4'],
+  ]);
+  final state = _event('state', const [
+    ['buzz-question-state', 'ask-1', 'closed'],
+  ], createdAt: 20);
+  final question = _event('question', _question, kind: EventKind.streamMessage);
+
+  test('indexes markers only in a DM', () {
+    final timeline = _build([mirror, divider, listing, state, question]);
+    expect(timeline.mirrorOf('mirror'), isNotNull);
+    expect(timeline.dividerOf('divider')?.label, 'Earlier session loaded');
+    expect(timeline.listingOf('listing')?.listing.items.single.title, 'Now');
+    expect(timeline.hidesRow('state'), isTrue);
+    expect(timeline.questionOf('question')?.askId, 'ask-1');
+
+    final stream = _build([mirror, divider, question], isDm: false);
+    expect(stream.mirrorOf('mirror'), isNull);
+    expect(stream.dividerOf('divider'), isNull);
+    expect(stream.questionOf('question'), isNull);
+  });
+
+  test('ignores markers from non-members and on the wrong kind', () {
+    final timeline = _build([
+      _event('foreign', const [
+        ['buzz-session', 'new', ''],
+      ], signer: _outsider),
+      _event('kind9', const [
+        ['buzz-session', 'new', ''],
+      ], kind: EventKind.streamMessage),
+      _event('quiet-question', _question),
+    ]);
+    expect(timeline.dividerOf('foreign'), isNull);
+    expect(timeline.dividerOf('kind9'), isNull);
+    expect(timeline.questionOf('quiet-question'), isNull);
+  });
+
+  test('question cards and actions need an agent signer other than me', () {
+    final timeline = _build([
+      _event('mine', _question, kind: EventKind.streamMessage, signer: _me),
+    ]);
+    expect(timeline.questionOf('mine'), isNull);
+  });
+
+  test('requester mirrors show a member author or say who relayed them', () {
+    final timeline = _build([mirror, relayed]);
+    expect(timeline.authorOf(_message(mirror)), _me);
+    expect(timeline.isRelayed(_message(mirror)), isFalse);
+    expect(timeline.authorOf(_message(relayed)), _agent);
+    expect(timeline.isRelayed(_message(relayed)), isTrue);
+  });
+
+  group('question status', () {
+    test('open, then closed by the asking agent', () {
+      expect(
+        _build([question]).questionStatusOf('question'),
+        AgentDmQuestionStatus.open,
+      );
+      expect(
+        _build([question, state]).questionStatusOf('question'),
+        AgentDmQuestionStatus.closed,
+      );
+    });
+
+    test('an answer from the other member wins over closed', () {
+      final answer = _event(
+        'answer',
+        const [
+          ['buzz-answer', 'ask-1'],
+        ],
+        kind: EventKind.streamMessage,
+        signer: _me,
+        createdAt: 15,
+      );
+      expect(
+        _build([question, state, answer]).questionStatusOf('question'),
+        AgentDmQuestionStatus.answered,
+      );
+    });
+
+    test('the agent answering its own ask does not count', () {
+      final selfAnswer = _event('self', const [
+        ['buzz-answer', 'ask-1'],
+      ], kind: EventKind.streamMessage);
+      expect(
+        _build([question, selfAnswer]).questionStatusOf('question'),
+        AgentDmQuestionStatus.open,
+      );
+    });
+
+    test('an answered state event marks the card answered', () {
+      final answered = _event('answered', const [
+        ['buzz-question-state', 'ask-1', 'answered'],
+      ], createdAt: 30);
+      expect(
+        _build([question, state, answered]).questionStatusOf('question'),
+        AgentDmQuestionStatus.answered,
+      );
+    });
+  });
+
+  test('actions are used once my message carries one of their refs', () {
+    final reply = _event('reply', const [
+      ['buzz-action', 'retry', 'Retry', 'retry', 'primary', 'ref-1'],
+      [
+        'buzz-action',
+        'continue_on_claude',
+        'Continue',
+        'go',
+        'secondary',
+        'ref-2',
+      ],
+    ], kind: EventKind.streamMessage);
+    expect(_build([reply]).actionsOf('reply'), hasLength(2));
+    expect(_build([reply]).actionsUsed('reply'), isFalse);
+    final tap = _event(
+      'tap',
+      const [
+        ['buzz-action-ref', 'ref-2'],
+      ],
+      kind: EventKind.streamMessage,
+      signer: _me,
+    );
+    expect(_build([reply, tap]).actionsUsed('reply'), isTrue);
+  });
+
+  test('newestListing picks the latest listing from the signer', () {
+    final older = _event('older', const [
+      ['buzz-sessions', ''],
+    ], createdAt: 5);
+    final newer = _event('newer', const [
+      ['buzz-sessions', ''],
+    ], createdAt: 50);
+    final timeline = _build([newer, older]);
+    expect(timeline.newestListing(signerPubkey: _agent)?.eventId, 'newer');
+    expect(timeline.newestListing(signerPubkey: _me), isNull);
+    expect(timeline.listingIdsFrom(_agent), {'newer', 'older'});
+  });
+
+  test('present drops state rows and makes dividers and listings system', () {
+    final timeline = _build([mirror, divider, listing, state]);
+    final presented = timeline.present([
+      for (final event in [mirror, divider, listing, state]) _message(event),
+    ]);
+    expect(presented.map((m) => m.id), ['mirror', 'divider', 'listing']);
+    expect(presented.map((m) => m.isSystem), [false, true, true]);
+  });
+}

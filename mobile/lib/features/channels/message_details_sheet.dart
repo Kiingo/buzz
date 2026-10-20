@@ -7,6 +7,9 @@ import '../../shared/clipboard_utils.dart';
 import '../../shared/theme/buzz_icons.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/modal_presentation.dart';
+import '../../shared/agent_dm/agent_dm_markers.dart';
+import 'agent_dm/agent_dm_mirror_details.dart';
+import 'agent_dm/agent_dm_scope.dart';
 import 'reply_details.dart';
 import 'timeline_message.dart';
 
@@ -19,18 +22,24 @@ Future<void> showMessageDetailsSheet(
   BuildContext context,
   TimelineMessage message,
 ) {
+  // Read before the sheet: its route sits outside the timeline's scope.
+  final mirror = AgentDmScope.mirrorOf(context, message);
   return showBuzzModalBottomSheet<void>(
     context: context,
     title: 'Message details',
     isScrollControlled: true,
-    builder: (sheetContext) => MessageDetailsSheet(message: message),
+    builder: (sheetContext) =>
+        MessageDetailsSheet(message: message, mirror: mirror),
   );
 }
 
 class MessageDetailsSheet extends StatelessWidget {
   final TimelineMessage message;
 
-  const MessageDetailsSheet({super.key, required this.message});
+  /// The agent DM mirror marker, shown as the original time and subject.
+  final AgentDmMirror? mirror;
+
+  const MessageDetailsSheet({super.key, required this.message, this.mirror});
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +61,7 @@ class MessageDetailsSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (mirror case final mirror?) AgentDmMirrorDetails(mirror: mirror),
             if (details.hasMission) ...[
               Text('Kiingo mission', style: context.textTheme.titleSmall),
               const SizedBox(height: Grid.half),

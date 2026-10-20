@@ -1,3 +1,5 @@
+import 'agent_dm/agent_dm_scope.dart';
+import 'agent_dm/agent_dm_sessions_button.dart';
 import 'agent_reply_handoff.dart';
 import 'huddle_timeline.dart';
 import '../../shared/widgets/modal_presentation.dart';
@@ -517,6 +519,14 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
         showsComposer &&
         !isAgentIdentityUnresolved &&
         !_isOneToOneAgentDm(resolvedChannel, agentPubkeys);
+    final sessionsAgent =
+        !personalChat && showsComposer && !isAgentIdentityUnresolved
+        ? agentDmSessionsPeer(
+            channel: resolvedChannel,
+            currentPubkey: currentPubkey,
+            agentPubkeys: agentPubkeys,
+          )
+        : null;
     final messagesNotifier = ref.read(messagesProvider.notifier);
     final isConnectionInProgress =
         sessionStatus == SessionStatus.connecting ||
@@ -635,12 +645,21 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
         ? dmHeader?.presenceLabel
         : headerMemberLabel;
 
+    final agentDm = useAgentDmTimeline(
+      ref,
+      channel: resolvedChannel,
+      events: messagesState.value,
+      currentPubkey: currentPubkey,
+      agentPubkeys: agentPubkeys,
+    );
     final timelineMessages = resolvedChannel.isForum
         ? <TimelineMessage>[]
-        : formatTimeline(
-            messagesState.value ?? const [],
-            currentPubkey: currentPubkey,
-            agentPubkeys: agentPubkeys,
+        : agentDm.present(
+            formatTimeline(
+              messagesState.value ?? const [],
+              currentPubkey: currentPubkey,
+              agentPubkeys: agentPubkeys,
+            ),
           );
     final timelineEntries = buildMainTimelineEntries(
       // End events still update the original card through allMessages.
@@ -717,6 +736,12 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
               ...messagesState.value ?? const [],
               ...huddleLifecycle,
             ]),
+          if (sessionsAgent != null)
+            agentDmSessionsNavigationAction(
+              context,
+              channel: resolvedChannel,
+              agentPubkey: sessionsAgent,
+            ),
         ],
         iconColor: context.colors.primary,
         titleContentHeight: appBarTitleContentHeight,
@@ -736,6 +761,11 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
             _HuddleButton(
               channel: resolvedChannel,
               events: [...messagesState.value ?? const [], ...huddleLifecycle],
+            ),
+          if (sessionsAgent != null)
+            AgentDmSessionsButton(
+              channel: resolvedChannel,
+              agentPubkey: sessionsAgent,
             ),
         ],
       ),
@@ -816,7 +846,7 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
                             ),
                           ),
                           data: (events) {
-                            return _MessageList(
+                            final list = _MessageList(
                               notifier: ref.watch(messagesProvider.notifier),
                               inlineTyping: personalChat
                                   ? typingEntries
@@ -862,6 +892,12 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
                               restoreComposerFocus: showsComposer
                                   ? () => restoreComposerFocus.value?.call()
                                   : null,
+                            );
+                            return AgentDmScope(
+                              timeline: agentDm,
+                              channel: resolvedChannel,
+                              personal: personalChat,
+                              child: list,
                             );
                           },
                         ),

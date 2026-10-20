@@ -8,6 +8,8 @@ import 'package:buzz/shared/relay/relay.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+part 'activity_provider_agent_dm_cases.dart';
+
 /// Records subscriptions and DM history queries for Activity projection tests.
 class _RecordingSessionNotifier extends RelaySessionNotifier {
   final List<List<String>> dmQueries = [];
@@ -1114,6 +1116,8 @@ void main() {
       },
     );
   });
+
+  _agentDmQuietActivityCases();
 }
 
 class _FixedChannelsNotifier extends ChannelsNotifier {

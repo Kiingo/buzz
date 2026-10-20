@@ -920,8 +920,8 @@ class _MessageList extends HookConsumerWidget {
                         prevMessage == null ||
                         prevMessage.isSystem ||
                         showDayDivider ||
-                        prevMessage.pubkey.toLowerCase() !=
-                            message.pubkey.toLowerCase() ||
+                        AgentDmScope.authorOf(context, prevMessage) !=
+                            AgentDmScope.authorOf(context, message) ||
                         (message.createdAt - prevMessage.createdAt) > 300);
 
                 final nextMessage = chronIdx + 1 < displayEntries.length
@@ -933,8 +933,8 @@ class _MessageList extends HookConsumerWidget {
                     nextMessage.isSystem ||
                     nextMessage.hasAttachments ||
                     !isSameDay(message.createdAt, nextMessage.createdAt) ||
-                    nextMessage.pubkey.toLowerCase() !=
-                        message.pubkey.toLowerCase() ||
+                    AgentDmScope.authorOf(context, nextMessage) !=
+                        AgentDmScope.authorOf(context, message) ||
                     nextMessage.createdAt - message.createdAt > 300;
 
                 return LocalMessageSendTransition(
@@ -960,7 +960,10 @@ class _MessageList extends HookConsumerWidget {
                             dayTimestamp: message.createdAt,
                             stickyDayTimestamp: stickyDayTimestamp,
                           ),
-                        if (message.isSystem)
+                        if (AgentDmScope.rowFor(context, message)
+                            case final agentDmRow?)
+                          agentDmRow
+                        else if (message.isSystem)
                           _SystemMessageRow(
                             message: message,
                             groupedMessages: entryGroup.length > 1
