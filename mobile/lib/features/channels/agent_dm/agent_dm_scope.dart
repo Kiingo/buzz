@@ -7,6 +7,7 @@ import '../../../shared/relay/relay.dart';
 import '../channel.dart';
 import '../channel_management_provider.dart';
 import '../timeline_message.dart';
+import 'agent_dm_call_card_row.dart';
 import 'agent_dm_message_footer.dart';
 import 'agent_dm_mirror_badge.dart';
 import 'agent_dm_session_divider_row.dart';
@@ -94,6 +95,14 @@ class AgentDmScope extends InheritedWidget {
   static Widget? rowFor(BuildContext context, TimelineMessage message) {
     final timeline = maybeOf(context)?.timeline;
     if (timeline == null) return null;
+    final call = timeline.callOf(message.id);
+    if (call != null) {
+      return AgentDmCallCardRow(
+        key: ValueKey('agent-dm-call-${message.id}'),
+        call: call,
+        content: message.content,
+      );
+    }
     final divider = timeline.dividerOf(message.id);
     if (divider != null) {
       return AgentDmSessionDividerRow(
