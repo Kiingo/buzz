@@ -156,6 +156,8 @@ void _expandComposer({
 }
 
 Widget _composerSuggestionPanel({
+  List<AgentCommand> commandSuggestions = const [],
+  ValueChanged<AgentCommand>? onCommandSelect,
   required List<Channel> channelSuggestions,
   required List<MentionCandidate> mentionSuggestions,
   required Set<String> unavailableMentions,
@@ -166,7 +168,15 @@ Widget _composerSuggestionPanel({
   required bool isDmChannel,
   required ValueChanged<Channel> onChannelSelect,
   required ValueChanged<MentionCandidate> onMentionSelect,
-}) => channelSuggestions.isNotEmpty
+}) => commandSuggestions.isNotEmpty && onCommandSelect != null
+    ? KeyedSubtree(
+        key: const ValueKey('agent-command-suggestions'),
+        child: _AgentCommandSuggestions(
+          suggestions: commandSuggestions,
+          onSelect: onCommandSelect,
+        ),
+      )
+    : channelSuggestions.isNotEmpty
     ? KeyedSubtree(
         key: const ValueKey('channel-suggestions'),
         child: _ChannelSuggestions(
