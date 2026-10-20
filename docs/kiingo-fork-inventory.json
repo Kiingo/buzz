@@ -747,6 +747,16 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "paths": [
+        "desktop/src-tauri/src/huddle/pipeline.rs"
+      ],
+      "purpose": "Huddle speech-to-text messages carry [\"transcribed\", \"stt\"] (exactly two elements) on the kind 9 the STT task publishes, so readers can label and speak huddle speech distinctly from typed chat; typed messages never carry it (tests in the same file). A label only, never audience or authority. Kiingo A10.",
+      "removalCondition": "Drop when upstream Buzz marks transcribed huddle messages with an equivalent tag.",
+      "upstreamStatus": "Generic provenance label; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz release maintainers",
       "purpose": "Fork-neutral relay and push-gateway image, cache, attestation, and verification namespaces plus privilege-separated packaging of untrusted security-review source.",
       "upstreamStatus": "image namespace work submitted as block/buzz PR #6413; security-review privilege separation retained generically downstream pending upstream adoption",
