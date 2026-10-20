@@ -1,5 +1,6 @@
 import 'agent_dm/agent_dm_scope.dart';
 import 'agent_dm/agent_dm_sessions_button.dart';
+import '../../shared/agent_commands/agent_prewarm.dart';
 import 'agent_reply_handoff.dart';
 import 'huddle_timeline.dart';
 import '../../shared/widgets/modal_presentation.dart';
@@ -519,6 +520,15 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
         showsComposer &&
         !isAgentIdentityUnresolved &&
         !_isOneToOneAgentDm(resolvedChannel, agentPubkeys);
+    // The agent of a 1:1 agent DM: "/" commands and the DM-open prewarm.
+    final dmAgent = !personalChat && showsComposer && !isAgentIdentityUnresolved
+        ? agentDmSessionsPeer(
+            channel: resolvedChannel,
+            currentPubkey: currentPubkey,
+            agentPubkeys: agentPubkeys,
+          )
+        : null;
+    if (dmAgent != null) ref.watch(agentDmPrewarmProvider(dmAgent));
     final sessionsAgent =
         !personalChat && showsComposer && !isAgentIdentityUnresolved
         ? watchAgentDmSessionsAgent(
@@ -954,16 +964,7 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
                       ?assistant.pendingNotice,
                       ComposeBar(
                         channelId: channel.id,
-                        commandAgentPubkey:
-                            !personalChat &&
-                                showsComposer &&
-                                !isAgentIdentityUnresolved
-                            ? agentDmSessionsPeer(
-                                channel: resolvedChannel,
-                                currentPubkey: currentPubkey,
-                                agentPubkeys: agentPubkeys,
-                              )
-                            : null,
+                        commandAgentPubkey: dmAgent,
                         focusNode: composerFocusNode,
                         onFocusRestorerChanged: (restoreFocus) =>
                             restoreComposerFocus.value = restoreFocus,
