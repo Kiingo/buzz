@@ -21,6 +21,7 @@ use crate::relay::RestClient;
 
 mod cancellation;
 mod retry;
+mod stale;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -509,7 +510,6 @@ impl LocalPublicationWorker {
         }
         self.publish_message(intent, authorization.runtime_authorization.as_deref())
             .await
-            .map(Some)
     }
 
     async fn authorize(
@@ -602,7 +602,7 @@ impl LocalPublicationWorker {
         &self,
         intent: &LocalPublicationIntent,
         runtime_authorization: Option<&str>,
-    ) -> Result<String, String> {
+    ) -> Result<Option<String>, String> {
         use buzz_core::managed_publication::{Authorization, Operation, AUTHORIZATION_TAG};
         let authority = if publication_event_kind(intent) == 9 {
             let encoded =
@@ -682,14 +682,29 @@ impl LocalPublicationWorker {
             authorization.claims.check_event(&event)?;
         }
         let event_id = event.id.to_hex();
-        let already_published = self
+        let mut already_published = self
             .find_existing_event(&event, &intent.channel_id, &fence_tag_value)
             .await?;
         if !already_published {
-            tokio::time::timeout(Duration::from_secs(5), self.rest.submit_event(&event))
-                .await
-                .map_err(|_| "publication relay submission timed out".to_string())?
-                .map_err(|error| format!("publication relay submission failed: {error}"))?;
+            let submitted =
+                tokio::time::timeout(Duration::from_secs(5), self.rest.submit_event(&event))
+                    .await
+                    .map_err(|_| "publication relay submission timed out".to_string())?;
+            match submitted {
+                Ok(_) => {}
+                Err(error) if stale::is_stale_rejection(&error, &event, publication_now_secs()) => {
+                    // A previous acceptance with a lost ACK must keep its exact ID.
+                    // A failed read also proves nothing: never refresh in that case.
+                    already_published = self
+                        .find_existing_event(&event, &intent.channel_id, &fence_tag_value)
+                        .await?;
+                    if !already_published {
+                        self.retire_stale_event(intent, &event).await?;
+                        return Ok(None);
+                    }
+                }
+                Err(error) => return Err(format!("publication relay submission failed: {error}")),
+            }
         }
         if self.reconcile_reactions {
             if let Some(state) = reaction_state_for_publication_kind(&intent.publication_kind) {
@@ -711,7 +726,7 @@ impl LocalPublicationWorker {
             already_published,
             "published locally signed adapter output"
         );
-        Ok(event_id)
+        Ok(Some(event_id))
     }
 
     async fn find_existing_event(
