@@ -41,6 +41,7 @@ import {
 } from "@/features/agents/activeAgentTurnsStore";
 import { resetAgentWorkingSignal } from "@/features/agents/agentWorkingSignal";
 import { resetAgentSummaryCache } from "@/features/agent-dm/lib/agentSummary";
+import { resetAgentPrewarm } from "@/features/agent-dm/lib/agentPrewarm";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
 import { resetGuestAccessState } from "@/features/guest-access/lib/reset";
 import { resetAgentDmState } from "@/features/agent-dm/lib/registry";
@@ -88,6 +89,7 @@ async function resetCommunityState({
   }
   resetSidebarRelayConnectionCardState();
   resetAgentSummaryCache();
+  resetAgentPrewarm();
   resetMediaCaches();
   resetLinkPreviewMetadataCache();
   resetVideoPlayerState();
