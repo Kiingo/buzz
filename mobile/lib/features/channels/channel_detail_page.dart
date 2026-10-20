@@ -521,7 +521,8 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
         !_isOneToOneAgentDm(resolvedChannel, agentPubkeys);
     final sessionsAgent =
         !personalChat && showsComposer && !isAgentIdentityUnresolved
-        ? agentDmSessionsPeer(
+        ? watchAgentDmSessionsAgent(
+            ref,
             channel: resolvedChannel,
             currentPubkey: currentPubkey,
             agentPubkeys: agentPubkeys,

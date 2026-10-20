@@ -103,6 +103,32 @@ Map<String, dynamic> buildOwnerListProof({
   );
 }
 
+/// Proof for asking whether Buzz session controls are on for an agent:
+/// list-shaped (`action=session_controls`, `provider`, `request`,
+/// `community`, `expires`) and read-only, so it is signed without a tap. Any
+/// linked Buzz user may ask, not only the agent's owner.
+Map<String, dynamic> buildSessionControlsProof({
+  required String ownerSecretHex,
+  required String providerId,
+  required String requestId,
+  required String communityId,
+  DateTime? now,
+}) {
+  final createdAt = _nowSeconds(now);
+  return _signProof(
+    ownerSecretHex: ownerSecretHex,
+    content: hostedOwnerManagementProofContent,
+    createdAt: createdAt,
+    tags: [
+      ['action', 'session_controls'],
+      ['provider', providerId],
+      ['request', requestId],
+      ['community', communityId],
+      ['expires', '${createdAt + hostedOwnerProofTtlSeconds}'],
+    ],
+  );
+}
+
 /// Proof for one update or control write: `action=update|control`,
 /// `provider`, `request`, `agent`, `community`, `payload` (SHA-256 of the
 /// canonical request body without the proof), `expires`. The API burns each
