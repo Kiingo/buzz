@@ -18,7 +18,11 @@ class ComposeBar extends HookConsumerWidget {
   /// Optional thread IDs for thread-scoped typing indicators.
   final String? threadHeadId;
   final String? rootId;
+
+  /// The agent in a 1:1 agent DM, which enables the "/" autocomplete.
+  final String? commandAgentPubkey;
   const ComposeBar({
+    this.commandAgentPubkey,
     super.key,
     required this.channelId,
     this.channelName = '',
@@ -426,6 +430,13 @@ class ComposeBar extends HookConsumerWidget {
       return () => controller.removeListener(listener);
     }, [controller]);
 
+    final agentCommands = _useAgentCommandAutocomplete(
+      ref,
+      agentPubkey: commandAgentPubkey,
+      controller: controller,
+      focusNode: focusNode,
+    );
+
     // Ranked mention rows; shown rows hold still while the query stays.
     final mentionRows = _useMentionRows(
       ref,
@@ -491,6 +502,7 @@ class ComposeBar extends HookConsumerWidget {
       controller.clear();
       attachments.value = [];
       mentionMap.value.clear();
+      agentCommands.clear();
       mentionQuery.value = null;
       channelQuery.value = null;
       attachmentSurface.value = _AttachmentSurface.closed;
@@ -512,13 +524,18 @@ class ComposeBar extends HookConsumerWidget {
         return;
       }
       final submittedOrigin = ComposerSendOrigin.capture(sendSurfaceKey);
+      final skillTags = agentCommands.tagsFor(text);
       Future<void> sendWithOrigin(
         String content,
         List<String> mentionPubkeys, {
         List<List<String>> mediaTags = const [],
       }) => ComposerSendOrigin.run(
         submittedOrigin,
-        () => onSend(content, mentionPubkeys, mediaTags: mediaTags),
+        () => onSend(
+          content,
+          mentionPubkeys,
+          mediaTags: [...mediaTags, ...skillTags],
+        ),
       );
       final submittedDraftRevision = draftRevision.value;
       // Resolved before any await: see
@@ -982,6 +999,8 @@ class ComposeBar extends HookConsumerWidget {
     );
 
     final suggestionPanel = _composerSuggestionPanel(
+      commandSuggestions: agentCommands.suggestions,
+      onCommandSelect: agentCommands.select,
       channelSuggestions: channelSuggestions,
       mentionSuggestions: suggestions,
       unavailableMentions: mentionRows.unavailable,
