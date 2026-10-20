@@ -1427,9 +1427,11 @@
         "mobile/lib/features/channels/compose_bar.dart",
         "mobile/lib/features/channels/compose_bar/compose_bar_widget.dart",
         "mobile/lib/features/channels/compose_bar/helpers.dart",
-        "mobile/test/shared/agent_commands/agent_commands_test.dart"
+        "mobile/test/shared/agent_commands/agent_commands_test.dart",
+        "mobile/lib/shared/agent_commands/agent_prewarm.dart",
+        "mobile/test/shared/agent_commands/agent_prewarm_test.dart"
       ],
-      "purpose": "Claude-Code-style \"/\" autocomplete in a 1:1 agent DM: typing \"/\" at the start of the composer opens a popup of the agent's conversation commands (/new, /sessions, listed only where the server says session controls are on) and the skills the agent can use, read lazily from the hosted guest route's NIP-98 GET /agents/{key}/commands (ETag revalidated, cached 5 minutes per agent, any failure shows no popup). Picking a skill inserts /<name> and, on send, adds exactly one [\"buzz-skill\", skill_id, args] tag so the provider runs the skill natively instead of the agent reading prose; a typed-by-hand name stays an ordinary message. Hooks: the composer's suggestion panel, send tags and clear in compose_bar_widget.dart and helpers.dart, and the agent key passed by already-classified channel_detail_page.dart. Kiingo W6.",
+      "purpose": "Claude-Code-style \"/\" autocomplete in a 1:1 agent DM: typing \"/\" at the start of the composer opens a popup of the agent's conversation commands (/new, /sessions, listed only where the server says session controls are on) and the skills the agent can use, read lazily from the hosted guest route's NIP-98 GET /agents/{key}/commands (ETag revalidated, cached 5 minutes per agent, any failure shows no popup). Picking a skill inserts /<name> and, on send, adds exactly one [\"buzz-skill\", skill_id, args] tag so the provider runs the skill natively instead of the agent reading prose; a typed-by-hand name stays an ordinary message. Hooks: the composer's suggestion panel, send tags and clear in compose_bar_widget.dart and helpers.dart, and the agent key passed by already-classified channel_detail_page.dart. Kiingo W6. Opening a 1:1 agent DM also sends a fire-and-forget NIP-98 POST /agents/{key}/prewarm (at most once per agent per 2 minutes) so the server can warm the reader's session; the server always answers 200 and decides.",
       "removalCondition": "Drop when upstream Buzz ships a provider command/skill autocomplete for agent DMs.",
       "upstreamStatus": "Generic hosted-provider command catalog; not yet submitted to block/buzz."
     },
