@@ -12,6 +12,8 @@ import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { SystemMessageRow } from "./SystemMessageRow";
 import { AgentStatusRow, AgentStatusRows } from "./AgentStatusRow";
 import { KIND_AGENT_STATUS } from "@/shared/constants/kinds";
+import { isAgentSessionDividerMessage } from "@/features/agent-dm/lib/timeline";
+import { AgentSessionDivider } from "@/features/agent-dm/ui/AgentSessionDivider";
 
 type ToggleReaction = (
   message: TimelineMessage,
@@ -50,6 +52,8 @@ export function SystemRow({
     <div className="flex flex-col gap-1 pb-2.5">
       {firstEntry.message.kind === KIND_AGENT_STATUS ? (
         <AgentStatusRow message={firstEntry.message} />
+      ) : isAgentSessionDividerMessage(firstEntry.message) ? (
+        <AgentSessionDivider message={firstEntry.message} />
       ) : (
         <SystemMessageRow
           groupedMessages={groupedMessages}

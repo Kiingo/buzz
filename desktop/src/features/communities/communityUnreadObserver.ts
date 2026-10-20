@@ -15,6 +15,7 @@ import {
   isBroadcastReply,
 } from "@/features/messages/lib/threading";
 import { shouldNotifyForEvent } from "@/features/notifications/lib/shouldNotify";
+import { isAgentDmQuietEvent } from "@/features/agent-dm/lib/quiet";
 import {
   mutedChannelIdsFromStore,
   parseMutePayload,
@@ -277,6 +278,7 @@ export async function fetchCommunityUnread(args: {
     if (!hasUnread) {
       hasUnread = unreadEvents.some(
         (event) =>
+          !isAgentDmQuietEvent(event, channel) &&
           isUnreadExternalEvent(event, readState, readAt, normalizedPubkey) &&
           shouldNotifyForEvent(event, normalizedPubkey, {
             participatedRootIds,

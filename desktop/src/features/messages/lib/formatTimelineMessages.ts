@@ -49,6 +49,7 @@ import { formatTime } from "@/features/messages/lib/dateFormatters";
 import { applyEditTagOverlay } from "@/features/messages/lib/applyEditTagOverlay.mjs";
 import { truncateNpub } from "@/shared/lib/pubkey";
 import { isRetiredMissionNotice } from "./replyDetails";
+import { createAgentDmProjector } from "@/features/agent-dm/lib/timeline";
 
 const HEX_RE = /^[0-9a-f]+$/i;
 
@@ -466,6 +467,11 @@ export function formatTimelineMessages(
     return depth;
   }
 
+  const agentDm = createAgentDmProjector(events, channel, {
+    currentPubkey,
+    currentUserAvatarUrl,
+    profiles,
+  });
   return visibleEvents.flatMap((event) => {
     const author = getAuthorLabel(event);
     const authorPubkey =
@@ -551,7 +557,7 @@ export function formatTimelineMessages(
     // Retired platform mission notices from agents stay out of the conversation.
     return message.isAgent && isRetiredMissionNotice(message.body)
       ? []
-      : [message];
+      : agentDm.project(message, event);
   });
 }
 

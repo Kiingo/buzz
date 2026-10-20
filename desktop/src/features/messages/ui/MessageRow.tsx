@@ -61,6 +61,11 @@ import { WaveMessageAttachment } from "./WaveMessageAttachment";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useMessageAgentAddressPrefix } from "./MessageAgentAddressPrefix";
 import { GuestReplyMarker } from "@/features/guest-access/ui/GuestReplyMarker";
+import {
+  AgentDmMessageExtras,
+  renderAgentDmBody,
+} from "@/features/agent-dm/ui/AgentDmMessageExtras";
+import { agentDmRowEqual } from "@/features/agent-dm/lib/timeline";
 const DiffMessage = React.lazy(() => import("./DiffMessage"));
 const DiffMessageExpanded = React.lazy(() => import("./DiffMessageExpanded"));
 export type ThreadDepthGuideAction = {
@@ -416,6 +421,8 @@ export const MessageRow = React.memo(
             />
           );
         default: {
+          const agentDmBody = renderAgentDmBody(message);
+          if (agentDmBody) return agentDmBody;
           const waveMessage = parseWaveMessageContent(message.body);
           if (waveMessage) {
             return (
@@ -689,6 +696,7 @@ export const MessageRow = React.memo(
         <SentFromThreadLine channelId={channelId} tags={message.tags} />
         {renderBody()}
         <GuestReplyMarker createdAt={message.createdAt} tags={message.tags} />
+        <AgentDmMessageExtras channelId={channelId} message={message} />
         {continuationMetadataNode}
         <MessageReactions
           messageId={message.id}
@@ -964,6 +972,7 @@ export const MessageRow = React.memo(
     // thread (see messageRowEquality.ts).
     reactionsEqual(prev.message.reactions, next.message.reactions) &&
     tagsEqual(prev.message.tags, next.message.tags) &&
+    agentDmRowEqual(prev.message, next.message) &&
     prev.message.role === next.message.role &&
     prev.message.personaDisplayName === next.message.personaDisplayName &&
     prev.currentPubkey === next.currentPubkey &&
