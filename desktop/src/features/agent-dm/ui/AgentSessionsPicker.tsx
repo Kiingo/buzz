@@ -24,6 +24,7 @@ import { Checkbox } from "@/shared/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
 import { parseSessionsListing, type AgentSessionItem } from "../lib/markers";
+import { useSessionControlsAvailable } from "../lib/sessionControls";
 import {
   AGENT_DID_NOT_ANSWER,
   findFreshListing,
@@ -62,6 +63,22 @@ export function AgentSessionsPicker({
   const knownAgents = useKnownAgentPubkeys();
   const isAgent = isAgentHint || knownAgents.has(normalizePubkey(agentPubkey));
   if (channel.channelType !== "dm" || !isAgent) return null;
+  return <SessionControlsGate agentPubkey={agentPubkey} channel={channel} />;
+}
+
+/**
+ * Offers the picker only when the provider says this agent's session
+ * controls are available; hidden while unknown and on any lookup error.
+ */
+function SessionControlsGate({
+  agentPubkey,
+  channel,
+}: {
+  agentPubkey: string;
+  channel: Channel;
+}) {
+  const available = useSessionControlsAvailable(agentPubkey);
+  if (!available) return null;
   return <SessionsPicker agentPubkey={agentPubkey} channel={channel} />;
 }
 

@@ -677,7 +677,7 @@ pub(crate) fn spawn_transcription_task(
                 None,
                 &crate::relay::relay_api_base_url(),
             ) {
-                Ok(b) => b,
+                Ok(b) => b.tag(stt_transcribed_tag()),
                 Err(e) => {
                     eprintln!("buzz-desktop: STT build_message: {e}");
                     continue;
@@ -733,6 +733,69 @@ pub(crate) fn spawn_transcription_task(
             }
         }
     });
+}
+
+/// `["transcribed", "stt"]`: marks a kind 9 that huddle speech-to-text
+/// published, so readers can label (and speak) huddle speech distinctly from
+/// typed chat. A label only: it never changes audience or authority, and the
+/// typed-message path never adds it.
+fn stt_transcribed_tag() -> nostr::Tag {
+    nostr::Tag::custom(
+        nostr::TagKind::Custom("transcribed".into()),
+        ["stt".to_string()],
+    )
+}
+
+#[cfg(test)]
+mod stt_transcribed_tag_tests {
+    use super::*;
+
+    fn tags_of(builder: nostr::EventBuilder) -> Vec<Vec<String>> {
+        let keys = nostr::Keys::generate();
+        builder
+            .sign_with_keys(&keys)
+            .expect("sign")
+            .tags
+            .iter()
+            .map(|tag| tag.as_slice().to_vec())
+            .collect()
+    }
+
+    fn typed_message() -> nostr::EventBuilder {
+        events::build_message(
+            uuid::Uuid::nil(),
+            "hello",
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            "https://relay.example",
+        )
+        .expect("typed message")
+    }
+
+    #[test]
+    fn typed_messages_never_carry_the_transcribed_tag() {
+        assert!(tags_of(typed_message())
+            .iter()
+            .all(|tag| tag.first().map(String::as_str) != Some("transcribed")));
+    }
+
+    #[test]
+    fn stt_messages_carry_exactly_transcribed_stt() {
+        let tags = tags_of(typed_message().tag(stt_transcribed_tag()));
+        let marked: Vec<_> = tags
+            .iter()
+            .filter(|tag| tag.first().map(String::as_str) == Some("transcribed"))
+            .collect();
+        assert_eq!(
+            marked,
+            vec![&vec!["transcribed".to_string(), "stt".to_string()]]
+        );
+    }
 }
 
 #[cfg(test)]

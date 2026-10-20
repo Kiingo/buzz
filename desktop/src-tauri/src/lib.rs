@@ -70,6 +70,7 @@ use deep_link::{
     PendingNavigationDeepLinks,
 };
 use extensions::agent_commands_fetch;
+use extensions::agent_session_controls_available;
 use extensions::{
     abort_identity_rotation, acknowledge_pending_identity_rotation, hosted_owner_relink_available,
     hosted_owner_relink_list, hosted_owner_relink_rebind, identity_rotation_renderer_continuity,
@@ -573,6 +574,7 @@ pub fn run() {
             hosted_owner_relink_available,
             hosted_owner_relink_list,
             hosted_owner_relink_rebind,
+            agent_session_controls_available,
             start_builderlab_login,
             cancel_builderlab_login,
             get_builderlab_auth,

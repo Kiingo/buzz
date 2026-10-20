@@ -123,6 +123,35 @@ fn sign_owner_proof(owner: &Keys, tags: Vec<[String; 2]>, now: u64) -> Result<Va
     serde_json::from_str(&event.as_json()).map_err(|_| "owner_proof_invalid".to_string())
 }
 
+/// A read-only owner request body whose proof has the list shape: exactly
+/// `action`, `provider`, `request`, `community` and `expires`, plus any extra
+/// body fields (which the list-shaped proof does not bind).
+pub(crate) fn build_list_shaped_request(
+    owner: &Keys,
+    action: &str,
+    provider_id: &str,
+    community_id: &str,
+    request_id: &str,
+    extra: Map<String, Value>,
+    now: u64,
+) -> Result<Value, String> {
+    let proof = sign_owner_proof(
+        owner,
+        vec![
+            ["action".into(), action.into()],
+            ["provider".into(), provider_id.into()],
+            ["request".into(), request_id.into()],
+            ["community".into(), community_id.into()],
+        ],
+        now,
+    )?;
+    let mut body = extra;
+    body.insert("contract_version".into(), json!(1));
+    body.insert("request_id".into(), json!(request_id));
+    body.insert("owner_proof".into(), proof);
+    Ok(Value::Object(body))
+}
+
 /// List body: `action=list`, `provider`, `request`, `community`, `expires`.
 pub(super) fn build_list_request(
     owner: &Keys,

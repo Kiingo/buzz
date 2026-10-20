@@ -747,6 +747,16 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "paths": [
+        "desktop/src-tauri/src/huddle/pipeline.rs"
+      ],
+      "purpose": "Huddle speech-to-text messages carry [\"transcribed\", \"stt\"] (exactly two elements) on the kind 9 the STT task publishes, so readers can label and speak huddle speech distinctly from typed chat; typed messages never carry it (tests in the same file). A label only, never audience or authority. Kiingo A10.",
+      "removalCondition": "Drop when upstream Buzz marks transcribed huddle messages with an equivalent tag.",
+      "upstreamStatus": "Generic provenance label; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz release maintainers",
       "purpose": "Fork-neutral relay and push-gateway image, cache, attestation, and verification namespaces plus privilege-separated packaging of untrusted security-review source.",
       "upstreamStatus": "image namespace work submitted as block/buzz PR #6413; security-review privilege separation retained generically downstream pending upstream adoption",
@@ -1202,6 +1212,19 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "purpose": "Desktop session-controls gate for agent DMs: the DM header sessions picker (the only client path that sends /sessions, /new or /sessions load) is offered only when the hosted provider says the agent's session controls are available. A native extension signs a read-only list-shaped kind-27236 buzz-provider-owner-v1 proof (exactly action=session_controls, provider, request, community, expires; no prompt, reusing the hosted re-link signer and route) and POSTs {contract_version:1, request_id, owner_proof, agent_public_key} to /session-controls; the answer must carry contract_version 1, the same agent key and a boolean session_controls. The renderer looks it up lazily when an agent DM opens, caches per agent key (true 10 min, false 2 min), treats any error or timeout as false (cached like false, no retry loop), shares concurrent lookups, and clears the cache (retiring in-flight lookups) through the agent DM registry reset in resetCommunityState(). API base and provider id are the hosted re-link build configuration; without them the picker never shows. Hooks: one module plus re-export in extensions/mod.rs, one use line and one command registration in lib.rs; the re-link module exposes its route, post and a list-shaped proof builder.",
+      "upstreamStatus": "Generic mechanism configured by the hosted provider build configuration; not yet proposed upstream.",
+      "removalCondition": "Remove when agent runtimes advertise session controls another way or the sessions picker is removed.",
+      "paths": [
+        "desktop/src-tauri/src/extensions/session_controls/logic.rs",
+        "desktop/src-tauri/src/extensions/session_controls/mod.rs",
+        "desktop/src/features/agent-dm/lib/sessionControls.test.mjs",
+        "desktop/src/features/agent-dm/lib/sessionControls.ts"
+      ]
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
       "purpose": "Mobile side of agent guest access notifications: the self #p push subscription adds owner-addressed kinds 46040 (approval requested) and 46042 (alert) only when the relay advertises them in NIP-11 push_kinds (the descriptor now carries the advertised kinds), the iOS notification resolver presents them, and the Activity inbox shows unresolved 46040 requests and 46042 alerts in Needs Action, accepted only from the owner's own agents (NIP-OA verified kind:0) and dropped once a matching 46041 resolution arrives.",
       "upstreamStatus": "Generic notification kinds with no deployment-specific behaviour; not yet proposed upstream.",
@@ -1417,9 +1440,11 @@
         "mobile/test/features/channels/channels_provider_test.dart",
         "mobile/test/shared/agent_dm/agent_dm_answers_test.dart",
         "mobile/test/shared/agent_dm/agent_dm_markers_test.dart",
-        "mobile/test/shared/agent_dm/agent_dm_quiet_test.dart"
+        "mobile/test/shared/agent_dm/agent_dm_quiet_test.dart",
+        "mobile/lib/features/channels/agent_dm/agent_dm_call_card_row.dart",
+        "mobile/test/features/channels/agent_dm/agent_dm_call_card_test.dart"
       ],
-      "purpose": "Agent DM markers v1 on mobile (docs/agent-dm-markers.md): strict readers for buzz-mirror, buzz-session, buzz-sessions, buzz-question/-state/-answer and the six-element buzz-action, honoured only in a DM and only from a DM member. Quiet events (mirrors, dividers, listings, question states) are never unread, badged, a mention or a hidden-DM resurface: bound at the observed-unread seam every unread surface reads (channel list, unread badge, Me unread) and in the Activity inbox. Mirrors show their member author or \"Relayed by\" with a \"via email\" badge and original time and subject in Details; session dividers and listings render as rows; question-state events render none; question cards and action buttons send through the composer path; a sessions picker in the 1:1 agent DM header sends /sessions, /new and /sessions load. Upstream files keep one-line hooks; logic lives in shared/agent_dm and features/channels/agent_dm. Already-classified hooks: channel_detail_page.dart, message_details_sheet.dart, activity_provider.dart and its test. Kiingo W6.",
+      "purpose": "Agent DM markers v1 on mobile (docs/agent-dm-markers.md): strict readers for buzz-mirror, buzz-session, buzz-sessions, buzz-question/-state/-answer and the six-element buzz-action, honoured only in a DM and only from a DM member. Quiet events (mirrors, dividers, listings, question states) are never unread, badged, a mention or a hidden-DM resurface: bound at the observed-unread seam every unread surface reads (channel list, unread badge, Me unread) and in the Activity inbox. Mirrors show their member author or \"Relayed by\" with a \"via email\" badge and original time and subject in Details; session dividers and listings render as rows; question-state events render none; question cards and action buttons send through the composer path; a sessions picker in the 1:1 agent DM header sends /sessions, /new and /sessions load. Upstream files keep one-line hooks; logic lives in shared/agent_dm and features/channels/agent_dm. Already-classified hooks: channel_detail_page.dart, message_details_sheet.dart, activity_provider.dart and its test. Kiingo W6. Voice call cards: a voice mirror with one buzz-call tag renders as a collapsed card (Call · N min, summary, Show transcript); a voice mirror without it is badged \"via voice call\".",
       "removalCondition": "Drop when upstream renders equivalent agent DM markers on mobile, or Kiingo agents stop publishing them.",
       "upstreamStatus": "Generic, provider-neutral extension of the agent DM markers contract; not yet submitted to block/buzz."
     },
@@ -1434,6 +1459,23 @@
       "purpose": "Sessions picker only where it works: the 1:1 agent DM header offers Sessions only when the hosted API's POST /session-controls (list-shaped read-only owner proof, action session_controls, signed by the signed-in key) says session controls are on for that agent key. Asked lazily when an agent DM opens and cached per agent key, 10 minutes when on and 2 minutes when off; any error or timeout hides the picker and is not retried before the cache lapses. Without a hosted API in the build there is no picker. Hooks in already-classified hosted_agent_client.dart, hosted_agent_proofs.dart, agent_dm_sessions_button.dart and channel_detail_page.dart. Kiingo W6.",
       "removalCondition": "Drop when the session-controls capability is carried by the agent's own profile or listing, or Kiingo agents always enable session controls.",
       "upstreamStatus": "Generic hosted-provider capability check; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz mobile maintainers",
+      "paths": [
+        "mobile/lib/shared/agent_commands/agent_commands.dart",
+        "mobile/lib/features/channels/compose_bar/agent_commands.dart",
+        "mobile/lib/features/channels/compose_bar.dart",
+        "mobile/lib/features/channels/compose_bar/compose_bar_widget.dart",
+        "mobile/lib/features/channels/compose_bar/helpers.dart",
+        "mobile/test/shared/agent_commands/agent_commands_test.dart",
+        "mobile/lib/shared/agent_commands/agent_prewarm.dart",
+        "mobile/test/shared/agent_commands/agent_prewarm_test.dart"
+      ],
+      "purpose": "Claude-Code-style \"/\" autocomplete in a 1:1 agent DM: typing \"/\" at the start of the composer opens a popup of the agent's conversation commands (/new, /sessions, listed only where the server says session controls are on) and the skills the agent can use, read lazily from the hosted guest route's NIP-98 GET /agents/{key}/commands (ETag revalidated, cached 5 minutes per agent, any failure shows no popup). Picking a skill inserts /<name> and, on send, adds exactly one [\"buzz-skill\", skill_id, args] tag so the provider runs the skill natively instead of the agent reading prose; a typed-by-hand name stays an ordinary message. Hooks: the composer's suggestion panel, send tags and clear in compose_bar_widget.dart and helpers.dart, and the agent key passed by already-classified channel_detail_page.dart. Kiingo W6. Opening a 1:1 agent DM also sends a fire-and-forget NIP-98 POST /agents/{key}/prewarm (at most once per agent per 2 minutes) so the server can warm the reader's session; the server always answers 200 and decides.",
+      "removalCondition": "Drop when upstream Buzz ships a provider command/skill autocomplete for agent DMs.",
+      "upstreamStatus": "Generic hosted-provider command catalog; not yet submitted to block/buzz."
     },
     {
       "classification": "retain-generic",
@@ -1750,7 +1792,7 @@
       "paths": [
         "docs/agent-dm-markers.md"
       ],
-      "purpose": "Agent DM markers v1: the shared tag contract between agent runtimes and the desktop/mobile clients for 1:1 agent DMs. Agent-signed mirrored history from other surfaces (buzz-mirror, quiet kind 40002 with no p tag), session dividers and listings (buzz-session, buzz-sessions) with the /sessions, /new and /sessions load commands, question cards (buzz-question, buzz-question-state, buzz-answer) and action buttons (buzz-action). Kiingo W6 (one agent, one conversation, one native session).",
+      "purpose": "Agent DM markers v1: the shared tag contract between agent runtimes and the desktop/mobile clients for 1:1 agent DMs. Agent-signed mirrored history from other surfaces (buzz-mirror, quiet kind 40002 with no p tag), session dividers and listings (buzz-session, buzz-sessions) with the /sessions, /new and /sessions load commands, question cards (buzz-question, buzz-question-state, buzz-answer) and action buttons (buzz-action). Kiingo W6 (one agent, one conversation, one native session). The call card (buzz-call on a voice mirror) records each voice call.",
       "removalCondition": "Drop when upstream defines equivalent agent DM markers or Kiingo agents stop publishing them.",
       "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz."
     },
