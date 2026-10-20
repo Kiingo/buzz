@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import '../../../shared/hosted_agents/session_controls.dart';
 import '../../../shared/theme/buzz_icons.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/ios_navigation_bar.dart';
@@ -25,6 +27,26 @@ String? agentDmSessionsPeer({
   final peer = participants.single;
   final agents = {for (final pubkey in agentPubkeys) pubkey.toLowerCase()};
   return agents.contains(peer) ? peer : null;
+}
+
+/// The agent whose sessions picker the DM header offers, or null. Besides a
+/// 1:1 DM with an agent ([agentDmSessionsPeer]), the server must say session
+/// controls are on for that agent; until it answers, and after any failed
+/// check, there is no picker. Asked lazily, only for such a DM.
+String? watchAgentDmSessionsAgent(
+  WidgetRef ref, {
+  required Channel channel,
+  required String? currentPubkey,
+  required Set<String> agentPubkeys,
+}) {
+  final peer = agentDmSessionsPeer(
+    channel: channel,
+    currentPubkey: currentPubkey,
+    agentPubkeys: agentPubkeys,
+  );
+  if (peer == null) return null;
+  final available = ref.watch(agentSessionControlsProvider(peer)).value;
+  return available == true ? peer : null;
 }
 
 /// The native header item that opens the sessions picker.

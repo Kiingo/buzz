@@ -16,6 +16,7 @@ import 'hosted_agent_proofs.dart';
 import 'hosted_agent_responses.dart';
 import 'hosted_agent_snapshot.dart';
 import 'hosted_owner_rebind.dart';
+import 'session_controls.dart';
 
 const _maxResponseBytes = 2 * 1024 * 1024;
 
@@ -237,6 +238,49 @@ class HostedAgentClient implements HostedAgentProvisioner {
       );
     }
     return parseHostedAgentList(body, requestId);
+  }
+
+  /// Whether Buzz session controls (the Sessions picker, `/new`,
+  /// `/sessions`) are on for the agent with [agentPublicKey]. Read-only; any
+  /// linked Buzz user may ask. Throws on any failure or malformed answer, so
+  /// callers fail closed.
+  Future<bool> sessionControls({
+    required HostedAgentCatalog catalog,
+    required String agentPublicKey,
+  }) async {
+    final agent = agentPublicKey.trim().toLowerCase();
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(agent)) {
+      throw const HostedAgentException('session_controls_invalid_agent');
+    }
+    final requestId = const Uuid().v4();
+    final (status, body) = await _send(
+      'POST',
+      '/session-controls',
+      timeout: const Duration(seconds: 10),
+      body: {
+        'contract_version': 1,
+        'request_id': requestId,
+        'owner_proof': buildSessionControlsProof(
+          ownerSecretHex: ownerSecretHex(),
+          providerId: catalog.providerId,
+          requestId: requestId,
+          communityId: route.communityId,
+        ),
+        'agent_public_key': agent,
+      },
+    );
+    if (!_ok(status)) {
+      throw hostedAgentFailure(
+        body,
+        status: status,
+        fallbackCode: 'session_controls_failed',
+      );
+    }
+    return parseSessionControlsResponse(
+      body,
+      requestId: requestId,
+      agentPublicKey: agent,
+    );
   }
 
   /// Change name, instructions and execution profile. [expectedRevision] is
