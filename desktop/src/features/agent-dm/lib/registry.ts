@@ -2,8 +2,11 @@
  * Community-scoped client memory for agent DM cards: question cards this
  * client answered and messages whose action buttons were used. Rows read it
  * with `useSyncExternalStore`; `resetAgentDmState()` clears it on community
- * switch (wired into resetCommunityState()).
+ * switch (wired into resetCommunityState()), together with the cached
+ * session-controls answers.
  */
+
+import { resetSessionControlsCache } from "./sessionControls";
 
 let answeredQuestionIds = new Set<string>();
 let usedActionMessageIds = new Set<string>();
@@ -50,4 +53,5 @@ export function resetAgentDmState() {
   answeredQuestionIds = new Set();
   usedActionMessageIds = new Set();
   notify();
+  resetSessionControlsCache();
 }

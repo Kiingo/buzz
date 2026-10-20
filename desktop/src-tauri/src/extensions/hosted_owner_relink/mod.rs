@@ -27,7 +27,7 @@ use crate::app_state::AppState;
 use crate::commands::{acceptable_base_url, community_id_for_relay};
 use crate::relay::relay_ws_url_with_override;
 
-pub(crate) use request::{OwnerAgent, RebindResult, RebindSelection};
+pub(crate) use request::{build_list_shaped_request, OwnerAgent, RebindResult, RebindSelection};
 
 const LIST_TIMEOUT: Duration = Duration::from_secs(20);
 const REBIND_TIMEOUT: Duration = Duration::from_secs(60);
@@ -44,12 +44,14 @@ fn configured(runtime: &str, build: &[Option<&'static str>]) -> Option<String> {
         .find(|value| !value.is_empty())
 }
 
-struct Route {
-    base_url: String,
-    provider_id: String,
+/// The hosted provider's API base and provider id.
+pub(crate) struct Route {
+    pub(crate) base_url: String,
+    pub(crate) provider_id: String,
 }
 
-fn route() -> Option<Route> {
+/// The configured hosted provider route, or `None` when this build has none.
+pub(crate) fn route() -> Option<Route> {
     let base_url = configured(
         "BUZZ_DESKTOP_HOSTED_AGENTS_URL",
         &[
@@ -95,7 +97,7 @@ fn error_string(status: Option<u16>, error: &str, correlation_id: Option<String>
     .unwrap_or_else(|_| error.to_string())
 }
 
-fn now_seconds() -> Result<u64, String> {
+pub(crate) fn now_seconds() -> Result<u64, String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
@@ -114,7 +116,13 @@ fn bounded(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-async fn post(route: &Route, path: &str, body: &Value, timeout: Duration) -> Result<Value, String> {
+/// POST a JSON body to the provider; errors are JSON strings with a code.
+pub(crate) async fn post(
+    route: &Route,
+    path: &str,
+    body: &Value,
+    timeout: Duration,
+) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(timeout)

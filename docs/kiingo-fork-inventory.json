@@ -1185,6 +1185,19 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "purpose": "Desktop session-controls gate for agent DMs: the DM header sessions picker (the only client path that sends /sessions, /new or /sessions load) is offered only when the hosted provider says the agent's session controls are available. A native extension signs a read-only list-shaped kind-27236 buzz-provider-owner-v1 proof (exactly action=session_controls, provider, request, community, expires; no prompt, reusing the hosted re-link signer and route) and POSTs {contract_version:1, request_id, owner_proof, agent_public_key} to /session-controls; the answer must carry contract_version 1, the same agent key and a boolean session_controls. The renderer looks it up lazily when an agent DM opens, caches per agent key (true 10 min, false 2 min), treats any error or timeout as false (cached like false, no retry loop), shares concurrent lookups, and clears the cache (retiring in-flight lookups) through the agent DM registry reset in resetCommunityState(). API base and provider id are the hosted re-link build configuration; without them the picker never shows. Hooks: one module plus re-export in extensions/mod.rs, one use line and one command registration in lib.rs; the re-link module exposes its route, post and a list-shaped proof builder.",
+      "upstreamStatus": "Generic mechanism configured by the hosted provider build configuration; not yet proposed upstream.",
+      "removalCondition": "Remove when agent runtimes advertise session controls another way or the sessions picker is removed.",
+      "paths": [
+        "desktop/src-tauri/src/extensions/session_controls/logic.rs",
+        "desktop/src-tauri/src/extensions/session_controls/mod.rs",
+        "desktop/src/features/agent-dm/lib/sessionControls.test.mjs",
+        "desktop/src/features/agent-dm/lib/sessionControls.ts"
+      ]
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
       "purpose": "Mobile side of agent guest access notifications: the self #p push subscription adds owner-addressed kinds 46040 (approval requested) and 46042 (alert) only when the relay advertises them in NIP-11 push_kinds (the descriptor now carries the advertised kinds), the iOS notification resolver presents them, and the Activity inbox shows unresolved 46040 requests and 46042 alerts in Needs Action, accepted only from the owner's own agents (NIP-OA verified kind:0) and dropped once a matching 46041 resolution arrives.",
       "upstreamStatus": "Generic notification kinds with no deployment-specific behaviour; not yet proposed upstream.",
