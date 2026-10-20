@@ -6,6 +6,7 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 
 import { agentDmMessageKinds } from "../lib/timeline";
 import { AgentActionButtons } from "./AgentActionButtons";
+import { AgentCallCard } from "./AgentCallCard";
 import { AgentMirrorMarker } from "./AgentMirrorMarker";
 import { AgentQuestionCard } from "./AgentQuestionCard";
 import { AgentSessionsListing } from "./AgentSessionsListing";
@@ -35,6 +36,8 @@ export function AgentDmMessageExtras({
   const kinds = agentDmMessageKinds(message);
   const agentSigned = useIsAgentSigned(message);
   if (kinds.length === 0) return null;
+  // A call card shows its own title and direction in the body.
+  if (kinds.includes("call")) return null;
   if (kinds.includes("mirror")) return <AgentMirrorMarker message={message} />;
   if (!channelId || !agentSigned) return null;
   return (
@@ -56,7 +59,9 @@ export function AgentDmMessageExtras({
 export function renderAgentDmBody(
   message: TimelineMessage,
 ): React.ReactNode | null {
-  return agentDmMessageKinds(message).includes("listing") ? (
+  const kinds = agentDmMessageKinds(message);
+  if (kinds.includes("call")) return <AgentCallCard message={message} />;
+  return kinds.includes("listing") ? (
     <AgentSessionsListing message={message} />
   ) : null;
 }

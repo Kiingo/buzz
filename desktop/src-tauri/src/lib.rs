@@ -77,6 +77,7 @@ use extensions::{
     identity_rotation_status, inspect_identity_rotation_handoff, run_identity_rotation,
     take_pending_identity_rotation, IdentityRotationExtensionState,
 };
+use extensions::{agent_prewarm, agent_summary_fetch};
 use extensions::{
     confirm_key_replacement, key_replacement_confirmed, key_replacement_status,
     old_owner_key_removed, remove_old_owner_key,
@@ -568,6 +569,8 @@ pub fn run() {
             acknowledge_pending_identity_rotation,
             identity_rotation_renderer_continuity,
             identity_rotation_status,
+            agent_summary_fetch,
+            agent_prewarm,
             inspect_identity_rotation_handoff,
             run_identity_rotation,
             abort_identity_rotation,
