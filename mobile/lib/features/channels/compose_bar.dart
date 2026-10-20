@@ -18,6 +18,7 @@ import 'package:buzz/shared/theme/buzz_icons.dart';
 
 import 'package:nostr/nostr.dart' as nostr;
 
+import '../../shared/agent_commands/agent_commands.dart';
 import '../../shared/mentions/agent_identity_provider.dart';
 import '../../shared/mentions/mention_bindings.dart';
 import '../../shared/mentions/mention_rules.dart';
@@ -56,6 +57,7 @@ part 'compose_bar/agent_mention_labels.dart';
 part 'compose_bar/markdown_editing_controller.dart';
 part 'compose_bar/draft_lifecycle.dart';
 part 'compose_bar/suggestions.dart';
+part 'compose_bar/agent_commands.dart';
 part 'compose_bar/mention_chooser.dart';
 part 'compose_bar/formatting_toolbar.dart';
 part 'compose_bar/attachments.dart';
