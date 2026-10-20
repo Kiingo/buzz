@@ -24,8 +24,7 @@ String agentSummaryForYouLabel(AgentSummaryExecution execution) {
   return switch (execution.unavailableReason) {
     final reason? when reason.contains('subscription') =>
       'Connect your ${_harnessLabel(execution.harness)} subscription to talk to this agent.',
-    _ =>
-      'Not available with your connected accounts. Check your harness connections.',
+    _ => "Model details aren't available for you yet.",
   };
 }
 
