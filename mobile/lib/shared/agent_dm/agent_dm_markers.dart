@@ -120,6 +120,7 @@ class AgentDmMirror {
     'teams' => 'via Teams',
     'sms' => 'via SMS',
     'web' => 'via web',
+    'voice' => 'via voice call',
     _ => 'via $surface',
   };
 
@@ -177,6 +178,62 @@ AgentDmMirror? readAgentDmMirror(List<List<String>> tags) {
     authorPubkey: author[2],
     authorName: author[3],
     subject: subject,
+  );
+}
+
+/// Which way a recorded call went.
+enum AgentDmCallDirection {
+  /// The person called the agent.
+  inbound,
+
+  /// The agent called the person.
+  outbound,
+}
+
+/// `buzz-call`: a voice call's record card, carried with a `voice` mirror.
+class AgentDmCall {
+  final AgentDmCallDirection direction;
+
+  /// Call length in seconds.
+  final int durationS;
+
+  /// Where the call happened, such as `web` or `buzz_huddle`.
+  final String surface;
+
+  const AgentDmCall({
+    required this.direction,
+    required this.durationS,
+    required this.surface,
+  });
+
+  /// "Call · N min", rounded and never below one minute.
+  String get title {
+    final minutes = (durationS / 60).round();
+    return 'Call · ${minutes < 1 ? 1 : minutes} min';
+  }
+}
+
+/// Reads `["buzz-call", direction, durationS, surface]` from a `voice`
+/// mirror. Anything else is not a call card (it renders as the mirror).
+AgentDmCall? readAgentDmCall(List<List<String>> tags) {
+  final mirror = readAgentDmMirror(tags);
+  final tag = _single(tags, 'buzz-call', 4);
+  if (mirror == null || mirror.surface != 'voice' || tag == null) return null;
+  final direction = switch (tag[1]) {
+    'inbound' => AgentDmCallDirection.inbound,
+    'outbound' => AgentDmCallDirection.outbound,
+    _ => null,
+  };
+  final durationS = RegExp(r'^\d{1,9}$').hasMatch(tag[2])
+      ? int.parse(tag[2])
+      : null;
+  if (direction == null || durationS == null || !_surface.hasMatch(tag[3])) {
+    return null;
+  }
+  return AgentDmCall(
+    direction: direction,
+    durationS: durationS,
+    surface: tag[3],
   );
 }
 
