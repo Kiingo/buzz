@@ -170,7 +170,7 @@ export function agentSummaryForYouLabel(execution: AgentSummaryExecution) {
   if (execution.unavailableReason?.includes("subscription")) {
     return `Connect your ${harnessLabel(execution.harness)} subscription to talk to this agent.`;
   }
-  return "Not available with your connected accounts. Check your harness connections.";
+  return "Model details aren't available for you yet.";
 }
 
 /** The section's rows, in order, with the mobile card's labels. */

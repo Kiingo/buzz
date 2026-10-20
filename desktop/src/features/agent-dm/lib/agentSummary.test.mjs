@@ -121,7 +121,7 @@ test("optional parts and plain reasons", () => {
   assert.equal(summary.editUrl, null, "only https edit links are offered");
   assert.equal(
     agentSummaryForYouLabel({ ...summary.execution, unavailableReason: null }),
-    "Not available with your connected accounts. Check your harness connections.",
+    "Model details aren't available for you yet.",
   );
   assert.equal(
     agentSummaryRows(parseAgentSummary(body({ execution: null }), AGENT)).some(
