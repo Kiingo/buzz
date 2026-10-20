@@ -17,6 +17,7 @@ class HostedAgentSnapshot {
     this.systemPrompt,
     this.lastReadyAt,
     this.errorCode,
+    this.ownerPublicKey,
   });
 
   final String providerAgentId;
@@ -40,6 +41,11 @@ class HostedAgentSnapshot {
   final String observedState;
   final DateTime? lastReadyAt;
   final String? errorCode;
+
+  /// Lowercase hex owner key the API holds for this agent, or `null` when the
+  /// API did not say. A value other than the signed-in key means the agent is
+  /// still linked to an earlier owner key.
+  final String? ownerPublicKey;
 
   bool get isDeleted =>
       desiredState == 'deleted' ||
@@ -95,6 +101,7 @@ HostedAgentSnapshot? parseHostedAgentSnapshot(Object? value) {
   if (revisionValue is! int || revisionValue < 1) return null;
   final config = value['provider_config'];
   final errorCode = value['error_code'];
+  final owner = value['owner_public_key'];
   return HostedAgentSnapshot(
     providerAgentId: id,
     agentPublicKey: pubkey.toLowerCase(),
@@ -117,6 +124,9 @@ HostedAgentSnapshot? parseHostedAgentSnapshot(Object? value) {
     ),
     errorCode: errorCode is String && _code.hasMatch(errorCode)
         ? errorCode
+        : null,
+    ownerPublicKey: owner is String && _hex64.hasMatch(owner.toLowerCase())
+        ? owner.toLowerCase()
         : null,
   );
 }

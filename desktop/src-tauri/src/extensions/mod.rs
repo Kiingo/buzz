@@ -3,8 +3,12 @@
 //! Concrete extension implementations live here so the upstream application
 //! shell needs only stable registration hooks.
 
+pub(crate) mod hosted_owner_relink;
 pub(crate) mod identity_rotation;
 
+pub(crate) use hosted_owner_relink::{
+    hosted_owner_relink_available, hosted_owner_relink_list, hosted_owner_relink_rebind,
+};
 pub(crate) use identity_rotation::{
     abort_identity_rotation, acknowledge_pending_identity_rotation,
     identity_rotation_renderer_continuity, identity_rotation_status,
