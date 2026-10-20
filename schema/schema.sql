@@ -96,6 +96,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 \i tables/public/event_mentions.sql
 \i tables/public/channel_event_heads.sql
 \i tables/public/user_stop_events.sql
+\i tables/public/agent_owner_reassignments.sql
 \i tables/public/subscriptions.sql
 \i tables/public/delivery_log.sql
 \i tables/public/workflows.sql
@@ -193,6 +194,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 \i triggers/managed_publications.sql
 \i triggers/channel_event_heads.sql
 \i triggers/user_stop_events.sql
+\i triggers/agent_owner_reassignments.sql
 
 -- seeds
 \i seeds/communities.sql

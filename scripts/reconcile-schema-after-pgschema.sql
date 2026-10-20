@@ -232,6 +232,7 @@ SELECT attach_community_write_fence('managed_publication_scopes');
 SELECT attach_community_write_fence('managed_publication_receipts');
 SELECT attach_community_write_fence('managed_publications');
 SELECT attach_community_write_fence('user_stop_events');
+SELECT attach_community_write_fence('agent_owner_reassignments');
 
 DO $$
 BEGIN
@@ -242,12 +243,13 @@ BEGIN
         JOIN pg_proc p ON p.oid = t.tgfoid
         WHERE n.nspname = current_schema()
           AND c.relname IN ('managed_runtime_issuers', 'managed_publication_scopes',
-                            'managed_publication_receipts', 'managed_publications', 'user_stop_events')
+                            'managed_publication_receipts', 'managed_publications', 'user_stop_events',
+                            'agent_owner_reassignments')
           AND t.tgname = 'community_write_fence_' || c.relname
           AND p.proname = 'enforce_community_write_fence'
           AND t.tgenabled = 'O' AND NOT t.tgisinternal AND t.tgtype = 31
-    ) <> 5 THEN
-        RAISE EXCEPTION 'managed publication tables require community write fences';
+    ) <> 6 THEN
+        RAISE EXCEPTION 'runtime control tables require community write fences';
     END IF;
 END $$;
 

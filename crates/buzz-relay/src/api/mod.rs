@@ -1,6 +1,7 @@
 //! HTTP API — media, git, NIP-05, and the Nostr HTTP bridge.
 
 pub mod admin;
+pub(crate) mod agent_owner_rotation;
 pub mod bridge;
 pub mod buzz_v1;
 pub mod events;
@@ -404,11 +405,14 @@ pub mod relay_members {
     ///
     /// Both principals are ensured first because `agent_owner_pubkey` has a
     /// community-scoped foreign key. The mapping is first-write-wins; an
-    /// existing mapping is accepted only when it names the same owner.
+    /// existing mapping is accepted only when it names the same owner, or
+    /// when [`super::agent_owner_rotation`] moves it to this owner on signed
+    /// evidence that the recorded owner key was rotated to it.
     ///
     /// A mapping already confirmed in `observer_owner_cache` returns early:
-    /// `agent_owner_pubkey` is set once and never cleared, so the writes
-    /// below would all be no-ops. HTTP agents call this on every request.
+    /// `agent_owner_pubkey` only changes through that guarded rotation path,
+    /// so the writes below would all be no-ops. HTTP agents call this on every
+    /// request.
     pub async fn materialize_nip_oa_owner(
         state: &AppState,
         tenant: &TenantContext,
@@ -462,11 +466,17 @@ pub mod relay_members {
                 state.disconnect_unowned_agent_clusterwide(tenant, &agent.to_bytes());
                 true
             }
-            Ok(false) => state
-                .db
-                .is_agent_owner(tenant.community(), agent.as_bytes(), owner.as_bytes())
-                .await
-                .unwrap_or(false),
+            Ok(false) => {
+                state
+                    .db
+                    .is_agent_owner(tenant.community(), agent.as_bytes(), owner.as_bytes())
+                    .await
+                    .unwrap_or(false)
+                    || super::agent_owner_rotation::reassign_rotated_owner(
+                        state, tenant, agent, owner,
+                    )
+                    .await
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "failed to backfill agent_owner_pubkey");
                 false

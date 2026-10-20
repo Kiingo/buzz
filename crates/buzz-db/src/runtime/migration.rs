@@ -709,7 +709,12 @@ mod postgres_tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 70);
+        assert_eq!(migrations.len(), 71);
+        assert_eq!(migrations[70].version, 71);
+        let owner_reassignments = migrations[70].sql.as_str();
+        assert!(owner_reassignments.contains("CREATE TABLE agent_owner_reassignments"));
+        assert!(owner_reassignments
+            .contains("SELECT attach_community_write_fence('agent_owner_reassignments');"));
         assert_eq!(migrations[69].version, 70);
         let retire_ttl = strip_sql_comments(migrations[69].sql.as_str());
         for statement in [
@@ -2241,7 +2246,20 @@ mod postgres_tests {
                 .sql
                 .as_ref(),
         );
+        let agent_owner_reassignments = surface(
+            MIGRATOR
+                .iter()
+                .find(|migration| migration.version == 71)
+                .expect("embedded migration 0071")
+                .sql
+                .as_ref(),
+        );
         let schema = surface(&schema_sql);
+        assert_eq!(
+            agent_owner_reassignments.fence_attachments,
+            BTreeSet::from(["agent_owner_reassignments".to_owned()]),
+            "0071 must fence the owner reassignment audit"
+        );
         assert_eq!(
             managed_publication.fence_attachments,
             BTreeSet::from([
@@ -2278,6 +2296,7 @@ mod postgres_tests {
             .chain(&managed_publication.tables)
             .chain(&user_stop_events.tables)
             .chain(&channel_event_sequence.tables)
+            .chain(&agent_owner_reassignments.tables)
         {
             let in_schema = schema
                 .tables
@@ -2396,6 +2415,7 @@ mod postgres_tests {
         expected_fences.extend(managed_publication.fence_attachments);
         expected_fences.extend(user_stop_events.fence_attachments);
         expected_fences.extend(channel_event_sequence.fence_attachments);
+        expected_fences.extend(agent_owner_reassignments.fence_attachments);
         let personal = surface(
             MIGRATOR
                 .iter()
