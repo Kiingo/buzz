@@ -9,6 +9,7 @@ import {
   filterSlashCommands,
   MAX_SKILL_ARGS,
   parseSkillInvocation,
+  slashCommandNeedsConfirm,
   slashCommandText,
 } from "./slashQuery.ts";
 
@@ -143,4 +144,10 @@ test("the menu belongs to 1:1 DMs whose other member is an agent", () => {
   assert.equal(agentDmPeer(dm([self, agent], "stream"), self, isAgent), null);
   assert.equal(agentDmPeer(dm([self, agent]), undefined, isAgent), null);
   assert.equal(agentDmPeer(undefined, self, isAgent), null);
+});
+
+test("only /new asks for confirmation; /sessions and skills do not", () => {
+  assert.equal(slashCommandNeedsConfirm(SESSION_NEW), true);
+  assert.equal(slashCommandNeedsConfirm(SESSION_LIST), false);
+  assert.equal(slashCommandNeedsConfirm(REVIEW), false);
 });

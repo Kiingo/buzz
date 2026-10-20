@@ -25,11 +25,30 @@ import {
   filterSlashCommands,
   MAX_SKILL_ARGS,
   parseSkillInvocation,
+  slashCommandNeedsConfirm,
   slashCommandText,
   type SlashQuery,
 } from "../lib/slashQuery";
 
 const NO_COMMANDS: AgentSlashCommand[] = [];
+
+type ChooseActions = {
+  applyEdit: (edit: AutocompleteEdit) => void;
+  submit: () => void;
+};
+
+function applyChoice(
+  command: AgentSlashCommand,
+  tokenEnd: number,
+  actions: ChooseActions,
+) {
+  actions.applyEdit({
+    replaceFromOffset: 0,
+    replaceToOffset: tokenEnd,
+    insertText: slashCommandText(command),
+  });
+  if (command.kind === "session") actions.submit();
+}
 
 /**
  * The DM composer's "/" menu for an agent DM: lists the agent's session
@@ -72,6 +91,11 @@ export function useAgentSlashCommands({
   const [text, setText] = React.useState("");
   const [dismissed, setDismissed] = React.useState(false);
   const [selectedIndex, setSelectedIndex] = React.useState(0);
+  const [pendingConfirm, setPendingConfirm] = React.useState<{
+    command: AgentSlashCommand;
+    tokenEnd: number;
+    actions: ChooseActions;
+  } | null>(null);
 
   const suggestions = React.useMemo(
     () =>
@@ -141,27 +165,37 @@ export function useAgentSlashCommands({
 
   /**
    * Put the chosen command in the composer. A session command is then sent
-   * as the plain message it has always been; a skill waits for arguments.
+   * as the plain message it has always been (`/new` only after the person
+   * confirms); a skill waits for arguments.
    */
   const choose = React.useCallback(
-    (
-      command: AgentSlashCommand,
-      actions: {
-        applyEdit: (edit: AutocompleteEdit) => void;
-        submit: () => void;
-      },
-    ) => {
-      actions.applyEdit({
-        replaceFromOffset: 0,
-        replaceToOffset: slashQuery?.tokenEnd ?? 0,
-        insertText: slashCommandText(command),
-      });
+    (command: AgentSlashCommand, actions: ChooseActions) => {
+      const tokenEnd = slashQuery?.tokenEnd ?? 0;
       setSlashQuery(null);
       setSelectedIndex(0);
-      if (command.kind === "session") actions.submit();
+      if (slashCommandNeedsConfirm(command)) {
+        setPendingConfirm({ command, tokenEnd, actions });
+        return;
+      }
+      applyChoice(command, tokenEnd, actions);
     },
     [slashQuery],
   );
+
+  const confirmPending = React.useCallback(() => {
+    if (!pendingConfirm) return;
+    setPendingConfirm(null);
+    applyChoice(
+      pendingConfirm.command,
+      pendingConfirm.tokenEnd,
+      pendingConfirm.actions,
+    );
+  }, [pendingConfirm]);
+
+  const cancelPending = React.useCallback(() => {
+    setPendingConfirm(null);
+    setDismissed(true);
+  }, []);
 
   /**
    * Send the composer text as a skill invocation when it starts with a
@@ -201,7 +235,10 @@ export function useAgentSlashCommands({
 
   return {
     argumentHint,
+    cancelPending,
     choose,
+    confirmPending,
+    pendingConfirm: pendingConfirm?.command ?? null,
     handleKeyDown,
     isOpen,
     selectedIndex,

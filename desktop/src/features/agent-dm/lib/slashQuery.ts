@@ -55,6 +55,14 @@ export function slashCommandText(command: AgentSlashCommand) {
   return command.kind === "skill" ? `/${command.name} ` : `/${command.name}`;
 }
 
+/**
+ * Whether choosing the command asks first. Only `/new` does: it ends the
+ * agent's current session. `/sessions` is a harmless listing request.
+ */
+export function slashCommandNeedsConfirm(command: AgentSlashCommand) {
+  return command.kind === "session" && command.name === "new";
+}
+
 export type SkillInvocation = { command: AgentSkillCommand; args: string };
 
 /**

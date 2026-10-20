@@ -2,6 +2,16 @@ import * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/shared/ui/alert-dialog";
+import {
   POPOVER_CUSTOM_ENTER_MOTION_CLASS,
   POPOVER_SHADOW_STYLE,
   POPOVER_SURFACE_CLASS,
@@ -42,6 +52,34 @@ export function AgentSlashCommandMenu({
     active?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
+  // The confirm takes focus from the editor, so it renders regardless of
+  // focus ownership; only the composer that opened it has one pending.
+  const confirm = (
+    <AlertDialog
+      onOpenChange={(open) => {
+        if (!open) slash.cancelPending();
+      }}
+      open={slash.pendingConfirm !== null}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Start a new session?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The agent ends its current session. Your next message starts a fresh
+            one.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={slash.confirmPending}>
+            Start
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
+  if (slash.pendingConfirm) return confirm;
   if (!composerOwnsFocus) return null;
   if (!isOpen) {
     return argumentHint ? (
