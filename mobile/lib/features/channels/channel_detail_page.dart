@@ -954,6 +954,16 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
                       ?assistant.pendingNotice,
                       ComposeBar(
                         channelId: channel.id,
+                        commandAgentPubkey:
+                            !personalChat &&
+                                showsComposer &&
+                                !isAgentIdentityUnresolved
+                            ? agentDmSessionsPeer(
+                                channel: resolvedChannel,
+                                currentPubkey: currentPubkey,
+                                agentPubkeys: agentPubkeys,
+                              )
+                            : null,
                         focusNode: composerFocusNode,
                         onFocusRestorerChanged: (restoreFocus) =>
                             restoreComposerFocus.value = restoreFocus,
