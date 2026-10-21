@@ -8,6 +8,12 @@ const buzzPushSelfDirectedKinds = buzzPushEligibleKinds;
 const buzzPushRenderableKinds = buzzPushEligibleKinds;
 const buzzPushChannelKinds = [9];
 
+/// Kinds a muted channel's ignore filter drops. Wider than
+/// [buzzPushChannelKinds]: the self-directed `#p` subscription also wakes on
+/// kind 40002, so an addressed 40002 in a muted channel (for example a
+/// voice-redirect mirror in an agent DM) must be ignored too.
+const buzzPushMutedIgnoreKinds = [9, 40002];
+
 /// Owner-addressed agent guest access notifications that should wake the
 /// owner: approval requested (46040) and alert (46042). They join the self
 /// `#p` subscription only when the relay advertises them in `push_kinds`,
@@ -474,7 +480,7 @@ List<BuzzPushSubscription> buildDesiredBuzzPushSubscriptions({
   final mutedIgnoreFilters = <BuzzPushFilter>[];
   for (final chunk in _chunks(activeMuted, buzzPushChannelChunkSize)) {
     mutedIgnoreFilters.add(
-      BuzzPushFilter(kinds: buzzPushChannelKinds, hTags: chunk),
+      BuzzPushFilter(kinds: buzzPushMutedIgnoreKinds, hTags: chunk),
     );
   }
   if (mutedIgnoreFilters.length + 1 > buzzPushMaxIgnoreFilters) {

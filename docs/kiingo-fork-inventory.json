@@ -1032,7 +1032,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
-      "purpose": "Relay support for agent guest access notifications: stored, global, owner-addressed kinds 46040 (approval requested), 46041 (approval resolved) and 46042 (guest-access alert) with strict envelope validation (one hex p tag, agent tag, correlation id, status/severity enums, short content, no h tag); p-gated reads at the filter, result and live fan-out layers (only the addressed owner can read them, including by id); and push eligibility for 46040/46042 (relay push kinds under buzz-push-v1, the application push-match allowlist PUSH_MATCH_KINDS that replaced the retired trigger, and fork migration 0045 retained as applied history) so approval requests wake the owner's phone. The read gate now derives from RESULT_GATED_KINDS instead of hard-coded kinds.",
+      "purpose": "Relay support for agent guest access notifications: stored, global, owner-addressed kinds 46040 (approval requested), 46041 (approval resolved) and 46042 (guest-access alert) with strict envelope validation (one hex p tag, agent tag, correlation id, status/severity enums, short content, no h tag); p-gated reads at the filter, result and live fan-out layers (only the addressed owner can read them, including by id); and push eligibility for 46040/46042 (relay push kinds under buzz-push-v1, the application push-match allowlist PUSH_MATCH_KINDS that replaced the retired trigger, and fork migration 0045 retained as applied history) so approval requests wake the owner's phone. The read gate now derives from RESULT_GATED_KINDS instead of hard-coded kinds. A push-match test pins the mobile lease shape: an addressed 40002 in a muted channel does not wake.",
       "upstreamStatus": "Generic notification kinds with no deployment-specific behaviour; not yet proposed upstream.",
       "removalCondition": "Remove when block/buzz ships owner-addressed approval notification kinds with private reads and push eligibility.",
       "paths": [
@@ -1226,7 +1226,7 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
-      "purpose": "Mobile side of agent guest access notifications: the self #p push subscription adds owner-addressed kinds 46040 (approval requested) and 46042 (alert) only when the relay advertises them in NIP-11 push_kinds (the descriptor now carries the advertised kinds), the iOS notification resolver presents them, and the Activity inbox shows unresolved 46040 requests and 46042 alerts in Needs Action, accepted only from the owner's own agents (NIP-OA verified kind:0) and dropped once a matching 46041 resolution arrives.",
+      "purpose": "Mobile side of agent guest access notifications: the self #p push subscription adds owner-addressed kinds 46040 (approval requested) and 46042 (alert) only when the relay advertises them in NIP-11 push_kinds (the descriptor now carries the advertised kinds), the iOS notification resolver presents them, and the Activity inbox shows unresolved 46040 requests and 46042 alerts in Needs Action, accepted only from the owner's own agents (NIP-OA verified kind:0) and dropped once a matching 46041 resolution arrives. A muted channel's ignore filter also covers kind 40002 (not only kind 9), so an addressed 40002 in a muted channel, such as an agent DM's addressed mirror (docs/agent-dm-markers.md §1), stays silent like kind 9.",
       "upstreamStatus": "Generic notification kinds with no deployment-specific behaviour; not yet proposed upstream.",
       "removalCondition": "Remove when block/buzz ships owner-addressed approval notification kinds on mobile.",
       "paths": [
@@ -1834,7 +1834,7 @@
       "paths": [
         "docs/agent-dm-markers.md"
       ],
-      "purpose": "Agent DM markers v1: the shared tag contract between agent runtimes and the desktop/mobile clients for 1:1 agent DMs. Agent-signed mirrored history from other surfaces (buzz-mirror, quiet kind 40002 with no p tag), session dividers and listings (buzz-session, buzz-sessions) with the /sessions, /new and /sessions load commands, question cards (buzz-question, buzz-question-state, buzz-answer) and action buttons (buzz-action). Kiingo W6 (one agent, one conversation, one native session). The call card (buzz-call on a voice mirror) records each voice call.",
+      "purpose": "Agent DM markers v1: the shared tag contract between agent runtimes and the desktop/mobile clients for 1:1 agent DMs. Agent-signed mirrored history from other surfaces (buzz-mirror, quiet kind 40002 with no p tag, except an addressed mirror with one requester p that wakes only that person's phone), session dividers and listings (buzz-session, buzz-sessions) with the /sessions, /new and /sessions load commands, question cards (buzz-question, buzz-question-state, buzz-answer) and action buttons (buzz-action). Kiingo W6 (one agent, one conversation, one native session). The call card (buzz-call on a voice mirror) records each voice call.",
       "removalCondition": "Drop when upstream defines equivalent agent DM markers or Kiingo agents stop publishing them.",
       "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz."
     },
