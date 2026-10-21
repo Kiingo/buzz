@@ -239,6 +239,11 @@ fn p0_pool_acquisitions_use_typed_operation_pairs_without_other() {
             "begin_community_write_transaction(",
         ),
         (
+            "pub async fn archive_ephemeral_huddle_channel(\n",
+            "/// Unarchives a channel",
+            "begin_community_write_transaction(",
+        ),
+        (
             "pub async fn unarchive_channel(\n",
             "/// Soft-delete a channel",
             "begin_community_write_transaction(",

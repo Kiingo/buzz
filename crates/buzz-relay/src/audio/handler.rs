@@ -792,7 +792,7 @@ pub(crate) async fn handle_active_audio_connection(
                 &mut terminal_ctrl_rx,
                 nip_fi_assertion.is_some(),
                 refusal.denial_class(),
-                serde_json::json!({"type": "error", "message": "not a member"}),
+                refusal.off_mode_frame(),
             )
             .await;
             return;
@@ -2098,9 +2098,15 @@ pub(crate) async fn handle_active_audio_connection(
     if should_auto_end {
         info!(channel_id = %channel_id, "audio room empty — auto-ending huddle");
 
+        // Archive only the huddle's ephemeral backing channel. Admission
+        // refuses permanent channels, but the TTL is re-checked here in the
+        // same statement as the archive, so a channel whose TTL was cleared
+        // during the huddle (or any other permanent channel) is never
+        // archived by a huddle ending. An ephemeral channel the TTL reaper
+        // already archived still ends the huddle, so clients see the 48103.
         match state
             .db
-            .archive_channel(tenant.community(), channel_id)
+            .archive_ephemeral_huddle_channel(tenant.community(), channel_id)
             .await
         {
             Err(e) => {
@@ -2108,7 +2114,18 @@ pub(crate) async fn handle_active_audio_connection(
                 room.clear_ended();
                 room_emptied = false;
             }
-            Ok(()) => {
+            Ok(outcome) => {
+                match outcome {
+                    buzz_db::channel::HuddleChannelArchive::Archived => {}
+                    buzz_db::channel::HuddleChannelArchive::AlreadyArchived => info!(
+                        channel_id = %channel_id,
+                        "huddle channel was already archived (TTL expiry); ending the huddle"
+                    ),
+                    buzz_db::channel::HuddleChannelArchive::Permanent => warn!(
+                        channel_id = %channel_id,
+                        "huddle ended in a permanent channel; leaving the channel unarchived"
+                    ),
+                }
                 room_emptied = state
                     .audio_rooms
                     .cleanup_if_empty(tenant.community(), channel_id);
@@ -2700,14 +2717,38 @@ impl HuddleAdmissionGuard {
 #[derive(Debug)]
 enum AdmissionRefusal {
     Denied(&'static str),
+    /// The caller may read the channel, but it is a permanent channel (no
+    /// TTL), not a huddle's ephemeral backing channel. Huddle audio only runs
+    /// in ephemeral huddle channels, so a direct join to a DM, group or stream
+    /// is refused. Non-members never get this refusal: they get the same
+    /// `Denied("not a member")` as for any channel they cannot read, so it
+    /// reveals nothing about channels the caller cannot see.
+    NotHuddleChannel,
     Dependency(buzz_db::DbError),
 }
+
+/// Client-facing error code for [`AdmissionRefusal::NotHuddleChannel`].
+pub(crate) const NOT_A_HUDDLE_CHANNEL_CODE: &str = "not_a_huddle_channel";
 
 impl AdmissionRefusal {
     fn denial_class(&self) -> buzz_auth::DenialClass {
         match self {
-            Self::Denied(_) => buzz_auth::DenialClass::AuthorizationDenied,
+            Self::Denied(_) | Self::NotHuddleChannel => buzz_auth::DenialClass::AuthorizationDenied,
             Self::Dependency(_) => buzz_auth::DenialClass::AuthorizationUnavailable,
+        }
+    }
+
+    /// The legacy (non-NIP-FI) error frame for this refusal.
+    fn off_mode_frame(&self) -> serde_json::Value {
+        match self {
+            Self::NotHuddleChannel => serde_json::json!({
+                "type": "error",
+                "code": NOT_A_HUDDLE_CHANNEL_CODE,
+                "message": "huddle audio requires a huddle channel",
+            }),
+            Self::Denied(_) | Self::Dependency(_) => {
+                serde_json::json!({"type": "error", "message": "not a member"})
+            }
         }
     }
 }
@@ -2716,6 +2757,7 @@ impl std::fmt::Display for AdmissionRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Denied(reason) => f.write_str(reason),
+            Self::NotHuddleChannel => f.write_str("not a huddle channel"),
             Self::Dependency(e) => write!(f, "db error: {e}"),
         }
     }
@@ -2795,10 +2837,11 @@ async fn exit_authorization_refusal<S>(
 
 /// Validate membership for audio admission — **no durable write**.
 ///
-/// Loads the channel, checks archival status, resolves the parent-channel
-/// linkage for ephemeral channels, and checks existing membership and parent
-/// membership. Returns [`MembershipAdmission`] describing what still needs
-/// to happen at commit time.
+/// Loads the channel, checks archival status, refuses permanent (non-TTL)
+/// channels, resolves the parent-channel linkage of the ephemeral huddle
+/// channel, and checks existing membership and parent membership. Returns
+/// [`MembershipAdmission`] describing what still needs to happen at commit
+/// time.
 ///
 /// Performs zero DB writes. Any needed auto-add write is deferred into the
 /// caller-owned transaction inside `commit_participant_join`.
@@ -2830,30 +2873,44 @@ async fn check_membership_for_admission(
         return Err(AdmissionRefusal::Denied("channel is archived"));
     }
 
+    // Huddle audio runs only in a huddle's ephemeral backing channel (kind
+    // 9007 with a TTL). A permanent channel (DM, group, stream) is never a
+    // huddle room: a direct `/huddle/{id}/audio` join to one is refused, so
+    // the room-empty teardown can never end in a permanent channel. Callers
+    // who can read the channel get the typed refusal; everyone else gets the
+    // same "not a member" as for any channel they cannot read.
+    if channel.ttl_seconds.is_none() {
+        let can_read = channel.visibility == "open"
+            || state
+                .is_member_cached(tenant.community(), channel_id, pubkey_bytes)
+                .await
+                .map_err(AdmissionRefusal::Dependency)?;
+        return Err(if can_read {
+            AdmissionRefusal::NotHuddleChannel
+        } else {
+            AdmissionRefusal::Denied("not a member")
+        });
+    }
+
     // Lifecycle events for an ephemeral huddle belong in its parent channel.
-    let lifecycle_parent_id = if channel.ttl_seconds.is_some() {
-        let parent_id = parent_channel_id.ok_or(AdmissionRefusal::Denied(
-            "ephemeral channel requires parent linkage",
-        ))?;
-        let linked = state
-            .db
-            .huddle_started_link_exists(
-                tenant.community(),
-                parent_id,
-                channel_id,
-                &channel.created_by,
-            )
-            .await
-            .map_err(AdmissionRefusal::Dependency)?;
-        if !linked {
-            return Err(AdmissionRefusal::Denied(
-                "ephemeral channel is not linked to claimed parent",
-            ));
-        }
-        parent_id
-    } else {
-        channel_id
-    };
+    let lifecycle_parent_id = parent_channel_id.ok_or(AdmissionRefusal::Denied(
+        "ephemeral channel requires parent linkage",
+    ))?;
+    let linked = state
+        .db
+        .huddle_started_link_exists(
+            tenant.community(),
+            lifecycle_parent_id,
+            channel_id,
+            &channel.created_by,
+        )
+        .await
+        .map_err(AdmissionRefusal::Dependency)?;
+    if !linked {
+        return Err(AdmissionRefusal::Denied(
+            "ephemeral channel is not linked to claimed parent",
+        ));
+    }
 
     // Fast path: already a member.
     let is_member = state
@@ -2874,18 +2931,16 @@ async fn check_membership_for_admission(
     }
 
     // Auto-add path: private ephemeral channel + caller is member of parent.
-    if channel.ttl_seconds.is_some() {
-        let parent_member = state
-            .is_member_cached(tenant.community(), lifecycle_parent_id, pubkey_bytes)
-            .await
-            .map_err(AdmissionRefusal::Dependency)?;
+    let parent_member = state
+        .is_member_cached(tenant.community(), lifecycle_parent_id, pubkey_bytes)
+        .await
+        .map_err(AdmissionRefusal::Dependency)?;
 
-        if parent_member {
-            return Ok(MembershipAdmission::AutoAddRequired {
-                parent_channel_id: lifecycle_parent_id,
-                channel_created_by: channel.created_by.clone(),
-            });
-        }
+    if parent_member {
+        return Ok(MembershipAdmission::AutoAddRequired {
+            parent_channel_id: lifecycle_parent_id,
+            channel_created_by: channel.created_by.clone(),
+        });
     }
 
     Err(AdmissionRefusal::Denied("not a member"))
@@ -4192,9 +4247,13 @@ mod tests {
         .unwrap();
         client
             .send(tokio_tungstenite::tungstenite::Message::Text(
-                serde_json::json!({"type": "auth", "event": auth_event})
-                    .to_string()
-                    .into(),
+                serde_json::json!({
+                    "type": "auth",
+                    "event": auth_event,
+                    "parent_channel_id": fixture_parent_id(channel_id),
+                })
+                .to_string()
+                .into(),
             ))
             .await
             .expect("send auth");
@@ -5251,7 +5310,15 @@ mod tests {
         Some(Arc::new(state))
     }
 
-    /// Seed a community + channel + membership row. Returns `(pool, tenant, channel_id, pubkey_bytes)`.
+    /// Seed a community, an ephemeral huddle channel and a membership row.
+    /// Returns `(tenant, channel_id, member_key)`.
+    ///
+    /// The channel is a huddle backing channel: it has a TTL, and a
+    /// creator-signed kind 48100 links it as its own lifecycle parent, so a
+    /// client joins it with `parent_channel_id` set to `channel_id`
+    /// ([`fixture_parent_id`]). Lifecycle events (48101–48103) therefore land
+    /// in `channel_id` itself. Huddle audio refuses permanent channels, so a
+    /// fixture without the TTL and link could not be admitted at all.
     async fn seed_audio_fixture(
         pool: &sqlx::PgPool,
     ) -> (buzz_core::tenant::TenantContext, uuid::Uuid, nostr::Keys) {
@@ -5268,8 +5335,9 @@ mod tests {
         let creator = nostr::Keys::generate();
         let creator_bytes = creator.public_key().to_bytes().to_vec();
         sqlx::query(
-            "INSERT INTO channels (id, community_id, name, channel_type, visibility, created_by) \
-             VALUES ($1, $2, 'w9-test-channel', 'stream', 'open', $3)",
+            "INSERT INTO channels \
+             (id, community_id, name, channel_type, visibility, created_by, ttl_seconds, ttl_deadline) \
+             VALUES ($1, $2, 'w9-test-channel', 'stream', 'open', $3, 3600, NOW() + interval '1 hour')",
         )
         .bind(channel_id)
         .bind(community_uuid)
@@ -5277,6 +5345,8 @@ mod tests {
         .execute(pool)
         .await
         .expect("W9 fixture: seed channel");
+        seed_huddle_started_link(pool, community_uuid, channel_id, channel_id, &creator_bytes)
+            .await;
 
         let member_key = nostr::Keys::generate();
         let member_bytes = member_key.public_key().to_bytes().to_vec();
@@ -5297,6 +5367,43 @@ mod tests {
             host,
         );
         (tenant, channel_id, member_key)
+    }
+
+    /// The `parent_channel_id` a client sends to join a [`seed_audio_fixture`]
+    /// channel: the fixture links the huddle channel as its own parent.
+    fn fixture_parent_id(channel_id: uuid::Uuid) -> String {
+        channel_id.to_string()
+    }
+
+    /// Insert the creator-signed kind 48100 "huddle started" event in
+    /// `parent_channel_id` that links it to the ephemeral `huddle_channel_id`,
+    /// as `huddle_started_link_exists` requires for audio admission.
+    async fn seed_huddle_started_link(
+        pool: &sqlx::PgPool,
+        community_uuid: uuid::Uuid,
+        parent_channel_id: uuid::Uuid,
+        huddle_channel_id: uuid::Uuid,
+        creator_bytes: &[u8],
+    ) {
+        let content = serde_json::json!({ "ephemeral_channel_id": huddle_channel_id.to_string() })
+            .to_string();
+        let mut event_id = huddle_channel_id.as_bytes().to_vec();
+        event_id.extend_from_slice(parent_channel_id.as_bytes());
+        sqlx::query(
+            "INSERT INTO events \
+             (community_id, id, pubkey, created_at, kind, tags, content, sig, channel_id) \
+             VALUES ($1, $2, $3, NOW(), $4, '[]', $5, $6, $7)",
+        )
+        .bind(community_uuid)
+        .bind(event_id)
+        .bind(creator_bytes)
+        .bind(48100_i32)
+        .bind(&content)
+        .bind(vec![0u8; 64])
+        .bind(parent_channel_id)
+        .execute(pool)
+        .await
+        .expect("fixture: seed huddle_started link");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -9431,7 +9538,7 @@ mod tests {
             let auth_msg = serde_json::json!({
                 "type": "auth",
                 "event": auth_event,
-                "parent_channel_id": null,
+                "parent_channel_id": fixture_parent_id(channel_id),
                 "protocol_version": 1,
             })
             .to_string();
@@ -9818,7 +9925,7 @@ mod tests {
             let auth_msg = serde_json::json!({
                 "type": "auth",
                 "event": auth_event,
-                "parent_channel_id": null,
+                "parent_channel_id": fixture_parent_id(channel_id),
                 "protocol_version": 1,
             })
             .to_string();
@@ -10654,7 +10761,7 @@ mod tests {
             let auth_msg = serde_json::json!({
                 "type": "auth",
                 "event": auth_event,
-                "parent_channel_id": null,
+                "parent_channel_id": fixture_parent_id(channel_id),
                 "protocol_version": 2,
             })
             .to_string();
@@ -10979,7 +11086,7 @@ mod tests {
             let auth_msg = serde_json::json!({
                 "type": "auth",
                 "event": auth_event,
-                "parent_channel_id": null,
+                "parent_channel_id": fixture_parent_id(channel_id),
                 "protocol_version": 2,
             })
             .to_string();
@@ -11493,7 +11600,7 @@ mod tests {
             let auth_msg = serde_json::json!({
                 "type": "auth",
                 "event": auth_event,
-                "parent_channel_id": null,
+                "parent_channel_id": fixture_parent_id(channel_id),
                 "protocol_version": 1,
             })
             .to_string();
@@ -11682,7 +11789,7 @@ mod tests {
             let auth_msg = serde_json::json!({
                 "type": "auth",
                 "event": auth_event,
-                "parent_channel_id": null,
+                "parent_channel_id": fixture_parent_id(channel_id),
                 "protocol_version": 1,
             })
             .to_string();
@@ -11932,7 +12039,7 @@ mod tests {
             let auth_msg = serde_json::json!({
                 "type": "auth",
                 "event": auth_event,
-                "parent_channel_id": null,
+                "parent_channel_id": fixture_parent_id(channel_id),
                 "protocol_version": 1,
             })
             .to_string();
@@ -12960,7 +13067,7 @@ mod tests {
             let auth = serde_json::json!({
                 "type": "auth",
                 "event": auth_event,
-                "parent_channel_id": null,
+                "parent_channel_id": fixture_parent_id(channel_id),
                 "protocol_version": 2,
             });
             client
@@ -13548,11 +13655,40 @@ mod tests {
         }
 
         /// Open a registered audio socket for `key` and send its AUTH, without
-        /// reading any reply. `assertion` admits it under NIP-FI.
+        /// reading any reply. `assertion` admits it under NIP-FI. The AUTH
+        /// names the [`seed_audio_fixture`] parent ([`fixture_parent_id`]).
         async fn start_audio_auth(
             state: &std::sync::Arc<crate::state::AppState>,
             tenant: buzz_core::tenant::TenantContext,
             channel_id: uuid::Uuid,
+            key: &nostr::Keys,
+            auth_tag: Option<Vec<String>>,
+            assertion: Option<buzz_auth::VerifiedAssertion>,
+        ) -> (
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+            tokio::task::JoinHandle<std::io::Result<()>>,
+        ) {
+            start_audio_auth_with_parent(
+                state,
+                tenant,
+                channel_id,
+                Some(fixture_parent_id(channel_id)),
+                key,
+                auth_tag,
+                assertion,
+            )
+            .await
+        }
+
+        /// [`start_audio_auth`] with an explicit `parent_channel_id` in the
+        /// AUTH (`None` sends `null`, as a client with no parent would).
+        async fn start_audio_auth_with_parent(
+            state: &std::sync::Arc<crate::state::AppState>,
+            tenant: buzz_core::tenant::TenantContext,
+            channel_id: uuid::Uuid,
+            parent_channel_id: Option<String>,
             key: &nostr::Keys,
             auth_tag: Option<Vec<String>>,
             assertion: Option<buzz_auth::VerifiedAssertion>,
@@ -13619,9 +13755,13 @@ mod tests {
             let auth_event = auth_event.sign_with_keys(key).unwrap();
             client
                 .send(tokio_tungstenite::tungstenite::Message::Text(
-                    serde_json::json!({"type": "auth", "event": auth_event})
-                        .to_string()
-                        .into(),
+                    serde_json::json!({
+                        "type": "auth",
+                        "event": auth_event,
+                        "parent_channel_id": parent_channel_id,
+                    })
+                    .to_string()
+                    .into(),
                 ))
                 .await
                 .expect("send auth");
@@ -13870,6 +14010,429 @@ mod tests {
             );
             assert_eq!(closed, 1, "the ban must close the live audio socket");
             expect_policy_close(&mut client).await;
+            server.abort();
+        }
+
+        // ── Huddle audio runs only in ephemeral huddle channels ─────────────
+        //
+        // A huddle's audio room lives in its ephemeral backing channel (kind
+        // 9007 with a TTL), linked from the parent by a kind 48100. When the
+        // last participant leaves, that backing channel is archived. A
+        // permanent channel (a DM, group or stream) must never be archived by
+        // a huddle ending, and a direct `/huddle/{id}/audio` join to one is
+        // refused outright. Incident (2026-10-21): a client joined a DM's id
+        // directly and left; the last leave archived the DM.
+
+        /// Seed a community and a permanent channel (no TTL) of `channel_type`
+        /// and `visibility`, with `members` as members. Returns the tenant
+        /// and the channel id.
+        async fn seed_permanent_channel(
+            pool: &sqlx::PgPool,
+            channel_type: &str,
+            visibility: &str,
+            members: &[&nostr::Keys],
+        ) -> (buzz_core::tenant::TenantContext, uuid::Uuid) {
+            let community_uuid = uuid::Uuid::new_v4();
+            let host = format!("huddle-guard-{}.example", community_uuid.simple());
+            sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+                .bind(community_uuid)
+                .bind(&host)
+                .execute(pool)
+                .await
+                .expect("seed community");
+            let creator = members
+                .first()
+                .map(|key| key.public_key().to_bytes().to_vec())
+                .unwrap_or_else(|| nostr::Keys::generate().public_key().to_bytes().to_vec());
+            let channel_id = uuid::Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO channels (id, community_id, name, channel_type, visibility, created_by) \
+                 VALUES ($1, $2, 'huddle-guard', $3::channel_type, $4::channel_visibility, $5)",
+            )
+            .bind(channel_id)
+            .bind(community_uuid)
+            .bind(channel_type)
+            .bind(visibility)
+            .bind(&creator)
+            .execute(pool)
+            .await
+            .expect("seed permanent channel");
+            let tenant = buzz_core::tenant::TenantContext::resolved(
+                buzz_core::tenant::CommunityId::from_uuid(community_uuid),
+                host,
+            );
+            for key in members {
+                add_channel_member(pool, &tenant, channel_id, key).await;
+            }
+            (tenant, channel_id)
+        }
+
+        /// Seed the ephemeral backing channel of a huddle started by
+        /// `creator` in `parent_channel_id`: a private stream with a TTL and
+        /// the creator-signed 48100 link. Only the creator is a member; other
+        /// parent members are auto-added when they join.
+        async fn seed_parent_huddle(
+            pool: &sqlx::PgPool,
+            tenant: &buzz_core::tenant::TenantContext,
+            parent_channel_id: uuid::Uuid,
+            creator: &nostr::Keys,
+        ) -> uuid::Uuid {
+            let creator_bytes = creator.public_key().to_bytes().to_vec();
+            let huddle_channel_id = uuid::Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO channels \
+                 (id, community_id, name, channel_type, visibility, created_by, ttl_seconds, ttl_deadline) \
+                 VALUES ($1, $2, 'huddle-backing', 'stream', 'private', $3, 3600, NOW() + interval '1 hour')",
+            )
+            .bind(huddle_channel_id)
+            .bind(tenant.community().as_uuid())
+            .bind(&creator_bytes)
+            .execute(pool)
+            .await
+            .expect("seed huddle channel");
+            add_channel_member(pool, tenant, huddle_channel_id, creator).await;
+            seed_huddle_started_link(
+                pool,
+                *tenant.community().as_uuid(),
+                parent_channel_id,
+                huddle_channel_id,
+                &creator_bytes,
+            )
+            .await;
+            huddle_channel_id
+        }
+
+        async fn channel_archived(pool: &sqlx::PgPool, channel_id: uuid::Uuid) -> bool {
+            sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                "SELECT archived_at FROM channels WHERE id = $1",
+            )
+            .bind(channel_id)
+            .fetch_one(pool)
+            .await
+            .expect("read archived_at")
+            .is_some()
+        }
+
+        async fn lifecycle_event_count(
+            pool: &sqlx::PgPool,
+            tenant: &buzz_core::tenant::TenantContext,
+            channel_id: uuid::Uuid,
+            kind: i32,
+        ) -> i64 {
+            sqlx::query_scalar(
+                "SELECT COUNT(*) FROM events WHERE community_id = $1 AND channel_id = $2 AND kind = $3",
+            )
+            .bind(tenant.community().as_uuid())
+            .bind(channel_id)
+            .bind(kind)
+            .fetch_one(pool)
+            .await
+            .expect("count lifecycle events")
+        }
+
+        /// Wait until the huddle in `parent_channel_id` has ended (its 48103
+        /// is committed), so teardown — including any archive — has run.
+        async fn await_huddle_ended(
+            pool: &sqlx::PgPool,
+            tenant: &buzz_core::tenant::TenantContext,
+            parent_channel_id: uuid::Uuid,
+        ) {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+            while lifecycle_event_count(pool, tenant, parent_channel_id, 48103).await == 0 {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "the huddle must end (48103) after its last participant leaves"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }
+
+        fn not_a_huddle_channel_frame() -> String {
+            serde_json::json!({
+                "type": "error",
+                "code": NOT_A_HUDDLE_CHANNEL_CODE,
+                "message": "huddle audio requires a huddle channel",
+            })
+            .to_string()
+        }
+
+        /// Regression for the 2026-10-21 incident: a member joins a DM's id
+        /// directly (no huddle channel), with or without claiming the DM as
+        /// its parent. The join is refused with the typed
+        /// `not_a_huddle_channel` error, no participant is admitted, and the
+        /// DM is never archived. A non-member of the DM gets the plain
+        /// "not a member" refusal, which says nothing about the DM.
+        ///
+        /// Mutation: delete the `ttl_seconds.is_none()` refusal in
+        /// `check_membership_for_admission` → the member is admitted (and on
+        /// leaving archives the DM) → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn direct_join_to_dm_is_refused_and_dm_stays_unarchived() {
+            use tokio_tungstenite::tungstenite::Message;
+            let state = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let pool = state.db.pool().clone();
+            let (alice, bob) = (nostr::Keys::generate(), nostr::Keys::generate());
+            let (tenant, dm_id) =
+                seed_permanent_channel(&pool, "dm", "private", &[&alice, &bob]).await;
+
+            for parent in [None, Some(dm_id.to_string())] {
+                let (mut client, server) = start_audio_auth_with_parent(
+                    &state,
+                    tenant.clone(),
+                    dm_id,
+                    parent.clone(),
+                    &alice,
+                    None,
+                    None,
+                )
+                .await;
+                let frames = audio_frames_until_close(&mut client).await;
+                assert_eq!(
+                    frames.first(),
+                    Some(&Message::Text(not_a_huddle_channel_frame().into())),
+                    "parent {parent:?}: a direct DM join must be refused as not a huddle channel"
+                );
+                server.abort();
+            }
+
+            let stranger = nostr::Keys::generate();
+            let (mut client, server) = start_audio_auth_with_parent(
+                &state,
+                tenant.clone(),
+                dm_id,
+                None,
+                &stranger,
+                None,
+                None,
+            )
+            .await;
+            let frames = audio_frames_until_close(&mut client).await;
+            assert_eq!(
+                frames.first(),
+                Some(&Message::Text(
+                    serde_json::json!({"type": "error", "message": "not a member"})
+                        .to_string()
+                        .into()
+                )),
+                "a non-member must get the plain refusal"
+            );
+            server.abort();
+
+            assert_eq!(
+                lifecycle_event_count(&pool, &tenant, dm_id, 48101).await,
+                0,
+                "no participant may be admitted to a DM's audio"
+            );
+            assert!(
+                state.audio_rooms.get(tenant.community(), dm_id).is_none(),
+                "no audio room may exist for a DM"
+            );
+            assert!(
+                !channel_archived(&pool, dm_id).await,
+                "the DM must never be archived"
+            );
+        }
+
+        /// A direct join to an open stream, which anyone may read, is refused
+        /// the same way, so an open channel cannot be archived by a stranger
+        /// joining and leaving its audio.
+        ///
+        /// Mutation: refuse only private channels → the open stream admits
+        /// the stranger → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn direct_join_to_open_stream_is_refused() {
+            use tokio_tungstenite::tungstenite::Message;
+            let state = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let pool = state.db.pool().clone();
+            let (tenant, stream_id) = seed_permanent_channel(&pool, "stream", "open", &[]).await;
+            let stranger = nostr::Keys::generate();
+            let (mut client, server) = start_audio_auth_with_parent(
+                &state,
+                tenant.clone(),
+                stream_id,
+                None,
+                &stranger,
+                None,
+                None,
+            )
+            .await;
+            let frames = audio_frames_until_close(&mut client).await;
+            assert_eq!(
+                frames.first(),
+                Some(&Message::Text(not_a_huddle_channel_frame().into())),
+                "a direct join to an open stream must be refused as not a huddle channel"
+            );
+            server.abort();
+            assert!(
+                !channel_archived(&pool, stream_id).await,
+                "the open stream must never be archived"
+            );
+        }
+
+        /// The standard DM huddle: the huddle runs in its ephemeral backing
+        /// channel, linked from the DM. When the last participant leaves, the
+        /// backing channel is archived and the DM is not.
+        ///
+        /// Mutation: skip the archive on room end → the backing channel stays
+        /// unarchived → RED. Archive `parent_id_for_event` instead → the DM is
+        /// archived → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn last_leave_archives_ephemeral_huddle_channel_not_its_dm() {
+            let state = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let pool = state.db.pool().clone();
+            let (alice, bob) = (nostr::Keys::generate(), nostr::Keys::generate());
+            let (tenant, dm_id) =
+                seed_permanent_channel(&pool, "dm", "private", &[&alice, &bob]).await;
+            let huddle_id = seed_parent_huddle(&pool, &tenant, dm_id, &alice).await;
+
+            // Bob is a DM member only: admission auto-adds him, as production does.
+            let (mut client, server) = start_audio_auth_with_parent(
+                &state,
+                tenant.clone(),
+                huddle_id,
+                Some(dm_id.to_string()),
+                &bob,
+                None,
+                None,
+            )
+            .await;
+            let joined = next_audio_text(&mut client).await;
+            assert!(
+                !joined.contains("\"error\""),
+                "the huddle channel must admit a DM member; got {joined}"
+            );
+            client.close(None).await.expect("close client");
+
+            await_huddle_ended(&pool, &tenant, dm_id).await;
+            assert!(
+                channel_archived(&pool, huddle_id).await,
+                "the ephemeral huddle channel must be archived when the huddle ends"
+            );
+            assert!(
+                !channel_archived(&pool, dm_id).await,
+                "the DM must never be archived"
+            );
+            server.abort();
+        }
+
+        /// Defense in depth at the room-end seam: if a huddle channel's TTL
+        /// is cleared while the huddle runs (making it permanent), the last
+        /// leave still ends the huddle but leaves the channel unarchived.
+        ///
+        /// Mutation: call `archive_channel` instead of
+        /// `archive_ephemeral_huddle_channel` at room end → the now-permanent
+        /// channel is archived → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn last_leave_never_archives_a_channel_made_permanent_mid_huddle() {
+            let state = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let pool = state.db.pool().clone();
+            let alice = nostr::Keys::generate();
+            let (tenant, dm_id) = seed_permanent_channel(&pool, "dm", "private", &[&alice]).await;
+            let huddle_id = seed_parent_huddle(&pool, &tenant, dm_id, &alice).await;
+
+            let (mut client, server) = start_audio_auth_with_parent(
+                &state,
+                tenant.clone(),
+                huddle_id,
+                Some(dm_id.to_string()),
+                &alice,
+                None,
+                None,
+            )
+            .await;
+            let joined = next_audio_text(&mut client).await;
+            assert!(
+                !joined.contains("\"error\""),
+                "must be admitted; got {joined}"
+            );
+
+            sqlx::query(
+                "UPDATE channels SET ttl_seconds = NULL, ttl_deadline = NULL WHERE id = $1",
+            )
+            .bind(huddle_id)
+            .execute(&pool)
+            .await
+            .expect("clear the huddle channel's TTL");
+            client.close(None).await.expect("close client");
+
+            await_huddle_ended(&pool, &tenant, dm_id).await;
+            assert!(
+                !channel_archived(&pool, huddle_id).await,
+                "a channel without a TTL must not be archived by a huddle ending"
+            );
+            assert!(
+                !channel_archived(&pool, dm_id).await,
+                "the DM must never be archived"
+            );
+            server.abort();
+        }
+
+        /// If the TTL reaper archives the huddle channel while the huddle is
+        /// still running, the last leave must still end the huddle: the room
+        /// is cleaned up and a 48103 is emitted, so clients do not keep a
+        /// phantom huddle. The DM stays unarchived.
+        ///
+        /// Mutation: treat `AlreadyArchived` as an archive failure (keep the
+        /// huddle alive) → no 48103 → `await_huddle_ended` times out → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn last_leave_ends_huddle_whose_channel_the_reaper_already_archived() {
+            let state = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let pool = state.db.pool().clone();
+            let alice = nostr::Keys::generate();
+            let (tenant, dm_id) = seed_permanent_channel(&pool, "dm", "private", &[&alice]).await;
+            let huddle_id = seed_parent_huddle(&pool, &tenant, dm_id, &alice).await;
+
+            let (mut client, server) = start_audio_auth_with_parent(
+                &state,
+                tenant.clone(),
+                huddle_id,
+                Some(dm_id.to_string()),
+                &alice,
+                None,
+                None,
+            )
+            .await;
+            let joined = next_audio_text(&mut client).await;
+            assert!(
+                !joined.contains("\"error\""),
+                "must be admitted; got {joined}"
+            );
+
+            // The reaper's write: archive the expired ephemeral channel.
+            sqlx::query("UPDATE channels SET archived_at = NOW() WHERE id = $1")
+                .bind(huddle_id)
+                .execute(&pool)
+                .await
+                .expect("archive the huddle channel as the reaper does");
+            client.close(None).await.expect("close client");
+
+            await_huddle_ended(&pool, &tenant, dm_id).await;
+            assert!(
+                state
+                    .audio_rooms
+                    .get(tenant.community(), huddle_id)
+                    .is_none(),
+                "the ended huddle's room must be cleaned up"
+            );
+            assert!(
+                !channel_archived(&pool, dm_id).await,
+                "the DM must never be archived"
+            );
             server.abort();
         }
 
