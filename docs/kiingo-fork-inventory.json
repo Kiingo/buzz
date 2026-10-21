@@ -1847,6 +1847,18 @@
       "purpose": "Quiet agent DM markers (docs/agent-dm-markers.md: buzz-mirror, buzz-session, buzz-sessions, buzz-question-state) are left out of an agent's DM conversation context: they are agent-signed presentation for people (mirrored history from other surfaces, session dividers and listings, question-card state), never prompt input. One filter hook in pool.rs parse_nostr_dm_response. Kiingo W6.",
       "removalCondition": "Drop when upstream excludes presentation-only agent DM markers from prompt context, or Kiingo agents stop publishing them.",
       "upstreamStatus": "Generic, provider-neutral; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz relay maintainers",
+      "paths": [
+        "crates/buzz-db/src/store/channel.rs",
+        "crates/buzz-relay/src/audio/handler.rs",
+        "crates/buzz-relay/tests/boot_lifecycle.rs"
+      ],
+      "purpose": "Huddle audio runs only in a huddle's ephemeral (TTL) backing channel: audio admission refuses a channel without a TTL (typed not_a_huddle_channel for readers, plain not-a-member otherwise), and the room-end teardown archives only through archive_ephemeral_huddle_channel, which never archives a permanent channel and still ends a huddle whose channel the TTL reaper already archived. Previously a direct /huddle/{id}/audio join to a DM was admitted and the last leave archived the DM. The boot lifecycle tests cover the bounded retry of the one-time Redis bootstrap gate (state.rs). Kiingo W6, Kiingo/buzz#240.",
+      "removalCondition": "Drop when upstream refuses huddle audio in non-ephemeral channels and archives only ephemeral huddle channels on room end, and retries its Redis bootstrap within a bound.",
+      "upstreamStatus": "Generic, provider-neutral bug fix; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
