@@ -469,15 +469,63 @@ impl Drop for CommunityConnectionGuard {
 /// it without parsing the underlying driver error.
 pub const REDIS_BOOTSTRAP_FAILURE: &str = "Redis command path unavailable at startup";
 
-/// Budget for the one-time bootstrap PING. A refused port answers immediately;
-/// this only bounds a blackholed address, where hanging forever would be worse
-/// than exiting.
-const REDIS_BOOTSTRAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Overall budget for the bootstrap gate, across every attempt.
+///
+/// A pod's first Redis dial can lose a race with its own network coming up:
+/// the driver caps connection setup at one second, and a single slow dial used
+/// to fail boot outright (two relay restarts on 2026-10-21). The gate now
+/// retries within this bound, and a Redis that stays unreachable past it is
+/// still startup-fatal.
+const REDIS_BOOTSTRAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// Keep the Redis driver's per-command timeout outside the relay-owned startup
-/// budget so [`REDIS_BOOTSTRAP_TIMEOUT`] remains the one authoritative bound.
+/// Bound on one attempt (lazy checkout plus PING). A refused port answers
+/// immediately; this only bounds a peer that accepts and never replies, so a
+/// stuck attempt is retried instead of consuming the whole budget.
+const REDIS_BOOTSTRAP_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Attempts before the gate gives up, even with budget left. Keeps a refused
+/// port fail-fast: five instant refusals and their backoff take under four
+/// seconds.
+const REDIS_BOOTSTRAP_MAX_ATTEMPTS: u32 = 5;
+
+/// Pause after the first failed attempt; it doubles per retry up to
+/// [`REDIS_BOOTSTRAP_MAX_BACKOFF`].
+const REDIS_BOOTSTRAP_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Ceiling on the pause between attempts.
+const REDIS_BOOTSTRAP_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Keep the Redis driver's per-command timeout outside the relay-owned attempt
+/// budget so [`REDIS_BOOTSTRAP_ATTEMPT_TIMEOUT`] remains the authoritative
+/// bound on one PING.
 const REDIS_BOOTSTRAP_DRIVER_TIMEOUT: std::time::Duration =
-    REDIS_BOOTSTRAP_TIMEOUT.saturating_mul(2);
+    REDIS_BOOTSTRAP_ATTEMPT_TIMEOUT.saturating_mul(2);
+
+/// The pause after failed attempt number `attempt` (1-based): the initial
+/// backoff, doubled per retry, capped at [`REDIS_BOOTSTRAP_MAX_BACKOFF`].
+fn redis_bootstrap_backoff(attempt: u32) -> std::time::Duration {
+    let factor = 1_u32
+        .checked_shl(attempt.saturating_sub(1))
+        .unwrap_or(u32::MAX);
+    REDIS_BOOTSTRAP_INITIAL_BACKOFF
+        .saturating_mul(factor)
+        .min(REDIS_BOOTSTRAP_MAX_BACKOFF)
+}
+
+/// One bootstrap attempt: check a connection out of the pool and PING it.
+async fn ping_redis_command_path(pool: &deadpool_redis::Pool) -> anyhow::Result<()> {
+    let connection = pool.get().await.map_err(anyhow::Error::from)?;
+    // This one-shot connection is removed from the pool so extending its
+    // driver timeout cannot leak into normal serving traffic. The relay's
+    // attempt timeout must bound both lazy checkout and PING.
+    let mut connection = deadpool_redis::Connection::take(connection);
+    connection.set_response_timeout(REDIS_BOOTSTRAP_DRIVER_TIMEOUT);
+    redis::cmd("PING")
+        .query_async::<String>(&mut connection)
+        .await
+        .map(|_| ())
+        .map_err(anyhow::Error::from)
+}
 
 /// Proves once, during startup, that the Redis command path this pod will serve
 /// from can actually be reached.
@@ -489,28 +537,46 @@ const REDIS_BOOTSTRAP_DRIVER_TIMEOUT: std::time::Duration =
 /// that listener is a one-way latch, so the check has to happen before it, and
 /// it is deliberately a *startup* gate: once serving, a Redis blip is a
 /// dependency failure and must never change readiness.
+///
+/// A failed attempt is retried with backoff, at most
+/// [`REDIS_BOOTSTRAP_MAX_ATTEMPTS`] times and within
+/// [`REDIS_BOOTSTRAP_TIMEOUT`] overall; past either bound the error names
+/// [`REDIS_BOOTSTRAP_FAILURE`] and boot fails.
 pub async fn verify_redis_command_path(pool: &deadpool_redis::Pool) -> anyhow::Result<()> {
-    let ping = async {
-        let connection = pool
-            .get()
-            .await
-            .map_err(|error| anyhow::anyhow!("{REDIS_BOOTSTRAP_FAILURE}: {error}"))?;
-        // This one-shot connection is removed from the pool so extending its
-        // driver timeout cannot leak into normal serving traffic. The relay's
-        // outer timeout below must bound both lazy checkout and PING.
-        let mut connection = deadpool_redis::Connection::take(connection);
-        connection.set_response_timeout(REDIS_BOOTSTRAP_DRIVER_TIMEOUT);
-        redis::cmd("PING")
-            .query_async::<String>(&mut connection)
-            .await
-            .map_err(|error| anyhow::anyhow!("{REDIS_BOOTSTRAP_FAILURE}: {error}"))
-    };
+    let started = tokio::time::Instant::now();
+    let deadline = started + REDIS_BOOTSTRAP_TIMEOUT;
+    let mut attempt: u32 = 1;
+    loop {
+        let budget = deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .min(REDIS_BOOTSTRAP_ATTEMPT_TIMEOUT);
+        let error = match tokio::time::timeout(budget, ping_redis_command_path(pool)).await {
+            Ok(Ok(())) => {
+                if attempt > 1 {
+                    tracing::info!(attempt, "Redis bootstrap succeeded after retry");
+                }
+                return Ok(());
+            }
+            Ok(Err(error)) => error.to_string(),
+            Err(_) => format!("no response within {budget:?}"),
+        };
 
-    match tokio::time::timeout(REDIS_BOOTSTRAP_TIMEOUT, ping).await {
-        Err(_) => Err(anyhow::anyhow!(
-            "{REDIS_BOOTSTRAP_FAILURE}: no response within {REDIS_BOOTSTRAP_TIMEOUT:?}"
-        )),
-        Ok(result) => result.map(|_| ()),
+        let backoff = redis_bootstrap_backoff(attempt);
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if attempt >= REDIS_BOOTSTRAP_MAX_ATTEMPTS || remaining <= backoff {
+            return Err(anyhow::anyhow!(
+                "{REDIS_BOOTSTRAP_FAILURE}: {error} (gave up after {attempt} attempts in {:?})",
+                started.elapsed()
+            ));
+        }
+        tracing::warn!(
+            attempt,
+            max_attempts = REDIS_BOOTSTRAP_MAX_ATTEMPTS,
+            backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
+            "Redis bootstrap attempt failed; retrying: {error}"
+        );
+        tokio::time::sleep(backoff).await;
+        attempt += 1;
     }
 }
 
@@ -4578,5 +4644,24 @@ pub(crate) mod tests {
             }
             other => panic!("expected a restart close frame, got {other:?}"),
         }
+    }
+
+    /// The backoff doubles from the initial pause and stops at the ceiling,
+    /// and the whole schedule fits the overall budget with room for the
+    /// attempts themselves.
+    #[test]
+    fn redis_bootstrap_backoff_doubles_to_its_ceiling() {
+        let schedule: Vec<u128> = (1..=6)
+            .map(|attempt| redis_bootstrap_backoff(attempt).as_millis())
+            .collect();
+        assert_eq!(schedule, vec![250, 500, 1000, 2000, 2000, 2000]);
+        assert_eq!(
+            redis_bootstrap_backoff(u32::MAX),
+            REDIS_BOOTSTRAP_MAX_BACKOFF
+        );
+        let total_backoff: std::time::Duration = (1..REDIS_BOOTSTRAP_MAX_ATTEMPTS)
+            .map(redis_bootstrap_backoff)
+            .sum();
+        assert!(total_backoff < REDIS_BOOTSTRAP_TIMEOUT);
     }
 }
