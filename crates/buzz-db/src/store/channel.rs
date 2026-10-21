@@ -758,24 +758,37 @@ pub async fn archive_channel(
     Ok(())
 }
 
+/// What [`archive_ephemeral_huddle_channel`] did with a huddle's channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HuddleChannelArchive {
+    /// The ephemeral channel was archived by this call.
+    Archived,
+    /// The ephemeral channel was already archived, typically by the TTL
+    /// reaper before the last participant left. The huddle has still ended.
+    AlreadyArchived,
+    /// The channel has no TTL, so it is permanent and was left unarchived.
+    Permanent,
+}
+
 /// Archives an ephemeral (TTL-bearing) huddle channel when its audio room
 /// ends.
 ///
 /// Unlike [`archive_channel`], this only archives a channel whose
 /// `ttl_seconds` is set: a huddle's backing channel. A permanent channel
-/// (a DM, group or stream, which has no TTL) is never archived; the call
-/// returns `Ok(false)` and leaves it unchanged. The row is locked before the
-/// check and the update repeats the TTL condition, so a concurrent TTL change
-/// cannot slip between them.
+/// (a DM, group or stream, which has no TTL) is never archived. The row is
+/// locked before the check and the update repeats the TTL condition, so a
+/// concurrent TTL change cannot slip between them.
 ///
-/// Returns `Ok(true)` when the channel was archived, `Ok(false)` when it is
-/// not ephemeral, `AccessDenied` when it is already archived and
-/// `ChannelNotFound` when it does not exist or is deleted.
+/// An ephemeral channel that is already archived (the TTL reaper got there
+/// first) is reported as [`HuddleChannelArchive::AlreadyArchived`], not as an
+/// error, so the caller still ends the huddle. An archived permanent channel
+/// stays `AccessDenied`, and a missing or deleted channel is
+/// `ChannelNotFound`.
 pub async fn archive_ephemeral_huddle_channel(
     pool: &PgPool,
     community_id: CommunityId,
     channel_id: Uuid,
-) -> Result<bool> {
+) -> Result<HuddleChannelArchive> {
     let mut tx = crate::begin_community_write_transaction(
         pool,
         community_id,
@@ -792,21 +805,26 @@ pub async fn archive_ephemeral_huddle_channel(
     .fetch_optional(tx.conn())
     .await?;
 
-    match row {
-        None => return Err(DbError::ChannelNotFound(channel_id)),
-        Some(r) => {
-            let archived_at: Option<DateTime<Utc>> = r.try_get("archived_at")?;
-            if archived_at.is_some() {
-                return Err(DbError::AccessDenied(
-                    "channel is already archived".to_string(),
-                ));
-            }
-            let ttl_seconds: Option<i32> = r.try_get("ttl_seconds")?;
-            if ttl_seconds.is_none() {
-                tx.commit().await?;
-                return Ok(false);
-            }
+    let Some(row) = row else {
+        return Err(DbError::ChannelNotFound(channel_id));
+    };
+    let archived_at: Option<DateTime<Utc>> = row.try_get("archived_at")?;
+    let ttl_seconds: Option<i32> = row.try_get("ttl_seconds")?;
+    match (archived_at.is_some(), ttl_seconds.is_some()) {
+        (true, true) => {
+            tx.commit().await?;
+            return Ok(HuddleChannelArchive::AlreadyArchived);
         }
+        (true, false) => {
+            return Err(DbError::AccessDenied(
+                "channel is already archived".to_string(),
+            ));
+        }
+        (false, false) => {
+            tx.commit().await?;
+            return Ok(HuddleChannelArchive::Permanent);
+        }
+        (false, true) => {}
     }
 
     let result = sqlx::query(
@@ -820,7 +838,11 @@ pub async fn archive_ephemeral_huddle_channel(
     .await?;
 
     tx.commit().await?;
-    Ok(result.rows_affected() == 1)
+    Ok(if result.rows_affected() == 1 {
+        HuddleChannelArchive::Archived
+    } else {
+        HuddleChannelArchive::AlreadyArchived
+    })
 }
 
 /// Unarchives a channel.
@@ -1198,14 +1220,13 @@ impl Db {
 
     /// Archives an ephemeral huddle channel; never archives a permanent one.
     ///
-    /// See [`archive_ephemeral_huddle_channel`]. Returns `Ok(false)` for a
-    /// channel without a TTL.
+    /// See [`archive_ephemeral_huddle_channel`] for the outcomes.
     #[datastore_span(name = "archive_ephemeral_huddle_channel", system = "postgresql")]
     pub async fn archive_ephemeral_huddle_channel(
         &self,
         community_id: CommunityId,
         channel_id: Uuid,
-    ) -> Result<bool> {
+    ) -> Result<HuddleChannelArchive> {
         archive_ephemeral_huddle_channel(&self.pool, community_id, channel_id).await
     }
 
@@ -1507,8 +1528,8 @@ mod postgres_tests {
 
     /// A huddle ending archives only its ephemeral backing channel. A DM, a
     /// private group and an open stream (no TTL) are never archived by
-    /// [`archive_ephemeral_huddle_channel`]: it returns `Ok(false)` and the
-    /// row keeps `archived_at` NULL. The incident this guards: a huddle joined
+    /// [`archive_ephemeral_huddle_channel`]: it returns
+    /// [`HuddleChannelArchive::Permanent`] and the row keeps `archived_at` NULL. The incident this guards: a huddle joined
     /// directly in a DM archived the DM when its last participant left.
     ///
     /// Mutation: drop the `ttl_seconds` check (archive like
@@ -1554,11 +1575,12 @@ mod postgres_tests {
             .await
             .expect("create permanent channel");
 
-            let archived = archive_ephemeral_huddle_channel(&pool, community, channel.id)
+            let outcome = archive_ephemeral_huddle_channel(&pool, community, channel.id)
                 .await
                 .expect("archive call on a permanent channel");
-            assert!(
-                !archived,
+            assert_eq!(
+                outcome,
+                HuddleChannelArchive::Permanent,
                 "{name}: a permanent channel must not be archived"
             );
             let reloaded = get_channel(&pool, community, channel.id)
@@ -1572,10 +1594,14 @@ mod postgres_tests {
     }
 
     /// The ephemeral backing channel of a huddle is archived when the huddle
-    /// ends, exactly once: a second call reports the existing archive.
+    /// ends, exactly once. A second call, as when the TTL reaper archived the
+    /// channel before the last participant left, reports
+    /// [`HuddleChannelArchive::AlreadyArchived`] rather than an error, so the
+    /// huddle still ends.
     ///
-    /// Mutation: return `Ok(false)` unconditionally → the TTL channel stays
-    /// unarchived → RED.
+    /// Mutation: return `Permanent` unconditionally → the TTL channel stays
+    /// unarchived → RED. Return `AccessDenied` for an archived TTL channel
+    /// again → the second call errors → RED.
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn archive_ephemeral_huddle_channel_archives_ttl_channel_once() {
@@ -1599,19 +1625,26 @@ mod postgres_tests {
         .await
         .expect("create ephemeral channel");
 
-        let archived = archive_ephemeral_huddle_channel(&pool, community, channel.id)
+        let outcome = archive_ephemeral_huddle_channel(&pool, community, channel.id)
             .await
             .expect("archive ephemeral channel");
-        assert!(archived, "the ephemeral huddle channel must be archived");
+        assert_eq!(
+            outcome,
+            HuddleChannelArchive::Archived,
+            "the ephemeral huddle channel must be archived"
+        );
         let reloaded = get_channel(&pool, community, channel.id)
             .await
             .expect("reload channel");
         assert!(reloaded.archived_at.is_some(), "archived_at must be set");
 
-        let again = archive_ephemeral_huddle_channel(&pool, community, channel.id).await;
-        assert!(
-            matches!(again, Err(DbError::AccessDenied(_))),
-            "a second archive must report the existing archive; got {again:?}"
+        let again = archive_ephemeral_huddle_channel(&pool, community, channel.id)
+            .await
+            .expect("an already-archived ephemeral channel is not an error");
+        assert_eq!(
+            again,
+            HuddleChannelArchive::AlreadyArchived,
+            "a second archive must report the existing archive"
         );
     }
 }

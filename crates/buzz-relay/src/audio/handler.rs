@@ -2102,7 +2102,8 @@ pub(crate) async fn handle_active_audio_connection(
         // refuses permanent channels, but the TTL is re-checked here in the
         // same statement as the archive, so a channel whose TTL was cleared
         // during the huddle (or any other permanent channel) is never
-        // archived by a huddle ending.
+        // archived by a huddle ending. An ephemeral channel the TTL reaper
+        // already archived still ends the huddle, so clients see the 48103.
         match state
             .db
             .archive_ephemeral_huddle_channel(tenant.community(), channel_id)
@@ -2113,12 +2114,17 @@ pub(crate) async fn handle_active_audio_connection(
                 room.clear_ended();
                 room_emptied = false;
             }
-            Ok(archived) => {
-                if !archived {
-                    warn!(
+            Ok(outcome) => {
+                match outcome {
+                    buzz_db::channel::HuddleChannelArchive::Archived => {}
+                    buzz_db::channel::HuddleChannelArchive::AlreadyArchived => info!(
+                        channel_id = %channel_id,
+                        "huddle channel was already archived (TTL expiry); ending the huddle"
+                    ),
+                    buzz_db::channel::HuddleChannelArchive::Permanent => warn!(
                         channel_id = %channel_id,
                         "huddle ended in a permanent channel; leaving the channel unarchived"
-                    );
+                    ),
                 }
                 room_emptied = state
                     .audio_rooms
@@ -14365,6 +14371,63 @@ mod tests {
             assert!(
                 !channel_archived(&pool, huddle_id).await,
                 "a channel without a TTL must not be archived by a huddle ending"
+            );
+            assert!(
+                !channel_archived(&pool, dm_id).await,
+                "the DM must never be archived"
+            );
+            server.abort();
+        }
+
+        /// If the TTL reaper archives the huddle channel while the huddle is
+        /// still running, the last leave must still end the huddle: the room
+        /// is cleaned up and a 48103 is emitted, so clients do not keep a
+        /// phantom huddle. The DM stays unarchived.
+        ///
+        /// Mutation: treat `AlreadyArchived` as an archive failure (keep the
+        /// huddle alive) → no 48103 → `await_huddle_ended` times out → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn last_leave_ends_huddle_whose_channel_the_reaper_already_archived() {
+            let state = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let pool = state.db.pool().clone();
+            let alice = nostr::Keys::generate();
+            let (tenant, dm_id) = seed_permanent_channel(&pool, "dm", "private", &[&alice]).await;
+            let huddle_id = seed_parent_huddle(&pool, &tenant, dm_id, &alice).await;
+
+            let (mut client, server) = start_audio_auth_with_parent(
+                &state,
+                tenant.clone(),
+                huddle_id,
+                Some(dm_id.to_string()),
+                &alice,
+                None,
+                None,
+            )
+            .await;
+            let joined = next_audio_text(&mut client).await;
+            assert!(
+                !joined.contains("\"error\""),
+                "must be admitted; got {joined}"
+            );
+
+            // The reaper's write: archive the expired ephemeral channel.
+            sqlx::query("UPDATE channels SET archived_at = NOW() WHERE id = $1")
+                .bind(huddle_id)
+                .execute(&pool)
+                .await
+                .expect("archive the huddle channel as the reaper does");
+            client.close(None).await.expect("close client");
+
+            await_huddle_ended(&pool, &tenant, dm_id).await;
+            assert!(
+                state
+                    .audio_rooms
+                    .get(tenant.community(), huddle_id)
+                    .is_none(),
+                "the ended huddle's room must be cleaned up"
             );
             assert!(
                 !channel_archived(&pool, dm_id).await,
