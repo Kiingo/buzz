@@ -818,6 +818,85 @@ mod tests {
         assert_eq!(wakes[0].author, owner.public_key().to_bytes().to_vec());
     }
 
+    /// The mobile lease shape: self `#p` on every renderable kind, ignoring
+    /// self-authored events and muted channels.
+    fn mobile_lease(
+        keys: &nostr::Keys,
+        muted_kinds: &[u64],
+        muted: &str,
+    ) -> buzz_db::push::MatchLease {
+        let hex = keys.public_key().to_hex();
+        let mut lease = self_directed_lease(keys);
+        lease.subscriptions = serde_json::json!([{
+            "filter": {"kinds": [9, 40002, 45001, 45003], "#p": [hex]},
+            "class": "default",
+            "ignore": [
+                {"kinds": [9, 40002, 45001, 45003], "authors": [hex]},
+                {"kinds": muted_kinds, "#h": [muted]}
+            ],
+            "suppress": {"p_tags_max": 20}
+        }]);
+        lease
+    }
+
+    /// An agent DM mirror (kind 40002) addressed to the requester with one `p`
+    /// wakes them, unless they muted that DM: the muted-channel ignore must
+    /// cover 40002 as well as kind 9.
+    #[test]
+    fn addressed_mirror_in_a_muted_dm_does_not_wake() {
+        let requester = nostr::Keys::generate();
+        let agent = nostr::Keys::generate();
+        let dm = uuid::Uuid::new_v4();
+        let event = EventBuilder::new(Kind::Custom(40002), "I sent the full answer to chat.")
+            .tags([
+                Tag::parse(["h", &dm.to_string()]).unwrap(),
+                Tag::parse(["buzz-mirror", "voice", "call-1", "1792570000"]).unwrap(),
+                Tag::parse(["buzz-mirror-author", "agent", "", ""]).unwrap(),
+                Tag::public_key(requester.public_key()),
+            ])
+            .sign_with_keys(&agent)
+            .unwrap();
+        let job = buzz_db::push::BatchedMatch {
+            event: buzz_core::StoredEvent::new(event, Some(dm)),
+            attempt: 1,
+        };
+        let memberships: std::collections::HashSet<_> =
+            [(dm, requester.public_key().to_bytes().to_vec())].into();
+        let wakes = |lease: buzz_db::push::MatchLease| {
+            match_job(
+                &job,
+                &MatchContext {
+                    leases: vec![lease],
+                    memberships: memberships.clone(),
+                },
+            )
+            .unwrap()
+        };
+
+        let other = uuid::Uuid::new_v4().to_string();
+        let unmuted = wakes(mobile_lease(&requester, &[9, 40002], &other));
+        assert_eq!(
+            unmuted.len(),
+            1,
+            "an addressed mirror in an unmuted DM wakes"
+        );
+        assert_eq!(
+            unmuted[0].author,
+            requester.public_key().to_bytes().to_vec()
+        );
+
+        let dm_id = dm.to_string();
+        assert!(
+            wakes(mobile_lease(&requester, &[9, 40002], &dm_id)).is_empty(),
+            "a muted DM's addressed 40002 must not wake"
+        );
+        assert_eq!(
+            wakes(mobile_lease(&requester, &[9], &dm_id)).len(),
+            1,
+            "a kind-9-only mute ignore misses 40002, which is why the mobile lease widens it"
+        );
+    }
+
     async fn capture(
         State(seen): State<Arc<Mutex<Vec<Value>>>>,
         OriginalUri(uri): OriginalUri,

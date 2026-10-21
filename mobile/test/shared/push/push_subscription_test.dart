@@ -120,9 +120,36 @@ void main() {
     expect(subscriptions.first.ignore, hasLength(2));
     expect(subscriptions.first.ignore.first.kinds, buzzPushRenderableKinds);
     expect(subscriptions.first.ignore.last.hTags, [channelB]);
+    expect(subscriptions.first.ignore.last.kinds, buzzPushMutedIgnoreKinds);
     expect(
       subscriptions.first.suppress?.pTagsMax,
       buzzPushHellthreadParticipantLimit,
+    );
+  });
+
+  test('a muted channel also ignores addressed kind 40002', () {
+    // The self #p subscription wakes on 40002 (an addressed agent DM mirror,
+    // such as a voice redirect). Muting the DM must silence it like kind 9.
+    final subscriptions = buildDesiredBuzzPushSubscriptions(
+      myPubkey: me,
+      channelIds: [channelA, channelB],
+      mutedChannelIds: [channelB],
+    );
+    final self = subscriptions.first;
+    expect(self.filter.pTags, [me]);
+    expect(self.filter.kinds, contains(40002));
+    final muted = self.ignore.where((f) => f.hTags != null).single;
+    expect(muted.hTags, [channelB]);
+    expect(muted.kinds, containsAll([9, 40002]));
+    expect(muted.authors, isNull);
+    expect(muted.pTags, isNull);
+    // The relay accepts the widened ignore filter on a round trip.
+    final decoded = BuzzPushSubscription.fromJson(
+      jsonDecode(jsonEncode(self.toJson())) as Map<String, dynamic>,
+    );
+    expect(
+      decoded.ignore.where((f) => f.hTags != null).single.kinds,
+      containsAll([9, 40002]),
     );
   });
 

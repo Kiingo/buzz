@@ -14,16 +14,19 @@ signer and applies none of the overrides.
 a mention, never raises a DM alert, desktop notification, sound or home-activity
 row, and never wakes mobile push. Kind 40002 with no `p` tag already misses
 both mobile push filters (`#h` channel subscriptions are kind 9 only; `#p`
-self-directed subscriptions need a `p` tag). Quiet events may still advance a
-channel's recency ordering.
+self-directed subscriptions need a `p` tag). The one exception to "never wakes
+mobile push" is the addressed mirror in §1, which wakes only its requester's
+phone. Quiet events may still advance a channel's recency ordering.
 
 ## 1. Mirrored history: `buzz-mirror`
 
 A message from the same conversation on another surface (an email, a Teams 1:1
-message) copied into the DM as history. It is never a reply and never a push.
+message) copied into the DM as history. It is never a reply, and it is a push
+only in the addressed case below.
 
 - Kind `40002`, signed by the agent (the only key that can post into the DM).
-- `["h", <channel uuid>]`. No `p` tags. No `e` tags.
+- `["h", <channel uuid>]`. No `e` tags. No `p` tags, except for the addressed
+  mirror below.
 - `["buzz-mirror", <surface>, <source_id>, <original_unix_seconds>]`
   - `surface` matches `^[a-z][a-z0-9_-]{0,31}$`. Known values: `email`,
     `teams`, `sms`, `web`, `voice`.
@@ -50,6 +53,30 @@ Rendering:
 - Quiet. Edits, deletion and moderation stay keyed to the signer; the agent
   deletes a mirror with an ordinary kind 5 deletion when the source's retention
   ends.
+
+### Addressed mirror: one `p` for the requester
+
+A mirror that the requester must not miss, such as a voice call's answer
+redirected to the DM after the call, may carry exactly one
+`["p", <requester pubkey>]`. The requester is the person in this private 1:1
+DM with the agent.
+
+- **In clients:** it renders and stays quiet like any other mirror, because
+  clients classify mirrors by their marker tags, not by `p`. It does not make
+  the DM unread, count as a mention, or raise a desktop notification or
+  activity row.
+- **On mobile:** it matches the self-directed `#p` push subscription, which
+  includes kind `40002`. So it wakes the requester's phone, and the
+  notification shows the mirror's content.
+- **Muting:** a muted DM stays silent. The mobile lease's muted-channel ignore
+  filters cover kinds `9` and `40002`.
+- **Publisher rules:**
+  - add the `p` only to the requester of a private 1:1 DM;
+  - never in group or guest conversations, and never to a third party;
+  - at most once per source message, so retries and replays never push twice;
+  - never on an empty content.
+
+  Every other mirror keeps no `p`.
 
 ### Call card: `buzz-call`
 
