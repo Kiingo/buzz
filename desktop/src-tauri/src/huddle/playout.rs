@@ -151,6 +151,55 @@ fn is_locally_synthesized_peer(
         .contains_key(&peer_idx)
 }
 
+/// One media-roster entry, reported to the webview as `huddle-audio-peers`
+/// so it can tell when an agent is itself a live audio participant.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct AudioPeerPresence {
+    pub(crate) pubkey: String,
+    pub(crate) peer_index: u8,
+    /// A send-only TTS publisher socket opened by this desktop.
+    pub(crate) local: bool,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct AudioPeersPayload<'a> {
+    ephemeral_channel_id: &'a str,
+    peers: &'a [AudioPeerPresence],
+}
+
+fn audio_peer_presence(
+    index_to_pubkey: &std::collections::HashMap<u8, String>,
+    local_tts_publishers: &super::tts::LocalTtsPublishers,
+) -> Vec<AudioPeerPresence> {
+    let mut peers: Vec<_> = index_to_pubkey
+        .iter()
+        .map(|(peer_index, pubkey)| AudioPeerPresence {
+            pubkey: pubkey.clone(),
+            peer_index: *peer_index,
+            local: is_locally_synthesized_peer(*peer_index, local_tts_publishers),
+        })
+        .collect();
+    peers.sort_by_key(|peer| peer.peer_index);
+    peers
+}
+
+fn emit_audio_peers(
+    app_handle: Option<&tauri::AppHandle>,
+    ephemeral_channel_id: &str,
+    peers: &[AudioPeerPresence],
+) {
+    if let Some(app) = app_handle {
+        use tauri::Emitter;
+        let _ = app.emit(
+            "huddle-audio-peers",
+            AudioPeersPayload {
+                ephemeral_channel_id,
+                peers,
+            },
+        );
+    }
+}
+
 fn is_agent_peer(
     peer_idx: u8,
     index_to_pubkey: &std::collections::HashMap<u8, String>,
@@ -276,6 +325,7 @@ pub(crate) async fn run_playout_recv_loop(
     sink_handle: rodio::MixerDeviceSink,
     cancel: CancellationToken,
     app_handle: Option<tauri::AppHandle>,
+    ephemeral_channel_id: String,
     initial_peers: Vec<(u8, String, u8)>,
     tts_active: Arc<AtomicBool>,
     tts_cancel: Arc<AtomicBool>,
@@ -302,6 +352,10 @@ pub(crate) async fn run_playout_recv_loop(
         index_to_pubkey.insert(idx, pubkey);
         index_to_epoch.insert(idx, epoch);
     }
+    // Last roster reported to the webview; re-sent every speaker tick so a
+    // late listener and a trailing local-publisher registration converge.
+    let mut reported_peers = audio_peer_presence(&index_to_pubkey, &local_tts_publishers);
+    emit_audio_peers(app_handle.as_ref(), &ephemeral_channel_id, &reported_peers);
     let mut active_indices: std::collections::HashSet<u8> = std::collections::HashSet::new();
     let mut speaker_levels: std::collections::HashMap<u8, f32> = std::collections::HashMap::new();
     let mut remote_release_deadlines: std::collections::HashMap<u8, tokio::time::Instant> =
@@ -409,6 +463,8 @@ pub(crate) async fn run_playout_recv_loop(
                     let _ = app.emit("huddle-active-speakers", &pubkeys);
                 }
                 active_indices.clear();
+                reported_peers = audio_peer_presence(&index_to_pubkey, &local_tts_publishers);
+                emit_audio_peers(app_handle.as_ref(), &ephemeral_channel_id, &reported_peers);
             }
             _ = speaker_level_tick.tick() => {
                 if let Some(ref app) = app_handle {
@@ -641,6 +697,16 @@ pub(crate) async fn run_playout_recv_loop(
                                 }
                                 _ => {}
                             }
+                            let current =
+                                audio_peer_presence(&index_to_pubkey, &local_tts_publishers);
+                            if current != reported_peers {
+                                reported_peers = current;
+                                emit_audio_peers(
+                                    app_handle.as_ref(),
+                                    &ephemeral_channel_id,
+                                    &reported_peers,
+                                );
+                            }
                         }
                     }
                     Some(Ok(WsMsg::Ping(data))) => {
@@ -656,6 +722,7 @@ pub(crate) async fn run_playout_recv_loop(
     }
 
     human_floor.clear_remote();
+    emit_audio_peers(app_handle.as_ref(), &ephemeral_channel_id, &[]);
     if let Some(ref app) = app_handle {
         use tauri::Emitter;
         let _ = app.emit(
@@ -774,6 +841,30 @@ mod tests {
             "a second socket for the same agent remains audible"
         );
         assert!(!is_locally_synthesized_peer(9, &local_publishers));
+    }
+
+    #[test]
+    fn reported_roster_flags_only_this_desktops_publisher_sockets() {
+        let local_publishers = super::super::tts::LocalTtsPublishers::default();
+        local_publishers
+            .lock()
+            .expect("local publishers")
+            .insert(3, 1);
+        let roster = std::collections::HashMap::from([
+            (4, "agent".to_owned()),
+            (3, "agent".to_owned()),
+            (1, "human".to_owned()),
+        ]);
+
+        let peers = audio_peer_presence(&roster, &local_publishers);
+
+        assert_eq!(
+            peers
+                .iter()
+                .map(|peer| (peer.peer_index, peer.pubkey.as_str(), peer.local))
+                .collect::<Vec<_>>(),
+            vec![(1, "human", false), (3, "agent", true), (4, "agent", false)]
+        );
     }
 
     #[test]

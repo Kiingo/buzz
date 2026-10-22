@@ -2,6 +2,11 @@ import {
   KIND_STREAM_MESSAGE,
   KIND_STREAM_MESSAGE_V2,
 } from "../../../shared/constants/kinds.ts";
+import {
+  type AgentSelfVoiceState,
+  EMPTY_AGENT_SELF_VOICE_STATE,
+  selfVoiceSuppression,
+} from "./agentSelfVoice";
 import { removeEmptySpoilerBlocks } from "./ttsLiveMessageSanitizer";
 
 export type LiveTtsEvent = {
@@ -10,6 +15,8 @@ export type LiveTtsEvent = {
   pubkey: string;
   content: string;
   tags: string[][];
+  /** Unix seconds; compared with the agent's last audio leave. */
+  created_at?: number;
 };
 
 export type LiveTtsEligibility =
@@ -21,6 +28,8 @@ export type LiveTtsEligibility =
         | "h_tag_mismatch"
         | "author_not_agent"
         | "self_authored"
+        | "spoken_marker"
+        | "agent_self_voiced"
         | "empty_or_system";
     };
 
@@ -55,6 +64,7 @@ export function classifySpeakableAgentText(
   agentPubkeys: ReadonlySet<string>,
   selfPubkey: string | null,
   channelId: string,
+  selfVoice: AgentSelfVoiceState = EMPTY_AGENT_SELF_VOICE_STATE,
 ): LiveTtsEligibility {
   if (
     event.kind !== KIND_STREAM_MESSAGE &&
@@ -67,6 +77,9 @@ export function classifySpeakableAgentText(
     return { text: null, reason: "author_not_agent" };
   if (event.pubkey === selfPubkey)
     return { text: null, reason: "self_authored" };
+  // An agent that speaks for itself in the huddle is never also synthesized.
+  const selfVoiced = selfVoiceSuppression(selfVoice, event);
+  if (selfVoiced !== null) return { text: null, reason: selfVoiced };
   const content = textWithoutAttachments(event).trim();
   if (content.length === 0 || content.startsWith("[System]"))
     return { text: null, reason: "empty_or_system" };
@@ -81,12 +94,14 @@ export function routeLiveAgentText(
   channelId: string,
   routeId: number,
   enqueue: (text: string, routeId: number) => "queued" | "disabled",
+  selfVoice: AgentSelfVoiceState = EMPTY_AGENT_SELF_VOICE_STATE,
 ): LiveTtsRouteResult {
   const eligibility = classifySpeakableAgentText(
     event,
     agentPubkeys,
     selfPubkey,
     channelId,
+    selfVoice,
   );
   if (eligibility.text === null) return eligibility.reason;
   return enqueue(eligibility.text, routeId);
