@@ -5,8 +5,9 @@ use tokio::time::Instant;
 
 use super::{
     is_status_event_publication, is_status_publication, publication_retry_delay,
-    publication_retry_max_elapsed, LocalPublicationIntent, LocalPublicationWorker,
-    PUBLICATION_QUEUE_CAPACITY, RELAY_TIMESTAMP_REJECTION, STATUS_PUBLISH_ATTEMPT_TIMEOUT,
+    publication_retry_max_elapsed, relay_timestamp_rejected_event_id, LocalPublicationIntent,
+    LocalPublicationWorker, PUBLICATION_QUEUE_CAPACITY, RELAY_TIMESTAMP_REJECTED_PHASE,
+    RELAY_TIMESTAMP_REJECTION, RELAY_TIMESTAMP_REJECTION_REASON, STATUS_PUBLISH_ATTEMPT_TIMEOUT,
 };
 
 const RETRY_FENCE_CAPACITY: usize = PUBLICATION_QUEUE_CAPACITY * 2;
@@ -115,13 +116,36 @@ impl LocalPublicationWorker {
                         );
                         return None;
                     }
+                    // A chat answer the relay refused for its frozen timestamp
+                    // can never be accepted under that signature. Report the
+                    // refused event so the completion API can re-stamp or park
+                    // the fence; the durable outbox keeps the saved output.
+                    if matches!(intent.publication_kind.as_str(), "final" | "action") {
+                        if let Some(frozen_event_id) = relay_timestamp_rejected_event_id(&error) {
+                            self.report_failure(
+                                intent,
+                                "relay_timestamp_rejected",
+                                Some(frozen_event_id),
+                            )
+                            .await;
+                            tracing::warn!(
+                                target: "buzz::local_publication",
+                                receipt_id = %intent.receipt_id, fence_id = %intent.fence_id,
+                                publication_kind = %intent.publication_kind, attempt,
+                                frozen_event_id, frozen_event_created_at = intent.event_created_at,
+                                "relay refused the frozen publication timestamp; reported for re-stamping, saved output remains recoverable"
+                            );
+                            return None;
+                        }
+                    }
                     let delay = publication_retry_delay(attempt);
                     self.retry_pacing
                         .lock()
                         .await
                         .defer(&intent.fence_id, delay);
                     if matches!(intent.publication_kind.as_str(), "final" | "action") {
-                        self.report_failure(intent, failure_code(&error)).await;
+                        self.report_failure(intent, failure_code(&error), None)
+                            .await;
                     }
                     if started_at.elapsed().saturating_add(delay)
                         > publication_retry_max_elapsed(intent)
@@ -148,7 +172,12 @@ impl LocalPublicationWorker {
         }
     }
 
-    async fn report_failure(&self, intent: &LocalPublicationIntent, code: &'static str) {
+    async fn report_failure(
+        &self,
+        intent: &LocalPublicationIntent,
+        code: &'static str,
+        frozen_event_id: Option<&str>,
+    ) {
         let request = self
             .rest
             .http
@@ -157,13 +186,7 @@ impl LocalPublicationWorker {
                 self.completion_api_base_url, intent.fence_id
             ))
             .bearer_auth(&self.internal_token)
-            .json(&serde_json::json!({
-                "fence_id": intent.fence_id,
-                "receipt_id": intent.receipt_id,
-                "community_id": intent.community_id,
-                "agent_public_key": intent.agent_public_key,
-                "failure_code": code,
-            }));
+            .json(&failure_report_body(intent, code, frozen_event_id));
         // One bounded observation, never a delivery retry or success receipt.
         let recorded = tokio::time::timeout(FAILURE_REPORT_TIMEOUT, request.send())
             .await
@@ -179,8 +202,39 @@ impl LocalPublicationWorker {
     }
 }
 
+/// Identity and phase only, never error text. A relay timestamp rejection
+/// also names the refused frozen event and the relay's fixed reason, which
+/// the completion API requires before it re-stamps the fence.
+fn failure_report_body(
+    intent: &LocalPublicationIntent,
+    code: &'static str,
+    frozen_event_id: Option<&str>,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "fence_id": intent.fence_id,
+        "receipt_id": intent.receipt_id,
+        "community_id": intent.community_id,
+        "agent_public_key": intent.agent_public_key,
+        "failure_code": code,
+    });
+    if let (Some(frozen_event_id), Some(fields)) = (frozen_event_id, body.as_object_mut()) {
+        fields.insert(
+            "relay_rejection".into(),
+            RELAY_TIMESTAMP_REJECTION_REASON.into(),
+        );
+        fields.insert("frozen_event_id".into(), frozen_event_id.into());
+        fields.insert(
+            "frozen_event_created_at".into(),
+            intent.event_created_at.into(),
+        );
+    }
+    body
+}
+
 fn failure_code(error: &str) -> &'static str {
-    if error.starts_with("publication eligibility unavailable:") {
+    if error.starts_with(RELAY_TIMESTAMP_REJECTED_PHASE) {
+        "relay_timestamp_rejected"
+    } else if error.starts_with("publication eligibility unavailable:") {
         "authorization_unavailable"
     } else if error.starts_with("publication eligibility rejected:") {
         "authorization_rejected"

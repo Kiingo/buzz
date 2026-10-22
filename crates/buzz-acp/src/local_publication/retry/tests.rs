@@ -101,6 +101,63 @@ fn failure_phase_never_copies_arbitrary_error_text() {
     }
 }
 
+#[test]
+fn relay_timestamp_rejection_reports_its_own_phase_with_the_frozen_event() {
+    let event_id = "ab".repeat(32);
+    let error = super::super::relay_timestamp_rejected_error(
+        &event_id,
+        r#"HTTP error: POST /events returned HTTP 400 Bad Request: {"error":"invalid: event timestamp too far from server time"}"#,
+    );
+    assert_eq!(failure_code(&error), "relay_timestamp_rejected");
+    assert_eq!(
+        relay_timestamp_rejected_event_id(&error),
+        Some(event_id.as_str())
+    );
+    // The status drop path still recognises the rejection inside the phase.
+    assert!(error.contains(RELAY_TIMESTAMP_REJECTION));
+
+    // Any other submission failure keeps its phase and names no event.
+    let plain = "publication relay submission failed: HTTP error: POST /events returned HTTP 400 Bad Request: {\"error\":\"invalid: bad signature\"}";
+    assert_eq!(failure_code(plain), "relay_submission_unavailable");
+    assert_eq!(relay_timestamp_rejected_event_id(plain), None);
+    for malformed in [
+        "AB".repeat(32),
+        "ab".repeat(31),
+        format!("{}g", "a".repeat(63)),
+    ] {
+        let error = format!("{RELAY_TIMESTAMP_REJECTED_PHASE}: frozen_event_id={malformed}: x");
+        assert_eq!(
+            relay_timestamp_rejected_event_id(&error),
+            None,
+            "{malformed}"
+        );
+    }
+
+    let keys = Keys::generate();
+    let saved = intent(keys.public_key().to_hex());
+    let identity = serde_json::json!({
+        "fence_id": saved.fence_id, "receipt_id": saved.receipt_id,
+        "community_id": saved.community_id,
+        "agent_public_key": saved.agent_public_key,
+    });
+    let mut stale = identity.clone();
+    stale["failure_code"] = "relay_timestamp_rejected".into();
+    // Byte-for-byte the relay's reason, as the completion API matches it.
+    stale["relay_rejection"] = "invalid: event timestamp too far from server time".into();
+    stale["frozen_event_id"] = event_id.clone().into();
+    stale["frozen_event_created_at"] = saved.event_created_at.into();
+    assert_eq!(
+        failure_report_body(&saved, "relay_timestamp_rejected", Some(&event_id)),
+        stale
+    );
+    let mut plain_body = identity;
+    plain_body["failure_code"] = "relay_submission_unavailable".into();
+    assert_eq!(
+        failure_report_body(&saved, "relay_submission_unavailable", None),
+        plain_body
+    );
+}
+
 #[tokio::test]
 async fn diagnostic_reporting_is_one_bounded_attempt_with_identity_and_phase_only() {
     tokio::time::timeout(Duration::from_secs(4), async {
@@ -142,7 +199,7 @@ async fn diagnostic_reporting_is_one_bounded_attempt_with_identity_and_phase_onl
             );
         });
         worker
-            .report_failure(&saved, "authorization_unavailable")
+            .report_failure(&saved, "authorization_unavailable", None)
             .await;
         server.await.unwrap();
         assert!(worker.retry_pacing.lock().await.fences.is_empty());
