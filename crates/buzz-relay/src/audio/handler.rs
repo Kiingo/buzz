@@ -13698,6 +13698,37 @@ mod tests {
             >,
             tokio::task::JoinHandle<std::io::Result<()>>,
         ) {
+            start_audio_auth_versioned(
+                state,
+                tenant,
+                channel_id,
+                parent_channel_id,
+                key,
+                auth_tag,
+                assertion,
+                None,
+            )
+            .await
+        }
+
+        /// [`start_audio_auth_with_parent`] that also requests
+        /// `protocol_version` in the AUTH (`None` omits it: protocol 1).
+        #[allow(clippy::too_many_arguments)]
+        async fn start_audio_auth_versioned(
+            state: &std::sync::Arc<crate::state::AppState>,
+            tenant: buzz_core::tenant::TenantContext,
+            channel_id: uuid::Uuid,
+            parent_channel_id: Option<String>,
+            key: &nostr::Keys,
+            auth_tag: Option<Vec<String>>,
+            assertion: Option<buzz_auth::VerifiedAssertion>,
+            protocol_version: Option<u8>,
+        ) -> (
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+            tokio::task::JoinHandle<std::io::Result<()>>,
+        ) {
             use std::sync::Arc;
             let relay_url =
                 crate::api::bridge::nip42_expected_relay_url(&state.config.relay_url, &tenant);
@@ -13753,15 +13784,17 @@ mod tests {
                 auth_event = auth_event.tag(nostr::Tag::parse(tag).unwrap());
             }
             let auth_event = auth_event.sign_with_keys(key).unwrap();
+            let mut auth = serde_json::json!({
+                "type": "auth",
+                "event": auth_event,
+                "parent_channel_id": parent_channel_id,
+            });
+            if let Some(version) = protocol_version {
+                auth["protocol_version"] = version.into();
+            }
             client
                 .send(tokio_tungstenite::tungstenite::Message::Text(
-                    serde_json::json!({
-                        "type": "auth",
-                        "event": auth_event,
-                        "parent_channel_id": parent_channel_id,
-                    })
-                    .to_string()
-                    .into(),
+                    auth.to_string().into(),
                 ))
                 .await
                 .expect("send auth");
@@ -14617,6 +14650,619 @@ mod tests {
                     .expect("owner link read"),
                 "an expired session must not write the owner link"
             );
+        }
+
+        // ── Agent audio peers ───────────────────────────────────────────────
+        //
+        // A service that speaks for an agent joins huddle audio as an ordinary
+        // client: the agent's key, admitted through its NIP-OA owner
+        // attestation, on protocol v2. These cases pin what such a client
+        // relies on: frames flow both ways with a human (same pod and across
+        // pods), two sockets of one key are two independent admissions, a
+        // silent peer never stalls another peer's frames, and AUTH names the
+        // community host the socket presented, not the address it dialed.
+
+        type AudioWsClient = tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >;
+
+        /// A fresh agent key and its NIP-OA `auth` tag, signed by a fresh owner.
+        fn attested_agent() -> (nostr::Keys, Vec<String>) {
+            let (agent, owner) = (nostr::Keys::generate(), nostr::Keys::generate());
+            let tag = buzz_sdk::nip_oa::compute_auth_tag(&owner, &agent.public_key(), "")
+                .expect("sign NIP-OA credential");
+            (agent, serde_json::from_str(&tag).expect("tag JSON"))
+        }
+
+        /// A protocol-v2 client frame: the 8-byte header (`seq`, `ts_48k`,
+        /// `level_dbov`, flags) followed by an opaque Opus body.
+        fn v2_frame(seq: u16, body: &[u8]) -> Vec<u8> {
+            let mut frame = seq.to_be_bytes().to_vec();
+            frame.extend_from_slice(&(u32::from(seq) * 960).to_be_bytes());
+            frame.extend_from_slice(&[(-20i8) as u8, 0]);
+            frame.extend_from_slice(body);
+            frame
+        }
+
+        /// What a v2 listener receives for `frame` from `peer_index`.
+        fn relayed(peer_index: u8, frame: &[u8]) -> Vec<u8> {
+            let mut out = vec![peer_index];
+            out.extend_from_slice(frame);
+            out
+        }
+
+        /// Admit `key` on protocol v2 (with an optional NIP-OA tag) and return
+        /// the client, its server task and the parsed `joined` reply.
+        async fn open_v2_audio_socket(
+            state: &std::sync::Arc<crate::state::AppState>,
+            tenant: &buzz_core::tenant::TenantContext,
+            channel_id: uuid::Uuid,
+            key: &nostr::Keys,
+            auth_tag: Option<Vec<String>>,
+        ) -> (
+            AudioWsClient,
+            tokio::task::JoinHandle<std::io::Result<()>>,
+            serde_json::Value,
+        ) {
+            let (mut client, server) = start_audio_auth_versioned(
+                state,
+                tenant.clone(),
+                channel_id,
+                Some(fixture_parent_id(channel_id)),
+                key,
+                auth_tag,
+                None,
+                Some(2),
+            )
+            .await;
+            let joined: serde_json::Value =
+                serde_json::from_str(&next_audio_text(&mut client).await).expect("joined JSON");
+            assert_eq!(joined["type"], "joined", "must be admitted; got {joined}");
+            assert_eq!(joined["pubkey"], key.public_key().to_hex());
+            (client, server, joined)
+        }
+
+        fn joined_index(joined: &serde_json::Value) -> u8 {
+            u8::try_from(joined["peer_index"].as_u64().expect("peer_index")).expect("u8 index")
+        }
+
+        /// The next binary frame, skipping control text and pings.
+        async fn next_audio_binary(client: &mut AudioWsClient) -> Vec<u8> {
+            loop {
+                match tokio::time::timeout(std::time::Duration::from_secs(5), client.next())
+                    .await
+                    .expect("binary frame timeout")
+                {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(b))) => {
+                        return b.to_vec()
+                    }
+                    Some(Ok(
+                        tokio_tungstenite::tungstenite::Message::Text(_)
+                        | tokio_tungstenite::tungstenite::Message::Ping(_)
+                        | tokio_tungstenite::tungstenite::Message::Pong(_),
+                    )) => continue,
+                    other => panic!("expected a binary frame; got {other:?}"),
+                }
+            }
+        }
+
+        /// The next control message of `kind` (`joined`, `left`), skipping
+        /// audio and other control.
+        async fn next_audio_control(client: &mut AudioWsClient, kind: &str) -> serde_json::Value {
+            loop {
+                match tokio::time::timeout(std::time::Duration::from_secs(5), client.next())
+                    .await
+                    .unwrap_or_else(|_| panic!("`{kind}` control timeout"))
+                {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Text(t))) => {
+                        let v: serde_json::Value = serde_json::from_str(&t).expect("control JSON");
+                        if v["type"] == kind {
+                            return v;
+                        }
+                    }
+                    Some(Ok(_)) => continue,
+                    other => panic!("expected `{kind}` control; got {other:?}"),
+                }
+            }
+        }
+
+        async fn send_audio_binary(client: &mut AudioWsClient, frame: &[u8]) {
+            client
+                .send(tokio_tungstenite::tungstenite::Message::Binary(
+                    frame.to_vec().into(),
+                ))
+                .await
+                .expect("send audio frame");
+        }
+
+        async fn send_audio_leave(client: &mut AudioWsClient) {
+            client
+                .send(tokio_tungstenite::tungstenite::Message::Text(
+                    r#"{"type":"leave"}"#.into(),
+                ))
+                .await
+                .expect("send leave");
+        }
+
+        /// The `admission_id`s of the channel's committed `kind` lifecycle
+        /// events once `want` exist, re-read after a quiet period so a
+        /// duplicate emission would be counted.
+        async fn settled_admission_ids(
+            pool: &sqlx::PgPool,
+            tenant: &buzz_core::tenant::TenantContext,
+            channel_id: uuid::Uuid,
+            kind: i32,
+            want: usize,
+        ) -> std::collections::BTreeSet<String> {
+            let read = || async {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT content FROM events \
+                     WHERE community_id = $1 AND channel_id = $2 AND kind = $3",
+                )
+                .bind(tenant.community().as_uuid())
+                .bind(channel_id)
+                .bind(kind)
+                .fetch_all(pool)
+                .await
+                .expect("lifecycle content query")
+            };
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            while read().await.len() < want && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let contents = read().await;
+            assert_eq!(contents.len(), want, "kind {kind} rows: {contents:?}");
+            contents
+                .iter()
+                .map(|c| {
+                    serde_json::from_str::<serde_json::Value>(c).expect("content JSON")
+                        ["admission_id"]
+                        .as_str()
+                        .expect("admission_id")
+                        .to_string()
+                })
+                .collect()
+        }
+
+        /// The admission id (`peer_id`) holding `peer_index` in the local room.
+        fn admission_at(
+            state: &crate::state::AppState,
+            tenant: &buzz_core::tenant::TenantContext,
+            channel_id: uuid::Uuid,
+            peer_index: u8,
+        ) -> Option<String> {
+            let room = state.audio_rooms.get(tenant.community(), channel_id)?;
+            let id = room
+                .peers
+                .iter()
+                .find(|p| p.peer_index == peer_index)
+                .map(|p| p.key().to_string());
+            id
+        }
+
+        /// R1 (same pod): an agent key admitted through its NIP-OA owner
+        /// attestation exchanges v2 frames with a human in an ephemeral
+        /// huddle. Each side receives the other's bytes unchanged behind the
+        /// sender's `peer_index`.
+        ///
+        /// Mutation: drop the owner-attested admission (agent refused) or skip
+        /// non-sender peers in `Room::broadcast_frame` → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn attested_agent_and_human_exchange_audio_frames_same_pod() {
+            let state = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let (tenant, channel_id, human) = seed_audio_fixture(state.db.pool()).await;
+            let (agent, auth_tag) = attested_agent();
+            add_channel_member(state.db.pool(), &tenant, channel_id, &agent).await;
+
+            let (mut human_ws, human_server, human_joined) =
+                open_v2_audio_socket(&state, &tenant, channel_id, &human, None).await;
+            let (mut agent_ws, agent_server, agent_joined) =
+                open_v2_audio_socket(&state, &tenant, channel_id, &agent, Some(auth_tag)).await;
+            let (human_index, agent_index) =
+                (joined_index(&human_joined), joined_index(&agent_joined));
+            assert_ne!(human_index, agent_index);
+
+            let from_human = v2_frame(1, b"human-opus");
+            send_audio_binary(&mut human_ws, &from_human).await;
+            assert_eq!(
+                next_audio_binary(&mut agent_ws).await,
+                relayed(human_index, &from_human)
+            );
+            let from_agent = v2_frame(1, b"agent-opus");
+            send_audio_binary(&mut agent_ws, &from_agent).await;
+            assert_eq!(
+                next_audio_binary(&mut human_ws).await,
+                relayed(agent_index, &from_agent)
+            );
+            human_server.abort();
+            agent_server.abort();
+        }
+
+        /// Mesh double for media round trips: the ingress dials a real owner
+        /// `HuddleControlAcceptor` over in-memory streams, and media datagrams
+        /// in each direction reach the other pod's real `MeshAudioRouter`.
+        struct MediaLoopTransport {
+            owner_rooms: Arc<crate::audio::room::AudioRoomManager>,
+            owner_router: crate::audio::mesh::MeshAudioRouter,
+            ingress_router: Arc<std::sync::OnceLock<crate::audio::mesh::MeshAudioRouter>>,
+        }
+        impl RelayPeerTransport for MediaLoopTransport {
+            fn send_datagram(&self, _to: RuntimeId, dgram: MeshDatagram) -> Result<(), MeshError> {
+                self.owner_router.on_media_datagram(&dgram);
+                Ok(())
+            }
+            fn open_session_stream(
+                &self,
+                _to: RuntimeId,
+                hello: StreamHello,
+            ) -> BoxFuture<'_, Result<MeshStream, MeshError>> {
+                let (to_owner_tx, to_owner_rx) = tokio::sync::mpsc::unbounded_channel();
+                let (to_ingress_tx, to_ingress_rx) = tokio::sync::mpsc::unbounded_channel();
+                let owner_stream = MeshStream::new(
+                    Box::new(ChanHalfSend(to_ingress_tx)),
+                    Box::new(ChanHalfRecv(to_owner_rx)),
+                );
+                let acceptor = crate::audio::join::HuddleControlAcceptor::new(
+                    Arc::clone(&self.owner_rooms),
+                    Arc::new(OwnerToIngressDatagrams(Arc::clone(&self.ingress_router)))
+                        as Arc<dyn RelayPeerTransport>,
+                    Arc::new(FakeRemoteDirectory {
+                        remote_runtime_id: OWNER_RUNTIME,
+                        generation: OWNER_GENERATION,
+                    }),
+                    OWNER_RUNTIME,
+                    Arc::new(HuddleOwnerRegistry::new()),
+                );
+                let from = hello.sender;
+                tokio::spawn(async move {
+                    let _ = acceptor.accept_inbound(from, hello, owner_stream).await;
+                });
+                let ingress_stream = MeshStream::new(
+                    Box::new(ChanHalfSend(to_owner_tx)),
+                    Box::new(ChanHalfRecv(to_ingress_rx)),
+                );
+                Box::pin(async move { Ok(ingress_stream) })
+            }
+            fn set_inbound(&self, _handler: Box<dyn InboundHandler>) {}
+        }
+
+        /// The owner acceptor's datagram sink: delivers to the ingress router.
+        struct OwnerToIngressDatagrams(
+            Arc<std::sync::OnceLock<crate::audio::mesh::MeshAudioRouter>>,
+        );
+        impl RelayPeerTransport for OwnerToIngressDatagrams {
+            fn send_datagram(&self, _to: RuntimeId, dgram: MeshDatagram) -> Result<(), MeshError> {
+                if let Some(router) = self.0.get() {
+                    router.on_media_datagram(&dgram);
+                }
+                Ok(())
+            }
+            fn open_session_stream(
+                &self,
+                _to: RuntimeId,
+                _hello: StreamHello,
+            ) -> BoxFuture<'_, Result<MeshStream, MeshError>> {
+                Box::pin(async { Err(MeshError::Transport("unused".into())) })
+            }
+            fn set_inbound(&self, _handler: Box<dyn InboundHandler>) {}
+        }
+
+        /// R1 (cross pod): the agent connects to a pod that does not own the
+        /// huddle; the human is on the owner pod. The agent's frames reach the
+        /// owner-pod human behind the agent's owner-assigned index, and the
+        /// human's frames come back to the agent behind the human's index.
+        ///
+        /// Mutation: forward the ingress client's frames to the local room
+        /// instead of `RemoteHuddleSession::forward_media`, or drop the
+        /// owner's remote-peer sink → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn attested_agent_on_ingress_pod_exchanges_audio_with_owner_pod_human() {
+            let owner_rooms = Arc::new(crate::audio::room::AudioRoomManager::new());
+            let ingress_router = Arc::new(std::sync::OnceLock::new());
+            let transport = Arc::new(MediaLoopTransport {
+                owner_rooms: Arc::clone(&owner_rooms),
+                owner_router: crate::audio::mesh::MeshAudioRouter::new(
+                    Arc::clone(&owner_rooms),
+                    OWNER_RUNTIME,
+                ),
+                ingress_router: Arc::clone(&ingress_router),
+            });
+            let h = cross_pod_setup_with_owner_caps(
+                true,
+                RosterSnapshot {
+                    revision: 1,
+                    peers: vec![],
+                },
+                vec![],
+                crate::mesh_boot::capabilities(),
+                Some(transport as Arc<dyn RelayPeerTransport>),
+            )
+            .await;
+            let ingress_runtime = h.state.mesh.get().expect("mesh").local_runtime_id;
+            assert!(ingress_router
+                .set(crate::audio::mesh::MeshAudioRouter::new(
+                    Arc::clone(&h.state.audio_rooms),
+                    ingress_runtime,
+                ))
+                .is_ok());
+            // The human is a committed peer of the owner pod's room.
+            let owner_room = owner_rooms.get_or_create(h.tenant.community(), h.channel_id);
+            let (human_id, human_index, _, mut human_audio, _human_ctrl, _) = owner_room
+                .add_peer(h.member_hex.clone(), 2)
+                .expect("add owner-pod human");
+            owner_room.mark_committed(human_id);
+
+            let (agent, auth_tag) = attested_agent();
+            add_channel_member(&h.pool, &h.tenant, h.channel_id, &agent).await;
+            let (mut agent_ws, agent_server, agent_joined) =
+                open_v2_audio_socket(&h.state, &h.tenant, h.channel_id, &agent, Some(auth_tag))
+                    .await;
+            let agent_index = joined_index(&agent_joined);
+            assert_ne!(agent_index, human_index);
+            assert!(
+                agent_joined["peers"]
+                    .as_array()
+                    .expect("peers")
+                    .iter()
+                    .any(|p| p["pubkey"] == h.member_hex),
+                "the agent's roster must include the owner-pod human; got {agent_joined}"
+            );
+
+            let from_agent = v2_frame(1, b"agent-opus");
+            send_audio_binary(&mut agent_ws, &from_agent).await;
+            let got = tokio::time::timeout(std::time::Duration::from_secs(5), human_audio.recv())
+                .await
+                .expect("owner-pod human frame timeout")
+                .expect("human audio open");
+            assert_eq!(got.to_vec(), relayed(agent_index, &from_agent));
+
+            let from_human = v2_frame(1, b"human-opus");
+            owner_room.broadcast_frame(human_id, bytes::Bytes::from(from_human.clone()));
+            assert_eq!(
+                next_audio_binary(&mut agent_ws).await,
+                relayed(human_index, &from_human)
+            );
+            agent_server.abort();
+        }
+
+        /// R2: two sockets for one agent key are two admissions. Both are
+        /// admitted with distinct indexes; each commits one 48101 whose
+        /// `admission_id` is its own; each hears the other's frames; leaving
+        /// the first commits one 48102 for the first admission only, while the
+        /// second stays in the roster; leaving the second commits its own
+        /// 48102 and ends the huddle.
+        ///
+        /// Mutation: reject or replace a second admission for a pubkey, key
+        /// the 48102 by pubkey instead of admission, or skip same-pubkey peers
+        /// in fan-out → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn duplicate_same_pubkey_sockets_are_independent_admissions() {
+            let state = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let pool = state.db.pool().clone();
+            let (tenant, channel_id, _member) = seed_audio_fixture(&pool).await;
+            let (agent, auth_tag) = attested_agent();
+            add_channel_member(&pool, &tenant, channel_id, &agent).await;
+            let agent_hex = agent.public_key().to_hex();
+
+            let (mut first, first_server, first_joined) =
+                open_v2_audio_socket(&state, &tenant, channel_id, &agent, Some(auth_tag.clone()))
+                    .await;
+            let (mut second, second_server, second_joined) =
+                open_v2_audio_socket(&state, &tenant, channel_id, &agent, Some(auth_tag)).await;
+            let (first_index, second_index) =
+                (joined_index(&first_joined), joined_index(&second_joined));
+            assert_ne!(
+                first_index, second_index,
+                "each socket gets its own peer_index"
+            );
+            let first_admission =
+                admission_at(&state, &tenant, channel_id, first_index).expect("first admission");
+            let second_admission =
+                admission_at(&state, &tenant, channel_id, second_index).expect("second admission");
+            assert_ne!(first_admission, second_admission);
+            assert_eq!(
+                settled_admission_ids(&pool, &tenant, channel_id, 48101, 2).await,
+                [first_admission.clone(), second_admission.clone()].into(),
+                "one 48101 per socket, each carrying that socket's admission_id"
+            );
+
+            let from_first = v2_frame(1, b"first-socket");
+            send_audio_binary(&mut first, &from_first).await;
+            assert_eq!(
+                next_audio_binary(&mut second).await,
+                relayed(first_index, &from_first)
+            );
+            let from_second = v2_frame(1, b"second-socket");
+            send_audio_binary(&mut second, &from_second).await;
+            assert_eq!(
+                next_audio_binary(&mut first).await,
+                relayed(second_index, &from_second)
+            );
+
+            send_audio_leave(&mut first).await;
+            let left = next_audio_control(&mut second, "left").await;
+            assert_eq!(left["pubkey"], agent_hex);
+            assert_eq!(left["peer_index"], first_index);
+            assert_eq!(
+                settled_admission_ids(&pool, &tenant, channel_id, 48102, 1).await,
+                [first_admission.clone()].into(),
+                "leaving the first socket commits exactly its own 48102"
+            );
+            let roster = state
+                .audio_rooms
+                .get(tenant.community(), channel_id)
+                .expect("room still live")
+                .roster_snapshot();
+            assert!(
+                roster
+                    .peers
+                    .iter()
+                    .any(|p| p.pubkey == agent_hex && p.peer_index == second_index),
+                "the second socket stays in the roster; got {:?}",
+                roster.peers
+            );
+            assert_eq!(
+                lifecycle_event_count(&pool, &tenant, channel_id, 48103).await,
+                0
+            );
+
+            send_audio_leave(&mut second).await;
+            assert_eq!(
+                settled_admission_ids(&pool, &tenant, channel_id, 48102, 2).await,
+                [first_admission, second_admission].into(),
+                "leaving the second socket commits its own 48102"
+            );
+            await_huddle_ended(&pool, &tenant, channel_id).await;
+            first_server.abort();
+            second_server.abort();
+        }
+
+        /// R3: a human who stops sending (DTX sends no frames) never holds up
+        /// another peer's frames. The agent receives every frame from the
+        /// talking human, in order and each before the next is sent, while the
+        /// silent human sends nothing.
+        ///
+        /// Mutation: make fan-out wait on, or interleave per, every peer (a
+        /// mixing or lock-step relay) → the first talker frame never arrives →
+        /// RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn silent_human_peer_does_not_stall_frames_to_agent() {
+            let state = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let (tenant, channel_id, silent) = seed_audio_fixture(state.db.pool()).await;
+            let talker = nostr::Keys::generate();
+            add_channel_member(state.db.pool(), &tenant, channel_id, &talker).await;
+            let (agent, auth_tag) = attested_agent();
+            add_channel_member(state.db.pool(), &tenant, channel_id, &agent).await;
+
+            let (mut silent_ws, silent_server, silent_joined) =
+                open_v2_audio_socket(&state, &tenant, channel_id, &silent, None).await;
+            let (mut talker_ws, talker_server, talker_joined) =
+                open_v2_audio_socket(&state, &tenant, channel_id, &talker, None).await;
+            let (mut agent_ws, agent_server, _) =
+                open_v2_audio_socket(&state, &tenant, channel_id, &agent, Some(auth_tag)).await;
+            let (silent_index, talker_index) =
+                (joined_index(&silent_joined), joined_index(&talker_joined));
+
+            // The silent human speaks once, then goes quiet for the rest.
+            let last_word = v2_frame(1, b"then-silence");
+            send_audio_binary(&mut silent_ws, &last_word).await;
+            assert_eq!(
+                next_audio_binary(&mut agent_ws).await,
+                relayed(silent_index, &last_word)
+            );
+            for seq in 1..=50u16 {
+                let frame = v2_frame(seq, b"talking");
+                send_audio_binary(&mut talker_ws, &frame).await;
+                let got = tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    next_audio_binary(&mut agent_ws),
+                )
+                .await
+                .unwrap_or_else(|_| panic!("talker frame {seq} stalled behind the silent peer"));
+                assert_eq!(got, relayed(talker_index, &frame), "frame {seq}");
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            silent_server.abort();
+            talker_server.abort();
+            agent_server.abort();
+        }
+
+        /// R4: a client that dials the relay by an internal address (here
+        /// 127.0.0.1) but sends the community's host as `Host` is bound to
+        /// that community, and its NIP-42 AUTH must name `wss://<tenant host>`
+        /// (scheme from the configured `relay_url`). Any other `relay` tag is
+        /// refused: the dialed address, an in-cluster service host, or the
+        /// tenant host on the wrong scheme. Drives the production router, so
+        /// the Host-to-tenant binding and the expected URL are both real.
+        ///
+        /// The URL derivation alone is unit-tested in `api::bridge::tests`
+        /// (`nip42_expected_relay_url_*`, `verify_nip42_*`); this pins it on the
+        /// huddle audio route end to end.
+        ///
+        /// Mutation: expect `config.relay_url` verbatim, or derive the host
+        /// from the socket address, in `handle_active_audio_connection` → RED.
+        #[tokio::test]
+        #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
+        async fn audio_auth_relay_tag_is_the_host_header_community() {
+            use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+            let base = audio_test_state_real_db().await.expect(
+                "PostgreSQL must be available — set BUZZ_TEST_DATABASE_URL or start local postgres",
+            );
+            let (tenant, channel_id, member) = seed_audio_fixture(base.db.pool()).await;
+            let mut state = (*base).clone();
+            Arc::make_mut(&mut state.config).relay_url = "wss://relay-config.example".to_string();
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let addr = listener.local_addr().expect("addr");
+            let app = crate::router::build_router(Arc::new(state))
+                .into_make_service_with_connect_info::<std::net::SocketAddr>();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await });
+
+            let tenant_host = tenant.host().to_string();
+            let refused = [
+                format!("wss://{addr}"),
+                "wss://buzz-relay.buzz.svc.cluster.local".to_string(),
+                format!("ws://{tenant_host}"),
+            ];
+            let accepted = format!("wss://{tenant_host}");
+            for relay_tag in refused.iter().chain(std::iter::once(&accepted)) {
+                let mut req = format!("ws://{addr}/huddle/{channel_id}/audio")
+                    .into_client_request()
+                    .expect("request");
+                req.headers_mut()
+                    .insert("host", tenant_host.parse().expect("host header"));
+                let (mut client, _) = connect_async(req).await.expect("audio upgrade");
+                let challenge: serde_json::Value =
+                    serde_json::from_str(&next_audio_text(&mut client).await)
+                        .expect("challenge JSON");
+                let auth_event = nostr::EventBuilder::new(nostr::Kind::Authentication, "")
+                    .tag(nostr::Tag::parse(["relay", relay_tag.as_str()]).unwrap())
+                    .tag(
+                        nostr::Tag::parse([
+                            "challenge",
+                            challenge["challenge"].as_str().expect("challenge"),
+                        ])
+                        .unwrap(),
+                    )
+                    .sign_with_keys(&member)
+                    .unwrap();
+                client
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        serde_json::json!({
+                            "type": "auth",
+                            "event": auth_event,
+                            "parent_channel_id": fixture_parent_id(channel_id),
+                            "protocol_version": 2,
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .expect("send auth");
+                let reply: serde_json::Value =
+                    serde_json::from_str(&next_audio_text(&mut client).await).expect("reply JSON");
+                if relay_tag == &accepted {
+                    assert_eq!(reply["type"], "joined", "{relay_tag}: {reply}");
+                    send_audio_leave(&mut client).await;
+                } else {
+                    assert_eq!(
+                        reply,
+                        serde_json::json!({"type": "error", "message": "auth failed"}),
+                        "{relay_tag} must be refused"
+                    );
+                }
+            }
+            server.abort();
         }
     }
 
