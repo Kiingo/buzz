@@ -3,6 +3,24 @@ import 'package:flutter/foundation.dart';
 import 'hosted_agent_catalog.dart';
 import 'hosted_agent_errors.dart';
 
+final _bidiControls = RegExp('[\u200E\u200F\u202A-\u202E\u2066-\u2069]');
+final _controlCharacters = RegExp(r'[\x00-\x1F\x7F-\x9F]');
+
+/// A provider-supplied [name] made safe to show: control characters become
+/// spaces, bidirectional controls (which can make a name read as something
+/// else) are removed, and the result is trimmed to at most 200 characters.
+/// It may come out empty.
+String hostedAgentPrintableName(String name) {
+  final cleaned = name
+      .replaceAll(_bidiControls, '')
+      .replaceAll(_controlCharacters, ' ')
+      .trim();
+  final runes = cleaned.runes;
+  return runes.length <= 200
+      ? cleaned
+      : String.fromCharCodes(runes.take(200)).trimRight();
+}
+
 /// One hosted agent as the API reports it now (`BuzzHostedAgentStateResponse`).
 @immutable
 class HostedAgentSnapshot {
@@ -70,11 +88,16 @@ class HostedAgentSnapshot {
       ? agentPublicKey
       : agentPublicKey.substring(0, 8);
 
-  /// [displayName] with [keyFingerprint], as notes and Link rows name it.
-  String get fingerprintedName {
-    final name = displayName.trim();
-    return '${name.isEmpty ? 'An agent' : name} ($keyFingerprint)';
+  /// [displayName] made safe to show (see [hostedAgentPrintableName]), or
+  /// "Unnamed agent" when nothing printable is left. Display only: updates
+  /// keep sending [displayName] as the API reported it.
+  String get printableName {
+    final name = hostedAgentPrintableName(displayName);
+    return name.isEmpty ? 'Unnamed agent' : name;
   }
+
+  /// [printableName] with [keyFingerprint], as notes and Link rows name it.
+  String get fingerprintedName => '$printableName ($keyFingerprint)';
 
   bool get isDeleted =>
       desiredState == 'deleted' ||

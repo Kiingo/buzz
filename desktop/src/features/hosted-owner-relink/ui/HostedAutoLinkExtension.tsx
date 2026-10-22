@@ -73,7 +73,7 @@ export function HostedAutoLinkExtension() {
         if (!backoff.allows(Date.now())) return;
         const result = await runAutoLinkPass(
           {
-            list: () => hostedOwnerRelinkApi.list(),
+            list: () => hostedOwnerRelinkApi.list({ background: true }),
             attestPending: (agents, view) =>
               hostedOwnerRelinkApi.attestPending(agents, view),
             rebind: (agents, view) => hostedOwnerRelinkApi.rebind(agents, view),

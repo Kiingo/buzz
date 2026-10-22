@@ -337,8 +337,29 @@ fn is_display_name(name: &str) -> bool {
     !name.is_empty() && name.chars().count() <= 200 && !name.chars().any(char::is_control)
 }
 
-/// Parse a list answer to `request_id`. Malformed agents, including ones
-/// with an empty or unprintable name, are skipped.
+/// A bidirectional override, embedding, isolate or mark: it can make a name
+/// read as something else on screen.
+fn is_bidi_control(ch: char) -> bool {
+    matches!(ch, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+/// A provider-supplied name made safe to show: control characters become
+/// spaces, bidirectional controls are removed, and the result is trimmed to
+/// at most 200 characters. It may come out empty; the renderer then shows a
+/// fallback with the agent's key fingerprint.
+pub(super) fn printable_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .filter(|ch| !is_bidi_control(*ch))
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    let trimmed: String = cleaned.trim().chars().take(200).collect();
+    trimmed.trim_end().to_string()
+}
+
+/// Parse a list answer to `request_id`. Agents with a malformed id or key
+/// are skipped; a bad name never drops an agent (so it can still be
+/// linked), it is shown cleaned or as a fallback instead.
 pub(super) fn parse_list_response(
     body: &Value,
     request_id: &str,
@@ -357,8 +378,8 @@ pub(super) fn parse_list_response(
         .filter_map(|agent| {
             let id = optional_str(agent, "provider_agent_id")?;
             let key = optional_str(agent, "agent_public_key")?.to_ascii_lowercase();
-            let name = optional_str(agent, "display_name")?.trim();
-            if !is_provider_agent_id(id) || !is_hex64(&key) || !is_display_name(name) {
+            let name = printable_name(optional_str(agent, "display_name").unwrap_or_default());
+            if !is_provider_agent_id(id) || !is_hex64(&key) {
                 return None;
             }
             let owner = optional_str(agent, "owner_public_key")
@@ -384,7 +405,7 @@ pub(super) fn parse_list_response(
             Some(OwnerAgent {
                 provider_agent_id: id.to_string(),
                 agent_public_key: key,
-                display_name: name.to_string(),
+                display_name: name,
                 owner_public_key: owner,
                 deleted,
                 status: status.to_string(),

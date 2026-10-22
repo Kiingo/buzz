@@ -144,7 +144,7 @@ class _RelinkSheet extends HookConsumerWidget {
                         'hosted-relink-current-${agent.providerAgentId}',
                       ),
                       icon: BuzzIcons.circleCheck,
-                      title: agent.displayName,
+                      title: agent.printableName,
                       value: 'Already linked',
                     ),
                 ],

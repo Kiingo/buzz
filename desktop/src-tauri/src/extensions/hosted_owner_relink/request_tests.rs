@@ -228,16 +228,20 @@ fn list_response_reads_owner_keys_and_skips_malformed_agents() {
                 {"provider_agent_id": "buzz:blank", "agent_public_key": ada,
                  "display_name": "   "},
                 {"provider_agent_id": "buzz:ctl", "agent_public_key": ada,
-                 "display_name": "Ada\u{202e}\u{0007}"},
+                 "display_name": " Ada\u{202e}\u{0007} "},
                 {"provider_agent_id": "buzz:nl", "agent_public_key": ada,
-                 "display_name": "Ada\nLinked: Mira"}
+                 "display_name": "Ada\nLinked: Mira"},
+                {"provider_agent_id": "buzz:noname", "agent_public_key": ada}
             ]
         }),
         "req-l",
     )
     .unwrap();
-    // Malformed keys and empty or unprintable names are skipped.
-    assert_eq!(agents.len(), 2);
+    // Malformed keys are skipped; a bad name keeps the agent, cleaned.
+    let names: Vec<_> = agents.iter().map(|a| a.display_name.as_str()).collect();
+    assert_eq!(names, ["Ada", "None", "", "Ada", "Ada Linked: Mira", ""]);
+    assert_eq!(printable_name(&"x".repeat(300)).chars().count(), 200);
+    let agents = &agents[..2];
     assert_eq!(agents[0].owner_public_key.as_deref(), Some(old.as_str()));
     assert!(!agents[0].deleted);
     assert_eq!(agents[1].owner_public_key, None);

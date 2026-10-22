@@ -23,6 +23,7 @@ import { hostedOwnerRelinkApi, setRelinkTransportForTests } from "./client.ts";
 import {
   agentFingerprint,
   agentLabel,
+  agentName,
   describeAttestOutcome,
   isAttested,
   isRetryableAttest,
@@ -292,8 +293,12 @@ test("a whole-request failure stops the pass and reports its code", async () => 
 
 test("the pass uses the production client against the native transport", async () => {
   const sent = [];
+  const listArgs = [];
   restore = setRelinkTransportForTests({
-    list: async () => view([pending("scout")], CURRENT, "list-7"),
+    list: async (args) => {
+      listArgs.push(args);
+      return view([pending("scout")], CURRENT, "list-7");
+    },
     attestPending: async (args) => {
       sent.push(args);
       return args.agents.map((a) => ({
@@ -307,7 +312,7 @@ test("the pass uses the production client against the native transport", async (
   });
   const result = await runAutoLinkPass(
     {
-      list: () => hostedOwnerRelinkApi.list(),
+      list: () => hostedOwnerRelinkApi.list({ background: true }),
       attestPending: (agents, listedIn) =>
         hostedOwnerRelinkApi.attestPending(agents, listedIn),
       rebind: (agents, listedIn) =>
@@ -317,6 +322,10 @@ test("the pass uses the production client against the native transport", async (
     newAutoLinkMemory(),
   );
   assert.deepEqual(result.linked, [labelOf("scout")]);
+  // A pass's lists are kept apart from the ones an open card signs against;
+  // the card's own list is not marked.
+  await hostedOwnerRelinkApi.list();
+  assert.deepEqual(listArgs, [{ background: true }, {}]);
   // Only the id and key cross to the native side, with the list they came
   // from and the owner key it was listed for.
   assert.deepEqual(Object.keys(sent[0].agents[0]).sort(), [
@@ -577,4 +586,15 @@ test("whole-request failures back off and say so once", () => {
     backoff.record(failed, now);
   }
   assert.notEqual(backoff.record(failed, now), null);
+});
+
+test("an agent with an empty name is still linked, under a fallback name", async () => {
+  const nameless = pending("ghost", { displayName: "" });
+  const { api, calls } = fakeApi(view([nameless]));
+  const result = await runAutoLinkPass(api, CURRENT, newAutoLinkMemory());
+  assert.deepEqual(calls.attest, [["buzz:ghost"]]);
+  assert.equal(agentName(nameless), "Unnamed agent");
+  assert.deepEqual(result.linked, [
+    `Unnamed agent (${agentFingerprint(nameless.agentPublicKey)})`,
+  ]);
 });

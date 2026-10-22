@@ -23,7 +23,7 @@ type SigningArgs = {
 
 type Transport = {
   available: () => Promise<boolean>;
-  list: () => Promise<HostedOwnerAgents>;
+  list: (args: { background?: boolean }) => Promise<HostedOwnerAgents>;
   rebind: (args: SigningArgs) => Promise<RebindResult[]>;
   attestPending: (args: SigningArgs) => Promise<AttestResult[]>;
   listUnlinked: () => Promise<UnlinkedAgent[]>;
@@ -31,7 +31,8 @@ type Transport = {
 
 const tauriTransport: Transport = {
   available: () => invokeTauri<boolean>("hosted_owner_relink_available"),
-  list: () => invokeTauri<HostedOwnerAgents>("hosted_owner_relink_list"),
+  list: (args) =>
+    invokeTauri<HostedOwnerAgents>("hosted_owner_relink_list", args),
   rebind: (args) =>
     invokeTauri<RebindResult[]>("hosted_owner_relink_rebind", args),
   attestPending: (args) =>
@@ -76,10 +77,16 @@ export const hostedOwnerRelinkApi = {
     }
   },
 
-  /** The owner's hosted agents; read-only. */
-  list: async () => {
+  /**
+   * The owner's hosted agents; read-only. An auto-link pass passes
+   * `background`, so the native side keeps its lists apart from the ones an
+   * open card or review signs against.
+   */
+  list: async (options: { background?: boolean } = {}) => {
     try {
-      return await transport.list();
+      return await transport.list(
+        options.background ? { background: true } : {},
+      );
     } catch (error) {
       throw toRelinkRequestError(error);
     }

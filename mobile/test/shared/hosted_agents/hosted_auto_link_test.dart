@@ -307,6 +307,63 @@ void main() {
     });
   });
 
+  group('names', () {
+    test(
+      'a bad name never drops an agent; it is cleaned or replaced',
+      () async {
+        expect(hostedAgentPrintableName(' Ada\u202E\u0007 '), 'Ada');
+        expect(
+          hostedAgentPrintableName('Ada\nLinked: Mira'),
+          'Ada Linked: Mira',
+        );
+        expect(hostedAgentPrintableName('   '), isEmpty);
+        expect(hostedAgentPrintableName('x' * 300).length, 200);
+
+        final nameless = HostedAgentSnapshot(
+          providerAgentId: 'buzz:ghost',
+          agentPublicKey: _key(5),
+          displayName: '\u202E\u0000',
+          providerConfig: const {},
+          profileRevision: 0,
+          desiredState: 'pending_attestation',
+          observedState: 'pending_attestation',
+          status: hostedAgentStatusPendingAttestation,
+        );
+        expect(nameless.printableName, 'Unnamed agent');
+        expect(
+          nameless.fingerprintedName,
+          'Unnamed agent (${nameless.agentPublicKey.substring(0, 8)})',
+        );
+        // Still linked, under the fallback name.
+        final api = _FakeApi([nameless]);
+        final result = await runHostedAutoLinkPass(
+          api: api,
+          ownerPublicKey: _owner,
+          memory: HostedAutoLinkMemory(),
+        );
+        expect(api.attested, [
+          ['\u202E\u0000'],
+        ]);
+        expect(result.linked, [nameless.fingerprintedName]);
+      },
+    );
+
+    test('the refused note never carries control characters', () {
+      final note = hostedAutoLinkRefusedNote(const [
+        HostedAutoLinkRefusal(name: 'Ada\nLinked: Mira\u202E', reason: 'No.'),
+        HostedAutoLinkRefusal(name: '\u0007', reason: 'No.'),
+      ])!;
+      final lines = note.split('\n');
+      expect(lines, [
+        "Couldn't link 2 agents",
+        'Ada Linked: Mira: No.',
+        'An agent: No.',
+      ]);
+      expect(note.contains('\u202E'), isFalse);
+      expect(note.contains('\u0007'), isFalse);
+    });
+  });
+
   group('cancellation', () {
     test(
       'turning the setting off stops a pass before its next request',

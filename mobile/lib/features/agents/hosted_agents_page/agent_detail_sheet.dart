@@ -44,7 +44,7 @@ class _AgentDetailSheet extends HookConsumerWidget {
     );
 
     Future<void> delete() async {
-      if (!await _confirmDelete(context, agent.displayName)) return;
+      if (!await _confirmDelete(context, agent.printableName)) return;
       if (!context.mounted) return;
       await run('delete', () async {
         final warning = await ref
@@ -55,7 +55,7 @@ class _AgentDetailSheet extends HookConsumerWidget {
         final messenger = ScaffoldMessenger.of(context);
         Navigator.of(context).pop(false);
         messenger.showSnackBar(
-          SnackBar(content: Text(warning ?? '${agent.displayName} deleted.')),
+          SnackBar(content: Text(warning ?? '${agent.printableName} deleted.')),
         );
       });
     }

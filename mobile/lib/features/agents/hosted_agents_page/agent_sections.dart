@@ -48,7 +48,7 @@ class _HostedSection extends ConsumerWidget {
                   AppListRow(
                     key: ValueKey('hosted-agent-${agent.providerAgentId}'),
                     icon: agent.isPaused ? BuzzIcons.pause : BuzzIcons.bot,
-                    title: agent.displayName,
+                    title: agent.printableName,
                     subtitle: [
                       ?hostedProfileLabels(
                         catalog,

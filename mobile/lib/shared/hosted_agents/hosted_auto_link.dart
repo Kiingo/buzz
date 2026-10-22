@@ -260,10 +260,16 @@ String? hostedAutoLinkRefusedNote(List<HostedAutoLinkRefusal> agents) {
       : "Couldn't link ${agents.length} agents";
   final lines = [
     title,
-    for (final agent in agents.take(3)) '${agent.name}: ${agent.reason}',
+    for (final agent in agents.take(3))
+      '${_printableOr(agent.name, 'An agent')}: ${agent.reason}',
     if (agents.length > 3) 'And ${agents.length - 3} more.',
   ];
   return lines.join('\n');
+}
+
+String _printableOr(String name, String fallback) {
+  final printable = hostedAgentPrintableName(name);
+  return printable.isEmpty ? fallback : printable;
 }
 
 /// Whole-request failures in a row before passes back off and say so.

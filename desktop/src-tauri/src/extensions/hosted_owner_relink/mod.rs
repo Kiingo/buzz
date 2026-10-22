@@ -66,17 +66,44 @@ enum Listed {
     Stale,
 }
 
-/// Lists kept, newest last. Several, so that a settings card refreshing its
-/// list does not invalidate a pass (or an open review) signing against an
-/// earlier one.
+/// Who read a list. Background auto-link passes and lists the owner opened
+/// (the settings card, a Link tap's refresh, the batch review) are kept
+/// apart, so passes running on every focus change never push out the list
+/// an open card or review is signing against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListOrigin {
+    Owner,
+    Background,
+}
+
+/// Lists kept per origin, newest last. Several, so that a settings card
+/// refreshing its list does not invalidate an open review signing against
+/// an earlier one.
 const MAX_LISTINGS: usize = 8;
-static LISTINGS: Mutex<VecDeque<Listing>> = Mutex::new(VecDeque::new());
+/// A pass signs only against the list it just read, so it needs few.
+const MAX_BACKGROUND_LISTINGS: usize = 2;
+
+struct Listings {
+    owner: VecDeque<Listing>,
+    background: VecDeque<Listing>,
+}
+
+static LISTINGS: Mutex<Listings> = Mutex::new(Listings {
+    owner: VecDeque::new(),
+    background: VecDeque::new(),
+});
 
 fn listing_scope(owner: &str, community_id: &str) -> String {
     format!("{owner} {community_id}")
 }
 
-fn remember_listing(list_id: &str, scope: &str, owner: &str, agents: &[OwnerAgent]) {
+fn remember_listing(
+    origin: ListOrigin,
+    list_id: &str,
+    scope: &str,
+    owner: &str,
+    agents: &[OwnerAgent],
+) {
     let entry = |agent: &OwnerAgent| {
         (
             agent.provider_agent_id.clone(),
@@ -100,15 +127,19 @@ fn remember_listing(list_id: &str, scope: &str, owner: &str, agents: &[OwnerAgen
         .map(entry)
         .collect();
     if let Ok(mut listings) = LISTINGS.lock() {
-        listings.retain(|listing| listing.list_id != list_id);
-        listings.push_back(Listing {
+        let (kept, limit) = match origin {
+            ListOrigin::Owner => (&mut listings.owner, MAX_LISTINGS),
+            ListOrigin::Background => (&mut listings.background, MAX_BACKGROUND_LISTINGS),
+        };
+        kept.retain(|listing| listing.list_id != list_id);
+        kept.push_back(Listing {
             list_id: list_id.to_string(),
             scope: scope.to_string(),
             pending,
             stale,
         });
-        while listings.len() > MAX_LISTINGS {
-            listings.pop_front();
+        while kept.len() > limit {
+            kept.pop_front();
         }
     }
 }
@@ -120,7 +151,9 @@ fn all_listed(list_id: &str, scope: &str, kind: Listed, selected: &[RebindSelect
         return false;
     };
     let Some(listing) = listings
+        .owner
         .iter()
+        .chain(listings.background.iter())
         .find(|listing| listing.list_id == list_id && listing.scope == scope)
     else {
         return false;
@@ -308,9 +341,10 @@ pub fn hosted_owner_relink_available(state: State<'_, AppState>) -> bool {
 }
 
 /// List the owner's hosted agents. Read-only: the settings card, a Link
-/// tap's refresh, or an auto-link pass reads it.
+/// tap's refresh, or (with `background`) an auto-link pass reads it.
 #[tauri::command]
 pub async fn hosted_owner_relink_list(
+    background: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<HostedOwnerAgents, String> {
     let route = route().ok_or_else(|| error_string(None, "hosted_relink_unavailable", None))?;
@@ -332,7 +366,13 @@ pub async fn hosted_owner_relink_list(
     let agents = request::parse_list_response(&response, &request_id)
         .map_err(|code| error_string(None, &code, None))?;
     let owner = keys.public_key().to_hex();
+    let origin = if background == Some(true) {
+        ListOrigin::Background
+    } else {
+        ListOrigin::Owner
+    };
     remember_listing(
+        origin,
         &request_id,
         &listing_scope(&owner, &community_id),
         &owner,
@@ -511,6 +551,7 @@ mod listed_tests {
             &[pick("buzz:ada", 'a')]
         ));
         remember_listing(
+            ListOrigin::Owner,
             "list-1",
             &scope,
             OWNER,
@@ -559,7 +600,7 @@ mod listed_tests {
 
         // A newer list (a settings card refresh) does not invalidate the
         // older one a pass is signing against...
-        remember_listing("list-2", &scope, OWNER, &[]);
+        remember_listing(ListOrigin::Owner, "list-2", &scope, OWNER, &[]);
         assert!(pending(&[pick("buzz:ada", 'a')]));
         assert!(!all_listed(
             "list-2",
@@ -567,9 +608,40 @@ mod listed_tests {
             Listed::Pending,
             &[pick("buzz:ada", 'a')]
         ));
-        // ...but only the most recent few lists are kept.
+        // ...and background passes, however many, never push it out, while
+        // only their latest few lists are kept.
+        let ada = [agent("buzz:ada", 'a', "pending_attestation", None, false)];
+        remember_listing(ListOrigin::Background, "auto-first", &scope, OWNER, &ada);
+        let first =
+            |picks: &[RebindSelection]| all_listed("auto-first", &scope, Listed::Pending, picks);
+        assert!(first(&[pick("buzz:ada", 'a')]));
+        for index in 0..(4 * MAX_LISTINGS) {
+            remember_listing(
+                ListOrigin::Background,
+                &format!("auto-{index}"),
+                &scope,
+                OWNER,
+                &ada,
+            );
+        }
+        assert!(pending(&[pick("buzz:ada", 'a')]));
+        assert!(!first(&[pick("buzz:ada", 'a')]));
+        let last = format!("auto-{}", 4 * MAX_LISTINGS - 1);
+        assert!(all_listed(
+            &last,
+            &scope,
+            Listed::Pending,
+            &[pick("buzz:ada", 'a')]
+        ));
+        // Only the most recent few owner lists are kept.
         for index in 3..(3 + MAX_LISTINGS) {
-            remember_listing(&format!("list-{index}"), &scope, OWNER, &[]);
+            remember_listing(
+                ListOrigin::Owner,
+                &format!("list-{index}"),
+                &scope,
+                OWNER,
+                &[],
+            );
         }
         assert!(!pending(&[pick("buzz:ada", 'a')]));
     }

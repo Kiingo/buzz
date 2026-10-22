@@ -18,6 +18,8 @@ import { relinkQueryKeys, writeAutoLinkSetting } from "../lib/autoLink";
 import { hostedOwnerRelinkApi } from "../lib/client";
 import {
   agentFingerprint,
+  agentLabel,
+  agentName,
   agentsToSend,
   currentAgents,
   describeAttestOutcome,
@@ -105,7 +107,7 @@ function RelinkSection() {
           testId="hosted-link-pending"
           title={
             pending.length === 1
-              ? `${pending[0]?.displayName} is waiting for you to link it.`
+              ? `${pending[0] ? agentLabel(pending[0]) : "An agent"} is waiting for you to link it.`
               : `${pending.length} agents are waiting for you to link them.`
           }
           view={view}
@@ -120,7 +122,7 @@ function RelinkSection() {
                 Re-link your agents to your current key.
               </span>{" "}
               {stale.length === 1
-                ? `${stale[0]?.displayName} is still linked to your old key.`
+                ? `${stale[0] ? agentLabel(stale[0]) : "An agent"} is still linked to your old key.`
                 : `${stale.length} agents are still linked to your old key.`}
             </span>
           </p>
@@ -291,7 +293,7 @@ function LinkList({
           >
             <div className="min-w-0">
               <p className="text-foreground">
-                {agent.displayName}
+                {agentName(agent)}
                 <KeyFingerprint agentPublicKey={agent.agentPublicKey} />
               </p>
               {state?.label ? (
@@ -321,7 +323,7 @@ function LinkList({
             ) : (
               <Button
                 aria-describedby={state?.label ? `${rowId}-result` : undefined}
-                aria-label={`Link ${agent.displayName} (${agentFingerprint(agent.agentPublicKey)})`}
+                aria-label={`Link ${agentLabel(agent)}`}
                 data-testid={`${rowId}-link`}
                 disabled={state?.busy === true}
                 onClick={() => void link(agent)}
@@ -462,7 +464,7 @@ function RelinkDialog({
                     className="text-foreground"
                     htmlFor={choosable ? id : undefined}
                   >
-                    {agent.displayName}
+                    {agentName(agent)}
                     <KeyFingerprint agentPublicKey={agent.agentPublicKey} />
                   </label>
                   {result ? (
@@ -497,7 +499,7 @@ function RelinkDialog({
                   aria-hidden
                   className="h-4 w-4 shrink-0 text-emerald-500"
                 />
-                <span>{agent.displayName}</span>
+                <span>{agentLabel(agent)}</span>
               </p>
             ))}
           </div>

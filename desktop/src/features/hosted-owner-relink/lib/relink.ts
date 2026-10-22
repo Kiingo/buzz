@@ -37,6 +37,14 @@ export function agentFingerprint(agentPublicKey: string): string {
 }
 
 /**
+ * An agent's name as shown: the native side already removed unprintable
+ * characters; an empty name reads "Unnamed agent".
+ */
+export function agentName(agent: { displayName: string }): string {
+  return agent.displayName.trim() || "Unnamed agent";
+}
+
+/**
  * How a note names an agent: its name and key fingerprint, so two agents
  * with the same name (or a name chosen to look like another) stay apart.
  */
@@ -44,8 +52,7 @@ export function agentLabel(agent: {
   displayName: string;
   agentPublicKey: string;
 }): string {
-  const name = agent.displayName.trim() || "An agent";
-  return `${name} (${agentFingerprint(agent.agentPublicKey)})`;
+  return `${agentName(agent)} (${agentFingerprint(agent.agentPublicKey)})`;
 }
 
 /** One agent's re-link result, as the native command returns it. */
