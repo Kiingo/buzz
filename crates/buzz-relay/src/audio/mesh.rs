@@ -39,6 +39,15 @@
 //! frame in a [`MeshDatagram`] and calls [`RelayPeerTransport::send_datagram`].
 //! The in-pod fan-out is reused unchanged; only a peer's *sink* differs.
 //!
+//! ## Once per pod, not once per participant
+//!
+//! A non-owner pod delivers every media datagram it receives to *all* of its
+//! local clients (minus the author). The owner therefore sends each frame to a
+//! pod once: the remote peers one pod registers share a
+//! [`DeliveryGroup`](super::room::DeliveryGroup), and the room's fan-out hands a
+//! frame to one member per group. Sending it through every member's sink would
+//! make each of N co-located clients hear every frame N times.
+//!
 //! ## Fencing (law, not exempt for media)
 //!
 //! Every datagram carries a [`FencedHeader`]. Both ends reject frames whose
@@ -393,5 +402,147 @@ mod tests {
             }),
             FenceVerdict::Accept { .. }
         ));
+    }
+
+    /// A recording transport: every datagram the owner's sinks send, by
+    /// destination pod.
+    struct RecordingTransport(std::sync::Mutex<Vec<(RuntimeId, MeshDatagram)>>);
+
+    impl RelayPeerTransport for RecordingTransport {
+        fn send_datagram(
+            &self,
+            to: RuntimeId,
+            dgram: MeshDatagram,
+        ) -> Result<(), buzz_relay_mesh::MeshError> {
+            self.0.lock().unwrap().push((to, dgram));
+            Ok(())
+        }
+        fn open_session_stream(
+            &self,
+            _to: RuntimeId,
+            _hello: buzz_relay_mesh::StreamHello,
+        ) -> buzz_relay_mesh::BoxFuture<
+            '_,
+            Result<buzz_relay_mesh::MeshStream, buzz_relay_mesh::MeshError>,
+        > {
+            Box::pin(async { Err(buzz_relay_mesh::MeshError::Transport("unused".into())) })
+        }
+        fn set_inbound(&self, _handler: Box<dyn buzz_relay_mesh::InboundHandler>) {}
+    }
+
+    impl RecordingTransport {
+        /// Wait for the sink tasks to ship `want` datagrams, give a straggler
+        /// time to show up, then take them all.
+        async fn settle(&self, want: usize) -> Vec<(RuntimeId, MeshDatagram)> {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            while self.0.lock().unwrap().len() < want && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            std::mem::take(&mut *self.0.lock().unwrap())
+        }
+    }
+
+    /// Two clients on one non-owner pod (and one on a second pod) each hear
+    /// an owner-pod speaker's frame, and each other's, exactly once.
+    ///
+    /// Mutation: give each remote peer its own delivery group (or none), so
+    /// the owner sends one datagram per remote participant → RED (each
+    /// co-located client receives the frame twice).
+    #[tokio::test]
+    async fn co_located_remote_clients_each_receive_a_frame_exactly_once() {
+        use super::super::room::DeliveryGroup;
+        use buzz_core::CommunityId;
+
+        let (owner_pod, ingress_pod, other_pod) = (rt(0xAA), rt(1), rt(2));
+        let community = CommunityId::from_uuid(Uuid::new_v4());
+        let session = Uuid::new_v4();
+        let fence = fenced(session, 7);
+        let transport = Arc::new(RecordingTransport(std::sync::Mutex::new(Vec::new())));
+
+        // Owner pod: one local speaker and three remote peers, two of them
+        // registered by the same ingress pod.
+        let owner_rooms = Arc::new(AudioRoomManager::new());
+        let owner_room = owner_rooms.get_or_create(community, session);
+        let (speaker_id, ..) = owner_room.add_peer("speaker".into(), 2).unwrap();
+        owner_room.mark_committed(speaker_id);
+        let mut remote_index = std::collections::HashMap::new();
+        for (pubkey, pod) in [
+            ("alice", ingress_pod),
+            ("bob", ingress_pod),
+            ("carol", other_pod),
+        ] {
+            let group = DeliveryGroup {
+                link: pod.0,
+                generation: fence.generation,
+            };
+            let (peer_id, peer_index, _, audio_rx, ..) = owner_room
+                .add_remote_peer_pending(pubkey.into(), 2, group)
+                .unwrap();
+            assert!(owner_room.commit_peer(peer_id).is_some());
+            spawn_remote_peer_sink(
+                Arc::clone(&transport) as Arc<dyn RelayPeerTransport>,
+                pod,
+                fence,
+                audio_rx,
+            );
+            remote_index.insert(pubkey, peer_index);
+        }
+
+        // Ingress pod: Alice and Bob are local clients at their owner-assigned
+        // indexes.
+        let ingress_rooms = Arc::new(AudioRoomManager::new());
+        let ingress_room = ingress_rooms.get_or_create(community, session);
+        let (_, _, mut alice_rx, ..) = ingress_room
+            .add_peer_at_index("alice".into(), 2, remote_index["alice"])
+            .unwrap();
+        let (_, _, mut bob_rx, ..) = ingress_room
+            .add_peer_at_index("bob".into(), 2, remote_index["bob"])
+            .unwrap();
+        let ingress = MeshAudioRouter::new(Arc::clone(&ingress_rooms), ingress_pod);
+
+        let to = |sent: &[(RuntimeId, MeshDatagram)], pod: RuntimeId| {
+            sent.iter().filter(|(t, _)| *t == pod).count()
+        };
+
+        // 1. The owner-pod speaker talks: one datagram per pod.
+        owner_room.broadcast_frame(speaker_id, Bytes::from_static(b"speaker-opus"));
+        let sent = transport.settle(2).await;
+        assert_eq!(
+            to(&sent, ingress_pod),
+            1,
+            "one datagram to the ingress pod: {sent:?}"
+        );
+        assert_eq!(
+            to(&sent, other_pod),
+            1,
+            "one datagram to the other pod: {sent:?}"
+        );
+        assert!(sent.iter().all(|(t, _)| *t != owner_pod));
+        for (_, dgram) in sent.iter().filter(|(t, _)| *t == ingress_pod) {
+            ingress.on_media_datagram(dgram);
+        }
+        for rx in [&mut alice_rx, &mut bob_rx] {
+            assert!(rx.try_recv().unwrap().ends_with(b"speaker-opus"));
+            assert!(
+                rx.try_recv().is_err(),
+                "a second copy reached a co-located client"
+            );
+        }
+
+        // 2. Alice talks; the owner receives her frame from the mesh. Bob
+        //    (same pod) and Carol (other pod) each get it once; Alice doesn't.
+        let mut from_alice = vec![remote_index["alice"]];
+        from_alice.extend_from_slice(b"alice-opus");
+        owner_room.deliver_prefixed(remote_index["alice"], Bytes::from(from_alice));
+        let sent = transport.settle(2).await;
+        assert_eq!(to(&sent, ingress_pod), 1, "{sent:?}");
+        assert_eq!(to(&sent, other_pod), 1, "{sent:?}");
+        for (_, dgram) in sent.iter().filter(|(t, _)| *t == ingress_pod) {
+            ingress.on_media_datagram(dgram);
+        }
+        assert!(bob_rx.try_recv().unwrap().ends_with(b"alice-opus"));
+        assert!(bob_rx.try_recv().is_err(), "Bob heard Alice twice");
+        assert!(alice_rx.try_recv().is_err(), "Alice heard herself");
     }
 }

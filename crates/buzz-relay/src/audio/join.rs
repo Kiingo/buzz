@@ -52,7 +52,8 @@ use uuid::Uuid;
 
 use super::mesh::spawn_remote_peer_sink;
 use super::room::{
-    AdmissionError, AudioRoomManager, Room, RosterDelta as RoomRosterDelta, RosterPeer,
+    AdmissionError, AudioRoomManager, DeliveryGroup, Room, RosterDelta as RoomRosterDelta,
+    RosterPeer,
 };
 use crate::tunnel::directory::{ReleaseResult, RenewResult, SessionDirectory, SessionLease};
 
@@ -1646,7 +1647,13 @@ impl<D: HuddleDirectory + ?Sized> HuddleControlAcceptor<D> {
         tracked: &mut std::collections::HashMap<String, Uuid>,
         commit_phase: bool,
     ) -> HuddleControlMsg {
-        match room.add_peer_pending(pubkey.to_string(), protocol_version) {
+        // Every participant `from` registers shares one link back to it, and
+        // that pod re-delivers each frame to all of its clients: one group.
+        let group = DeliveryGroup {
+            link: from.0,
+            generation: fenced.generation,
+        };
+        match room.add_remote_peer_pending(pubkey.to_string(), protocol_version, group) {
             Ok((peer_id, peer_index, epoch, audio_rx, _peer_ctrl_rx, _snapshot_revision)) => {
                 tracked.insert(pubkey.to_string(), peer_id);
                 if !commit_phase {
