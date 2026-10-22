@@ -775,6 +775,12 @@ pub fn spawn_agent_child<R: tauri::Runtime>(
             resolve_command("git-credential-nostr").as_deref(),
         );
     }
+    // Relay git trusts only the curated CA bundle (macOS), for every harness.
+    crate::git_ca_bundle::apply_relay_git_ca_info(
+        &mut command,
+        &crate::relay::relay_http_base_url(&effective_relay_url),
+        crate::git_ca_bundle::git_ssl_ca_info().as_deref(),
+    );
 
     // User env (descriptor.env): fully-layered floor→runtime→definition→global→persona→agent,
     // reserved-key filtered. Written last so user-explicit values win over Buzz-set env.
