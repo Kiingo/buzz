@@ -62,6 +62,8 @@ pub mod push_runtime;
 pub mod readiness;
 /// Axum router construction.
 pub mod router;
+/// The process shutdown signal, installed before any startup work.
+pub mod shutdown_signal;
 /// Timing for startup work between metrics bind and serving.
 pub mod startup_steps;
 /// Shared application state.

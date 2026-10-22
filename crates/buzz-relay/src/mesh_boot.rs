@@ -9,11 +9,15 @@
 //!    boot-unique `RuntimeId`),
 //! 2. publishes a relay-key-attested [`ReadyRecord`] to the Redis ready
 //!    registry and starts the readiness-gated heartbeat,
-//! 3. starts the [`MeshRuntime`] loops (accept, reconcile/dial, gossip) and
-//!    runs one immediate reconcile pass so seed peers are dialed at boot,
+//! 3. starts the [`MeshRuntime`] loops (accept, reconcile/dial, gossip). The
+//!    reconcile loop's first pass dials seed peers right away, in the
+//!    background: boot never waits on a dial, so a dead or slow seed (for
+//!    example the previous boot of this same pod, whose ready record has not
+//!    expired yet) cannot delay the health listener past the liveness budget,
 //! 4. spawns a drain watcher: when the relay's `shutting_down` flag flips,
 //!    membership gossips `draining=true`, locally-owned huddle leases are
-//!    generation-fenced drained, and the heartbeat clears the registry record.
+//!    generation-fenced drained, and this runtime's ready record is deleted
+//!    so no peer or later boot dials it.
 //!
 //! Consumers (huddle control plane, reliable-stream tunnels) reach the mesh
 //! exclusively through [`MeshHandle`] via `AppState::mesh()` — `None` means
@@ -472,6 +476,10 @@ pub(crate) async fn run_demo_echo(
 /// Wire protocol version advertised in registry/gossip records.
 const PROTO_VERSION: u16 = buzz_relay_mesh::WIRE_VERSION as u16;
 
+/// Bound on deleting this runtime's ready record during shutdown. Shutdown
+/// must not wait on Redis; a record left behind expires on its TTL.
+const READY_RECORD_CLEAR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Capabilities advertised by this build. All three tunnel profiles ship in
 /// the same binary, so the list is static.
 pub(crate) fn capabilities() -> Vec<String> {
@@ -549,10 +557,10 @@ pub async fn boot_mesh(
     // Anchor ready-record acceptance to this deployment's relay identity: all
     // pods share the relay signing key, so a seed attested by any other key is
     // foreign and rejected (Wren's review — possession is not authorization).
-    let membership = MeshMembership::new(local_record)
-        .with_expected_relay_pubkey(relay_keypair.public_key().to_hex());
-
     let registry = ReadyRegistry::new(redis_pool.clone(), config.mesh.registry_refresh);
+    let membership = MeshMembership::new(local_record)
+        .with_expected_relay_pubkey(relay_keypair.public_key().to_hex())
+        .with_max_record_age(registry.expiry());
     let ready_record = ReadyRecord::new(
         runtime_id,
         relay_keypair,
@@ -578,14 +586,17 @@ pub async fn boot_mesh(
         Arc::new(move || !hb_flag.load(Ordering::Relaxed)),
     );
 
-    let runtime = MeshRuntime::start(endpoint, membership, Some(registry));
+    // The runtime's reconcile loop dials seed peers on its first pass, in the
+    // background. Do not await a dial here: boot continues to the health
+    // listener while dials run.
+    let runtime = MeshRuntime::start(endpoint, membership, Some(registry.clone()));
     let owners = Arc::new(crate::audio::join::HuddleOwnerRegistry::new());
-    // Dial seed peers now rather than waiting for the first reconcile tick.
-    runtime.reconcile_now().await;
 
     // Drain watcher: SIGTERM flips `shutting_down`; gossip `draining=true` so
     // peers stop routing new sessions here, then actively drain locally-owned
-    // huddles so clients rejoin and Redis leases release inside the graceful window.
+    // huddles so clients rejoin and Redis leases release inside the graceful
+    // window, and delete this runtime's ready record so nothing dials it after
+    // the process exits (the heartbeat stops refreshing it on the same flag).
     {
         let runtime = runtime.clone();
         let owners = Arc::clone(&owners);
@@ -599,6 +610,19 @@ pub async fn boot_mesh(
                         huddle_drained,
                         "mesh drain started (draining=true gossiped)"
                     );
+                    match tokio::time::timeout(
+                        READY_RECORD_CLEAR_TIMEOUT,
+                        registry.clear_ready(runtime_id),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => tracing::info!("mesh ready record deleted"),
+                        // The record still expires on its TTL.
+                        Ok(Err(err)) => {
+                            tracing::warn!(%err, "mesh ready record delete failed")
+                        }
+                        Err(_) => tracing::warn!("mesh ready record delete timed out"),
+                    }
                     return;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::gossip::{system_time_from_millis, GossipRecord, PhiAccrual};
 use crate::registry::ReadyRecord;
@@ -16,12 +16,21 @@ use crate::{PeerInfo, RelayMeshMembership, RuntimeId};
 
 pub const DEFAULT_PHI_SUSPECT_THRESHOLD: f64 = 8.0;
 
+/// How long a peer record may go without a sign of life before it is treated
+/// as dead. Matches the ready-registry expiry (three 15 s refreshes): a runtime
+/// that has neither gossiped a newer record nor been seen in the registry for
+/// this long has exited, and its boot-unique id will never answer a dial.
+pub const DEFAULT_MAX_RECORD_AGE: Duration = Duration::from_secs(45);
+
 #[derive(Clone, Debug)]
 struct PeerState {
     record: GossipRecord,
     phi: PhiAccrual,
     connection_state: ConnectionState,
     counters: MeshPeerCounters,
+    /// Local clock: the last time this runtime saw evidence the peer is alive
+    /// (a newer gossip record, or its record in the ready registry).
+    last_seen: SystemTime,
 }
 
 /// Thread-safe membership view consumed by the relay.
@@ -40,6 +49,7 @@ pub struct MeshMembership {
     /// unanchored state is fail-closed, not accept-any.
     expected_relay_pubkey: Option<String>,
     phi_suspect_threshold: f64,
+    max_record_age: Duration,
 }
 
 impl MeshMembership {
@@ -53,6 +63,7 @@ impl MeshMembership {
             foreign_relay_rejections: Arc::new(AtomicU64::new(0)),
             expected_relay_pubkey: None,
             phi_suspect_threshold: DEFAULT_PHI_SUSPECT_THRESHOLD,
+            max_record_age: DEFAULT_MAX_RECORD_AGE,
         }
     }
 
@@ -65,6 +76,13 @@ impl MeshMembership {
 
     pub fn with_phi_suspect_threshold(mut self, threshold: f64) -> Self {
         self.phi_suspect_threshold = threshold;
+        self
+    }
+
+    /// Override [`DEFAULT_MAX_RECORD_AGE`]. The relay passes the ready-registry
+    /// expiry so both liveness bounds agree.
+    pub fn with_max_record_age(mut self, max_record_age: Duration) -> Self {
+        self.max_record_age = max_record_age;
         self
     }
 
@@ -112,24 +130,59 @@ impl MeshMembership {
             let mut record =
                 GossipRecord::new(ready.runtime_id, ready.endpoint_addrs, ready.proto_version);
             record.capabilities = ready.capabilities;
-            self.apply_gossip_record(record);
+            self.apply_record(record, true);
         }
     }
 
     /// Apply a gossiped record if it is newer than the local copy.
+    ///
+    /// Records that can only describe a dead runtime are refused, so peers
+    /// cannot gossip them back into the table after [`Self::prune_dead_peers`]
+    /// dropped them: a record whose owner heartbeat is older than the max
+    /// record age, and a record for another runtime id at one of this
+    /// runtime's own advertised addresses (see
+    /// [`Self::is_superseded_local_address`]).
     pub fn apply_gossip_record(&self, record: GossipRecord) -> bool {
+        self.apply_record(record, false)
+    }
+
+    /// `seen_in_registry`: the record came from a ready-registry scan, which
+    /// is itself proof of life (registry entries expire), so it refreshes the
+    /// peer's `last_seen` even when the version is not newer.
+    fn apply_record(&self, record: GossipRecord, seen_in_registry: bool) -> bool {
         if record.runtime_id == self.local_runtime_id {
+            return false;
+        }
+        if self.is_superseded_local_address(&record) {
+            tracing::debug!(
+                runtime_id = %record.runtime_id,
+                "mesh membership ignored a record at this runtime's own address (an earlier boot)"
+            );
+            return false;
+        }
+        let now = SystemTime::now();
+        if !seen_in_registry && self.heartbeat_expired(&record, now) {
+            tracing::debug!(
+                runtime_id = %record.runtime_id,
+                "mesh membership ignored a gossiped record with an expired heartbeat"
+            );
             return false;
         }
 
         let heartbeat = system_time_from_millis(record.heartbeat_millis);
         let mut peers = self.peers.write().expect("membership lock poisoned");
         match peers.get_mut(&record.runtime_id) {
-            Some(peer) if record.version <= peer.record.version => false,
+            Some(peer) if record.version <= peer.record.version => {
+                if seen_in_registry {
+                    peer.last_seen = now;
+                }
+                false
+            }
             Some(peer) => {
                 peer.record = record;
                 peer.connection_state = ConnectionState::Connected;
                 peer.phi.observe(heartbeat);
+                peer.last_seen = now;
                 true
             }
             None => {
@@ -145,11 +198,70 @@ impl MeshMembership {
                         record,
                         phi,
                         connection_state: ConnectionState::Connected,
+                        last_seen: now,
                     },
                 );
                 true
             }
         }
+    }
+
+    /// Whether `record` is another runtime id advertising one of this
+    /// runtime's own endpoint addresses.
+    ///
+    /// Only one process can hold a bound address, and every boot mints a new
+    /// runtime id, so such a record can only be an earlier boot of this same
+    /// process slot (a restarted container keeps its address). Dialing it
+    /// reaches this process under the wrong identity and fails only when the
+    /// handshake times out, so it is never a peer.
+    pub fn is_superseded_local_address(&self, record: &GossipRecord) -> bool {
+        if record.runtime_id == self.local_runtime_id || record.endpoint_addrs.is_empty() {
+            return false;
+        }
+        let local = self
+            .local_record
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        record
+            .endpoint_addrs
+            .iter()
+            .any(|addr| local.endpoint_addrs.contains(addr))
+    }
+
+    fn heartbeat_expired(&self, record: &GossipRecord, now: SystemTime) -> bool {
+        let heartbeat = system_time_from_millis(record.heartbeat_millis);
+        now.duration_since(heartbeat)
+            .is_ok_and(|age| age > self.max_record_age)
+    }
+
+    /// Drop peer records that describe dead runtimes, returning their ids.
+    ///
+    /// A record is dead when the peer is not connected and has shown no sign
+    /// of life (a newer gossip record or a registry sighting) for the max
+    /// record age. Without this the table keeps every runtime id it ever
+    /// learned and the reconcile loop dials each dead one forever. A live peer
+    /// that is merely not connected yet is re-seeded by its next registry
+    /// sighting.
+    pub fn prune_dead_peers(&self, is_connected: impl Fn(RuntimeId) -> bool) -> Vec<RuntimeId> {
+        let now = SystemTime::now();
+        let mut peers = self
+            .peers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dead: Vec<RuntimeId> = peers
+            .iter()
+            .filter(|(id, peer)| {
+                let silent = now
+                    .duration_since(peer.last_seen)
+                    .is_ok_and(|age| age > self.max_record_age);
+                silent && !is_connected(**id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &dead {
+            peers.remove(id);
+        }
+        dead
     }
 
     pub fn mark_connection_state(&self, runtime_id: RuntimeId, state: ConnectionState) {
@@ -397,7 +509,7 @@ impl RelayMeshMembership for MeshMembership {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, UNIX_EPOCH};
+    use std::time::Duration;
 
     use super::*;
 
@@ -405,6 +517,8 @@ mod tests {
         RuntimeId([byte; 32])
     }
 
+    /// `heartbeat_secs` offsets the owner heartbeat from now, so records stay
+    /// inside the max record age.
     fn record(byte: u8, version: u64, heartbeat_secs: u64) -> GossipRecord {
         GossipRecord {
             runtime_id: rid(byte),
@@ -414,10 +528,7 @@ mod tests {
             draining: false,
             capabilities: vec!["reliable-stream".to_string()],
             version,
-            heartbeat_millis: (UNIX_EPOCH + Duration::from_secs(heartbeat_secs))
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+            heartbeat_millis: crate::gossip::now_millis() + heartbeat_secs * 1_000,
         }
     }
 
@@ -496,6 +607,85 @@ mod tests {
         assert_eq!(status.counters.stale_generation_rejections, 1);
         assert_eq!(status.peers[0].counters.datagrams_sent, 1);
         assert_eq!(status.peers[0].counters.stale_generation_rejections, 1);
+    }
+
+    /// A restarted process keeps its address but mints a new runtime id. The
+    /// previous boot's record (still in the registry until it expires, and
+    /// still in peers' gossip) must never become a dial target: dialing it
+    /// reaches this process under the wrong identity.
+    #[test]
+    fn record_for_another_runtime_at_own_address_is_refused() {
+        let keys = relay_keys();
+        let membership = MeshMembership::new(record(1, 1, 0))
+            .with_expected_relay_pubkey(keys.public_key().to_hex());
+        let own_addr = "127.0.0.1:3478";
+
+        membership.apply_ready_records([
+            ready_record_signed(5, own_addr, &keys),
+            ready_record_signed(2, "127.0.0.2:3478", &keys),
+        ]);
+        let ids: Vec<_> = membership
+            .peers()
+            .into_iter()
+            .map(|p| p.runtime_id)
+            .collect();
+        assert_eq!(ids, vec![rid(2)]);
+
+        let mut gossiped = record(6, 3, 0);
+        gossiped.endpoint_addrs = vec![own_addr.to_string()];
+        assert!(!membership.apply_gossip_record(gossiped));
+        assert!(!membership.has_peer(rid(6)));
+    }
+
+    /// A dead runtime's record keeps circulating in peers' gossip with its
+    /// heartbeat frozen at death; once that heartbeat is older than the max
+    /// record age it must not re-enter the table.
+    #[test]
+    fn gossiped_record_with_expired_heartbeat_is_refused() {
+        let membership = MeshMembership::new(record(1, 1, 0));
+        let mut dead = record(2, 9, 0);
+        dead.heartbeat_millis = crate::gossip::now_millis()
+            - (DEFAULT_MAX_RECORD_AGE + Duration::from_secs(1)).as_millis() as u64;
+        assert!(!membership.apply_gossip_record(dead));
+        assert!(!membership.has_peer(rid(2)));
+
+        // A fresh record for the same id is still accepted.
+        assert!(membership.apply_gossip_record(record(2, 10, 0)));
+    }
+
+    #[test]
+    fn prune_drops_silent_unconnected_peers_and_keeps_connected_ones() {
+        let membership =
+            MeshMembership::new(record(1, 1, 0)).with_max_record_age(Duration::from_millis(50));
+        membership.apply_gossip_record(record(2, 1, 1));
+        membership.apply_gossip_record(record(3, 1, 1));
+        std::thread::sleep(Duration::from_millis(80));
+
+        let dropped = membership.prune_dead_peers(|id| id == rid(3));
+        assert_eq!(dropped, vec![rid(2)]);
+        assert!(!membership.has_peer(rid(2)));
+        assert!(
+            membership.has_peer(rid(3)),
+            "a connected peer is never pruned"
+        );
+    }
+
+    /// A registry sighting is proof of life even though it carries no newer
+    /// version, so a live peer that is not connected yet stays in the table.
+    #[test]
+    fn registry_sighting_keeps_an_unconnected_peer_alive() {
+        let keys = relay_keys();
+        let membership = MeshMembership::new(record(1, 1, 0))
+            .with_expected_relay_pubkey(keys.public_key().to_hex())
+            .with_max_record_age(Duration::from_millis(60));
+        membership.apply_ready_records([ready_record_signed(2, "127.0.0.2:3478", &keys)]);
+        std::thread::sleep(Duration::from_millis(40));
+        membership.apply_ready_records([ready_record_signed(2, "127.0.0.2:3478", &keys)]);
+        std::thread::sleep(Duration::from_millis(40));
+
+        assert!(membership.prune_dead_peers(|_| false).is_empty());
+        std::thread::sleep(Duration::from_millis(80));
+        assert_eq!(membership.prune_dead_peers(|_| false), vec![rid(2)]);
     }
 
     #[test]

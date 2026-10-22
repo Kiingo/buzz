@@ -970,4 +970,201 @@ mod postgres_tests {
             "the sampler must be owned by a relay that finished booting: {logs}"
         );
     }
+
+    /// The production readiness probe gives a starting relay about 30 s
+    /// before liveness restarts it. A restarted relay has to come up well
+    /// inside that, so the bound here leaves room for migrations on a cold
+    /// test database and nothing else.
+    const MESH_RESTART_READY_BUDGET: Duration = Duration::from_secs(20);
+    /// `serve` holds a 5 s routing grace, then drains with a 30 s backstop.
+    const SIGTERM_EXIT_BUDGET: Duration = Duration::from_secs(45);
+
+    /// One plain HTTP/1.0 GET against the relay's loopback health listener.
+    fn http_get(port: u16, path: &str) -> std::io::Result<(u16, String)> {
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(100))?;
+        stream.set_read_timeout(Some(Duration::from_millis(500)))?;
+        stream.write_all(format!("GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").as_bytes())?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response)?;
+        let status = response
+            .split_ascii_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .ok_or_else(|| std::io::Error::other("unparseable HTTP status line"))?;
+        let body = response
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body.to_string())
+            .unwrap_or_default();
+        Ok((status, body))
+    }
+
+    /// Polls `/_readiness` until it answers 200, panicking if the relay exits
+    /// first or `budget` runs out. Returns how long readiness took.
+    fn wait_for_readiness(
+        process: &mut RelayProcess,
+        health_port: u16,
+        budget: Duration,
+    ) -> Duration {
+        let started = Instant::now();
+        loop {
+            assert!(
+                process.try_wait().is_none(),
+                "relay exited before it became ready"
+            );
+            if let Ok((200, _)) = http_get(health_port, "/_readiness") {
+                return started.elapsed();
+            }
+            assert!(
+                started.elapsed() < budget,
+                "relay was not ready within {budget:?}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// Reads the relay's own `/_mesh` status document.
+    fn mesh_status(health_port: u16) -> Value {
+        let (status, body) = http_get(health_port, "/_mesh").expect("query /_mesh");
+        assert_eq!(status, 200, "/_mesh must answer on a ready relay: {body}");
+        serde_json::from_str(&body).expect("/_mesh returns JSON")
+    }
+
+    fn ready_record_exists(redis: &mut redis::Connection, runtime_id: &str) -> bool {
+        redis::cmd("EXISTS")
+            .arg(format!("mesh:ready:{runtime_id}"))
+            .query::<bool>(redis)
+            .expect("EXISTS on the test Redis")
+    }
+
+    /// Sends SIGTERM to this test's own relay child (never any other PID).
+    fn send_sigterm(process: &RelayProcess) {
+        let pid = process.child.as_ref().expect("relay child").id();
+        let status = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status()
+            .expect("run kill -TERM for the relay child");
+        assert!(status.success(), "kill -TERM {pid} failed: {status}");
+    }
+
+    /// A relay killed without cleanup leaves its mesh ready record in Redis
+    /// until the record's TTL runs out. When the replacement boots at the same
+    /// advertised address, that record names this process's own address under
+    /// a dead runtime id. Startup must not wait on it: readiness has to come
+    /// up well inside the probe budget, the record must never become a mesh
+    /// peer, and the same holds for a second restart in a row. On SIGTERM the
+    /// relay must delete its own ready record, drain, and exit 0.
+    #[test]
+    #[ignore = "requires PostgreSQL"]
+    fn mesh_restart_at_the_same_address_reaches_readiness_and_exits_cleanly() {
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("postgres lane provides DATABASE_URL for each test process");
+        let redis_url = std::env::var("REDIS_URL")
+            .expect("the postgres lane runs alongside Redis and exports REDIS_URL");
+        let mut redis = redis::Client::open(redis_url.as_str())
+            .expect("parse REDIS_URL")
+            .get_connection()
+            .expect("connect to the test Redis");
+
+        let metrics_port_value = reserve_closed_port().to_string();
+        let health_port = reserve_closed_port();
+        let health_port_value = health_port.to_string();
+        let bind_addr = format!("127.0.0.1:{}", reserve_closed_port());
+        // Every incarnation binds and advertises the same mesh address, as a
+        // restarted pod does with its pod IP and fixed mesh port.
+        let mesh_addr = format!("127.0.0.1:{}", reserve_closed_port());
+        let environment = [
+            ("BUZZ_RELAY_PRIVATE_KEY", VALID_RELAY_PRIVATE_KEY),
+            ("BUZZ_METRICS_PORT", metrics_port_value.as_str()),
+            ("BUZZ_HEALTH_PORT", health_port_value.as_str()),
+            ("BUZZ_BIND_ADDR", bind_addr.as_str()),
+            ("DATABASE_URL", database_url.as_str()),
+            ("REDIS_URL", redis_url.as_str()),
+            ("BUZZ_GIT_CONFORMANCE_PROBE", "false"),
+            ("BUZZ_MESH", "on"),
+            ("BUZZ_MESH_BIND_ADDR", mesh_addr.as_str()),
+            ("BUZZ_MESH_ADVERTISE_ADDR", mesh_addr.as_str()),
+        ];
+
+        let mut dead_runtime_ids: Vec<String> = Vec::new();
+        for incarnation in 0..3 {
+            let mut process = RelayProcess::spawn(&environment);
+            let ready_after =
+                wait_for_readiness(&mut process, health_port, MESH_RESTART_READY_BUDGET);
+            let status = mesh_status(health_port);
+            assert_eq!(status["enabled"], true, "mesh must be on: {status}");
+            let runtime_id = status["local_runtime_id"]
+                .as_str()
+                .expect("/_mesh names the local runtime id")
+                .to_string();
+            assert!(
+                !dead_runtime_ids.contains(&runtime_id),
+                "every boot must mint a fresh runtime id"
+            );
+            for dead in &dead_runtime_ids {
+                assert!(
+                    ready_record_exists(&mut redis, dead),
+                    "the killed incarnation's record must still be live for this test to mean anything"
+                );
+            }
+            // Let at least one reconcile pass (5 s cadence) see the stale
+            // records, then check none of them became a peer.
+            thread::sleep(Duration::from_secs(6));
+            assert!(process.try_wait().is_none(), "relay exited after readiness");
+            let status = mesh_status(health_port);
+            let peers = status["peers"].as_array().expect("/_mesh lists peers");
+            for peer in peers {
+                let peer_id = peer["runtime_id"].as_str().unwrap_or_default();
+                assert!(
+                    !dead_runtime_ids.iter().any(|dead| dead == peer_id),
+                    "incarnation {incarnation} adopted a dead incarnation at its own address as a peer: {status}"
+                );
+            }
+            assert!(
+                ready_record_exists(&mut redis, &runtime_id),
+                "a ready relay publishes its own ready record"
+            );
+            assert!(
+                ready_after < MESH_RESTART_READY_BUDGET,
+                "incarnation {incarnation} took {ready_after:?} to become ready"
+            );
+
+            if incarnation < 2 {
+                // A kill with no cleanup, as when the kubelet's grace period
+                // runs out: the ready record stays behind.
+                drop(process.terminate());
+                dead_runtime_ids.push(runtime_id);
+                continue;
+            }
+
+            send_sigterm(&process);
+            let output = process.wait(SIGTERM_EXIT_BUDGET);
+            let logs = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.status.success(),
+                "SIGTERM must end in a clean exit, got {}: {logs}",
+                output.status
+            );
+            assert!(
+                !ready_record_exists(&mut redis, &runtime_id),
+                "SIGTERM must delete the relay's own ready record: {logs}"
+            );
+            assert!(
+                logs.contains("mesh ready record deleted"),
+                "the drain path must report the ready record delete: {logs}"
+            );
+        }
+
+        // The killed incarnations' records would otherwise sit out their TTL.
+        for dead in &dead_runtime_ids {
+            let _: () = redis::cmd("DEL")
+                .arg(format!("mesh:ready:{dead}"))
+                .query(&mut redis)
+                .expect("DEL a killed incarnation's ready record");
+        }
+    }
 }
