@@ -9,10 +9,12 @@
 //!   runtime id is present in the (attested) membership table; unknown ids get
 //!   one registry rescan before rejection. Membership is a hint — admission
 //!   here gates *dialability*, never session ownership.
-//! - **Reconcile loop**: periodically rescans the Redis ready registry and
-//!   dials every known, non-draining peer we are not yet connected to. This is
-//!   what makes the mesh *warm*: failover is "next frame goes elsewhere," not
-//!   "wait for a handshake."
+//! - **Reconcile loop**: periodically rescans the Redis ready registry, drops
+//!   records of dead runtimes, and dials every known, non-draining peer we are
+//!   not yet connected to, each dial bounded by [`DEFAULT_DIAL_TIMEOUT`]. This
+//!   is what makes the mesh *warm*: failover is "next frame goes elsewhere,"
+//!   not "wait for a handshake." Its first pass runs as soon as the runtime
+//!   starts, in the background: nothing waits on a dial.
 //! - **Control stream**: exactly one per peer connection, opened by the
 //!   dialer. Carries scuttlebutt gossip (`Digest` → `Delta`) both ways.
 //! - **Simultaneous dial tie-break**: the connection dialed by the smaller
@@ -42,6 +44,12 @@ use crate::{InboundHandler, MeshDatagram, MeshError, MeshStream, RelayPeerTransp
 pub const DEFAULT_RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
 /// How often each side sends a gossip digest on every control stream.
 pub const DEFAULT_GOSSIP_INTERVAL: Duration = Duration::from_secs(2);
+/// Upper bound on one dial attempt to one peer address. A peer inside the
+/// cluster answers a QUIC handshake in milliseconds; an address with nothing
+/// behind it (or a different identity behind it) otherwise holds the dial for
+/// the transport's own idle timeout, about 30 s, and the reconcile pass dials
+/// serially.
+pub const DEFAULT_DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 /// Bound on queued control-stream frames per peer before backpressure.
 const CONTROL_QUEUE_DEPTH: usize = 64;
 
@@ -334,6 +342,19 @@ async fn reconcile_once(inner: &Arc<Inner>) {
         }
     }
 
+    let dropped = {
+        let peers = inner
+            .peers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner
+            .membership
+            .prune_dead_peers(|runtime_id| peers.contains_key(&runtime_id))
+    };
+    for runtime_id in dropped {
+        tracing::info!(peer = %runtime_id, "mesh: dropped record of a dead peer runtime");
+    }
+
     let local = inner.endpoint.runtime_id();
     let candidates: Vec<_> = inner
         .membership
@@ -374,13 +395,23 @@ async fn dial_peer(inner: &Arc<Inner>, record: &crate::gossip::GossipRecord) {
         inner
             .membership
             .mark_connection_state(record.runtime_id, ConnectionState::Connecting);
-        match inner.endpoint.connect(endpoint_addr).await {
-            Ok(peer) => {
+        match tokio::time::timeout(DEFAULT_DIAL_TIMEOUT, inner.endpoint.connect(endpoint_addr))
+            .await
+        {
+            Ok(Ok(peer)) => {
                 install_peer(inner, peer, true);
                 return;
             }
-            Err(err) => {
+            Ok(Err(err)) => {
                 tracing::warn!(peer = %record.runtime_id, addr, %err, "mesh: dial failed");
+            }
+            Err(_) => {
+                tracing::warn!(
+                    peer = %record.runtime_id,
+                    addr,
+                    timeout_ms = DEFAULT_DIAL_TIMEOUT.as_millis() as u64,
+                    "mesh: dial timed out"
+                );
             }
         }
     }
@@ -880,6 +911,33 @@ mod tests {
         .expect("datagram should flow after tie-break");
         a.shutdown();
         b.shutdown();
+    }
+
+    /// A peer address with nothing answering (a dead runtime's record) must
+    /// not hold a reconcile pass for the transport's own ~30 s handshake
+    /// timeout. The UDP socket below is bound and never read, so the dial's
+    /// handshake packets go unanswered.
+    #[tokio::test]
+    async fn dial_to_unanswered_address_is_bounded() {
+        let (a, _addrs) = runtime(11).await;
+        let silent = std::net::UdpSocket::bind(loopback_any()).unwrap();
+        let ghost_key = SecretKey::from_bytes(&[12u8; 32]);
+        let ghost = crate::endpoint::runtime_id_from_public_key(ghost_key.public());
+        a.membership().apply_gossip_record(GossipRecord::new(
+            ghost,
+            vec![silent.local_addr().unwrap().to_string()],
+            1,
+        ));
+
+        timeout(
+            DEFAULT_DIAL_TIMEOUT + Duration::from_secs(5),
+            a.reconcile_now(),
+        )
+        .await
+        .expect("a reconcile pass must not wait out the transport handshake timeout");
+        assert!(!a.connected_peers().contains(&ghost));
+        drop(silent);
+        a.shutdown();
     }
 
     #[test]

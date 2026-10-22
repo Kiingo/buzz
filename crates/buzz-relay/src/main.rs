@@ -348,6 +348,12 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
+    // Before any startup work: as PID 1, a SIGTERM that arrives before a
+    // handler exists is dropped, and the pod is SIGKILLed at the end of its
+    // grace period with no drain. See `buzz_relay::shutdown_signal`.
+    let shutdown = buzz_relay::shutdown_signal::ShutdownSignal::install()
+        .map_err(|error| anyhow::anyhow!("failed to install the SIGTERM handler: {error}"))?;
+
     // Install the ring CryptoProvider for rustls. Required before any rustls
     // TLS connection (rediss:// to ElastiCache, wss://, S3 over TLS): both
     // aws-lc-rs and ring are compiled in transitively, so rustls can't
@@ -861,6 +867,20 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
         }
     }
     let state = Arc::new(app_state);
+    // A SIGTERM during the rest of startup withdraws the pod at once: the
+    // shutdown flag stops mesh publication (and deletes the ready record) and
+    // readiness answers 503 from the first probe. `serve` then runs the
+    // normal grace and drain, since the latched signal resolves immediately.
+    {
+        let state = Arc::downgrade(&state);
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            shutdown.wait().await;
+            if let Some(state) = state.upgrade() {
+                state.begin_shutdown();
+            }
+        });
+    }
     let security_state = Arc::downgrade(&state);
     state.pubsub.set_security_requalification(move || {
         if let Some(state) = security_state.upgrade() {
@@ -1730,6 +1750,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
         router,
         health_router,
         Arc::clone(&state),
+        shutdown,
         jwks_refresh_cancel,
         jwks_refresh_handle,
     )
@@ -2093,6 +2114,7 @@ async fn serve(
     router: axum::Router,
     health_router: axum::Router,
     state: Arc<AppState>,
+    shutdown: buzz_relay::shutdown_signal::ShutdownSignal,
     jwks_refresh_cancel: CancellationToken,
     jwks_refresh_handle: Option<tokio::task::JoinHandle<()>>,
 ) -> anyhow::Result<()> {
@@ -2141,7 +2163,7 @@ async fn serve(
     // observed `true`. This keeps the test off real ports and off wall-clock
     // sleeps. Not implemented here. This comment records the plan only.
     let shutdown_handle = tokio::spawn(async move {
-        shutdown_signal().await;
+        shutdown.wait().await;
         shutdown_state.begin_shutdown();
         info!("Shutdown signal received — readiness now returns 503");
         // 5s grace: let K8s stop routing new traffic before we close listeners.
@@ -2270,22 +2292,6 @@ async fn serve(
     Ok(())
 }
 
-/// Wait for SIGTERM (Unix) or Ctrl+C.
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {},
-            _ = sigterm.recv() => {},
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        tokio::signal::ctrl_c().await.ok();
-    }
-}
 /// Reconstruct a `nostr::Event` from a [`DueReminder`] row for Redis pub/sub.
 fn reminder_to_event(reminder: &buzz_db::event::DueReminder) -> nostr::Event {
     let event_json = serde_json::json!({

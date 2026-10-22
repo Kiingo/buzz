@@ -1859,6 +1859,20 @@
       "purpose": "Huddle audio runs only in a huddle's ephemeral (TTL) backing channel: audio admission refuses a channel without a TTL (typed not_a_huddle_channel for readers, plain not-a-member otherwise), and the room-end teardown archives only through archive_ephemeral_huddle_channel, which never archives a permanent channel and still ends a huddle whose channel the TTL reaper already archived. Previously a direct /huddle/{id}/audio join to a DM was admitted and the last leave archived the DM. The boot lifecycle tests cover the bounded retry of the one-time Redis bootstrap gate (state.rs). Kiingo W6, Kiingo/buzz#240.",
       "removalCondition": "Drop when upstream refuses huddle audio in non-ephemeral channels and archives only ephemeral huddle channels on room end, and retries its Redis bootstrap within a bound.",
       "upstreamStatus": "Generic, provider-neutral bug fix; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz relay maintainers",
+      "paths": [
+        "crates/buzz-relay-mesh/src/membership.rs",
+        "crates/buzz-relay-mesh/src/runtime.rs",
+        "crates/buzz-relay/src/lib.rs",
+        "crates/buzz-relay/src/mesh_boot.rs",
+        "crates/buzz-relay/src/shutdown_signal.rs"
+      ],
+      "purpose": "Relay mesh restart safety. A restarted relay keeps its address but mints a new runtime id, so the previous boot's unexpired ready record pointed at the relay itself; boot awaited a dial to it before binding health, which could run past the liveness budget and restart the pod in a loop. Mesh boot no longer waits on any dial (the reconcile loop dials in the background), each dial is bounded well under the liveness budget, membership refuses records for another runtime id at its own address and gossiped records whose heartbeat outlived the registry expiry, and peers with no sign of life for that long are dropped from the peer table. The SIGTERM handler is installed before any startup work, so a signal during startup is not dropped when the relay runs as PID 1; on shutdown the relay deletes its own ready record, drains and exits 0. The boot lifecycle tests restart a mesh-on relay at the same address twice and assert readiness within the probe budget and a clean SIGTERM exit.",
+      "removalCondition": "Drop when upstream mesh boot never awaits a peer dial before the health listener, bounds dials, ignores records at its own address and prunes dead peers, and installs its shutdown handler before startup work.",
+      "upstreamStatus": "Generic, provider-neutral bug fix; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
