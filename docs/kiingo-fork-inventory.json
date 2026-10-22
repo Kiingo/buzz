@@ -1894,6 +1894,18 @@
       "classification": "retain-generic",
       "owner": "Buzz relay maintainers",
       "paths": [
+        "crates/buzz-relay/src/audio/join.rs",
+        "crates/buzz-relay/src/audio/mesh.rs",
+        "crates/buzz-relay/src/audio/room.rs"
+      ],
+      "purpose": "Cross-pod huddle audio is sent to each remote pod once, not once per remote participant. The owner pod used to send one datagram per remote client, and the receiving pod delivered each datagram to every local client in the room, so N clients on the same pod each heard every frame N times. Remote peers now carry a delivery group (the inter-pod link and its fenced generation); fan-out sends one datagram per group and moves to the next member when a queue is full. The mesh unit test asserts each co-located remote client receives a frame exactly once. Kiingo/buzz#249.",
+      "removalCondition": "Drop when upstream fans cross-pod huddle audio out once per destination pod.",
+      "upstreamStatus": "Generic, provider-neutral bug fix; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz relay maintainers",
+      "paths": [
         "crates/buzz-relay-mesh/src/membership.rs",
         "crates/buzz-relay-mesh/src/runtime.rs",
         "crates/buzz-relay/src/lib.rs",
