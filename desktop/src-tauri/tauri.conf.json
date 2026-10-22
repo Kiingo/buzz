@@ -68,6 +68,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
+      "minimumSystemVersion": "10.15",
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist",
       "dmg": {

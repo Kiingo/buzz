@@ -479,3 +479,27 @@ fn test_managed_node_runtime_ready_returns_false_when_binary_absent() {
         "managed_node_runtime_ready must return false when the binary file does not exist"
     );
 }
+
+#[test]
+fn managed_node_artifact_matches_pinned_version() {
+    let Some(artifact) = MANAGED_NODE_ARTIFACT else {
+        return;
+    };
+    let extension = if artifact.filename.ends_with(".zip") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+    assert_eq!(
+        artifact.filename,
+        format!(
+            "node-{MANAGED_NODE_VERSION}-{}.{extension}",
+            artifact.platform
+        )
+    );
+    assert_eq!(artifact.sha256.len(), 64);
+    assert!(artifact
+        .sha256
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
+}

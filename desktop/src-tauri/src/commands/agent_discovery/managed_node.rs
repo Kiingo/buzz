@@ -3,9 +3,10 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use std::{io::Read, io::Write};
 
-use crate::managed_agents::{is_npm_global_install, InstallStepResult};
+use crate::managed_agents::{
+    is_npm_global_install, InstallStepResult, BUZZ_MANAGED_NODE_VERSION as MANAGED_NODE_VERSION,
+};
 
-const MANAGED_NODE_VERSION: &str = "v24.18.0";
 const MANAGED_NODE_MAX_BYTES: u64 = 90 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
@@ -18,43 +19,43 @@ struct ManagedNodeArtifact {
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const MANAGED_NODE_ARTIFACT: Option<ManagedNodeArtifact> = Some(ManagedNodeArtifact {
     platform: "darwin-arm64",
-    filename: "node-v24.18.0-darwin-arm64.tar.gz",
-    sha256: "e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1",
+    filename: "node-v24.22.1-darwin-arm64.tar.gz",
+    sha256: "89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7",
 });
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 const MANAGED_NODE_ARTIFACT: Option<ManagedNodeArtifact> = Some(ManagedNodeArtifact {
     platform: "darwin-x64",
-    filename: "node-v24.18.0-darwin-x64.tar.gz",
-    sha256: "dfd0dbd3e721503434df7b7205e719f61b3a3a31b2bcf9729b8b91fea240f080",
+    filename: "node-v24.22.1-darwin-x64.tar.gz",
+    sha256: "d132557e7ee2b85af08b0c8c34338e65c6430f2238d01f727728ef42dc83b035",
 });
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const MANAGED_NODE_ARTIFACT: Option<ManagedNodeArtifact> = Some(ManagedNodeArtifact {
     platform: "linux-x64",
-    filename: "node-v24.18.0-linux-x64.tar.gz",
-    sha256: "783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8",
+    filename: "node-v24.22.1-linux-x64.tar.gz",
+    sha256: "eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c",
 });
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const MANAGED_NODE_ARTIFACT: Option<ManagedNodeArtifact> = Some(ManagedNodeArtifact {
     platform: "linux-arm64",
-    filename: "node-v24.18.0-linux-arm64.tar.gz",
-    sha256: "6b4484c2190274175df9aa8f28e2d758a819cb1c1fe6ab481e2f95b463ab8508",
+    filename: "node-v24.22.1-linux-arm64.tar.gz",
+    sha256: "33c37be234ba8bee041961047b19160f4d7d0f164e8e246f78bdd10feff148b3",
 });
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 const MANAGED_NODE_ARTIFACT: Option<ManagedNodeArtifact> = Some(ManagedNodeArtifact {
     platform: "win-x64",
-    filename: "node-v24.18.0-win-x64.zip",
-    sha256: "0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821",
+    filename: "node-v24.22.1-win-x64.zip",
+    sha256: "d2046d28c2c3dcd211ac5145c0bf30e2047ef9dfb306693c8c6e2eccd8b95fa5",
 });
 
 #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
 const MANAGED_NODE_ARTIFACT: Option<ManagedNodeArtifact> = Some(ManagedNodeArtifact {
     platform: "win-arm64",
-    filename: "node-v24.18.0-win-arm64.zip",
-    sha256: "f274669adb93b1fd0fbf8f21fd078609e9dcc84333d4f2718d2dde3f9a161a01",
+    filename: "node-v24.22.1-win-arm64.zip",
+    sha256: "a0c807319fede24c4a0d8f84564c82a619bd313b16b10c007c383c2609e99171",
 });
 
 #[cfg(not(any(
@@ -206,7 +207,7 @@ fn kill_probe_group(pid: u32) {
 /// Returns `true` when the managed Node runtime is absent or no longer executes —
 /// meaning any existing npm adapter shims are broken and must be reinstalled.
 ///
-/// This fires when the pinned Node version changes (e.g. v24.11.0 → v24.18.0):
+/// This fires when the pinned Node version changes (e.g. v24.18.0 → v24.22.1):
 /// the old dir stays on disk, shims appear installed, but they fail at run time
 /// because the Node binary they reference is gone.  Treating the adapter as
 /// missing forces `ensure_managed_node_runtime_blocking` to re-download Node and
