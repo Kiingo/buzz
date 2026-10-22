@@ -30,13 +30,11 @@ impl ShutdownSignal {
         tokio::spawn(async move {
             #[cfg(unix)]
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {},
+                _ = ctrl_c_or_never() => {},
                 _ = sigterm.recv() => {},
             }
             #[cfg(not(unix))]
-            {
-                let _ = tokio::signal::ctrl_c().await;
-            }
+            ctrl_c_or_never().await;
             let _ = tx.send(true);
         });
         Ok(Self { received })
@@ -61,6 +59,16 @@ impl ShutdownSignal {
         if received.wait_for(|fired| *fired).await.is_err() {
             std::future::pending::<()>().await;
         }
+    }
+}
+
+/// Resolve on Ctrl+C. If the Ctrl+C handler cannot be registered, never
+/// resolve: a registration failure is not a shutdown request, and SIGTERM
+/// still ends the process.
+async fn ctrl_c_or_never() {
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::warn!(%error, "Ctrl+C handler unavailable; SIGTERM still shuts down");
+        std::future::pending::<()>().await;
     }
 }
 
