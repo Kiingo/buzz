@@ -481,6 +481,14 @@ async fn create_managed_agent_in<R: tauri::Runtime>(
     };
 
     // ── Pre-Phase 2: validate provider config BEFORE any side effects ────────
+    let attach_agent_id = match input.backend {
+        BackendKind::Provider { .. } => {
+            crate::extensions::hosted_owner_relink::normalized_attach_agent_id(
+                input.attach_agent_id.as_deref(),
+            )?
+        }
+        BackendKind::Local => None,
+    };
     let prepared_provider = provider_create::prepare_provider_backend(&input.backend).await?;
     let provider_owns_execution_profile = prepared_provider.owns_execution_profile;
     let validated_provider_binary_path = prepared_provider.binary_path;
@@ -778,6 +786,16 @@ async fn create_managed_agent_in<R: tauri::Runtime>(
             super::agent_config::apply_picker_effort_level(&mut record, Some(level));
         }
         records.push(record);
+        let known_pubkeys = records
+            .iter()
+            .map(|record| record.pubkey.as_str())
+            .collect::<Vec<_>>();
+        crate::extensions::hosted_owner_relink::remember_attach(
+            &app,
+            &pubkey,
+            attach_agent_id.as_deref(),
+            &known_pubkeys,
+        )?;
 
         save_managed_agents(&app, &records)?;
 

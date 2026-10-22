@@ -428,12 +428,14 @@
     {
       "hook": "desktop/src/app/AppShell.tsx",
       "implementations": [
-        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.tsx"
+        "desktop/src/extensions/identity-rotation/IdentityRotationExtension.tsx",
+        "desktop/src/features/hosted-owner-relink/ui/HostedAutoLinkExtension.tsx"
       ],
-      "contract": "Provider-neutral rendering seam for a self-contained identity lifecycle dialog with no configured coordinator or tenant knowledge.",
+      "contract": "Provider-neutral rendering seam for a self-contained identity lifecycle dialog with no configured coordinator or tenant knowledge. The same seam mounts a renderless provider-neutral runner for the owner's hosted-agent auto-link setting.",
       "focusedTests": [
         "desktop/src/extensions/identity-rotation/IdentityRotationExtension.test.mjs",
-        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs"
+        "desktop/src/shared/lib/ncryptsecSourceScan.test.mjs",
+        "desktop/src/features/hosted-owner-relink/lib/autoLink.test.mjs"
       ]
     },
     {
@@ -1724,6 +1726,34 @@
         "mobile/lib/features/agents/hosted_agents_page/relink_sheet.dart",
         "mobile/lib/shared/hosted_agents/hosted_owner_rebind.dart",
         "mobile/test/shared/hosted_agents/hosted_owner_rebind_test.dart"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz hosted-agent maintainers",
+      "purpose": "Owner attestation of agents a hosted provider minted (\"every agent on Buzz\"), and attaching a new hosted identity to an existing provider agent, desktop and mobile. The provider's POST /owner/agents/list answer now carries status (active | pending_attestation), kiingo_agent_id (validated lowercase UUID, otherwise dropped) and display_name per agent; an older answer without status reads as active, any other value as unknown (neither pending nor stale). The UI keys pending, paused and stale off status, never off desired_state (a pending agent's desired_state reads paused). Provider agent ids pass back verbatim (never trimmed or re-cased); an id with surrounding whitespace or control characters is not usable. Pending agents are attested through POST /owner/agents/attest-pending with exactly the re-link body (one fresh request id, one NIP-OA owner attestation per agent and no other, 1-20 agents) and the same fresh single-use kind-27236 buzz-provider-owner-v1 proof with action=attest_pending, provider, request, agent=\"\", community, payload and expires; answers are bound to the request id, the current key and exactly the requested agents (activated | already_active | rejected, dm_opened; an omitted agent is a retryable result_missing; a dm_open_failed note on an activated agent is kept and shown as linked, since the provider retries the DM). Desktop signs natively and refuses to sign any agent the most recent authenticated list for the same signed-in key and community did not report as pending. An owner setting \"Auto-link my new agents\" (off by default, stored per signed-in key on the device: desktop localStorage, mobile SharedPreferences) runs a pass on launch, on resume (at most once a minute) and every 15 minutes while the app is in the foreground, never two at once: list, attest every pending agent, re-link every agent still on an earlier owner key through rebind-owner-key, in batches of at most 20, stopping at a whole-request failure; agents refused for good are remembered in memory per key so a pass does not sign for them again and are reported once with the reason in plain words; one quiet note (desktop toast, mobile SnackBar) names the agents it linked. With the setting off, each pending or stale agent has its own Link button that signs for that agent only. Attach: POST /owner/agents/unlinked (list-shaped read-only proof, action=list_unlinked) lists the owner's agents without a Buzz identity (kiingo_agent_id, display_name, owner_principal_type; machine defaults, malformed entries and repeats hidden; at most 200, newest first). The create form offers them under \"Agent\" with \"Create a new agent\" as the default (desktop: single-agent create dialog only, for the bundled destination; mobile: hosted create page). Mobile sends kiingo_agent_id on the create body and folds it into the idempotency key only when present. Desktop passes attachAgentId on the create request; the native create validates it (lowercase UUID) before side effects and remembers it beside the agent store (hosted-agent-attach.json, keyed by agent pubkey, pruned to known agents), and every deploy payload of that identity carries agent.kiingo_agent_id so replays and rollback keep the same idempotency key. Attach, ownership and service-setup codes (already_has_buzz_identity, not_agent_owner, agent_spec_required, kiingo_agent_id_invalid, provisioning_keys_*, scope_unconfigured) read as plain sentences in both apps. Hooks: command registrations plus re-exports in lib.rs/extensions/mod.rs, one import and one element in AppShell.tsx (same seam as the identity-rotation extension), one optional request field (requests.rs), one validate and one remember call in create (agents.rs), one apply call in the deploy payload builder (agents_deploy.rs), one optional attachAgentId through BackendIntent/WhereToRunDraft/CreateManagedAgentInput/createManagedAgent, one opt-in picker slot in WhereToRunSection.tsx enabled from AgentDialog.tsx, one wording seam in failedRemoteCreateMessage, one wrapper around HomePage in mobile app.dart, one section and part line in hosted_agents_page.dart, Link rows in agent_sections.dart, and optional fields in the hosted snapshot and draft.",
+      "upstreamStatus": "Provider-neutral client of a hosted provider route; not submitted to block/buzz.",
+      "removalCondition": "Drop when hosted providers activate agents without an owner attestation from the owner's device, or upstream ships an equivalent owner attestation flow.",
+      "paths": [
+        "desktop/src-tauri/src/extensions/hosted_owner_relink/attach.rs",
+        "desktop/src/features/agents/lib/instanceInputForDefinition.ts",
+        "desktop/src/features/hosted-owner-relink/lib/attach.test.mjs",
+        "desktop/src/features/hosted-owner-relink/lib/attach.ts",
+        "desktop/src/features/hosted-owner-relink/lib/autoLink.test.mjs",
+        "desktop/src/features/hosted-owner-relink/lib/autoLink.ts",
+        "desktop/src/features/hosted-owner-relink/ui/HostedAttachAgentPicker.tsx",
+        "desktop/src/features/hosted-owner-relink/ui/HostedAutoLinkExtension.tsx",
+        "desktop/src/shared/api/tauri.ts",
+        "desktop/src/shared/api/types.ts",
+        "mobile/lib/features/agents/hosted_agent_create_page/attach_section.dart",
+        "mobile/lib/features/agents/hosted_agents_page/link_section.dart",
+        "mobile/lib/features/agents/hosted_auto_link_host.dart",
+        "mobile/lib/shared/hosted_agents/hosted_auto_link.dart",
+        "mobile/lib/shared/hosted_agents/hosted_owner_attest.dart",
+        "mobile/lib/shared/hosted_agents/hosted_unlinked_agents.dart",
+        "mobile/test/shared/hosted_agents/hosted_auto_link_test.dart",
+        "mobile/test/shared/hosted_agents/hosted_owner_attest_test.dart",
+        "mobile/test/shared/hosted_agents/hosted_unlinked_agents_test.dart"
       ]
     },
     {

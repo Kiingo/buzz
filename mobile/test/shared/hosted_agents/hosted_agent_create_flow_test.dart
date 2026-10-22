@@ -175,6 +175,50 @@ void main() {
     expect(first['identity_envelope'], isNot(second['identity_envelope']));
   });
 
+  test(
+    'attaches to an existing agent only when the owner picked one',
+    () async {
+      final agent = HostedAgentIdentity.fromSecretHex(_agentSecret);
+      final scope = scopeFor(agent);
+      Future<Map<String, Object?>> build(String? kiingoAgentId) =>
+          buildHostedProvisionRequest(
+            requestId: 'a',
+            identity: agent,
+            draft: HostedAgentDraft(
+              displayName: draft.displayName,
+              systemPrompt: draft.systemPrompt,
+              providerConfig: draft.providerConfig,
+              kiingoAgentId: kiingoAgentId,
+            ),
+            scope: scope,
+            catalog: catalog,
+          );
+      final fresh = await build(null);
+      expect(fresh.containsKey('kiingo_agent_id'), isFalse);
+      final attached = await build('0A1B2C3D-0000-4000-8000-00000000ABCD');
+      expect(
+        attached['kiingo_agent_id'],
+        '0a1b2c3d-0000-4000-8000-00000000abcd',
+      );
+      // Attaching joins the replay key; a plain create keeps its old key.
+      expect(attached['idempotency_key'], isNot(fresh['idempotency_key']));
+      final replay = await build('0a1b2c3d-0000-4000-8000-00000000abcd');
+      expect(replay['idempotency_key'], attached['idempotency_key']);
+      final other = await build('0a1b2c3d-0000-4000-8000-00000000abce');
+      expect(other['idempotency_key'], isNot(attached['idempotency_key']));
+      await expectLater(
+        build('not-a-uuid'),
+        throwsA(
+          isA<HostedAgentException>().having(
+            (e) => e.code,
+            'code',
+            'kiingo_agent_id_invalid',
+          ),
+        ),
+      );
+    },
+  );
+
   test('rejects a model the catalog does not offer before sending', () async {
     final agent = HostedAgentIdentity.fromSecretHex(_agentSecret);
     final provisioner = _FakeProvisioner(const []);

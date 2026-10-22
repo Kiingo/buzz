@@ -11,7 +11,20 @@ class _HostedSection extends ConsumerWidget {
     final catalog = ref.watch(hostedAgentCatalogProvider).value;
     final List<Widget> rows;
     if (agents.hasValue) {
-      final list = agents.requireValue;
+      // Pending agents are listed (with Link) in the section above.
+      final list = [
+        for (final agent in agents.requireValue)
+          if (!agent.isPendingAttestation) agent,
+      ];
+      final owner = ref
+          .read(hostedAgentListProvider.notifier)
+          .currentOwnerPublicKey();
+      final stale = owner == null
+          ? const <String>{}
+          : {
+              for (final agent in staleHostedAgents(list, owner))
+                agent.providerAgentId,
+            };
       rows = list.isEmpty
           ? [
               AppListRow(
@@ -24,22 +37,33 @@ class _HostedSection extends ConsumerWidget {
             ]
           : [
               for (final agent in list)
-                AppListRow(
-                  key: ValueKey('hosted-agent-${agent.providerAgentId}'),
-                  icon: agent.isPaused ? BuzzIcons.pause : BuzzIcons.bot,
-                  title: agent.displayName,
-                  subtitle: [
-                    ?hostedProfileLabels(catalog, agent.providerConfig).harness,
-                    ?hostedProfileLabels(catalog, agent.providerConfig).model,
-                  ].join(' · '),
-                  value: _stateLabel(agent),
-                  trailing: Icon(
-                    BuzzIcons.chevronRight,
-                    size: 18,
-                    color: context.colors.onSurfaceVariant,
+                if (stale.contains(agent.providerAgentId))
+                  _LinkRow(
+                    key: ValueKey('hosted-link-stale-${agent.providerAgentId}'),
+                    agent: agent,
+                    rebind: true,
+                    onOpen: () => unawaited(_openAgent(context, ref, agent)),
+                  )
+                else
+                  AppListRow(
+                    key: ValueKey('hosted-agent-${agent.providerAgentId}'),
+                    icon: agent.isPaused ? BuzzIcons.pause : BuzzIcons.bot,
+                    title: agent.printableName,
+                    subtitle: [
+                      ?hostedProfileLabels(
+                        catalog,
+                        agent.providerConfig,
+                      ).harness,
+                      ?hostedProfileLabels(catalog, agent.providerConfig).model,
+                    ].join(' · '),
+                    value: _stateLabel(agent),
+                    trailing: Icon(
+                      BuzzIcons.chevronRight,
+                      size: 18,
+                      color: context.colors.onSurfaceVariant,
+                    ),
+                    onTap: () => unawaited(_openAgent(context, ref, agent)),
                   ),
-                  onTap: () => unawaited(_openAgent(context, ref, agent)),
-                ),
             ];
     } else if (agents.hasError) {
       final error = agents.error;

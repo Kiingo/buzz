@@ -21,7 +21,7 @@ class _RelinkPrompt extends HookConsumerWidget {
     final count = stale.length;
     const label = 'Re-link your agents to your current key';
     final subtitle = count == 1
-        ? '${stale.single.displayName} is still linked to your old key.'
+        ? '${stale.single.printableName} is still linked to your old key.'
         : '$count agents are still linked to your old key.';
     return Padding(
       padding: const EdgeInsets.only(bottom: Grid.sm),

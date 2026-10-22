@@ -129,6 +129,31 @@ Map<String, dynamic> buildSessionControlsProof({
   );
 }
 
+/// Proof for listing the owner's agents that have no Buzz identity yet:
+/// list-shaped (`action=list_unlinked`, `provider`, `request`, `community`,
+/// `expires`) and read-only; the API does not burn it.
+Map<String, dynamic> buildListUnlinkedProof({
+  required String ownerSecretHex,
+  required String providerId,
+  required String requestId,
+  required String communityId,
+  DateTime? now,
+}) {
+  final createdAt = _nowSeconds(now);
+  return _signProof(
+    ownerSecretHex: ownerSecretHex,
+    content: hostedOwnerManagementProofContent,
+    createdAt: createdAt,
+    tags: [
+      ['action', 'list_unlinked'],
+      ['provider', providerId],
+      ['request', requestId],
+      ['community', communityId],
+      ['expires', '${createdAt + hostedOwnerProofTtlSeconds}'],
+    ],
+  );
+}
+
 /// Proof for one update or control write: `action=update|control`,
 /// `provider`, `request`, `agent`, `community`, `payload` (SHA-256 of the
 /// canonical request body without the proof), `expires`. The API burns each
@@ -180,6 +205,35 @@ Map<String, dynamic> buildRebindOwnerKeyProof({
     createdAt: createdAt,
     tags: [
       ['action', 'rebind_owner_key'],
+      ['provider', providerId],
+      ['request', requestId],
+      ['agent', ''],
+      ['community', communityId],
+      ['payload', payloadSha256],
+      ['expires', '${createdAt + hostedOwnerProofTtlSeconds}'],
+    ],
+  );
+}
+
+/// Proof for attesting agents the provider holds pending until their owner
+/// vouches for them: exactly the re-link proof with `action=attest_pending`
+/// (`provider`, `request`, an empty `agent`, `community`, `payload`,
+/// `expires`). Signed by the current key; single use.
+Map<String, dynamic> buildAttestPendingProof({
+  required String ownerSecretHex,
+  required String providerId,
+  required String requestId,
+  required String communityId,
+  required String payloadSha256,
+  DateTime? now,
+}) {
+  final createdAt = _nowSeconds(now);
+  return _signProof(
+    ownerSecretHex: ownerSecretHex,
+    content: hostedOwnerManagementProofContent,
+    createdAt: createdAt,
+    tags: [
+      ['action', 'attest_pending'],
       ['provider', providerId],
       ['request', requestId],
       ['agent', ''],

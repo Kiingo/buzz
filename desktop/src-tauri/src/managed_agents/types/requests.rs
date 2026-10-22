@@ -207,6 +207,11 @@ pub struct CreateManagedAgentRequest {
     /// Local-only thinking effort saved before the first spawn.
     #[serde(default)]
     pub effort_level: Option<String>,
+    /// Existing provider-side agent a provider-backed identity attaches to,
+    /// instead of the provider creating a new one. Sent on every deploy of
+    /// this identity (see `extensions::hosted_owner_relink::apply_attach`).
+    #[serde(default)]
+    pub attach_agent_id: Option<String>,
 }
 
 /// Patch request for updating a managed agent's mutable fields.

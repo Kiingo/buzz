@@ -17,6 +17,11 @@ export type WhereToRunDraft = {
   probedProvider: BackendProviderProbeResult | null;
   /** Owner readiness check, for providers that advertise preflight. */
   preflight: ProviderPreflightState;
+  /**
+   * An existing provider-side agent the owner chose to attach this identity
+   * to, or null (or absent) to have the provider create a new one.
+   */
+  attachAgentId?: string | null;
 };
 
 export const emptyWhereToRunDraft: WhereToRunDraft = {
@@ -24,6 +29,7 @@ export const emptyWhereToRunDraft: WhereToRunDraft = {
   providerConfig: {},
   probedProvider: null,
   preflight: idlePreflight,
+  attachAgentId: null,
 };
 
 /**
@@ -113,5 +119,6 @@ export function resolveBackendIntent(
     type: "provider",
     id: draft.runOn,
     config: draftProviderConfig(draft),
+    ...(draft.attachAgentId ? { attachAgentId: draft.attachAgentId } : {}),
   };
 }

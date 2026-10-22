@@ -430,6 +430,11 @@ export type CreateManagedAgentInput = {
    */
   respondToAllowlist?: string[];
   relayMesh?: RelayMeshConfig;
+  /**
+   * Existing provider-side agent a provider-backed identity attaches to,
+   * instead of the provider creating a new one.
+   */
+  attachAgentId?: string;
 };
 
 export type CreateManagedAgentResponse = {

@@ -72,10 +72,12 @@ use deep_link::{
 use extensions::agent_commands_fetch;
 use extensions::agent_session_controls_available;
 use extensions::{
-    abort_identity_rotation, acknowledge_pending_identity_rotation, hosted_owner_relink_available,
-    hosted_owner_relink_list, hosted_owner_relink_rebind, identity_rotation_renderer_continuity,
-    identity_rotation_status, inspect_identity_rotation_handoff, run_identity_rotation,
-    take_pending_identity_rotation, IdentityRotationExtensionState,
+    abort_identity_rotation, acknowledge_pending_identity_rotation,
+    hosted_owner_relink_attest_pending, hosted_owner_relink_available, hosted_owner_relink_list,
+    hosted_owner_relink_list_unlinked, hosted_owner_relink_rebind,
+    identity_rotation_renderer_continuity, identity_rotation_status,
+    inspect_identity_rotation_handoff, run_identity_rotation, take_pending_identity_rotation,
+    IdentityRotationExtensionState,
 };
 use extensions::{agent_prewarm, agent_summary_fetch};
 use extensions::{
@@ -577,6 +579,8 @@ pub fn run() {
             hosted_owner_relink_available,
             hosted_owner_relink_list,
             hosted_owner_relink_rebind,
+            hosted_owner_relink_attest_pending,
+            hosted_owner_relink_list_unlinked,
             agent_session_controls_available,
             start_builderlab_login,
             cancel_builderlab_login,

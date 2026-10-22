@@ -18,7 +18,7 @@ Future<void> _openAgent(
 ) async {
   final edit = await showBuzzModalBottomSheet<bool>(
     context: context,
-    title: agent.displayName,
+    title: agent.printableName,
     isScrollControlled: true,
     builder: (_) => _AgentDetailSheet(
       providerAgentId: agent.providerAgentId,
@@ -35,7 +35,9 @@ Future<void> _openAgent(
   if (saved == null || !context.mounted) return;
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
-      content: Text('${saved.displayName} saved. It picks up the change now.'),
+      content: Text(
+        '${saved.printableName} saved. It picks up the change now.',
+      ),
     ),
   );
 }

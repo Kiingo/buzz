@@ -12,6 +12,8 @@ import '../../shared/hosted_agents/hosted_agent_errors.dart';
 import '../../shared/hosted_agents/hosted_agent_list.dart';
 import '../../shared/hosted_agents/hosted_agent_snapshot.dart';
 import '../../shared/hosted_agents/hosted_agent_store.dart';
+import '../../shared/hosted_agents/hosted_auto_link.dart';
+import '../../shared/hosted_agents/hosted_owner_attest.dart';
 import '../../shared/hosted_agents/hosted_owner_rebind.dart';
 import '../../shared/hosted_agents/owned_agents_provider.dart';
 import '../../shared/theme/buzz_icons.dart';
@@ -26,6 +28,7 @@ import 'hosted_agent_create_page.dart';
 part 'hosted_agents_page/agent_actions.dart';
 part 'hosted_agents_page/agent_detail_sheet.dart';
 part 'hosted_agents_page/agent_sections.dart';
+part 'hosted_agents_page/link_section.dart';
 part 'hosted_agents_page/relink_prompt.dart';
 part 'hosted_agents_page/relink_sheet.dart';
 
@@ -110,6 +113,7 @@ class _AgentsBody extends ConsumerWidget {
           Grid.lg,
         ),
         children: [
+          _LinkAgentsSection(agents: hosted),
           _RelinkPrompt(agents: hosted),
           _HostedSection(agents: hosted, onCreate: onCreate),
           const SizedBox(height: Grid.sm),
@@ -150,6 +154,8 @@ class _AgentsUnavailable extends StatelessWidget {
 /// Plain label for an agent's live state.
 String _stateLabel(HostedAgentSnapshot agent) {
   if (agent.isDeleted) return 'Deleting';
+  if (agent.isPendingAttestation) return 'Waiting to be linked';
+  if (!agent.isActive) return 'Unavailable';
   if (agent.isPaused) {
     return agent.observedState == 'paused' ? 'Paused' : 'Pausing';
   }

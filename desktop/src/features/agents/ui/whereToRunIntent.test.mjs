@@ -61,6 +61,20 @@ test("provider draft resolves with coerced config values", () => {
   });
 });
 
+test("a picked existing agent rides on the intent; none adds nothing", () => {
+  const id = "0a1b2c3d-0000-4000-8000-00000000abcd";
+  assert.equal(
+    resolveBackendIntent(providerDraft({ attachAgentId: id })).attachAgentId,
+    id,
+  );
+  assert.equal(
+    "attachAgentId" in
+      resolveBackendIntent(providerDraft({ attachAgentId: null })),
+    false,
+  );
+  assert.equal(emptyWhereToRunDraft.attachAgentId, null);
+});
+
 // ── applyProbeResult: probe resolution must merge, not overwrite ─────────────
 //
 // Pins the seam that fixed the "Typewriter Eraser" (agent-create dialog's

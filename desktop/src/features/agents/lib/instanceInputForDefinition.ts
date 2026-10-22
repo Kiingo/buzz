@@ -86,6 +86,8 @@ export type BackendIntent = {
   type: "provider";
   id: string;
   config: Record<string, unknown>;
+  /** Existing provider-side agent to attach to, when the owner picked one. */
+  attachAgentId?: string | null;
 };
 
 /**
@@ -137,6 +139,9 @@ export async function buildInstanceInputForDefinition(
         id: backendIntent.id,
         config: backendIntent.config,
       },
+      ...(backendIntent.attachAgentId
+        ? { attachAgentId: backendIntent.attachAgentId }
+        : {}),
     };
   }
 

@@ -18,6 +18,7 @@ class HostedAgentDraft {
     required this.displayName,
     required this.systemPrompt,
     required this.providerConfig,
+    this.kiingoAgentId,
   });
 
   final String displayName;
@@ -25,7 +26,16 @@ class HostedAgentDraft {
 
   /// The coerced provider configuration (flat scalars).
   final Map<String, Object> providerConfig;
+
+  /// An existing provider agent the owner picked to attach this Buzz
+  /// identity to, instead of the provider creating a new agent. `null`
+  /// creates a new one.
+  final String? kiingoAgentId;
 }
+
+final _uuid = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+);
 
 /// Where the agent runs and who owns it.
 @immutable
@@ -172,6 +182,10 @@ const _capabilityPolicy = {
 
 /// The deterministic key that lets the API recognize a replay of the same
 /// create (used by rollback to learn whether an uncertain create landed).
+///
+/// [kiingoAgentId] joins the key only when the owner attached an existing
+/// agent, so a plain create keeps the key it always had, and attaching the
+/// same identity to a different agent is a different create.
 String hostedAgentIdempotencyKey({
   required String communityId,
   required String agentPublicKey,
@@ -179,6 +193,7 @@ String hostedAgentIdempotencyKey({
   required String providerConfigSha256,
   required Map<String, Object?> agentInstructions,
   required String displayName,
+  String? kiingoAgentId,
 }) => stableJsonSha256({
   'identity_envelope_version': hostedIdentityEnvelopeVersion,
   'community_id': communityId,
@@ -188,6 +203,7 @@ String hostedAgentIdempotencyKey({
   'agent_instructions': agentInstructions,
   'display_name': displayName,
   'response_policy': hostedAgentResponsePolicy,
+  'kiingo_agent_id': ?kiingoAgentId,
 });
 
 /// Build the full `POST /agents` body. A replay with the same identity, draft
@@ -203,6 +219,10 @@ Future<Map<String, Object?>> buildHostedProvisionRequest({
   final displayName = draft.displayName.trim();
   if (displayName.isEmpty || displayName.length > 256) {
     throw const HostedAgentException('agent_name_invalid');
+  }
+  final kiingoAgentId = draft.kiingoAgentId?.trim().toLowerCase();
+  if (kiingoAgentId != null && !_uuid.hasMatch(kiingoAgentId)) {
+    throw const HostedAgentException('kiingo_agent_id_invalid');
   }
   final config = draft.providerConfig;
   final profile = buildHostedExecutionProfile(
@@ -237,6 +257,7 @@ Future<Map<String, Object?>> buildHostedProvisionRequest({
       providerConfigSha256: configHash,
       agentInstructions: instructions,
       displayName: displayName,
+      kiingoAgentId: kiingoAgentId,
     ),
     'community_id': scope.communityId,
     'relay_url': scope.relayUrl,
@@ -249,6 +270,9 @@ Future<Map<String, Object?>> buildHostedProvisionRequest({
     'agent_instructions': instructions,
     'response_policy': hostedAgentResponsePolicy,
     'capability_policy': _capabilityPolicy,
+    // Attach to an existing agent the owner owns; the API refuses an agent
+    // that already has a Buzz identity (`already_has_buzz_identity`).
+    'kiingo_agent_id': ?kiingoAgentId,
   };
 }
 

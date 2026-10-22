@@ -17,6 +17,7 @@ import '../../shared/hosted_agents/hosted_agent_icons.dart';
 import '../../shared/hosted_agents/hosted_agent_list.dart';
 import '../../shared/hosted_agents/hosted_agent_responses.dart';
 import '../../shared/hosted_agents/hosted_agent_snapshot.dart';
+import '../../shared/hosted_agents/hosted_unlinked_agents.dart';
 import '../../shared/hosted_agents/provider_config_schema.dart';
 import '../../shared/theme/buzz_icons.dart';
 import '../../shared/theme/theme.dart';
@@ -25,6 +26,7 @@ import '../../shared/widgets/buzz_loading_indicator.dart';
 import '../../shared/widgets/frosted_app_bar.dart';
 import '../../shared/widgets/frosted_scaffold.dart';
 
+part 'hosted_agent_create_page/attach_section.dart';
 part 'hosted_agent_create_page/create_form.dart';
 part 'hosted_agent_create_page/execution_fields.dart';
 part 'hosted_agent_create_page/failure_notice.dart';
