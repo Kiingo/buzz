@@ -145,6 +145,7 @@ pub(crate) async fn connect_audio_relay(
         .unwrap_or_else(|e| e.into_inner())
         .clone();
 
+    let ephemeral_channel_id = channel_id.to_owned();
     tokio::spawn(async move {
         if let Err(e) = audio_relay_pipeline(AudioRelayPipelineArgs {
             ws_tx,
@@ -152,6 +153,7 @@ pub(crate) async fn connect_audio_relay(
             pcm_rx,
             cancel: cancel_clone.clone(),
             app_handle: app_handle.clone(),
+            ephemeral_channel_id,
             initial_peers,
             tts_cancel,
             tts_active,
@@ -346,6 +348,7 @@ struct AudioRelayPipelineArgs {
     pcm_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     cancel: CancellationToken,
     app_handle: Option<tauri::AppHandle>,
+    ephemeral_channel_id: String,
     initial_peers: Vec<(u8, String, u8)>,
     tts_cancel: Arc<AtomicBool>,
     tts_active: Arc<AtomicBool>,
@@ -363,6 +366,7 @@ async fn audio_relay_pipeline(args: AudioRelayPipelineArgs) -> Result<(), String
         mut pcm_rx,
         cancel,
         app_handle,
+        ephemeral_channel_id,
         initial_peers,
         tts_cancel,
         tts_active,
@@ -428,6 +432,7 @@ async fn audio_relay_pipeline(args: AudioRelayPipelineArgs) -> Result<(), String
         sink_handle,
         cancel,
         app_handle,
+        ephemeral_channel_id,
         initial_peers,
         tts_active,
         tts_cancel,

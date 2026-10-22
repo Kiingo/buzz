@@ -9,6 +9,12 @@ import {
 import { buildHuddleTtsLiveFilter } from "@/shared/api/relayChannelFilters";
 import { relayClient } from "@/shared/api/relayClient";
 import {
+  type AgentSelfVoiceState,
+  applyHuddleAudioPeers,
+  EMPTY_AGENT_SELF_VOICE_STATE,
+  type HuddleAudioPeer,
+} from "./agentSelfVoice";
+import {
   createInitialTtsReadinessGate,
   createLatestStateGate,
   createOrderedSpeaker,
@@ -43,6 +49,7 @@ export function useTtsSubscription(
     let disposed = false;
     let cleanup: (() => void) | null = null;
     let unlistenHuddleState: (() => void) | null = null;
+    let unlistenAudioPeers: (() => void) | null = null;
     let ttsStateKnown = false;
     let agentVerificationRetryId: number | null = null;
 
@@ -57,6 +64,31 @@ export function useTtsSubscription(
     // successful fetch means "no agents in the huddle" → still mute.
     let agentsLoaded = false;
     const agentPubkeys = new Set<string>();
+
+    // ── Agents that speak for themselves ─────────────────────────────────
+    // The native audio relay reports the live media roster, flagging this
+    // desktop's own TTS publisher sockets. An agent with any other admission
+    // is speaking in the huddle itself, so its text is not synthesized here.
+    let selfVoice: AgentSelfVoiceState = EMPTY_AGENT_SELF_VOICE_STATE;
+    void listen<{ ephemeral_channel_id: string; peers: HuddleAudioPeer[] }>(
+      "huddle-audio-peers",
+      (event) => {
+        if (disposed) return;
+        if (event.payload.ephemeral_channel_id !== ephemeralChannelId) return;
+        selfVoice = applyHuddleAudioPeers(
+          selfVoice,
+          event.payload.peers,
+          Date.now(),
+        );
+      },
+    )
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenAudioPeers = unlisten;
+      })
+      .catch((err) => {
+        console.warn("[huddle] Failed to listen for audio peers:", err);
+      });
 
     const speakInOrder = createOrderedSpeaker(
       async (text, routeId, speakerPubkey) => {
@@ -153,6 +185,7 @@ export function useTtsSubscription(
         routeId,
         (text, queuedRouteId) =>
           speakInOrder.enqueue(text, queuedRouteId, event.pubkey),
+        selfVoice,
       );
       if (result === "queued") {
         console.debug(
@@ -325,6 +358,7 @@ export function useTtsSubscription(
       speakInOrder.setEnabled(false);
       cleanup?.();
       unlistenHuddleState?.();
+      unlistenAudioPeers?.();
       unsubscribeDocumentVisibility();
       if (agentRefreshId !== null) window.clearInterval(agentRefreshId);
       if (agentVerificationRetryId !== null) {

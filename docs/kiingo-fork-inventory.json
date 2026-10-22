@@ -1921,6 +1921,20 @@
       "purpose": "October 2026 security advisories. The Buzz-private Node runtime for agent adapters moves to Node 24.22.1 (Brotli decoder RCE CVE-2026-111497, TLS hostname checks, randomUUID snapshot entropy, eMudhra CA removal), with SHA-256 pins from the release's SHASUMS256.txt and one version constant shared by the install path and the download code; the Hermit dev toolchain moves to the same Node; the feature-flag fixture lockfile resolves rustls-webpki 0.103.16 (RUSTSEC-2026-0382); and the macOS minimum system version is stated in the base Tauri config at the 10.15 the release config and deployment target already use.",
       "removalCondition": "Drop when upstream pins Node 24.22.1 or later for the managed runtime and Hermit, its fixture lockfile resolves rustls-webpki 0.103.16 or later, and its base Tauri config states the macOS minimum.",
       "upstreamStatus": "Generic, provider-neutral security update; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "paths": [
+        "desktop/src-tauri/src/huddle/playout.rs",
+        "desktop/src-tauri/src/huddle/relay_api.rs",
+        "desktop/src/features/huddle/lib/agentSelfVoice.test.mjs",
+        "desktop/src/features/huddle/lib/agentSelfVoice.ts",
+        "desktop/src/features/huddle/lib/useTtsSubscription.ts"
+      ],
+      "purpose": "An agent that is itself a live audio participant in a huddle speaks for itself, so desktops don't also synthesize its text replies. The native audio relay reports the media roster (huddle-audio-peers) with this desktop's own TTS publisher sockets flagged, and one pure decision (agentSelfVoice.ts, used by the ttsLiveMessages.ts classifier) suppresses TTS while the agent holds any other admission, across a two-socket rejoin, and for messages created within 3 s after its last admission leaves; a message tagged [\"spoken\", \"1\"] is never synthesized. With neither signal, TTS is unchanged.",
+      "removalCondition": "Drop when upstream Buzz suppresses local TTS for agents that publish their own huddle audio, or for messages marked as already spoken.",
+      "upstreamStatus": "Generic, provider-neutral huddle behavior; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
