@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useIdentityQuery } from "@/shared/api/hooks";
 
 import {
+  createAutoLinkBackoff,
   createAutoLinkScheduler,
   linkedNote,
   newAutoLinkMemory,
@@ -32,7 +33,10 @@ const isForeground = () =>
  * App-wide runner for "auto-link my new agents". Renders nothing. While the
  * owner's setting is on and this build can reach the hosted provider, it
  * runs a pass on launch, on resume and every 15 minutes in the foreground,
- * and shows a quiet "Linked: …" note when a pass linked anyone.
+ * and shows a quiet "Linked: …" note when a pass linked anyone. A pass in
+ * flight stops before its next signed request once the setting is off or
+ * the signed-in key changes; passes that keep failing back off, with one
+ * plain note.
  */
 export function HostedAutoLinkExtension() {
   const identity = useIdentityQuery();
@@ -47,12 +51,18 @@ export function HostedAutoLinkExtension() {
     enabled: enabled && owner !== null,
   });
   const canRun = enabled && owner !== null && available.data === true;
+  // The signed-in key right now, for a pass that started under another.
+  const ownerNow = React.useRef(owner);
+  ownerNow.current = owner;
 
   React.useEffect(() => {
     if (!canRun || owner === null) return;
-    // Refusals are remembered for this key and this mount only.
+    // Refusals and backoff are remembered for this key and this mount only.
     const memory = newAutoLinkMemory();
+    const backoff = createAutoLinkBackoff();
     let current = true;
+    const shouldContinue = () =>
+      current && ownerNow.current === owner && readAutoLinkSetting(owner);
     const scheduler = createAutoLinkScheduler({
       isForeground,
       now: () => Date.now(),
@@ -60,19 +70,22 @@ export function HostedAutoLinkExtension() {
       clearInterval: (handle) =>
         globalThis.clearInterval(handle as ReturnType<typeof setInterval>),
       runPass: async () => {
+        if (!backoff.allows(Date.now())) return;
         const result = await runAutoLinkPass(
           {
             list: () => hostedOwnerRelinkApi.list(),
-            attestPending: (agents) =>
-              hostedOwnerRelinkApi.attestPending(agents),
-            rebind: (agents) => hostedOwnerRelinkApi.rebind(agents),
+            attestPending: (agents, view) =>
+              hostedOwnerRelinkApi.attestPending(agents, view),
+            rebind: (agents, view) => hostedOwnerRelinkApi.rebind(agents, view),
           },
           owner,
           memory,
+          { shouldContinue },
         );
         // A pass that finishes after the setting changed or the owner signed
         // out says nothing.
-        if (!current) return;
+        if (!shouldContinue()) return;
+        const failed = backoff.record(result, Date.now());
         if (result.sent) {
           void queryClient.invalidateQueries({
             queryKey: relinkQueryKeys.agents,
@@ -86,6 +99,13 @@ export function HostedAutoLinkExtension() {
           toast(refused.title, {
             id: "hosted-auto-link-refused",
             description: refused.description,
+          });
+        }
+        // Passes that keep failing as a whole are said once per run.
+        if (failed) {
+          toast(failed.title, {
+            id: "hosted-auto-link-failed",
+            description: failed.description,
           });
         }
       },

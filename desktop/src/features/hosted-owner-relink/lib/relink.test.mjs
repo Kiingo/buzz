@@ -31,6 +31,7 @@ const agent = (id, ownerPublicKey, extra = {}) => ({
 
 const view = {
   currentOwnerPublicKey: CURRENT,
+  listId: "list-1",
   agents: [
     agent("ada", OLD),
     agent("mira", OLD.toUpperCase()),
@@ -115,6 +116,9 @@ test("whole-request errors become one sentence each", () => {
     "not_agent_owner",
     "attest_pending_invalid",
     "database_unavailable",
+    "owner_key_changed",
+    "attest_selection_not_listed",
+    "rebind_selection_not_listed",
   ]) {
     const plain = describeRequestError(code);
     assert.equal(describeRequestError(`buzz_hosted_${code}`), plain);
@@ -164,9 +168,9 @@ test("selection sends only chosen agents and retries only retryable ones", () =>
 test("rebind passes exactly the selected agents in one native call", async () => {
   const calls = [];
   restore = setRelinkTransportForTests({
-    rebind: async (agents) => {
-      calls.push(agents);
-      return agents.map((a) => ({
+    rebind: async (args) => {
+      calls.push(args);
+      return args.agents.map((a) => ({
         providerAgentId: a.providerAgentId,
         outcome: "rebound",
         code: null,
@@ -174,11 +178,14 @@ test("rebind passes exactly the selected agents in one native call", async () =>
     },
   });
   const [ada] = staleAgents(view);
-  const results = await hostedOwnerRelinkApi.rebind([ada]);
+  const results = await hostedOwnerRelinkApi.rebind([ada], view);
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0], [
-    { providerAgentId: "ada", agentPublicKey: ada.agentPublicKey },
-  ]);
+  // Bound to the list it came from and the key that list was listed for.
+  assert.deepEqual(calls[0], {
+    agents: [{ providerAgentId: "ada", agentPublicKey: ada.agentPublicKey }],
+    expectedOwner: CURRENT,
+    listId: "list-1",
+  });
   assert.equal(describeOutcome(results[0]), "Re-linked");
 });
 
@@ -190,11 +197,17 @@ test("an empty or oversized selection never reaches the native signer", async ()
       return [];
     },
   });
-  await assert.rejects(hostedOwnerRelinkApi.rebind([]), RelinkRequestError);
+  await assert.rejects(
+    hostedOwnerRelinkApi.rebind([], view),
+    RelinkRequestError,
+  );
   const many = Array.from({ length: MAX_REBIND_AGENTS + 1 }, (_, index) =>
     agent(`a${index}`, OLD),
   );
-  await assert.rejects(hostedOwnerRelinkApi.rebind(many), RelinkRequestError);
+  await assert.rejects(
+    hostedOwnerRelinkApi.rebind(many, view),
+    RelinkRequestError,
+  );
   assert.equal(called, false);
 });
 
@@ -207,7 +220,7 @@ test("a native failure surfaces as one request error, not a retry", async () => 
     },
   });
   await assert.rejects(
-    hostedOwnerRelinkApi.rebind([staleAgents(view)[0]]),
+    hostedOwnerRelinkApi.rebind([staleAgents(view)[0]], view),
     (error) =>
       error instanceof RelinkRequestError &&
       error.code === "database_unavailable",

@@ -1,5 +1,7 @@
 import {
+  agentLabel,
   describeAttestRejection,
+  describeRequestError,
   describeRejection,
   isAttested,
   isRetryable,
@@ -20,7 +22,9 @@ import {
  * on launch, on resume and every 15 minutes, attests every agent the list
  * reports as pending, re-links every agent still on an earlier owner key,
  * and then shows one quiet note naming the agents it linked. Only agents the
- * authenticated list returned are ever signed for.
+ * authenticated list returned are ever signed for, and a pass stops before
+ * its next signed request once the setting is turned off or the key changes.
+ * Repeated whole-request failures back off, with one plain note.
  */
 
 /** Passes repeat this often while the app is in the foreground. */
@@ -83,8 +87,16 @@ export function subscribeAutoLinkSetting(listener: () => void): () => void {
 
 export type AutoLinkApi = {
   list: () => Promise<HostedOwnerAgents>;
-  attestPending: (agents: HostedOwnerAgent[]) => Promise<AttestResult[]>;
-  rebind: (agents: HostedOwnerAgent[]) => Promise<RebindResult[]>;
+  /** Sign for `agents`, which `view` (the pass's list) reported pending. */
+  attestPending: (
+    agents: HostedOwnerAgent[],
+    view: HostedOwnerAgents,
+  ) => Promise<AttestResult[]>;
+  /** Sign for `agents`, which `view` reported on an earlier owner key. */
+  rebind: (
+    agents: HostedOwnerAgent[],
+    view: HostedOwnerAgents,
+  ) => Promise<RebindResult[]>;
 };
 
 /**
@@ -99,18 +111,33 @@ export const newAutoLinkMemory = (): AutoLinkMemory => ({ refused: new Set() });
 const memoryKey = (owner: string, agent: HostedOwnerAgent) =>
   `${owner.toLowerCase()}|${agent.providerAgentId}|${agent.agentPublicKey.toLowerCase()}`;
 
+export type AutoLinkPassOptions = {
+  /**
+   * Checked after the list and before every signed request: false (the
+   * setting was turned off, the owner signed out or switched keys) stops
+   * the pass without signing anything more.
+   */
+  shouldContinue?: () => boolean;
+};
+
 export type AutoLinkPassResult = {
-  /** Names of agents this pass attested or re-linked, in list order. */
+  /**
+   * Agents this pass attested or re-linked, in list order, each as its
+   * name and key fingerprint (see `agentLabel`).
+   */
   linked: string[];
   /**
-   * Agents this pass could not link for good, with the reason in plain
-   * words. Each is reported once: refused agents are not sent again.
+   * Agents this pass could not link for good, labelled the same way, with
+   * the reason in plain words. Each is reported once: refused agents are
+   * not sent again.
    */
   notLinked: { name: string; reason: string }[];
   /** Whole-request error codes, if any request failed. */
   errors: string[];
   /** False when the pass did not run (wrong key, nothing to do). */
   sent: boolean;
+  /** True when `shouldContinue` stopped the pass before it finished. */
+  cancelled: boolean;
 };
 
 export function chunk<T>(items: readonly T[], size: number): T[][] {
@@ -124,19 +151,29 @@ export function chunk<T>(items: readonly T[], size: number): T[][] {
 /**
  * One auto-link pass for `ownerPublicKey`: list, attest the pending agents,
  * re-link the stale ones, in requests of at most 20 agents, each request one
- * new id and proof. A whole-request failure stops the pass; the next pass
- * starts over from a fresh list.
+ * new id and proof, each held to this pass's list. A whole-request failure
+ * stops the pass; the next pass starts over from a fresh list. The pass
+ * checks `options.shouldContinue` after the list and before every request.
  */
 export async function runAutoLinkPass(
   api: AutoLinkApi,
   ownerPublicKey: string,
   memory: AutoLinkMemory,
+  options: AutoLinkPassOptions = {},
 ): Promise<AutoLinkPassResult> {
   const result: AutoLinkPassResult = {
     linked: [],
     notLinked: [],
     errors: [],
     sent: false,
+    cancelled: false,
+  };
+  const keepGoing = () => {
+    if (options.shouldContinue && !options.shouldContinue()) {
+      result.cancelled = true;
+      return false;
+    }
+    return true;
   };
   let view: HostedOwnerAgents;
   try {
@@ -152,15 +189,13 @@ export async function runAutoLinkPass(
     !memory.refused.has(memoryKey(owner, agent));
   const pending = pendingAgents(view).filter(fresh);
   const stale = staleAgents(view).filter(fresh);
-  const names = new Map(
-    view.agents.map((agent) => [agent.providerAgentId, agent.displayName]),
-  );
   const linkedIds = new Set<string>();
 
   try {
     for (const batch of chunk(pending, MAX_REBIND_AGENTS)) {
+      if (!keepGoing()) break;
       result.sent = true;
-      const outcomes = await api.attestPending(batch);
+      const outcomes = await api.attestPending(batch, view);
       for (const agent of batch) {
         const outcome = outcomes.find(
           (candidate) => candidate.providerAgentId === agent.providerAgentId,
@@ -173,15 +208,16 @@ export async function runAutoLinkPass(
         } else if (!isRetryableAttest(outcome)) {
           memory.refused.add(memoryKey(owner, agent));
           result.notLinked.push({
-            name: agent.displayName,
+            name: agentLabel(agent),
             reason: describeAttestRejection(outcome?.code ?? null),
           });
         }
       }
     }
     for (const batch of chunk(stale, MAX_REBIND_AGENTS)) {
+      if (result.cancelled || !keepGoing()) break;
       result.sent = true;
-      const outcomes = await api.rebind(batch);
+      const outcomes = await api.rebind(batch, view);
       for (const agent of batch) {
         const outcome = outcomes.find(
           (candidate) => candidate.providerAgentId === agent.providerAgentId,
@@ -194,7 +230,7 @@ export async function runAutoLinkPass(
         ) {
           memory.refused.add(memoryKey(owner, agent));
           result.notLinked.push({
-            name: agent.displayName,
+            name: agentLabel(agent),
             reason: describeRejection(outcome?.code ?? null),
           });
         }
@@ -205,7 +241,7 @@ export async function runAutoLinkPass(
   }
   for (const agent of view.agents) {
     if (linkedIds.has(agent.providerAgentId)) {
-      result.linked.push(names.get(agent.providerAgentId) ?? "an agent");
+      result.linked.push(agentLabel(agent));
     }
   }
   return result;
@@ -234,11 +270,71 @@ export function notLinkedNote(
 }
 
 /** The quiet note after a pass, or null when it linked nothing. */
-export function linkedNote(names: readonly string[]): string | null {
-  const shown = names.map((name) => name.trim() || "an agent");
+export function linkedNote(labels: readonly string[]): string | null {
+  const shown = labels.map((label) => label.trim() || "An agent");
   if (shown.length === 0) return null;
   if (shown.length <= 4) return `Linked: ${shown.join(", ")}`;
   return `Linked: ${shown.slice(0, 3).join(", ")} and ${shown.length - 3} more`;
+}
+
+// ---- Backoff -----------------------------------------------------------------
+
+/** Whole-request failures in a row before passes back off and say so. */
+export const AUTO_LINK_FAILURES_BEFORE_BACKOFF = 3;
+/** The first wait after that; each further failure doubles it. */
+export const AUTO_LINK_BACKOFF_BASE_MS = 30 * 60_000;
+/** The longest wait between passes that keep failing. */
+export const AUTO_LINK_BACKOFF_MAX_MS = 8 * 60 * 60_000;
+
+/**
+ * Backs off passes that keep failing as a whole (offline, a signature the
+ * service refuses, the service down): after three failures in a row, the
+ * next pass waits 30 minutes, then an hour, up to eight hours, and one
+ * plain note says so. A pass that gets through resets it.
+ */
+export function createAutoLinkBackoff() {
+  let failures = 0;
+  let notBefore = Number.NEGATIVE_INFINITY;
+  return {
+    /** Whether a pass may start at `now`. */
+    allows(now: number): boolean {
+      return now >= notBefore;
+    },
+    /**
+     * Record a finished pass. Returns the note to show, once per run of
+     * failures, or null.
+     */
+    record(
+      result: Pick<AutoLinkPassResult, "errors" | "cancelled">,
+      now: number,
+    ): { title: string; description: string } | null {
+      if (result.cancelled) return null;
+      const code = result.errors[0];
+      if (code === undefined) {
+        failures = 0;
+        notBefore = Number.NEGATIVE_INFINITY;
+        return null;
+      }
+      failures += 1;
+      if (failures < AUTO_LINK_FAILURES_BEFORE_BACKOFF) return null;
+      const steps = failures - AUTO_LINK_FAILURES_BEFORE_BACKOFF;
+      notBefore =
+        now +
+        Math.min(
+          AUTO_LINK_BACKOFF_BASE_MS * 2 ** steps,
+          AUTO_LINK_BACKOFF_MAX_MS,
+        );
+      if (failures !== AUTO_LINK_FAILURES_BEFORE_BACKOFF) return null;
+      return {
+        title: "Couldn't link your agents automatically",
+        description: `${describeRequestError(code)} Buzz will keep trying, less often.`,
+      };
+    },
+    /** Consecutive whole-request failures so far. */
+    get failures() {
+      return failures;
+    },
+  };
 }
 
 // ---- Scheduling --------------------------------------------------------------

@@ -224,12 +224,19 @@ fn list_response_reads_owner_keys_and_skips_malformed_agents() {
                  "display_name": "None", "owner_public_key": null,
                  "desired_state": "deleted", "observed_state": "deleted"},
                 {"provider_agent_id": "buzz:bad", "agent_public_key": "xyz",
-                 "display_name": "Bad"}
+                 "display_name": "Bad"},
+                {"provider_agent_id": "buzz:blank", "agent_public_key": ada,
+                 "display_name": "   "},
+                {"provider_agent_id": "buzz:ctl", "agent_public_key": ada,
+                 "display_name": "Ada\u{202e}\u{0007}"},
+                {"provider_agent_id": "buzz:nl", "agent_public_key": ada,
+                 "display_name": "Ada\nLinked: Mira"}
             ]
         }),
         "req-l",
     )
     .unwrap();
+    // Malformed keys and empty or unprintable names are skipped.
     assert_eq!(agents.len(), 2);
     assert_eq!(agents[0].owner_public_key.as_deref(), Some(old.as_str()));
     assert!(!agents[0].deleted);

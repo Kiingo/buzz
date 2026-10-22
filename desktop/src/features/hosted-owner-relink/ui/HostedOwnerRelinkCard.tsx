@@ -17,6 +17,7 @@ import {
 import { relinkQueryKeys, writeAutoLinkSetting } from "../lib/autoLink";
 import { hostedOwnerRelinkApi } from "../lib/client";
 import {
+  agentFingerprint,
   agentsToSend,
   currentAgents,
   describeAttestOutcome,
@@ -33,6 +34,7 @@ import {
   type HostedOwnerAgent,
   type HostedOwnerAgents,
   type RebindResult,
+  type RelinkListing,
 } from "../lib/relink";
 import { useAutoLinkSetting } from "./HostedAutoLinkExtension";
 
@@ -147,6 +149,7 @@ function RelinkSection() {
       <RelinkDialog
         current={currentAgents(view)}
         key={review}
+        listing={view}
         onOpenChange={setOpen}
         open={open}
         stale={stale}
@@ -181,6 +184,21 @@ function AutoLinkSetting({ owner }: { owner: string }) {
         onCheckedChange={(checked) => writeAutoLinkSetting(owner, checked)}
       />
     </div>
+  );
+}
+
+/**
+ * An agent key's short fingerprint beside its name, so two agents with the
+ * same name (or one named to look like another) can be told apart.
+ */
+function KeyFingerprint({ agentPublicKey }: { agentPublicKey: string }) {
+  return (
+    <span
+      className="ml-1.5 font-mono text-xs text-muted-foreground"
+      title="Agent key"
+    >
+      {agentFingerprint(agentPublicKey)}
+    </span>
   );
 }
 
@@ -220,7 +238,10 @@ function LinkList({
     let next: LinkState;
     try {
       if (kind === "attest") {
-        const [result] = await hostedOwnerRelinkApi.attestPending([agent]);
+        const [result] = await hostedOwnerRelinkApi.attestPending(
+          [agent],
+          view,
+        );
         const linked = isAttested(result);
         next = {
           busy: false,
@@ -229,7 +250,7 @@ function LinkList({
           label: result ? describeAttestOutcome(result) : undefined,
         };
       } else {
-        const [result] = await hostedOwnerRelinkApi.rebind([agent]);
+        const [result] = await hostedOwnerRelinkApi.rebind([agent], view);
         const linked =
           result?.outcome === "rebound" ||
           result?.outcome === "already_current";
@@ -269,7 +290,10 @@ function LinkList({
             key={`${owner}:${agent.providerAgentId}`}
           >
             <div className="min-w-0">
-              <p className="text-foreground">{agent.displayName}</p>
+              <p className="text-foreground">
+                {agent.displayName}
+                <KeyFingerprint agentPublicKey={agent.agentPublicKey} />
+              </p>
               {state?.label ? (
                 <p
                   className={
@@ -297,7 +321,7 @@ function LinkList({
             ) : (
               <Button
                 aria-describedby={state?.label ? `${rowId}-result` : undefined}
-                aria-label={`Link ${agent.displayName}`}
+                aria-label={`Link ${agent.displayName} (${agentFingerprint(agent.agentPublicKey)})`}
                 data-testid={`${rowId}-link`}
                 disabled={state?.busy === true}
                 onClick={() => void link(agent)}
@@ -320,13 +344,20 @@ function RelinkDialog({
   onOpenChange,
   stale,
   current,
+  listing,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   stale: HostedOwnerAgent[];
   current: HostedOwnerAgent[];
+  listing: RelinkListing;
 }) {
   const queryClient = useQueryClient();
+  // The list this review signs against, snapshotted with its agents.
+  const [reviewedList] = React.useState<RelinkListing>(() => ({
+    currentOwnerPublicKey: listing.currentOwnerPublicKey,
+    listId: listing.listId,
+  }));
   // Snapshot the agents for this review so a refreshed list does not change
   // what the owner is looking at; every agent starts selected.
   const [reviewed] = React.useState(stale);
@@ -360,7 +391,7 @@ function RelinkDialog({
     setBusy(true);
     setRequestError(null);
     try {
-      const next = await hostedOwnerRelinkApi.rebind(sendable);
+      const next = await hostedOwnerRelinkApi.rebind(sendable, reviewedList);
       setResults((previous) => mergeResults(previous, next));
       void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
     } catch (error) {
@@ -432,6 +463,7 @@ function RelinkDialog({
                     htmlFor={choosable ? id : undefined}
                   >
                     {agent.displayName}
+                    <KeyFingerprint agentPublicKey={agent.agentPublicKey} />
                   </label>
                   {result ? (
                     <p

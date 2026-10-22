@@ -331,7 +331,14 @@ fn optional_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
-/// Parse a list answer to `request_id`. Malformed agents are skipped.
+/// A trimmed display name Buzz shows: 1 to 200 characters, none of them
+/// control characters.
+fn is_display_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().count() <= 200 && !name.chars().any(char::is_control)
+}
+
+/// Parse a list answer to `request_id`. Malformed agents, including ones
+/// with an empty or unprintable name, are skipped.
 pub(super) fn parse_list_response(
     body: &Value,
     request_id: &str,
@@ -351,7 +358,7 @@ pub(super) fn parse_list_response(
             let id = optional_str(agent, "provider_agent_id")?;
             let key = optional_str(agent, "agent_public_key")?.to_ascii_lowercase();
             let name = optional_str(agent, "display_name")?.trim();
-            if !is_provider_agent_id(id) || !is_hex64(&key) || name.chars().count() > 200 {
+            if !is_provider_agent_id(id) || !is_hex64(&key) || !is_display_name(name) {
                 return None;
             }
             let owner = optional_str(agent, "owner_public_key")
@@ -431,9 +438,7 @@ pub(super) fn parse_unlinked_response(
             let name = optional_str(agent, "display_name")?.trim();
             let principal = optional_str(agent, "owner_principal_type")?;
             if !is_uuid(&id)
-                || name.is_empty()
-                || name.chars().count() > 200
-                || name.chars().any(char::is_control)
+                || !is_display_name(name)
                 || !matches!(principal, "User" | "Organization")
                 || !seen.insert(id.clone())
             {

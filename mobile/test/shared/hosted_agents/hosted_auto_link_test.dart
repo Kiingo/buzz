@@ -116,12 +116,10 @@ void main() {
     test(
       'attests pending agents, re-links stale ones, and names them',
       () async {
-        final api = _FakeApi([
-          _pending('scout'),
-          _live('Ada', owner: _oldOwner, fill: 6),
-          _live('Mira', fill: 7),
-          _pending('Mail Helper', fill: 8),
-        ]);
+        final scout = _pending('scout');
+        final ada = _live('Ada', owner: _oldOwner, fill: 6);
+        final helper = _pending('Mail Helper', fill: 8);
+        final api = _FakeApi([scout, ada, _live('Mira', fill: 7), helper]);
         final result = await runHostedAutoLinkPass(
           api: api,
           ownerPublicKey: _owner,
@@ -133,11 +131,17 @@ void main() {
         expect(api.rebound, [
           ['Ada'],
         ]);
-        expect(result.linked, ['scout', 'Ada', 'Mail Helper']);
+        // Each agent is named with its key fingerprint.
+        final names = [
+          for (final agent in [scout, ada, helper]) agent.fingerprintedName,
+        ];
+        expect(result.linked, names);
+        expect(names.first, 'scout (${scout.agentPublicKey.substring(0, 8)})');
         expect(result.sent, isTrue);
+        expect(result.cancelled, isFalse);
         expect(
           hostedAutoLinkNote(result.linked),
-          'Linked: scout, Ada, Mail Helper',
+          'Linked: ${names.join(', ')}',
         );
       },
     );
@@ -198,7 +202,19 @@ void main() {
           memory: memory,
         );
         expect(first.linked, isEmpty);
-        await runHostedAutoLinkPass(
+        // Permanent refusals are named once, with the reason; retryable
+        // ones are not.
+        expect(first.notLinked.map((agent) => agent.name), [
+          _pending('theirs', fill: 6).fingerprintedName,
+          _live('Ada', owner: _oldOwner, fill: 7).fingerprintedName,
+        ]);
+        expect(first.notLinked.map((agent) => agent.reason), [
+          describeAttestRejection('not_agent_owner'),
+          describeRebindRejection('previous_owner_not_revoked'),
+        ]);
+        final note = hostedAutoLinkRefusedNote(first.notLinked)!;
+        expect(note.split('\n').first, "Couldn't link 2 agents");
+        final second = await runHostedAutoLinkPass(
           api: api,
           ownerPublicKey: _owner,
           memory: memory,
@@ -211,6 +227,7 @@ void main() {
           ['Ada', 'Sage'],
           ['Sage'],
         ]);
+        expect(second.notLinked, isEmpty);
       },
     );
 
@@ -227,7 +244,7 @@ void main() {
             ownerPublicKey: _owner,
             memory: memory,
           )).linked,
-          ['scout'],
+          [_pending('scout').fingerprintedName],
         );
         final already = _FakeApi(
           [_pending('scout')],
@@ -287,6 +304,151 @@ void main() {
         hostedAutoLinkNote(const ['a', 'b', 'c', 'd', 'e', 'f']),
         'Linked: a, b, c and 3 more',
       );
+    });
+  });
+
+  group('cancellation', () {
+    test(
+      'turning the setting off stops a pass before its next request',
+      () async {
+        // Off before the first request: the list is read, nothing is signed.
+        final off = _FakeApi([
+          _pending('scout'),
+          _live('Ada', owner: _oldOwner, fill: 6),
+        ]);
+        final stopped = await runHostedAutoLinkPass(
+          api: off,
+          ownerPublicKey: _owner,
+          memory: HostedAutoLinkMemory(),
+          shouldContinue: () => false,
+        );
+        expect(off.attested, isEmpty);
+        expect(off.rebound, isEmpty);
+        expect(stopped.cancelled, isTrue);
+        expect(stopped.sent, isFalse);
+
+        // Off between batches: the batch in flight finishes, no later one
+        // starts, and what it linked is still reported.
+        var enabled = true;
+        final midway = _FakeApi(
+          [
+            for (var index = 0; index < 45; index++) _pending('p$index'),
+            _live('Ada', owner: _oldOwner, fill: 6),
+          ],
+          attest: (agent) {
+            enabled = false;
+            return HostedAttestOutcome(
+              providerAgentId: agent.providerAgentId,
+              status: HostedAttestStatus.activated,
+              dmOpened: true,
+            );
+          },
+        );
+        final partial = await runHostedAutoLinkPass(
+          api: midway,
+          ownerPublicKey: _owner,
+          memory: HostedAutoLinkMemory(),
+          shouldContinue: () => enabled,
+        );
+        expect(midway.attested.map((batch) => batch.length), [20]);
+        expect(midway.rebound, isEmpty);
+        expect(partial.cancelled, isTrue);
+        expect(partial.linked, hasLength(20));
+      },
+    );
+
+    test('switching keys mid-pass stops it the same way', () async {
+      var signedIn = _owner;
+      final api = _FakeApi(
+        [_pending('scout'), _live('Ada', owner: _oldOwner, fill: 6)],
+        attest: (agent) {
+          signedIn = _oldOwner;
+          return HostedAttestOutcome(
+            providerAgentId: agent.providerAgentId,
+            status: HostedAttestStatus.activated,
+            dmOpened: true,
+          );
+        },
+      );
+      final result = await runHostedAutoLinkPass(
+        api: api,
+        ownerPublicKey: _owner,
+        memory: HostedAutoLinkMemory(),
+        shouldContinue: () => signedIn == _owner,
+      );
+      expect(api.attested, [
+        ['scout'],
+      ]);
+      expect(api.rebound, isEmpty);
+      expect(result.cancelled, isTrue);
+    });
+  });
+
+  group('backoff', () {
+    const failed = HostedAutoLinkResult(errors: ['hosted_agents_unreachable']);
+    const ok = HostedAutoLinkResult();
+
+    test('whole-request failures back off and say so once', () {
+      final backoff = HostedAutoLinkBackoff();
+      var now = DateTime(2026, 10, 22, 9);
+      // The first failures stay quiet and do not delay the next pass.
+      for (
+        var index = 1;
+        index < hostedAutoLinkFailuresBeforeBackoff;
+        index++
+      ) {
+        expect(backoff.record(failed, now), isNull);
+        expect(backoff.allows(now), isTrue);
+      }
+      // Then one plain note, and the next pass waits.
+      final note = backoff.record(failed, now);
+      expect(note, startsWith("Couldn't link your agents automatically."));
+      expect(
+        backoff.allows(
+          now.add(hostedAutoLinkBackoffBase - const Duration(seconds: 1)),
+        ),
+        isFalse,
+      );
+      expect(backoff.allows(now.add(hostedAutoLinkBackoffBase)), isTrue);
+      // Each further failure doubles the wait, silently, up to the cap.
+      now = now.add(hostedAutoLinkBackoffBase);
+      expect(backoff.record(failed, now), isNull);
+      expect(
+        backoff.allows(
+          now.add(hostedAutoLinkBackoffBase * 2 - const Duration(seconds: 1)),
+        ),
+        isFalse,
+      );
+      expect(backoff.allows(now.add(hostedAutoLinkBackoffBase * 2)), isTrue);
+      for (var index = 0; index < 40; index++) {
+        backoff.record(failed, now);
+      }
+      expect(
+        backoff.allows(
+          now.add(hostedAutoLinkBackoffMax - const Duration(seconds: 1)),
+        ),
+        isFalse,
+      );
+      expect(backoff.allows(now.add(hostedAutoLinkBackoffMax)), isTrue);
+      // A cancelled pass changes nothing.
+      final before = backoff.failures;
+      expect(
+        backoff.record(const HostedAutoLinkResult(cancelled: true), now),
+        isNull,
+      );
+      expect(backoff.failures, before);
+      // A pass that gets through resets it; a new run says so again.
+      expect(backoff.record(ok, now), isNull);
+      expect(backoff.failures, 0);
+      expect(backoff.allows(now), isTrue);
+      for (
+        var index = 1;
+        index < hostedAutoLinkFailuresBeforeBackoff;
+        index++
+      ) {
+        backoff.record(failed, now);
+      }
+      expect(backoff.record(failed, now), isNotNull);
     });
   });
 

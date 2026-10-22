@@ -64,21 +64,62 @@ fn store_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, S
     Ok(dir.join(STORE_FILE))
 }
 
-fn load(path: &Path) -> Result<AttachStore, String> {
+/// Why the store could not be read.
+#[derive(Debug, PartialEq, Eq)]
+enum LoadError {
+    /// The file exists but is not a store this build understands.
+    Corrupt,
+    /// The file could not be read at all.
+    Io,
+}
+
+fn empty_store() -> AttachStore {
+    AttachStore {
+        version: STORE_VERSION,
+        agents: BTreeMap::new(),
+    }
+}
+
+fn load(path: &Path) -> Result<AttachStore, LoadError> {
     match std::fs::read(path) {
         Ok(bytes) => {
             let store: AttachStore =
-                serde_json::from_slice(&bytes).map_err(|_| STORE_UNREADABLE.to_string())?;
+                serde_json::from_slice(&bytes).map_err(|_| LoadError::Corrupt)?;
             if store.version != STORE_VERSION {
-                return Err(STORE_UNREADABLE.into());
+                return Err(LoadError::Corrupt);
             }
             Ok(store)
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(AttachStore {
-            version: STORE_VERSION,
-            agents: BTreeMap::new(),
-        }),
-        Err(_) => Err(STORE_UNREADABLE.into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(empty_store()),
+        Err(_) => Err(LoadError::Io),
+    }
+}
+
+/// The store for a deploy: an unreadable or corrupt file reads as empty, so
+/// it never blocks deploys. An agent that had attached then deploys without
+/// its attach id; only a replay of an uncertain attach create is affected,
+/// since it no longer matches the original request.
+fn load_for_deploy(path: &Path) -> AttachStore {
+    load(path).unwrap_or_else(|error| {
+        tracing::warn!(
+            ?error,
+            "hosted agent attach store unreadable; deploying without attach ids"
+        );
+        empty_store()
+    })
+}
+
+/// The store for recording a new attach: a corrupt file is replaced (it
+/// could not be used anyway); a file that cannot be read refuses only this
+/// attach create.
+fn load_for_attach(path: &Path) -> Result<AttachStore, String> {
+    match load(path) {
+        Ok(store) => Ok(store),
+        Err(LoadError::Corrupt) => {
+            tracing::warn!("hosted agent attach store corrupt; starting a new one");
+            Ok(empty_store())
+        }
+        Err(LoadError::Io) => Err(STORE_UNREADABLE.into()),
     }
 }
 
@@ -132,25 +173,28 @@ pub(crate) fn remember_attach<R: tauri::Runtime>(
         .lock()
         .map_err(|_| STORE_UNWRITABLE.to_string())?;
     let path = store_path(app)?;
-    let store = remembered(load(&path)?, pubkey, attach, known_pubkeys);
+    let store = remembered(load_for_attach(&path)?, pubkey, attach, known_pubkeys);
     save(&path, &store)
 }
 
-/// Add the remembered attach id for `pubkey` to a deploy payload. No file or
-/// no entry leaves the payload as it was.
+/// Add the remembered attach id for `pubkey` to a deploy payload. No file, a
+/// corrupt or unreadable file, or no entry leaves the payload as it was.
 pub(crate) fn apply_attach<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     pubkey: &str,
     payload: &mut Value,
 ) -> Result<(), String> {
+    // A poisoned lock or a missing data dir must not block deploys either.
     let _guard = STORE_LOCK
         .lock()
-        .map_err(|_| STORE_UNREADABLE.to_string())?;
-    let path = store_path(app)?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Ok(path) = store_path(app) else {
+        return Ok(());
+    };
     if !path.exists() {
         return Ok(());
     }
-    attach_into(&load(&path)?, pubkey, payload);
+    attach_into(&load_for_deploy(&path), pubkey, payload);
     Ok(())
 }
 
@@ -203,15 +247,22 @@ mod tests {
     }
 
     #[test]
-    fn missing_store_is_empty_and_a_bad_version_is_refused() {
+    fn a_corrupt_store_never_blocks_deploys() {
         let dir = std::env::temp_dir().join(format!("buzz-attach-{}", uuid::Uuid::new_v4()));
         let path = dir.join(STORE_FILE);
         assert_eq!(load(&path).unwrap().agents.len(), 0);
         let store = remembered(AttachStore::default(), "agent", ID, &[]);
         save(&path, &store).unwrap();
         assert_eq!(load(&path).unwrap(), store);
-        std::fs::write(&path, br#"{"version":9,"agents":{}}"#).unwrap();
-        assert_eq!(load(&path).unwrap_err(), STORE_UNREADABLE);
+        assert_eq!(load_for_deploy(&path), store);
+        let corrupt_files: [&[u8]; 2] = [br#"{"version":9,"agents":{}}"#, b"not json"];
+        for corrupt in corrupt_files {
+            std::fs::write(&path, corrupt).unwrap();
+            assert_eq!(load(&path).unwrap_err(), LoadError::Corrupt);
+            // A deploy reads it as empty; a new attach starts a new store.
+            assert_eq!(load_for_deploy(&path), empty_store());
+            assert_eq!(load_for_attach(&path).unwrap(), empty_store());
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

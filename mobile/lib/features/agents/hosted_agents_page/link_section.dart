@@ -140,7 +140,7 @@ class _LinkRow extends HookConsumerWidget {
       trailing = Semantics(
         button: true,
         enabled: !busy.value,
-        label: '$action ${agent.displayName}',
+        label: '$action ${agent.fingerprintedName}',
         excludeSemantics: true,
         onTap: busy.value ? null : () => unawaited(link()),
         child: TextButton(
@@ -152,7 +152,7 @@ class _LinkRow extends HookConsumerWidget {
     }
     return AppListRow(
       icon: rebind ? BuzzIcons.key : BuzzIcons.bot,
-      title: agent.displayName,
+      title: agent.fingerprintedName,
       subtitle:
           label.value ??
           (rebind

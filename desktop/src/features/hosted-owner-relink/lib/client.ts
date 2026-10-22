@@ -8,35 +8,54 @@ import {
   type HostedOwnerAgent,
   type HostedOwnerAgents,
   type RebindResult,
+  type RelinkListing,
   type UnlinkedAgent,
 } from "./relink";
+
+type Selection = { providerAgentId: string; agentPublicKey: string };
+
+/** What a signing command sends: the agents and the list they came from. */
+type SigningArgs = {
+  agents: Selection[];
+  expectedOwner: string;
+  listId: string;
+};
 
 type Transport = {
   available: () => Promise<boolean>;
   list: () => Promise<HostedOwnerAgents>;
-  rebind: (
-    agents: { providerAgentId: string; agentPublicKey: string }[],
-  ) => Promise<RebindResult[]>;
-  attestPending: (
-    agents: { providerAgentId: string; agentPublicKey: string }[],
-  ) => Promise<AttestResult[]>;
+  rebind: (args: SigningArgs) => Promise<RebindResult[]>;
+  attestPending: (args: SigningArgs) => Promise<AttestResult[]>;
   listUnlinked: () => Promise<UnlinkedAgent[]>;
 };
 
 const tauriTransport: Transport = {
   available: () => invokeTauri<boolean>("hosted_owner_relink_available"),
   list: () => invokeTauri<HostedOwnerAgents>("hosted_owner_relink_list"),
-  rebind: (agents) =>
-    invokeTauri<RebindResult[]>("hosted_owner_relink_rebind", { agents }),
-  attestPending: (agents) =>
-    invokeTauri<AttestResult[]>("hosted_owner_relink_attest_pending", {
-      agents,
-    }),
+  rebind: (args) =>
+    invokeTauri<RebindResult[]>("hosted_owner_relink_rebind", args),
+  attestPending: (args) =>
+    invokeTauri<AttestResult[]>("hosted_owner_relink_attest_pending", args),
   listUnlinked: () =>
     invokeTauri<UnlinkedAgent[]>("hosted_owner_relink_list_unlinked"),
 };
 
 let transport: Transport = tauriTransport;
+
+/** Only the id and key of each agent cross to the native side. */
+function signingArgs(
+  agents: HostedOwnerAgent[],
+  listing: RelinkListing,
+): SigningArgs {
+  return {
+    agents: agents.map((agent) => ({
+      providerAgentId: agent.providerAgentId,
+      agentPublicKey: agent.agentPublicKey,
+    })),
+    expectedOwner: listing.currentOwnerPublicKey,
+    listId: listing.listId,
+  };
+}
 
 /** Test seam: replace the native transport. Returns a restore function. */
 export function setRelinkTransportForTests(next: Partial<Transport>) {
@@ -67,43 +86,37 @@ export const hostedOwnerRelinkApi = {
   },
 
   /**
-   * Re-link exactly `agents` to the current key. Only the confirm button
-   * calls this; the native side signs one new request per call and never
-   * retries on its own.
+   * Re-link exactly `agents` (live agents `listing` reported on an earlier
+   * owner key) to the current key: a Link tap, the batch review's confirm
+   * button, or an auto-link pass the owner turned on. The native side signs
+   * one new request per call, only while the signed-in key is still
+   * `listing`'s and only for agents that list reported, and never retries
+   * on its own.
    */
-  rebind: async (agents: HostedOwnerAgent[]) => {
+  rebind: async (agents: HostedOwnerAgent[], listing: RelinkListing) => {
     if (agents.length === 0 || agents.length > MAX_REBIND_AGENTS) {
       throw new RelinkRequestError("rebind_selection_invalid", null, null);
     }
     try {
-      return await transport.rebind(
-        agents.map((agent) => ({
-          providerAgentId: agent.providerAgentId,
-          agentPublicKey: agent.agentPublicKey,
-        })),
-      );
+      return await transport.rebind(signingArgs(agents, listing));
     } catch (error) {
       throw toRelinkRequestError(error);
     }
   },
 
   /**
-   * Attest exactly `agents` (pending agents from the latest list) with the
+   * Attest exactly `agents` (agents `listing` reported pending) with the
    * current key: a Link tap, or an auto-link pass the owner turned on. The
-   * native side signs one new request per call, only for agents its latest
-   * list reported pending, and never retries on its own.
+   * native side signs one new request per call, only while the signed-in
+   * key is still `listing`'s and only for agents that list reported
+   * pending, and never retries on its own.
    */
-  attestPending: async (agents: HostedOwnerAgent[]) => {
+  attestPending: async (agents: HostedOwnerAgent[], listing: RelinkListing) => {
     if (agents.length === 0 || agents.length > MAX_REBIND_AGENTS) {
       throw new RelinkRequestError("attest_selection_invalid", null, null);
     }
     try {
-      return await transport.attestPending(
-        agents.map((agent) => ({
-          providerAgentId: agent.providerAgentId,
-          agentPublicKey: agent.agentPublicKey,
-        })),
-      );
+      return await transport.attestPending(signingArgs(agents, listing));
     } catch (error) {
       throw toRelinkRequestError(error);
     }

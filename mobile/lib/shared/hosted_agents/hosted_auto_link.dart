@@ -16,7 +16,9 @@ import 'hosted_owner_rebind.dart';
 // on launch, on resume and every 15 minutes, attests every agent the list
 // reports as pending, re-links every agent still on an earlier owner key,
 // and then shows one quiet note naming the agents it linked. Only agents the
-// authenticated list returned are ever signed for.
+// authenticated list returned are ever signed for, and a pass stops before
+// its next signed request once the setting is turned off or the key changes.
+// Repeated whole-request failures back off, with one plain note.
 
 /// Passes repeat this often while the app is in the foreground.
 const hostedAutoLinkInterval = Duration(minutes: 15);
@@ -90,23 +92,55 @@ class HostedAutoLinkMemory {
       '${owner.toLowerCase()}|${agent.providerAgentId}|${agent.agentPublicKey}';
 }
 
+/// An agent a pass could not link for good, and why, in plain words.
+@immutable
+class HostedAutoLinkRefusal {
+  const HostedAutoLinkRefusal({required this.name, required this.reason});
+
+  /// The agent's name and key fingerprint.
+  final String name;
+  final String reason;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HostedAutoLinkRefusal &&
+      other.name == name &&
+      other.reason == reason;
+
+  @override
+  int get hashCode => Object.hash(name, reason);
+
+  @override
+  String toString() => 'HostedAutoLinkRefusal($name: $reason)';
+}
+
 /// The result of one pass.
 @immutable
 class HostedAutoLinkResult {
   const HostedAutoLinkResult({
     this.linked = const [],
+    this.notLinked = const [],
     this.errors = const [],
     this.sent = false,
+    this.cancelled = false,
   });
 
-  /// Names of agents this pass attested or re-linked, in list order.
+  /// Agents this pass attested or re-linked, in list order, each as its
+  /// name and key fingerprint.
   final List<String> linked;
+
+  /// Agents this pass could not link for good. Each is reported once:
+  /// refused agents are not sent again.
+  final List<HostedAutoLinkRefusal> notLinked;
 
   /// Whole-request error codes, if a request failed.
   final List<String> errors;
 
   /// Whether the pass sent any request after listing.
   final bool sent;
+
+  /// Whether `shouldContinue` stopped the pass before it finished.
+  final bool cancelled;
 }
 
 List<List<T>> _chunk<T>(List<T> items, int size) => [
@@ -120,11 +154,15 @@ List<List<T>> _chunk<T>(List<T> items, int size) => [
 /// One auto-link pass for [ownerPublicKey]: list, attest the pending
 /// agents, re-link the stale ones, in requests of at most 20 agents, each a
 /// new request id and proof. A whole-request failure stops the pass; the
-/// next pass starts over from a fresh list.
+/// next pass starts over from a fresh list. [shouldContinue] is checked
+/// after the list and before every signed request: false (the setting was
+/// turned off, the owner signed out or switched keys) stops the pass
+/// without signing anything more.
 Future<HostedAutoLinkResult> runHostedAutoLinkPass({
   required HostedAutoLinkApi api,
   required String ownerPublicKey,
   required HostedAutoLinkMemory memory,
+  bool Function()? shouldContinue,
 }) async {
   final List<HostedAgentSnapshot> agents;
   try {
@@ -138,10 +176,25 @@ Future<HostedAutoLinkResult> runHostedAutoLinkPass({
   final pending = pendingHostedAgents(agents).where(fresh).toList();
   final stale = staleHostedAgents(agents, owner).where(fresh).toList();
   final linked = <String>{};
+  final notLinked = <HostedAutoLinkRefusal>[];
   final errors = <String>[];
   var sent = false;
+  var cancelled = false;
+  bool keepGoing() {
+    if (shouldContinue != null && !shouldContinue()) cancelled = true;
+    return !cancelled;
+  }
+
+  void refuse(HostedAgentSnapshot agent, String reason) {
+    memory.refused.add(HostedAutoLinkMemory.keyFor(owner, agent));
+    notLinked.add(
+      HostedAutoLinkRefusal(name: agent.fingerprintedName, reason: reason),
+    );
+  }
+
   try {
     for (final batch in _chunk(pending, hostedRebindMaxAgents)) {
+      if (!keepGoing()) break;
       sent = true;
       final outcomes = {
         for (final outcome in await api.attestPending(batch))
@@ -155,11 +208,12 @@ Future<HostedAutoLinkResult> runHostedAutoLinkPass({
             linked.add(agent.providerAgentId);
           }
         } else if (outcome == null || !outcome.retryable) {
-          memory.refused.add(HostedAutoLinkMemory.keyFor(owner, agent));
+          refuse(agent, describeAttestRejection(outcome?.code));
         }
       }
     }
     for (final batch in _chunk(stale, hostedRebindMaxAgents)) {
+      if (!keepGoing()) break;
       sent = true;
       final outcomes = {
         for (final outcome in await api.rebind(batch))
@@ -171,7 +225,7 @@ Future<HostedAutoLinkResult> runHostedAutoLinkPass({
           linked.add(agent.providerAgentId);
         } else if (outcome?.status != HostedRebindStatus.alreadyCurrent &&
             !(outcome?.retryable ?? false)) {
-          memory.refused.add(HostedAutoLinkMemory.keyFor(owner, agent));
+          refuse(agent, describeRebindRejection(outcome?.code));
         }
       }
     }
@@ -181,13 +235,12 @@ Future<HostedAutoLinkResult> runHostedAutoLinkPass({
   return HostedAutoLinkResult(
     linked: List.unmodifiable([
       for (final agent in agents)
-        if (linked.contains(agent.providerAgentId))
-          agent.displayName.trim().isEmpty
-              ? 'an agent'
-              : agent.displayName.trim(),
+        if (linked.contains(agent.providerAgentId)) agent.fingerprintedName,
     ]),
+    notLinked: List.unmodifiable(notLinked),
     errors: List.unmodifiable(errors),
     sent: sent,
+    cancelled: cancelled,
   );
 }
 
@@ -196,6 +249,74 @@ String? hostedAutoLinkNote(List<String> names) {
   if (names.isEmpty) return null;
   if (names.length <= 4) return 'Linked: ${names.join(', ')}';
   return 'Linked: ${names.take(3).join(', ')} and ${names.length - 3} more';
+}
+
+/// The note for agents a pass could not link, or `null` when there are
+/// none: one "name: reason" line per agent, at most three, then a count.
+String? hostedAutoLinkRefusedNote(List<HostedAutoLinkRefusal> agents) {
+  if (agents.isEmpty) return null;
+  final title = agents.length == 1
+      ? "Couldn't link an agent"
+      : "Couldn't link ${agents.length} agents";
+  final lines = [
+    title,
+    for (final agent in agents.take(3)) '${agent.name}: ${agent.reason}',
+    if (agents.length > 3) 'And ${agents.length - 3} more.',
+  ];
+  return lines.join('\n');
+}
+
+/// Whole-request failures in a row before passes back off and say so.
+const hostedAutoLinkFailuresBeforeBackoff = 3;
+
+/// The first wait after that; each further failure doubles it.
+const hostedAutoLinkBackoffBase = Duration(minutes: 30);
+
+/// The longest wait between passes that keep failing.
+const hostedAutoLinkBackoffMax = Duration(hours: 8);
+
+/// Backs off passes that keep failing as a whole (offline, a signature the
+/// service refuses, the service down): after three failures in a row, the
+/// next pass waits 30 minutes, then an hour, up to eight hours, and one
+/// plain note says so. A pass that gets through resets it.
+class HostedAutoLinkBackoff {
+  int _failures = 0;
+  DateTime? _notBefore;
+
+  /// Consecutive whole-request failures so far.
+  int get failures => _failures;
+
+  /// Whether a pass may start at [now].
+  bool allows(DateTime now) {
+    final notBefore = _notBefore;
+    return notBefore == null || !now.isBefore(notBefore);
+  }
+
+  /// Record a finished pass. Returns the note to show, once per run of
+  /// failures, or `null`.
+  String? record(HostedAutoLinkResult result, DateTime now) {
+    if (result.cancelled) return null;
+    if (result.errors.isEmpty) {
+      _failures = 0;
+      _notBefore = null;
+      return null;
+    }
+    _failures += 1;
+    if (_failures < hostedAutoLinkFailuresBeforeBackoff) return null;
+    final steps = _failures - hostedAutoLinkFailuresBeforeBackoff;
+    // Capped before shifting, so a long run of failures cannot overflow.
+    final factor = 1 << (steps > 10 ? 10 : steps);
+    final wait = hostedAutoLinkBackoffBase * factor;
+    _notBefore = now.add(
+      wait > hostedAutoLinkBackoffMax ? hostedAutoLinkBackoffMax : wait,
+    );
+    if (_failures != hostedAutoLinkFailuresBeforeBackoff) return null;
+    final reason = describeAttestRequestError(
+      HostedAgentException(result.errors.first),
+    );
+    return "Couldn't link your agents automatically. $reason "
+        'Buzz will keep trying, less often.';
+  }
 }
 
 /// Why a pass may start.

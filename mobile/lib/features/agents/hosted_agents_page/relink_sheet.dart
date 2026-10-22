@@ -233,7 +233,7 @@ class _RelinkRow extends HookConsumerWidget {
       container: true,
       checked: result == null || result.retryable ? selected : null,
       enabled: enabled,
-      label: agent.displayName,
+      label: agent.fingerprintedName,
       value: result?.label,
       excludeSemantics: true,
       onTap: enabled ? onToggle : null,
@@ -250,7 +250,10 @@ class _RelinkRow extends HookConsumerWidget {
                     ? context.colors.error
                     : context.colors.onSurfaceVariant,
               ),
-        title: Text(agent.displayName, style: context.textTheme.bodyLarge),
+        title: Text(
+          agent.fingerprintedName,
+          style: context.textTheme.bodyLarge,
+        ),
         subtitle: result == null
             ? null
             : Text(

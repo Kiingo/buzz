@@ -17,8 +17,36 @@ export type HostedOwnerAgent = {
 
 export type HostedOwnerAgents = {
   currentOwnerPublicKey: string;
+  /**
+   * This list's request id. Signing commands name it, and the native side
+   * signs only for agents this list reported, with the key it was listed for.
+   */
+  listId: string;
   agents: HostedOwnerAgent[];
 };
+
+/** The list a signing request is held to: its id and its owner key. */
+export type RelinkListing = Pick<
+  HostedOwnerAgents,
+  "currentOwnerPublicKey" | "listId"
+>;
+
+/** A short, stable fingerprint of an agent key: its first 8 hex digits. */
+export function agentFingerprint(agentPublicKey: string): string {
+  return agentPublicKey.slice(0, 8).toLowerCase();
+}
+
+/**
+ * How a note names an agent: its name and key fingerprint, so two agents
+ * with the same name (or a name chosen to look like another) stay apart.
+ */
+export function agentLabel(agent: {
+  displayName: string;
+  agentPublicKey: string;
+}): string {
+  const name = agent.displayName.trim() || "An agent";
+  return `${name} (${agentFingerprint(agent.agentPublicKey)})`;
+}
 
 /** One agent's re-link result, as the native command returns it. */
 export type RebindResult = {
@@ -242,7 +270,10 @@ export function describeRequestError(code: string): string {
     case "attest_selection_invalid":
       return "The link request wasn't accepted; update Buzz and try again.";
     case "attest_selection_not_listed":
+    case "rebind_selection_not_listed":
       return "That agent isn't in your latest list; refresh and try again.";
+    case "owner_key_changed":
+      return "You're signed in with a different key now; check your agents again.";
     case "owner_proof_invalid":
       return "Your signature wasn't accepted; check this computer's date and time, then try again.";
     case "owner_proof_replayed":

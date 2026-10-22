@@ -2,30 +2,31 @@
 //!
 //! When an owner rotates their Buzz key, a hosted provider can still hold
 //! their agents under the earlier key. These commands let the owner list
-//! their hosted agents with the owner key the provider holds, and, only on
-//! their explicit confirmation in the app, re-link the agents they chose.
-//! Nothing here runs on its own: the list is read when the owner opens the
-//! settings card, and the re-link is signed only inside the command the
-//! confirm button invokes, once per invocation, with a fresh request id and a
-//! fresh single-use proof.
+//! their hosted agents with the owner key the provider holds and re-link
+//! them, and attest agents the provider minted and holds pending until their
+//! owner vouches for them (`attest-pending`). The renderer decides when: a
+//! Link tap, the batch review's confirm button, or the owner's "auto-link my
+//! new agents" setting, which runs unattended while it is on.
+//!
+//! Because the setting runs unattended, every signing command is bound to
+//! one authenticated list: the renderer passes back that list's id and the
+//! owner key it was listed for, and the command refuses unless the
+//! signed-in key is still that key and every agent it is asked to sign for
+//! was in that list as pending (attest) or as linked to an earlier owner key
+//! (re-link). Each invocation is one request with a fresh request id and a
+//! fresh single-use proof, never retried here; the provider re-checks
+//! ownership regardless.
 //!
 //! The provider API base and its provider id are build-time configuration:
 //! `BUZZ_BUILD_HOSTED_AGENTS_URL` and `BUZZ_BUILD_HOSTED_PROVIDER_ID`, or the
 //! release composition's `BUZZ_HOSTED_API_BASE_URL` and `BUZZ_PROVIDER_ID`
 //! when those are unset, with runtime overrides for development. A build that
 //! has no API base or no provider id hides the feature.
-//!
-//! The same commands attest agents the provider minted and holds pending
-//! until their owner vouches for them (`attest-pending`). The renderer
-//! decides when (a Link tap, or the owner's "auto-link my new agents"
-//! setting); this side signs only agents the most recent authenticated list
-//! for the signed-in key reported as pending, and the provider re-checks
-//! ownership regardless.
 
 mod attach;
 mod request;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -47,48 +48,106 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(20);
 const REBIND_TIMEOUT: Duration = Duration::from_secs(60);
 const ATTEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Pending agents the most recent authenticated list reported, for the key
-/// and community that listed them:
-/// `("<owner key> <community>", {(provider agent id, agent key)})`.
-type ListedPending = (String, HashSet<(String, String)>);
-static LISTED_PENDING: Mutex<Option<ListedPending>> = Mutex::new(None);
+/// What one authenticated list reported, so a later signing command can be
+/// held to it: the list's request id, the key and community that listed it,
+/// the agents it reported pending, and the live agents it reported linked to
+/// an earlier owner key, each as `(provider agent id, agent key)`.
+struct Listing {
+    list_id: String,
+    scope: String,
+    pending: HashSet<(String, String)>,
+    stale: HashSet<(String, String)>,
+}
+
+/// Which list membership a signing command needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Listed {
+    Pending,
+    Stale,
+}
+
+/// Lists kept, newest last. Several, so that a settings card refreshing its
+/// list does not invalidate a pass (or an open review) signing against an
+/// earlier one.
+const MAX_LISTINGS: usize = 8;
+static LISTINGS: Mutex<VecDeque<Listing>> = Mutex::new(VecDeque::new());
 
 fn listing_scope(owner: &str, community_id: &str) -> String {
     format!("{owner} {community_id}")
 }
 
-fn remember_listed_pending(scope: &str, agents: &[OwnerAgent]) {
-    let pending = agents
-        .iter()
-        .filter(|agent| agent.status == request::STATUS_PENDING_ATTESTATION && !agent.deleted)
-        .map(|agent| {
-            (
-                agent.provider_agent_id.clone(),
-                agent.agent_public_key.clone(),
-            )
-        })
+fn remember_listing(list_id: &str, scope: &str, owner: &str, agents: &[OwnerAgent]) {
+    let entry = |agent: &OwnerAgent| {
+        (
+            agent.provider_agent_id.clone(),
+            agent.agent_public_key.clone(),
+        )
+    };
+    let live = agents.iter().filter(|agent| !agent.deleted);
+    let pending = live
+        .clone()
+        .filter(|agent| agent.status == request::STATUS_PENDING_ATTESTATION)
+        .map(entry)
         .collect();
-    if let Ok(mut listed) = LISTED_PENDING.lock() {
-        *listed = Some((scope.to_string(), pending));
+    let stale = live
+        .filter(|agent| {
+            agent.status == request::STATUS_ACTIVE
+                && agent
+                    .owner_public_key
+                    .as_deref()
+                    .is_some_and(|holder| holder != owner)
+        })
+        .map(entry)
+        .collect();
+    if let Ok(mut listings) = LISTINGS.lock() {
+        listings.retain(|listing| listing.list_id != list_id);
+        listings.push_back(Listing {
+            list_id: list_id.to_string(),
+            scope: scope.to_string(),
+            pending,
+            stale,
+        });
+        while listings.len() > MAX_LISTINGS {
+            listings.pop_front();
+        }
     }
 }
 
-/// Whether every selection was listed as pending in `scope`.
-fn all_listed_pending(scope: &str, selected: &[RebindSelection]) -> bool {
-    let Ok(listed) = LISTED_PENDING.lock() else {
+/// Whether the list `list_id`, listed in `scope`, reported every selection
+/// as `kind`. Ids are compared verbatim; agent keys case-insensitively.
+fn all_listed(list_id: &str, scope: &str, kind: Listed, selected: &[RebindSelection]) -> bool {
+    let Ok(listings) = LISTINGS.lock() else {
         return false;
     };
-    let Some((listed_scope, pending)) = listed.as_ref() else {
+    let Some(listing) = listings
+        .iter()
+        .find(|listing| listing.list_id == list_id && listing.scope == scope)
+    else {
         return false;
     };
-    listed_scope == scope
+    let set = match kind {
+        Listed::Pending => &listing.pending,
+        Listed::Stale => &listing.stale,
+    };
+    !selected.is_empty()
         && selected.iter().all(|agent| {
-            pending.contains(&(
-                agent.provider_agent_id.trim().to_string(),
+            set.contains(&(
+                agent.provider_agent_id.clone(),
                 agent.agent_public_key.to_ascii_lowercase(),
             ))
         })
 }
+
+/// Refuse with `owner_key_changed` unless the signed-in key is still
+/// `expected_owner`, the key the list being signed against was listed for.
+fn bound_owner(signed_in: &str, expected_owner: &str) -> Result<(), String> {
+    if signed_in.eq_ignore_ascii_case(expected_owner.trim()) {
+        Ok(())
+    } else {
+        Err(error_string(None, "owner_key_changed", None))
+    }
+}
+
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
 /// The first non-empty value: the runtime override, then each build-time
@@ -237,6 +296,8 @@ pub(crate) async fn post(
 pub struct HostedOwnerAgents {
     /// The signed-in key the agents should be linked to.
     pub current_owner_public_key: String,
+    /// This list's request id; signing commands name it to be held to it.
+    pub list_id: String,
     pub agents: Vec<OwnerAgent>,
 }
 
@@ -246,7 +307,8 @@ pub fn hosted_owner_relink_available(state: State<'_, AppState>) -> bool {
     route().is_some() && !community_id_for_relay(&relay_ws_url_with_override(&state)).is_empty()
 }
 
-/// List the owner's hosted agents. Read-only; the owner opens the view.
+/// List the owner's hosted agents. Read-only: the settings card, a Link
+/// tap's refresh, or an auto-link pass reads it.
 #[tauri::command]
 pub async fn hosted_owner_relink_list(
     state: State<'_, AppState>,
@@ -270,19 +332,30 @@ pub async fn hosted_owner_relink_list(
     let agents = request::parse_list_response(&response, &request_id)
         .map_err(|code| error_string(None, &code, None))?;
     let owner = keys.public_key().to_hex();
-    remember_listed_pending(&listing_scope(&owner, &community_id), &agents);
+    remember_listing(
+        &request_id,
+        &listing_scope(&owner, &community_id),
+        &owner,
+        &agents,
+    );
     Ok(HostedOwnerAgents {
         current_owner_public_key: owner,
+        list_id: request_id,
         agents,
     })
 }
 
-/// Re-link the agents the owner selected to the current key. The confirm
-/// button is the only caller. One invocation is one request: a new request
-/// id, one attestation per selected agent, one new proof, no retries.
+/// Re-link agents to the current key: a Link tap, the batch review's
+/// confirm button, or the owner's auto-link setting. Signs only while the
+/// signed-in key is still `expected_owner`, and only for agents the list
+/// `list_id` reported as live and linked to an earlier owner key. One
+/// invocation is one request: a new request id, one attestation per agent,
+/// one new proof, no retries.
 #[tauri::command]
 pub async fn hosted_owner_relink_rebind(
     agents: Vec<RebindSelection>,
+    expected_owner: String,
+    list_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<RebindResult>, String> {
     let route = route().ok_or_else(|| error_string(None, "hosted_relink_unavailable", None))?;
@@ -291,6 +364,16 @@ pub async fn hosted_owner_relink_rebind(
         return Err(error_string(None, "hosted_relink_unavailable", None));
     }
     let keys = state.signing_keys()?;
+    let owner = keys.public_key().to_hex();
+    bound_owner(&owner, &expected_owner)?;
+    if !all_listed(
+        &list_id,
+        &listing_scope(&owner, &community_id),
+        Listed::Stale,
+        &agents,
+    ) {
+        return Err(error_string(None, "rebind_selection_not_listed", None));
+    }
     let request_id = uuid::Uuid::new_v4().to_string();
     let body = request::build_rebind_request(
         &keys,
@@ -308,17 +391,20 @@ pub async fn hosted_owner_relink_rebind(
         REBIND_TIMEOUT,
     )
     .await?;
-    request::parse_rebind_response(&response, &request_id, &keys.public_key().to_hex(), &agents)
+    request::parse_rebind_response(&response, &request_id, &owner, &agents)
         .map_err(|code| error_string(None, &code, None))
 }
 
 /// Attest pending agents for the current key: a Link tap, or the owner's
-/// auto-link setting. One invocation is one request: a new request id, one
-/// attestation per agent, one new proof, no retries. Only agents the most
-/// recent list for this key reported as pending are signed.
+/// auto-link setting. Signs only while the signed-in key is still
+/// `expected_owner`, and only for agents the list `list_id` reported as
+/// pending. One invocation is one request: a new request id, one
+/// attestation per agent, one new proof, no retries.
 #[tauri::command]
 pub async fn hosted_owner_relink_attest_pending(
     agents: Vec<RebindSelection>,
+    expected_owner: String,
+    list_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<AttestResult>, String> {
     let route = route().ok_or_else(|| error_string(None, "hosted_relink_unavailable", None))?;
@@ -328,7 +414,13 @@ pub async fn hosted_owner_relink_attest_pending(
     }
     let keys = state.signing_keys()?;
     let owner = keys.public_key().to_hex();
-    if !all_listed_pending(&listing_scope(&owner, &community_id), &agents) {
+    bound_owner(&owner, &expected_owner)?;
+    if !all_listed(
+        &list_id,
+        &listing_scope(&owner, &community_id),
+        Listed::Pending,
+        &agents,
+    ) {
         return Err(error_string(None, "attest_selection_not_listed", None));
     }
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -383,15 +475,18 @@ pub async fn hosted_owner_relink_list_unlinked(
 }
 
 #[cfg(test)]
-mod listed_pending_tests {
+mod listed_tests {
     use super::*;
 
-    fn agent(id: &str, key: char, status: &str, deleted: bool) -> OwnerAgent {
+    const OWNER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const OLD: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+
+    fn agent(id: &str, key: char, status: &str, owner: Option<&str>, deleted: bool) -> OwnerAgent {
         OwnerAgent {
             provider_agent_id: id.into(),
             agent_public_key: key.to_string().repeat(64),
             display_name: id.into(),
-            owner_public_key: None,
+            owner_public_key: owner.map(str::to_string),
             deleted,
             status: status.into(),
             kiingo_agent_id: None,
@@ -405,36 +500,86 @@ mod listed_pending_tests {
         }
     }
 
-    // One test, because the remembered list is process-wide.
+    // One test, because the remembered lists are process-wide.
     #[test]
-    fn only_agents_the_last_list_reported_pending_for_this_key_are_signed() {
-        let owner = listing_scope(&"1".repeat(64), "chat.example.test");
-        assert!(!all_listed_pending(&owner, &[pick("buzz:ada", 'a')]));
-        remember_listed_pending(
-            &owner,
-            &[
-                agent("buzz:ada", 'a', "pending_attestation", false),
-                agent("buzz:mira", 'b', "active", false),
-                agent("buzz:gone", 'c', "pending_attestation", true),
-            ],
-        );
-        assert!(all_listed_pending(&owner, &[pick("buzz:ada", 'a')]));
-        assert!(all_listed_pending(&owner, &[pick(" buzz:ada ", 'a')]));
-        // Live, deleted, unknown, or a different key: refused.
-        assert!(!all_listed_pending(&owner, &[pick("buzz:mira", 'b')]));
-        assert!(!all_listed_pending(&owner, &[pick("buzz:gone", 'c')]));
-        assert!(!all_listed_pending(&owner, &[pick("buzz:ada", 'd')]));
-        assert!(!all_listed_pending(
-            &owner,
-            &[pick("buzz:ada", 'a'), pick("buzz:new", 'e')]
-        ));
-        // Another signed-in key never inherits the list.
-        assert!(!all_listed_pending(
-            &"2".repeat(64),
+    fn signing_is_held_to_one_list_for_one_key() {
+        let scope = listing_scope(OWNER, "chat.example.test");
+        assert!(!all_listed(
+            "list-1",
+            &scope,
+            Listed::Pending,
             &[pick("buzz:ada", 'a')]
         ));
-        // A newer list replaces the old one.
-        remember_listed_pending(&owner, &[]);
-        assert!(!all_listed_pending(&owner, &[pick("buzz:ada", 'a')]));
+        remember_listing(
+            "list-1",
+            &scope,
+            OWNER,
+            &[
+                agent("buzz:ada", 'a', "pending_attestation", None, false),
+                agent("buzz:mira", 'b', "active", Some(OWNER), false),
+                agent("buzz:gone", 'c', "pending_attestation", None, true),
+                agent("buzz:sage", 'd', "active", Some(OLD), false),
+                agent("buzz:shed", 'e', "active", Some(OLD), true),
+                agent("buzz:anon", 'f', "active", None, false),
+            ],
+        );
+        let pending =
+            |picks: &[RebindSelection]| all_listed("list-1", &scope, Listed::Pending, picks);
+        let stale = |picks: &[RebindSelection]| all_listed("list-1", &scope, Listed::Stale, picks);
+        assert!(pending(&[pick("buzz:ada", 'a')]));
+        // Ids are verbatim; live, deleted, unknown or another key: refused.
+        assert!(!pending(&[pick(" buzz:ada ", 'a')]));
+        assert!(!pending(&[pick("buzz:mira", 'b')]));
+        assert!(!pending(&[pick("buzz:gone", 'c')]));
+        assert!(!pending(&[pick("buzz:ada", 'd')]));
+        assert!(!pending(&[pick("buzz:ada", 'a'), pick("buzz:new", 'e')]));
+        assert!(!pending(&[]));
+        // Re-link: only live agents the list held under an earlier key.
+        assert!(stale(&[pick("buzz:sage", 'd')]));
+        assert!(!stale(&[pick("buzz:ada", 'a')]));
+        assert!(!stale(&[pick("buzz:mira", 'b')]));
+        assert!(!stale(&[pick("buzz:shed", 'e')]));
+        assert!(!stale(&[pick("buzz:anon", 'f')]));
+        assert!(!stale(&[pick("buzz:sage", 'd'), pick("buzz:mira", 'b')]));
+        // Another signed-in key or community never inherits the list.
+        let other = listing_scope(OLD, "chat.example.test");
+        assert!(!all_listed(
+            "list-1",
+            &other,
+            Listed::Pending,
+            &[pick("buzz:ada", 'a')]
+        ));
+        // An unknown list id is refused.
+        assert!(!all_listed(
+            "list-9",
+            &scope,
+            Listed::Pending,
+            &[pick("buzz:ada", 'a')]
+        ));
+
+        // A newer list (a settings card refresh) does not invalidate the
+        // older one a pass is signing against...
+        remember_listing("list-2", &scope, OWNER, &[]);
+        assert!(pending(&[pick("buzz:ada", 'a')]));
+        assert!(!all_listed(
+            "list-2",
+            &scope,
+            Listed::Pending,
+            &[pick("buzz:ada", 'a')]
+        ));
+        // ...but only the most recent few lists are kept.
+        for index in 3..(3 + MAX_LISTINGS) {
+            remember_listing(&format!("list-{index}"), &scope, OWNER, &[]);
+        }
+        assert!(!pending(&[pick("buzz:ada", 'a')]));
+    }
+
+    #[test]
+    fn signing_needs_the_key_the_list_was_listed_for() {
+        assert!(bound_owner(OWNER, OWNER).is_ok());
+        assert!(bound_owner(OWNER, &OWNER.to_ascii_uppercase()).is_ok());
+        let error = bound_owner(OWNER, OLD).unwrap_err();
+        assert!(error.contains("owner_key_changed"));
+        assert!(bound_owner(OWNER, "").is_err());
     }
 }

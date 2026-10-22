@@ -63,6 +63,19 @@ class HostedAgentSnapshot {
   /// A live agent the owner can manage.
   bool get isActive => status == hostedAgentStatusActive;
 
+  /// The first 8 hex digits of [agentPublicKey], shown beside the name so
+  /// two agents with the same name (or one named to look like another) can
+  /// be told apart.
+  String get keyFingerprint => agentPublicKey.length <= 8
+      ? agentPublicKey
+      : agentPublicKey.substring(0, 8);
+
+  /// [displayName] with [keyFingerprint], as notes and Link rows name it.
+  String get fingerprintedName {
+    final name = displayName.trim();
+    return '${name.isEmpty ? 'An agent' : name} ($keyFingerprint)';
+  }
+
   bool get isDeleted =>
       desiredState == 'deleted' ||
       observedState == 'deleted' ||

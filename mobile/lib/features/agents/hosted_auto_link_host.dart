@@ -13,6 +13,9 @@ import '../../shared/hosted_agents/hosted_auto_link.dart';
 /// shell. While the owner's setting is on and hosted agents are available,
 /// it runs a pass on launch, on resume and every 15 minutes in the
 /// foreground, and shows a quiet "Linked: …" note when a pass linked anyone.
+/// A pass in flight stops before its next signed request once the setting
+/// is off or the signed-in key changes; agents refused for good are named
+/// once, and passes that keep failing back off with one plain note.
 class HostedAutoLinkHost extends HookConsumerWidget {
   /// Wraps [child]; renders nothing of its own.
   const HostedAutoLinkHost({super.key, required this.child});
@@ -33,8 +36,30 @@ class HostedAutoLinkHost extends HookConsumerWidget {
       } on HostedAgentException {
         return null;
       }
+      // Refusals and backoff are remembered for this key and mount only.
       final memory = HostedAutoLinkMemory();
+      final backoff = HostedAutoLinkBackoff();
       var current = true;
+      // Read live, not from this effect's snapshot: the setting or the key
+      // can change while a pass is between requests.
+      bool shouldContinue() {
+        if (!current || !context.mounted) return false;
+        if (!ref.read(hostedAutoLinkSettingProvider)) return false;
+        final live = ref.read(hostedAgentClientProvider);
+        if (!identical(live, client)) return false;
+        try {
+          return live?.ownerPublicKey().toLowerCase() == owner.toLowerCase();
+        } on HostedAgentException {
+          return false;
+        }
+      }
+
+      void say(String text) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text(text), duration: const Duration(seconds: 4)),
+        );
+      }
+
       final api = HostedAutoLinkClientApi(
         client,
         () => ref.read(hostedAgentCatalogProvider.future),
@@ -44,14 +69,17 @@ class HostedAutoLinkHost extends HookConsumerWidget {
             WidgetsBinding.instance.lifecycleState == null ||
             WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
         runPass: () async {
+          if (!backoff.allows(DateTime.now())) return;
           final result = await runHostedAutoLinkPass(
             api: api,
             ownerPublicKey: owner,
             memory: memory,
+            shouldContinue: shouldContinue,
           );
           // A pass that finishes after the setting changed or the key
           // changed says nothing.
-          if (!current || !context.mounted) return;
+          if (!shouldContinue()) return;
+          final failed = backoff.record(result, DateTime.now());
           if (result.sent) {
             unawaited(
               ref
@@ -60,15 +88,11 @@ class HostedAutoLinkHost extends HookConsumerWidget {
                   .catchError((Object _) {}),
             );
           }
-          final note = hostedAutoLinkNote(result.linked);
-          if (note != null) {
-            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-              SnackBar(
-                content: Text(note),
-                duration: const Duration(seconds: 4),
-              ),
-            );
+          if (hostedAutoLinkNote(result.linked) case final note?) say(note);
+          if (hostedAutoLinkRefusedNote(result.notLinked) case final note?) {
+            say(note);
           }
+          if (failed != null) say(failed);
         },
       );
       scheduler.value = next;
