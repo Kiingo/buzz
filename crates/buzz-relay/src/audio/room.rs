@@ -46,6 +46,25 @@ pub struct AudioPeer {
     /// revision and fires the joined delta) or by [`Room::mark_committed`]
     /// (flag only, no delta — used in tests). [Fix 7: FI-TRACE-PENDING-PEER-LEAK]
     pub committed: bool,
+    /// Set for a remote participant whose frames leave through a shared
+    /// delivery path (see [`DeliveryGroup`]); `None` for a local client.
+    pub delivery_group: Option<DeliveryGroup>,
+}
+
+/// Remote participants that share one delivery path out of this room.
+///
+/// Every participant a non-owner pod registers is reached through the same
+/// link to that pod, and that pod hands each frame it receives to all of its
+/// local clients. Fan-out therefore sends a frame to one member of each group
+/// rather than to every member; sending it per member would make every client
+/// on that pod hear the frame once per co-located client. `link` identifies the
+/// destination opaquely and `generation` keeps differently fenced paths apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeliveryGroup {
+    /// The destination the group's frames leave through.
+    pub link: [u8; 32],
+    /// The fenced generation the group's members were registered under.
+    pub generation: u64,
 }
 
 /// Control message for a single peer (separate from audio frames).
@@ -356,6 +375,7 @@ impl Room {
                 epoch,
                 protocol_version: requested_version,
                 committed: false, // marked true by mark_committed after tx commit
+                delivery_group: None,
             },
         );
         g.roster_revision = g.roster_revision.wrapping_add(1);
@@ -422,6 +442,7 @@ impl Room {
                 epoch,
                 protocol_version: requested_version,
                 committed: false, // marked true by mark_committed after tx commit
+                delivery_group: None,
             },
         );
         g.roster_revision = g.roster_revision.wrapping_add(1);
@@ -512,6 +533,27 @@ impl Room {
         pubkey: String,
         requested_version: u8,
     ) -> Result<PendingPeerAdmission, AdmissionError> {
+        self.add_peer_pending_in(pubkey, requested_version, None)
+    }
+
+    /// [`Self::add_peer_pending`] for a remote participant reached through
+    /// `group`'s shared delivery path: fan-out sends each frame to one member
+    /// of the group, not to every member.
+    pub fn add_remote_peer_pending(
+        &self,
+        pubkey: String,
+        requested_version: u8,
+        group: DeliveryGroup,
+    ) -> Result<PendingPeerAdmission, AdmissionError> {
+        self.add_peer_pending_in(pubkey, requested_version, Some(group))
+    }
+
+    fn add_peer_pending_in(
+        &self,
+        pubkey: String,
+        requested_version: u8,
+        delivery_group: Option<DeliveryGroup>,
+    ) -> Result<PendingPeerAdmission, AdmissionError> {
         let mut g = self.guard.lock().map_err(|_| AdmissionError::Ended)?;
         if g.ended {
             return Err(AdmissionError::Ended);
@@ -543,6 +585,7 @@ impl Room {
                 epoch,
                 protocol_version: requested_version,
                 committed: false, // commit_peer publishes the admission
+                delivery_group,
             },
         );
         // No roster_revision bump; no roster_tx send — deferred to commit_peer.
@@ -603,6 +646,7 @@ impl Room {
                 epoch,
                 protocol_version: requested_version,
                 committed: false, // commit_peer publishes the admission
+                delivery_group: None,
             },
         );
         // No roster_revision bump; no roster_tx send — deferred to commit_peer.
@@ -745,12 +789,7 @@ impl Room {
         prefixed.extend_from_slice(&frame);
         let prefixed = prefixed.freeze();
 
-        for entry in self.peers.iter() {
-            if *entry.key() == sender_id {
-                continue;
-            }
-            let _ = entry.audio_tx.try_send(prefixed.clone());
-        }
+        self.fan_out(&prefixed, |peer_id, _| *peer_id == sender_id);
     }
 
     /// Deliver an already-`[peer_index]`-prefixed frame that arrived over the
@@ -763,11 +802,31 @@ impl Room {
     /// round-tripped owner→back-to-their-pod from hearing themselves. Drops on
     /// full — real-time audio never queues.
     pub fn deliver_prefixed(&self, author_index: u8, prefixed: Bytes) {
+        self.fan_out(&prefixed, |_, peer| peer.peer_index == author_index);
+    }
+
+    /// Hand `frame` to every peer `skip` doesn't exclude, and to one member of
+    /// each [`DeliveryGroup`]: the group's pod re-delivers it to all of its
+    /// clients. A member whose queue is full doesn't count as delivered, so the
+    /// next member of its group is tried. Drops on full — real-time audio never
+    /// queues.
+    fn fan_out(&self, frame: &Bytes, skip: impl Fn(&Uuid, &AudioPeer) -> bool) {
+        let mut reached: Vec<DeliveryGroup> = Vec::new();
         for entry in self.peers.iter() {
-            if entry.peer_index == author_index {
+            if skip(entry.key(), entry.value()) {
                 continue;
             }
-            let _ = entry.audio_tx.try_send(prefixed.clone());
+            match entry.delivery_group {
+                None => {
+                    let _ = entry.audio_tx.try_send(frame.clone());
+                }
+                Some(group) if !reached.contains(&group) => {
+                    if entry.audio_tx.try_send(frame.clone()).is_ok() {
+                        reached.push(group);
+                    }
+                }
+                Some(_) => {}
+            }
         }
     }
 
