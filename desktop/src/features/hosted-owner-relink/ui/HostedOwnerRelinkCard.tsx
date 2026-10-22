@@ -1,9 +1,10 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, KeyRound, ShieldAlert } from "lucide-react";
+import { CheckCircle2, KeyRound, Link2, ShieldAlert } from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
+import { Switch } from "@/shared/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -13,28 +14,37 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 
+import { relinkQueryKeys, writeAutoLinkSetting } from "../lib/autoLink";
 import { hostedOwnerRelinkApi } from "../lib/client";
 import {
   agentsToSend,
   currentAgents,
+  describeAttestOutcome,
   describeOutcome,
+  isAttested,
   isRetryable,
+  isRetryableAttest,
   MAX_REBIND_AGENTS,
   mergeResults,
+  pendingAgents,
   selectableAgents,
   staleAgents,
   toRelinkRequestError,
   type HostedOwnerAgent,
+  type HostedOwnerAgents,
   type RebindResult,
 } from "../lib/relink";
+import { useAutoLinkSetting } from "./HostedAutoLinkExtension";
 
-const availableQueryKey = ["hosted-owner-relink", "available"] as const;
-const agentsQueryKey = ["hosted-owner-relink", "agents"] as const;
+const availableQueryKey = relinkQueryKeys.available;
+const agentsQueryKey = relinkQueryKeys.agents;
 
 /**
- * Profile settings: offers to re-link hosted agents that are still linked to
- * an earlier owner key. Nothing is signed until the owner confirms in the
- * review dialog, and only for the agents they left selected.
+ * Profile settings: the "Auto-link my new agents" setting, a Link button for
+ * each agent waiting for its owner and each agent still linked to an earlier
+ * owner key, and the batch re-link review. A Link tap signs for that one
+ * agent; the review signs only for the agents the owner left selected; the
+ * setting signs in the background only while it is on.
  */
 export function HostedOwnerRelinkCard() {
   const available = useQuery({
@@ -81,12 +91,26 @@ function RelinkSection() {
   }
   if (!view) return null;
   const stale = staleAgents(view);
-  if (stale.length === 0 && !open) return null;
+  const pending = pendingAgents(view);
 
   return (
     <section className="mt-8 min-w-0" data-testid="settings-hosted-relink">
+      <AutoLinkSetting owner={view.currentOwnerPublicKey} />
+      {pending.length > 0 ? (
+        <LinkList
+          agents={pending}
+          kind="attest"
+          testId="hosted-link-pending"
+          title={
+            pending.length === 1
+              ? `${pending[0]?.displayName} is waiting for you to link it.`
+              : `${pending.length} agents are waiting for you to link them.`
+          }
+          view={view}
+        />
+      ) : null}
       {stale.length > 0 ? (
-        <div className="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
+        <div className="mt-3 space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
           <p className="flex items-start gap-2 text-sm">
             <KeyRound aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
@@ -98,17 +122,26 @@ function RelinkSection() {
                 : `${stale.length} agents are still linked to your old key.`}
             </span>
           </p>
-          <Button
-            data-testid="hosted-relink-open"
-            onClick={() => {
-              setReview((value) => value + 1);
-              setOpen(true);
-            }}
-            size="sm"
-            type="button"
-          >
-            Re-link agents…
-          </Button>
+          <LinkList
+            agents={stale}
+            kind="rebind"
+            testId="hosted-link-stale"
+            view={view}
+          />
+          {stale.length > 1 ? (
+            <Button
+              data-testid="hosted-relink-open"
+              onClick={() => {
+                setReview((value) => value + 1);
+                setOpen(true);
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Review and re-link all…
+            </Button>
+          ) : null}
         </div>
       ) : null}
       <RelinkDialog
@@ -119,6 +152,166 @@ function RelinkSection() {
         stale={stale}
       />
     </section>
+  );
+}
+
+/** The owner's "Auto-link my new agents" switch for the signed-in key. */
+function AutoLinkSetting({ owner }: { owner: string }) {
+  const enabled = useAutoLinkSetting(owner);
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <label
+          className="text-sm font-medium text-foreground"
+          htmlFor="hosted-auto-link-switch"
+        >
+          Auto-link my new agents
+        </label>
+        <p className="text-sm text-muted-foreground" id="hosted-auto-link-copy">
+          While Buzz is open, it signs for agents you own as they are created
+          and re-links agents still on an old key, then tells you which ones it
+          linked.
+        </p>
+      </div>
+      <Switch
+        aria-describedby="hosted-auto-link-copy"
+        checked={enabled}
+        data-testid="hosted-auto-link-toggle"
+        id="hosted-auto-link-switch"
+        onCheckedChange={(checked) => writeAutoLinkSetting(owner, checked)}
+      />
+    </div>
+  );
+}
+
+type LinkState = {
+  busy: boolean;
+  label?: string;
+  failed?: boolean;
+  done?: boolean;
+};
+
+/**
+ * One row per agent with its own Link button. A tap signs for that agent
+ * only: one new request and proof, attest-pending for a waiting agent or
+ * re-link for one on an old key.
+ */
+function LinkList({
+  agents,
+  kind,
+  title,
+  testId,
+  view,
+}: {
+  agents: HostedOwnerAgent[];
+  kind: "attest" | "rebind";
+  title?: string;
+  testId: string;
+  view: HostedOwnerAgents;
+}) {
+  const queryClient = useQueryClient();
+  const [states, setStates] = React.useState<Record<string, LinkState>>({});
+  const owner = view.currentOwnerPublicKey;
+
+  const link = async (agent: HostedOwnerAgent) => {
+    const id = agent.providerAgentId;
+    if (states[id]?.busy || states[id]?.done) return;
+    setStates((previous) => ({ ...previous, [id]: { busy: true } }));
+    let next: LinkState;
+    try {
+      if (kind === "attest") {
+        const [result] = await hostedOwnerRelinkApi.attestPending([agent]);
+        const linked = isAttested(result);
+        next = {
+          busy: false,
+          done: linked || (result !== undefined && !isRetryableAttest(result)),
+          failed: !linked,
+          label: result ? describeAttestOutcome(result) : undefined,
+        };
+      } else {
+        const [result] = await hostedOwnerRelinkApi.rebind([agent]);
+        const linked =
+          result?.outcome === "rebound" ||
+          result?.outcome === "already_current";
+        next = {
+          busy: false,
+          done: linked || (result !== undefined && !isRetryable(result)),
+          failed: !linked,
+          label: result ? describeOutcome(result) : undefined,
+        };
+      }
+    } catch (error) {
+      next = {
+        busy: false,
+        failed: true,
+        label: toRelinkRequestError(error).message,
+      };
+    }
+    setStates((previous) => ({ ...previous, [id]: next }));
+    void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
+  };
+
+  return (
+    <div className="mt-3 space-y-2" data-testid={testId}>
+      {title ? (
+        <p className="flex items-start gap-2 text-sm">
+          <Link2 aria-hidden className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="font-medium text-foreground">{title}</span>
+        </p>
+      ) : null}
+      {agents.map((agent) => {
+        const state = states[agent.providerAgentId];
+        const rowId = `${testId}-${agent.providerAgentId}`;
+        return (
+          <div
+            className="flex items-start justify-between gap-3 text-sm"
+            data-testid={rowId}
+            key={`${owner}:${agent.providerAgentId}`}
+          >
+            <div className="min-w-0">
+              <p className="text-foreground">{agent.displayName}</p>
+              {state?.label ? (
+                <p
+                  className={
+                    state.failed
+                      ? "text-xs text-destructive"
+                      : "text-xs text-muted-foreground"
+                  }
+                  id={`${rowId}-result`}
+                  role="status"
+                >
+                  {state.label}
+                </p>
+              ) : null}
+            </div>
+            {state?.done && !state.failed ? (
+              <CheckCircle2
+                aria-hidden
+                className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500"
+              />
+            ) : state?.done ? (
+              <ShieldAlert
+                aria-hidden
+                className="mt-0.5 h-4 w-4 shrink-0 text-destructive"
+              />
+            ) : (
+              <Button
+                aria-describedby={state?.label ? `${rowId}-result` : undefined}
+                aria-label={`Link ${agent.displayName}`}
+                data-testid={`${rowId}-link`}
+                disabled={state?.busy === true}
+                onClick={() => void link(agent)}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {state?.busy ? "Linking…" : state?.failed ? "Retry" : "Link"}
+              </Button>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

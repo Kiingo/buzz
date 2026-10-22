@@ -107,6 +107,7 @@ import { AppProfilePanelProvider } from "@/app/AppProfilePanelProvider";
 import { AppWorkflowEditorOverlayProvider } from "@/app/AppWorkflowEditorOverlayProvider";
 import { LazySettingsScreen } from "@/app/LazySettingsScreen";
 import { IdentityRotationExtension } from "@/extensions/identity-rotation/IdentityRotationExtension";
+import { HostedAutoLinkExtension } from "@/features/hosted-owner-relink/ui/HostedAutoLinkExtension";
 const EMPTY_CHANNELS: Channel[] = [];
 export function AppShell() {
   useWebviewZoomShortcuts();
@@ -710,6 +711,7 @@ export function AppShell() {
         />
       ) : null}
       {!isHuddleRoom ? <IdentityRotationExtension /> : null}
+      {!isHuddleRoom ? <HostedAutoLinkExtension /> : null}
       <ChannelNavigationProvider channels={channels}>
         <AppShellProvider
           value={{

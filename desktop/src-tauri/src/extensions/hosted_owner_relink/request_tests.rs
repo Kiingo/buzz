@@ -330,3 +330,263 @@ fn rebind_response_for_another_request_owner_or_agent_is_refused() {
         );
     }
 }
+
+#[test]
+fn attest_pending_request_is_the_rebind_body_with_the_attest_action() {
+    let owner = owner();
+    let ada = agent_key('4');
+    let mira = agent_key('5');
+    let sage = agent_key('6');
+    let selected = [selection("buzz:ada", &ada), selection("buzz:mira", &mira)];
+    let body = build_attest_pending_request(
+        &owner,
+        "provider-x",
+        "chat.example.test",
+        "req-a",
+        &selected,
+        NOW,
+    )
+    .unwrap();
+
+    let mut keys = body
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    keys.sort();
+    assert_eq!(
+        keys,
+        ["agents", "contract_version", "owner_proof", "request_id"]
+    );
+
+    let mut without_proof = body.clone();
+    without_proof.as_object_mut().unwrap().remove("owner_proof");
+    assert_eq!(
+        proof_tags(&body),
+        vec![
+            vec!["action".to_string(), "attest_pending".into()],
+            vec!["provider".into(), "provider-x".into()],
+            vec!["request".into(), "req-a".into()],
+            vec!["agent".into(), String::new()],
+            vec!["community".into(), "chat.example.test".into()],
+            vec!["payload".into(), canonical_sha256(&without_proof)],
+            vec!["expires".into(), (NOW + 300).to_string()],
+        ]
+    );
+    let proof = Event::from_json(body["owner_proof"].to_string()).unwrap();
+    proof.verify().unwrap();
+    assert_eq!(proof.pubkey, owner.public_key());
+    assert_eq!(proof.kind, Kind::Custom(27_236));
+    assert_eq!(proof.content, "buzz-provider-owner-v1");
+
+    let agents = body["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 2);
+    for (agent, key) in agents.iter().zip([&ada, &mira]) {
+        assert_eq!(agent.as_object().unwrap().len(), 3);
+        let attestation = agent["owner_attestation"].as_str().unwrap();
+        assert!(attestation.len() <= 512);
+        assert!(verify_attestation(attestation, key));
+        assert!(!verify_attestation(attestation, &sage));
+    }
+
+    // The same agents re-linked sign the same body under a different action.
+    let rebind = build_rebind_request(
+        &owner,
+        "provider-x",
+        "chat.example.test",
+        "req-a",
+        &selected,
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(proof_tags(&rebind)[0][1], "rebind_owner_key");
+    assert_eq!(proof_tags(&rebind)[5], proof_tags(&body)[5]);
+    assert_ne!(rebind["owner_proof"]["id"], body["owner_proof"]["id"]);
+}
+
+#[test]
+fn invalid_attest_selections_sign_nothing() {
+    let owner = owner();
+    let ada = agent_key('4');
+    let build = |selected: &[RebindSelection]| {
+        build_attest_pending_request(&owner, "p", "c", "r", selected, NOW)
+    };
+    assert_eq!(build(&[]).unwrap_err(), "attest_selection_invalid");
+    let many = (0..=MAX_REBIND_AGENTS)
+        .map(|index| selection(&format!("buzz:{index}"), &ada))
+        .collect::<Vec<_>>();
+    assert_eq!(build(&many).unwrap_err(), "attest_selection_invalid");
+    assert_eq!(
+        build(&[selection("buzz:ada", &ada), selection("buzz:ada", &ada)]).unwrap_err(),
+        "attest_selection_invalid"
+    );
+    assert_eq!(
+        build(&[selection(" ", &ada)]).unwrap_err(),
+        "attest_selection_invalid"
+    );
+    let own = owner.public_key().to_hex();
+    assert_eq!(
+        build(&[selection("buzz:self", &own)]).unwrap_err(),
+        "owner_attestation_invalid"
+    );
+}
+
+#[test]
+fn list_response_reads_status_and_kiingo_agent_id() {
+    let ada = agent_key('4');
+    let mira = agent_key('5');
+    let sage = agent_key('6');
+    let id = "0a1b2c3d-0000-4000-8000-00000000abcd";
+    let agents = parse_list_response(
+        &json!({
+            "contract_version": 1,
+            "correlation_id": "req-l",
+            "agents": [
+                {"provider_agent_id": "buzz:ada", "agent_public_key": ada,
+                 "display_name": "Ada", "owner_public_key": null,
+                 "status": "pending_attestation", "kiingo_agent_id": id.to_uppercase()},
+                {"provider_agent_id": "buzz:mira", "agent_public_key": mira,
+                 "display_name": "Mira", "status": "active", "kiingo_agent_id": "not-a-uuid"},
+                {"provider_agent_id": "buzz:sage", "agent_public_key": sage,
+                 "display_name": "Sage", "status": "frozen"},
+                {"provider_agent_id": "buzz:old", "agent_public_key": sage,
+                 "display_name": "Old"}
+            ]
+        }),
+        "req-l",
+    )
+    .unwrap();
+    let statuses = agents
+        .iter()
+        .map(|agent| agent.status.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        statuses,
+        ["pending_attestation", "active", "unknown", "active"]
+    );
+    assert_eq!(agents[0].kiingo_agent_id.as_deref(), Some(id));
+    assert_eq!(agents[1].kiingo_agent_id, None);
+    assert_eq!(agents[0].owner_public_key, None);
+}
+
+#[test]
+fn uuid_shape_is_strict() {
+    assert!(is_uuid("0a1b2c3d-0000-4000-8000-00000000abcd"));
+    assert!(!is_uuid("0a1b2c3d00004000800000000000abcd"));
+    assert!(!is_uuid("0a1b2c3d-0000-4000-8000-00000000abcg"));
+    assert!(!is_uuid("0a1b2c3d-0000-4000-8000-00000000abcd0"));
+}
+
+#[test]
+fn attest_response_maps_outcomes_dm_and_missing_agents() {
+    let owner = owner().public_key().to_hex();
+    let ada = agent_key('4');
+    let mira = agent_key('5');
+    let sage = agent_key('6');
+    let id = "0a1b2c3d-0000-4000-8000-00000000abcd";
+    let requested = [
+        selection("buzz:ada", &ada),
+        selection("buzz:mira", &mira),
+        selection("buzz:sage", &sage),
+    ];
+    let results = parse_attest_pending_response(
+        &json!({
+            "contract_version": 1,
+            "correlation_id": "req-a",
+            "owner_public_key": owner,
+            "results": [
+                {"provider_agent_id": "buzz:ada", "agent_public_key": ada,
+                 "kiingo_agent_id": id, "outcome": "activated", "code": null,
+                 "dm_opened": true},
+                {"provider_agent_id": "buzz:mira", "agent_public_key": mira,
+                 "outcome": "rejected", "code": "buzz_hosted_not_agent_owner",
+                 "dm_opened": "yes"}
+            ]
+        }),
+        "req-a",
+        &owner,
+        &requested,
+    )
+    .unwrap();
+    assert_eq!(
+        results,
+        vec![
+            AttestResult {
+                provider_agent_id: "buzz:ada".into(),
+                outcome: "activated".into(),
+                code: None,
+                dm_opened: true,
+                kiingo_agent_id: Some(id.into()),
+            },
+            AttestResult {
+                provider_agent_id: "buzz:mira".into(),
+                outcome: "rejected".into(),
+                code: Some("not_agent_owner".into()),
+                dm_opened: false,
+                kiingo_agent_id: None,
+            },
+            AttestResult {
+                provider_agent_id: "buzz:sage".into(),
+                outcome: "rejected".into(),
+                code: Some("result_missing".into()),
+                dm_opened: false,
+                kiingo_agent_id: None,
+            },
+        ]
+    );
+}
+
+#[test]
+fn attest_response_for_another_request_owner_agent_or_outcome_is_refused() {
+    let owner = owner().public_key().to_hex();
+    let ada = agent_key('4');
+    let sage = agent_key('6');
+    let requested = [selection("buzz:ada", &ada)];
+    let answer = |correlation: &str, owner_key: &str, results: Value| {
+        json!({
+            "contract_version": 1,
+            "correlation_id": correlation,
+            "owner_public_key": owner_key,
+            "results": results,
+        })
+    };
+    let activated =
+        json!([{"provider_agent_id": "buzz:ada", "agent_public_key": ada, "outcome": "activated"}]);
+    for bad in [
+        answer("other", &owner, activated.clone()),
+        answer("req-a", &sage, activated.clone()),
+        answer(
+            "req-a",
+            &owner,
+            json!([{"provider_agent_id": "buzz:sage", "agent_public_key": sage, "outcome": "activated"}]),
+        ),
+        answer(
+            "req-a",
+            &owner,
+            json!([{"provider_agent_id": "buzz:ada", "agent_public_key": sage, "outcome": "activated"}]),
+        ),
+        // A re-link outcome is not an attest outcome.
+        answer(
+            "req-a",
+            &owner,
+            json!([{"provider_agent_id": "buzz:ada", "agent_public_key": ada, "outcome": "rebound"}]),
+        ),
+    ] {
+        assert_eq!(
+            parse_attest_pending_response(&bad, "req-a", &owner, &requested).unwrap_err(),
+            "response_invalid"
+        );
+    }
+    // And an attest outcome is not a re-link outcome.
+    assert_eq!(
+        parse_rebind_response(
+            &answer("req-a", &owner, activated),
+            "req-a",
+            &owner,
+            &requested
+        )
+        .unwrap_err(),
+        "response_invalid"
+    );
+}

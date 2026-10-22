@@ -6,6 +6,13 @@ export type HostedOwnerAgent = {
   /** Owner key the provider holds, or null when it did not say. */
   ownerPublicKey: string | null;
   deleted: boolean;
+  /**
+   * `pending_attestation` while the provider holds an agent it minted until
+   * its owner attests it; `active` otherwise. Older providers leave it out.
+   */
+  status?: "active" | "pending_attestation" | "unknown";
+  /** The provider's id for the agent, when it reported one. */
+  kiingoAgentId?: string | null;
 };
 
 export type HostedOwnerAgents = {
@@ -21,10 +28,34 @@ export type RebindResult = {
   code: string | null;
 };
 
-/** Most agents one re-link request may name. */
+/** One agent's attest-pending result, as the native command returns it. */
+export type AttestResult = {
+  providerAgentId: string;
+  outcome: "activated" | "already_active" | "rejected";
+  /** Reject code without the `buzz_hosted_` prefix. */
+  code: string | null;
+  /** Whether the provider opened the owner DM as the agent. */
+  dmOpened: boolean;
+  kiingoAgentId: string | null;
+};
+
+/** Most agents one re-link or attest request may name. */
 export const MAX_REBIND_AGENTS = 20;
 
 const lower = (value: string) => value.toLowerCase();
+
+const isActive = (agent: HostedOwnerAgent) =>
+  (agent.status ?? "active") === "active";
+
+/**
+ * Agents the provider minted and holds until their owner attests them.
+ * Only these are ever sent to attest-pending.
+ */
+export function pendingAgents(view: HostedOwnerAgents): HostedOwnerAgent[] {
+  return view.agents.filter(
+    (agent) => !agent.deleted && agent.status === "pending_attestation",
+  );
+}
 
 /**
  * Agents still linked to an earlier owner key: the provider names an owner
@@ -36,6 +67,7 @@ export function staleAgents(view: HostedOwnerAgents): HostedOwnerAgent[] {
   return view.agents.filter(
     (agent) =>
       !agent.deleted &&
+      isActive(agent) &&
       agent.ownerPublicKey !== null &&
       lower(agent.ownerPublicKey) !== current,
   );
@@ -47,6 +79,7 @@ export function currentAgents(view: HostedOwnerAgents): HostedOwnerAgent[] {
   return view.agents.filter(
     (agent) =>
       !agent.deleted &&
+      isActive(agent) &&
       agent.ownerPublicKey !== null &&
       lower(agent.ownerPublicKey) === current,
   );
@@ -103,6 +136,63 @@ export function describeOutcome(result: RebindResult): string {
   }
 }
 
+/**
+ * Whether an attest result means the agent is now linked. `dm_open_failed`
+ * is a reject code, but the agent was activated; the provider retries the DM.
+ */
+export function isAttested(result: AttestResult | undefined): boolean {
+  return (
+    result?.outcome === "activated" ||
+    result?.outcome === "already_active" ||
+    (result?.outcome === "rejected" && result.code === "dm_open_failed")
+  );
+}
+
+/** Attest reject codes a new request (fresh id and proof) may clear. */
+export function isRetryableAttestCode(code: string | null): boolean {
+  return code === "activate_failed" || code === "result_missing";
+}
+
+export function isRetryableAttest(result: AttestResult | undefined): boolean {
+  return (
+    result?.outcome === "rejected" &&
+    !isAttested(result) &&
+    isRetryableAttestCode(result.code)
+  );
+}
+
+/** One short sentence for an agent that was not attested. */
+export function describeAttestRejection(code: string | null): string {
+  switch (code) {
+    case "endpoint_not_found":
+      return "This agent no longer exists on the hosted service.";
+    case "not_pending":
+      return "This agent isn't waiting to be linked any more; refresh.";
+    case "agent_key_mismatch":
+      return "The agent's key didn't match; refresh and try again.";
+    case "owner_attestation_invalid":
+      return "The hosted service didn't accept your approval for this agent.";
+    case "not_agent_owner":
+      return "Only this agent's owner can link it.";
+    case "identity_unreadable":
+      return "The agent's identity couldn't be read; contact support.";
+    case "activate_failed":
+      return "Linking didn't finish; retry.";
+    case "result_missing":
+      return "The hosted service did not report this agent; retry.";
+    default:
+      return "This agent couldn't be linked.";
+  }
+}
+
+/** Plain words for one agent's attest result. */
+export function describeAttestOutcome(result: AttestResult): string {
+  if (result.outcome === "activated") return "Linked";
+  if (result.outcome === "already_active") return "Already linked";
+  if (isAttested(result)) return "Linked; its chat with you opens shortly";
+  return describeAttestRejection(result.code);
+}
+
 /** A failure of the whole request: its code and HTTP status, if any. */
 export class RelinkRequestError extends Error {
   readonly code: string;
@@ -128,6 +218,11 @@ export function describeRequestError(code: string): string {
     case "rebind_invalid":
     case "rebind_selection_invalid":
       return "The re-link request wasn't accepted; update Buzz and try again.";
+    case "attest_pending_invalid":
+    case "attest_selection_invalid":
+      return "The link request wasn't accepted; update Buzz and try again.";
+    case "attest_selection_not_listed":
+      return "That agent isn't in your latest list; refresh and try again.";
     case "owner_proof_invalid":
       return "Your signature wasn't accepted; check this computer's date and time, then try again.";
     case "owner_proof_replayed":

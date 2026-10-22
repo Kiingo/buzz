@@ -189,3 +189,32 @@ Map<String, dynamic> buildRebindOwnerKeyProof({
     ],
   );
 }
+
+/// Proof for attesting agents the provider holds pending until their owner
+/// vouches for them: exactly the re-link proof with `action=attest_pending`
+/// (`provider`, `request`, an empty `agent`, `community`, `payload`,
+/// `expires`). Signed by the current key; single use.
+Map<String, dynamic> buildAttestPendingProof({
+  required String ownerSecretHex,
+  required String providerId,
+  required String requestId,
+  required String communityId,
+  required String payloadSha256,
+  DateTime? now,
+}) {
+  final createdAt = _nowSeconds(now);
+  return _signProof(
+    ownerSecretHex: ownerSecretHex,
+    content: hostedOwnerManagementProofContent,
+    createdAt: createdAt,
+    tags: [
+      ['action', 'attest_pending'],
+      ['provider', providerId],
+      ['request', requestId],
+      ['agent', ''],
+      ['community', communityId],
+      ['payload', payloadSha256],
+      ['expires', '${createdAt + hostedOwnerProofTtlSeconds}'],
+    ],
+  );
+}

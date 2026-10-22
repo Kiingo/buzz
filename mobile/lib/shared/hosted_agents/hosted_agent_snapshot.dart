@@ -18,6 +18,8 @@ class HostedAgentSnapshot {
     this.lastReadyAt,
     this.errorCode,
     this.ownerPublicKey,
+    this.status = hostedAgentStatusActive,
+    this.kiingoAgentId,
   });
 
   final String providerAgentId;
@@ -47,6 +49,20 @@ class HostedAgentSnapshot {
   /// still linked to an earlier owner key.
   final String? ownerPublicKey;
 
+  /// [hostedAgentStatusActive], [hostedAgentStatusPendingAttestation], or
+  /// `unknown` for any other value. Older APIs leave it out (active).
+  final String status;
+
+  /// The provider's own id for the agent (lowercase UUID), when reported.
+  final String? kiingoAgentId;
+
+  /// The provider minted this agent and holds it until its owner attests it.
+  bool get isPendingAttestation =>
+      status == hostedAgentStatusPendingAttestation;
+
+  /// A live agent the owner can manage.
+  bool get isActive => status == hostedAgentStatusActive;
+
   bool get isDeleted =>
       desiredState == 'deleted' ||
       observedState == 'deleted' ||
@@ -66,39 +82,68 @@ class HostedAgentSnapshot {
   };
 }
 
+/// `status` of a live hosted agent.
+const hostedAgentStatusActive = 'active';
+
+/// `status` of an agent the provider holds until its owner attests it.
+const hostedAgentStatusPendingAttestation = 'pending_attestation';
+
 final _word = RegExp(r'^[a-z_]{1,40}$');
+final _uuid = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+);
 final _hex64 = RegExp(r'^[0-9a-f]{64}$');
 final _code = RegExp(r'^[A-Za-z0-9_-]{1,160}$');
 
 String? _optionalString(Object? value) =>
     value is String && value.trim().isNotEmpty ? value : null;
 
+String _status(Object? value) => switch (value) {
+  null => hostedAgentStatusActive,
+  hostedAgentStatusActive => hostedAgentStatusActive,
+  hostedAgentStatusPendingAttestation => hostedAgentStatusPendingAttestation,
+  _ => 'unknown',
+};
+
 /// Parse one state object, or `null` when it is malformed.
+///
+/// A pending agent has no running state or profile yet, so for it only the
+/// id, key and name are required; its revision reads as 0 and its states as
+/// `pending_attestation` when the API leaves them out.
 HostedAgentSnapshot? parseHostedAgentSnapshot(Object? value) {
   if (value is! Map) return null;
   final id = value['provider_agent_id'];
   final pubkey = value['agent_public_key'];
   final name = value['display_name'];
-  final desired = value['desired_state'];
-  final observed = value['observed_state'];
+  final status = _status(value['status']);
+  final pendingAgent = status == hostedAgentStatusPendingAttestation;
+  final rawDesired = value['desired_state'];
+  final rawObserved = value['observed_state'];
+  final desired = rawDesired is String && _word.hasMatch(rawDesired)
+      ? rawDesired
+      : (pendingAgent ? hostedAgentStatusPendingAttestation : null);
+  final observed = rawObserved is String && _word.hasMatch(rawObserved)
+      ? rawObserved
+      : (pendingAgent ? hostedAgentStatusPendingAttestation : null);
   if (id is! String ||
       id.trim().isEmpty ||
       id.length > 256 ||
       pubkey is! String ||
       !_hex64.hasMatch(pubkey.toLowerCase()) ||
       name is! String ||
-      desired is! String ||
-      !_word.hasMatch(desired) ||
-      observed is! String ||
-      !_word.hasMatch(observed)) {
+      desired == null ||
+      observed == null) {
     return null;
   }
   final profile = value['profile'];
   final instructions = value['agent_instructions'];
-  final revisionValue = profile is Map
+  final rawRevision = profile is Map
       ? profile['profile_revision']
       : (instructions is Map ? instructions['profile_revision'] : null);
-  if (revisionValue is! int || revisionValue < 1) return null;
+  final revisionValue = rawRevision is int && rawRevision >= 1
+      ? rawRevision
+      : (pendingAgent ? 0 : null);
+  if (revisionValue == null) return null;
   final config = value['provider_config'];
   final errorCode = value['error_code'];
   final owner = value['owner_public_key'];
@@ -128,7 +173,15 @@ HostedAgentSnapshot? parseHostedAgentSnapshot(Object? value) {
     ownerPublicKey: owner is String && _hex64.hasMatch(owner.toLowerCase())
         ? owner.toLowerCase()
         : null,
+    status: status,
+    kiingoAgentId: _kiingoAgentId(value['kiingo_agent_id']),
   );
+}
+
+String? _kiingoAgentId(Object? value) {
+  if (value is! String) return null;
+  final id = value.toLowerCase();
+  return _uuid.hasMatch(id) ? id : null;
 }
 
 /// Parse a list response; it must answer this request.

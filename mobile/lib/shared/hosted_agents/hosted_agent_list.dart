@@ -4,6 +4,7 @@ import 'hosted_agent_client.dart';
 import 'hosted_agent_controller.dart';
 import 'hosted_agent_errors.dart';
 import 'hosted_agent_snapshot.dart';
+import 'hosted_owner_attest.dart';
 import 'hosted_owner_rebind.dart';
 
 /// Lifecycle actions the phone offers.
@@ -185,6 +186,28 @@ class HostedAgentList extends AsyncNotifier<List<HostedAgentSnapshot>> {
       // The re-link already happened; a failed re-list keeps the previous
       // list and the owner can pull to refresh. Never report it as a failed
       // re-link.
+    }
+    return outcomes;
+  }
+
+  /// Attest [selected] pending agents with the signed-in key, then refresh
+  /// the list so linked agents show as live. A Link tap or an auto-link pass
+  /// the owner turned on calls this, only for agents this list reported as
+  /// pending.
+  Future<List<HostedAttestOutcome>> attestPending(
+    List<HostedAgentSnapshot> selected,
+  ) async {
+    final client = _client();
+    final catalog = await ref.read(hostedAgentCatalogProvider.future);
+    final outcomes = await client.attestPending(
+      catalog: catalog,
+      selected: selected,
+    );
+    try {
+      await refresh();
+    } on Object {
+      // The attestation already happened; a failed re-list keeps the
+      // previous list. Never report it as a failed link.
     }
     return outcomes;
   }

@@ -18,6 +18,7 @@ class HostedAgentDraft {
     required this.displayName,
     required this.systemPrompt,
     required this.providerConfig,
+    this.kiingoAgentId,
   });
 
   final String displayName;
@@ -25,7 +26,16 @@ class HostedAgentDraft {
 
   /// The coerced provider configuration (flat scalars).
   final Map<String, Object> providerConfig;
+
+  /// An existing provider agent the owner picked to attach this Buzz
+  /// identity to, instead of the provider creating a new agent. `null`
+  /// creates a new one.
+  final String? kiingoAgentId;
 }
+
+final _uuid = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+);
 
 /// Where the agent runs and who owns it.
 @immutable
@@ -204,6 +214,10 @@ Future<Map<String, Object?>> buildHostedProvisionRequest({
   if (displayName.isEmpty || displayName.length > 256) {
     throw const HostedAgentException('agent_name_invalid');
   }
+  final kiingoAgentId = draft.kiingoAgentId?.trim().toLowerCase();
+  if (kiingoAgentId != null && !_uuid.hasMatch(kiingoAgentId)) {
+    throw const HostedAgentException('kiingo_agent_id_invalid');
+  }
   final config = draft.providerConfig;
   final profile = buildHostedExecutionProfile(
     config: config,
@@ -249,6 +263,9 @@ Future<Map<String, Object?>> buildHostedProvisionRequest({
     'agent_instructions': instructions,
     'response_policy': hostedAgentResponsePolicy,
     'capability_policy': _capabilityPolicy,
+    // Attach to an existing agent the owner owns; the API refuses an agent
+    // that already has a Buzz identity (`already_has_buzz_identity`).
+    'kiingo_agent_id': ?kiingoAgentId,
   };
 }
 

@@ -65,6 +65,10 @@ String describeHostedAgentError(String code) => switch (code) {
   'agent_system_prompt_too_large' =>
     'The instructions are too long. Shorten them and try again.',
   'agent_name_invalid' => 'Give the agent a name.',
+  'kiingo_agent_id_invalid' =>
+    "That existing agent can't be used. Pick it again or create a new one.",
+  'buzz_hosted_already_has_buzz_identity' || 'already_has_buzz_identity' =>
+    'That agent is already on Buzz. Link it from your agents list instead.',
   'response_invalid' ||
   'delete_response_not_terminal' ||
   'preflight_response_invalid' =>

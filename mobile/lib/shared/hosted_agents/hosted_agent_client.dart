@@ -15,6 +15,7 @@ import 'hosted_agent_errors.dart';
 import 'hosted_agent_proofs.dart';
 import 'hosted_agent_responses.dart';
 import 'hosted_agent_snapshot.dart';
+import 'hosted_owner_attest.dart';
 import 'hosted_owner_rebind.dart';
 import 'session_controls.dart';
 
@@ -355,6 +356,49 @@ class HostedAgentClient implements HostedAgentProvisioner {
       );
     }
     return parseHostedRebindResponse(
+      response,
+      requestId: requestId,
+      ownerPublicKey: ownerPublicKey(),
+      requested: selected,
+    );
+  }
+
+  /// Attest [selected] pending agents with the signed-in key: a Link tap, or
+  /// an auto-link pass the owner turned on. Every call is one new request id
+  /// and one new single-use proof, with an attestation for each selected
+  /// agent and no other. Nothing here retries.
+  Future<List<HostedAttestOutcome>> attestPending({
+    required HostedAgentCatalog catalog,
+    required List<HostedAgentSnapshot> selected,
+  }) async {
+    final secret = ownerSecretHex();
+    final requestId = const Uuid().v4();
+    final body = buildHostedAttestBody(
+      ownerSecretHex: secret,
+      requestId: requestId,
+      selected: selected,
+    );
+    final proof = buildAttestPendingProof(
+      ownerSecretHex: secret,
+      providerId: catalog.providerId,
+      requestId: requestId,
+      communityId: route.communityId,
+      payloadSha256: hostedRebindPayloadSha256(body),
+    );
+    final (status, response) = await _send(
+      'POST',
+      '/owner/agents/attest-pending',
+      timeout: const Duration(seconds: 60),
+      body: {...body, 'owner_proof': proof},
+    );
+    if (!_ok(status)) {
+      throw hostedAgentFailure(
+        response,
+        status: status,
+        fallbackCode: 'attest_failed',
+      );
+    }
+    return parseHostedAttestResponse(
       response,
       requestId: requestId,
       ownerPublicKey: ownerPublicKey(),

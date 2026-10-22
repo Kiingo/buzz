@@ -4,6 +4,7 @@ import {
   MAX_REBIND_AGENTS,
   RelinkRequestError,
   toRelinkRequestError,
+  type AttestResult,
   type HostedOwnerAgent,
   type HostedOwnerAgents,
   type RebindResult,
@@ -15,6 +16,9 @@ type Transport = {
   rebind: (
     agents: { providerAgentId: string; agentPublicKey: string }[],
   ) => Promise<RebindResult[]>;
+  attestPending: (
+    agents: { providerAgentId: string; agentPublicKey: string }[],
+  ) => Promise<AttestResult[]>;
 };
 
 const tauriTransport: Transport = {
@@ -22,6 +26,10 @@ const tauriTransport: Transport = {
   list: () => invokeTauri<HostedOwnerAgents>("hosted_owner_relink_list"),
   rebind: (agents) =>
     invokeTauri<RebindResult[]>("hosted_owner_relink_rebind", { agents }),
+  attestPending: (agents) =>
+    invokeTauri<AttestResult[]>("hosted_owner_relink_attest_pending", {
+      agents,
+    }),
 };
 
 let transport: Transport = tauriTransport;
@@ -65,6 +73,28 @@ export const hostedOwnerRelinkApi = {
     }
     try {
       return await transport.rebind(
+        agents.map((agent) => ({
+          providerAgentId: agent.providerAgentId,
+          agentPublicKey: agent.agentPublicKey,
+        })),
+      );
+    } catch (error) {
+      throw toRelinkRequestError(error);
+    }
+  },
+
+  /**
+   * Attest exactly `agents` (pending agents from the latest list) with the
+   * current key: a Link tap, or an auto-link pass the owner turned on. The
+   * native side signs one new request per call, only for agents its latest
+   * list reported pending, and never retries on its own.
+   */
+  attestPending: async (agents: HostedOwnerAgent[]) => {
+    if (agents.length === 0 || agents.length > MAX_REBIND_AGENTS) {
+      throw new RelinkRequestError("attest_selection_invalid", null, null);
+    }
+    try {
+      return await transport.attestPending(
         agents.map((agent) => ({
           providerAgentId: agent.providerAgentId,
           agentPublicKey: agent.agentPublicKey,

@@ -25,7 +25,10 @@ List<HostedAgentSnapshot> staleHostedAgents(
   return List.unmodifiable(
     agents.where((agent) {
       final owner = agent.ownerPublicKey;
-      return owner != null && owner != current && !agent.isDeleted;
+      return owner != null &&
+          owner != current &&
+          agent.isActive &&
+          !agent.isDeleted;
     }),
   );
 }
@@ -38,26 +41,29 @@ List<HostedAgentSnapshot> currentHostedAgents(
   final current = currentOwnerPublicKey.toLowerCase();
   return List.unmodifiable(
     agents.where(
-      (agent) => agent.ownerPublicKey == current && !agent.isDeleted,
+      (agent) =>
+          agent.ownerPublicKey == current && agent.isActive && !agent.isDeleted,
     ),
   );
 }
 
 /// The re-link body without its proof: one fresh request id and a NIP-OA
 /// owner attestation from the current key for each selected agent, and for
-/// no other agent.
+/// no other agent. Attest-pending sends the same body ([invalidCode] names
+/// its own selection error).
 Map<String, Object?> buildHostedRebindBody({
   required String ownerSecretHex,
   required String requestId,
   required List<HostedAgentSnapshot> selected,
+  String invalidCode = 'rebind_selection_invalid',
 }) {
   if (selected.isEmpty || selected.length > hostedRebindMaxAgents) {
-    throw const HostedAgentException('rebind_selection_invalid');
+    throw HostedAgentException(invalidCode);
   }
   final seen = <String>{};
   for (final agent in selected) {
     if (!seen.add(agent.providerAgentId)) {
-      throw const HostedAgentException('rebind_selection_invalid');
+      throw HostedAgentException(invalidCode);
     }
   }
   return {
