@@ -259,7 +259,7 @@ pub(crate) fn build_deploy_payload_with_ownership<R: tauri::Runtime>(
     let effective_parallelism =
         crate::managed_agents::effective_parallelism(&descriptor.command, record.parallelism);
 
-    Ok(deploy_payload_json_with_ownership(
+    let mut payload = deploy_payload_json_with_ownership(
         record,
         crate::relay::effective_agent_relay_url(
             &record.relay_url,
@@ -279,7 +279,9 @@ pub(crate) fn build_deploy_payload_with_ownership<R: tauri::Runtime>(
         merged_user_env,
         launch,
         provider_owns_execution_profile,
-    ))
+    );
+    crate::extensions::hosted_owner_relink::apply_attach(app, &record.pubkey, &mut payload)?;
+    Ok(payload)
 }
 
 /// Pure serialization half of [`build_deploy_payload`]. Legacy top-level fields

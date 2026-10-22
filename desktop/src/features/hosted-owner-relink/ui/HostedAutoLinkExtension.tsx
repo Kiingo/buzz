@@ -8,6 +8,7 @@ import {
   createAutoLinkScheduler,
   linkedNote,
   newAutoLinkMemory,
+  notLinkedNote,
   readAutoLinkSetting,
   relinkQueryKeys,
   runAutoLinkPass,
@@ -79,6 +80,14 @@ export function HostedAutoLinkExtension() {
         }
         const note = linkedNote(result.linked);
         if (note) toast(note, { id: "hosted-auto-link" });
+        // Agents refused for good are said once, plainly, with the reason.
+        const refused = notLinkedNote(result.notLinked);
+        if (refused) {
+          toast(refused.title, {
+            id: "hosted-auto-link-refused",
+            description: refused.description,
+          });
+        }
       },
     });
     const onResume = () => {

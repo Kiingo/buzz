@@ -590,3 +590,168 @@ fn attest_response_for_another_request_owner_agent_or_outcome_is_refused() {
         "response_invalid"
     );
 }
+
+#[test]
+fn pending_entry_in_the_providers_exact_shape_lists_as_pending() {
+    let ada = agent_key('4');
+    let id = "buzz:0A1B2C3D-0000-4000-8000-00000000ABCD";
+    let agents = parse_list_response(
+        &json!({
+            "contract_version": 1,
+            "correlation_id": "req-l",
+            "agents": [
+                {"contract_version": 1, "status": "pending_attestation",
+                 "provider_agent_id": id, "agent_public_key": ada,
+                 "kiingo_agent_id": "0a1b2c3d-0000-4000-8000-00000000abcd",
+                 "display_name": "Scout", "owner_public_key": null,
+                 "desired_state": "paused", "observed_state": "pending_attestation",
+                 "profile_revision": 0},
+                {"provider_agent_id": " buzz:padded ", "agent_public_key": ada,
+                 "display_name": "Padded"}
+            ]
+        }),
+        "req-l",
+    )
+    .unwrap();
+    // The padded id is not usable, so it is skipped rather than trimmed.
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].status, STATUS_PENDING_ATTESTATION);
+    assert!(!agents[0].deleted);
+    // Ids pass through exactly as the provider wrote them.
+    assert_eq!(agents[0].provider_agent_id, id);
+}
+
+#[test]
+fn batch_requests_send_provider_agent_ids_verbatim() {
+    let owner = owner();
+    let ada = agent_key('4');
+    let id = "buzz:0A1B2C3D-0000-4000-8000-00000000ABCD";
+    let body = build_attest_pending_request(
+        &owner,
+        "provider-x",
+        "chat.example.test",
+        "req-a",
+        &[selection(id, &ada)],
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(body["agents"][0]["provider_agent_id"], id);
+    for bad in [" buzz:ada", "buzz:ada ", "buzz:\u{7}ada", ""] {
+        assert_eq!(
+            build_rebind_request(
+                &owner,
+                "provider-x",
+                "chat.example.test",
+                "req-r",
+                &[selection(bad, &ada)],
+                NOW,
+            )
+            .unwrap_err(),
+            "rebind_selection_invalid"
+        );
+    }
+}
+
+#[test]
+fn activated_agent_keeps_the_dm_open_failed_note() {
+    let owner = owner().public_key().to_hex();
+    let ada = agent_key('4');
+    let results = parse_attest_pending_response(
+        &json!({
+            "contract_version": 1,
+            "correlation_id": "req-a",
+            "owner_public_key": owner,
+            "results": [{"provider_agent_id": "buzz:ada", "agent_public_key": ada,
+                         "outcome": "activated", "code": "buzz_hosted_dm_open_failed",
+                         "dm_opened": false}],
+        }),
+        "req-a",
+        &owner,
+        &[selection("buzz:ada", &ada)],
+    )
+    .unwrap();
+    assert_eq!(results[0].outcome, "activated");
+    assert_eq!(results[0].code.as_deref(), Some("dm_open_failed"));
+    assert!(!results[0].dm_opened);
+}
+
+#[test]
+fn unlinked_request_is_list_shaped_with_its_own_action() {
+    let body = build_list_shaped_request(
+        &owner(),
+        "list_unlinked",
+        "provider-x",
+        "chat.example.test",
+        "req-u",
+        Map::new(),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(body["contract_version"], 1);
+    assert_eq!(body["request_id"], "req-u");
+    assert_eq!(
+        proof_tags(&body),
+        vec![
+            vec!["action".to_string(), "list_unlinked".into()],
+            vec!["provider".into(), "provider-x".into()],
+            vec!["request".into(), "req-u".into()],
+            vec!["community".into(), "chat.example.test".into()],
+            vec!["expires".into(), (NOW + 300).to_string()],
+        ]
+    );
+}
+
+#[test]
+fn unlinked_response_hides_machine_defaults_and_malformed_agents() {
+    let first = "0a1b2c3d-0000-4000-8000-00000000abcd";
+    let second = "0a1b2c3d-0000-4000-8000-00000000abce";
+    let agents = parse_unlinked_response(
+        &json!({
+            "contract_version": 1,
+            "correlation_id": "req-u",
+            "agents": [
+                {"kiingo_agent_id": first.to_uppercase(), "display_name": " Scout ",
+                 "owner_principal_type": "User", "machine_default": false},
+                {"kiingo_agent_id": second, "display_name": "This Mac",
+                 "owner_principal_type": "User", "machine_default": true},
+                {"kiingo_agent_id": second, "display_name": "No flag",
+                 "owner_principal_type": "User"},
+                {"kiingo_agent_id": "not-a-uuid", "display_name": "Bad id",
+                 "owner_principal_type": "User", "machine_default": false},
+                {"kiingo_agent_id": second, "display_name": "Team",
+                 "owner_principal_type": "Group", "machine_default": false},
+                {"kiingo_agent_id": first, "display_name": "Again",
+                 "owner_principal_type": "User", "machine_default": false},
+                {"kiingo_agent_id": second, "display_name": "Mail Helper",
+                 "owner_principal_type": "Organization", "machine_default": false}
+            ]
+        }),
+        "req-u",
+    )
+    .unwrap();
+    assert_eq!(
+        agents,
+        vec![
+            UnlinkedAgent {
+                kiingo_agent_id: first.into(),
+                display_name: "Scout".into(),
+                owner_principal_type: "User".into(),
+            },
+            UnlinkedAgent {
+                kiingo_agent_id: second.into(),
+                display_name: "Mail Helper".into(),
+                owner_principal_type: "Organization".into(),
+            },
+        ]
+    );
+    for bad in [
+        json!({"contract_version": 1, "correlation_id": "other", "agents": []}),
+        json!({"contract_version": 2, "correlation_id": "req-u", "agents": []}),
+        json!({"contract_version": 1, "correlation_id": "req-u"}),
+    ] {
+        assert_eq!(
+            parse_unlinked_response(&bad, "req-u").unwrap_err(),
+            "response_invalid"
+        );
+    }
+}

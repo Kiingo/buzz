@@ -10,7 +10,7 @@ pub(crate) mod identity_rotation;
 pub(crate) use agent_commands::agent_commands_fetch;
 pub(crate) use hosted_owner_relink::{
     hosted_owner_relink_attest_pending, hosted_owner_relink_available, hosted_owner_relink_list,
-    hosted_owner_relink_rebind,
+    hosted_owner_relink_list_unlinked, hosted_owner_relink_rebind,
 };
 pub(crate) use identity_rotation::{
     abort_identity_rotation, acknowledge_pending_identity_rotation,

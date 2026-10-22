@@ -163,6 +163,9 @@ String describeRebindRejection(String? code) => switch (code) {
 String describeRebindRequestError(
   HostedAgentException error,
 ) => switch (_stripPrefix(error.code)) {
+  // Every provisioning_keys_* 503 means the service isn't set up to sign.
+  final code? when code.startsWith('provisioning_keys_') =>
+    "The hosted service can't link agents right now; try again later.",
   'rebind_invalid' || 'rebind_selection_invalid' =>
     "The re-link request wasn't accepted; update Buzz and try again.",
   'owner_proof_invalid' =>
@@ -172,9 +175,10 @@ String describeRebindRequestError(
     "Your current key isn't linked to your account yet; link it, then try again.",
   'owner_ambiguous' =>
     'More than one account matches your key; contact support.',
-  'scope_unconfigured' => "Re-linking isn't available for this community yet.",
-  'provisioning_keys_unconfigured' || 'provisioning_keys_invalid' =>
-    "The hosted service can't re-link agents right now; try again later.",
+  'not_agent_owner' =>
+    "Only the agent's owner can do this; sign in with that account and try again.",
+  'scope_unconfigured' =>
+    "Linking agents isn't available for this community yet.",
   'database_unavailable' =>
     'The hosted service is temporarily unavailable; try again in a moment.',
   _ => error.message,

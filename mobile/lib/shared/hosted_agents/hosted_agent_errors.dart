@@ -34,15 +34,48 @@ class HostedAgentException implements Exception {
   /// counts; every other failure leaves remote state unknown.
   final bool remoteAbsent;
 
-  /// Plain-language text for the owner.
-  String get message => serverMessage ?? describeHostedAgentError(code);
+  /// Plain-language text for the owner. Attach and service-setup codes use
+  /// this app's own words, since they name a choice the owner made here.
+  String get message =>
+      _ownedHostedAgentCopy(code) ??
+      serverMessage ??
+      describeHostedAgentError(code);
 
   @override
   String toString() => 'HostedAgentException($code, $status)';
 }
 
+const _hostedCodePrefix = 'buzz_hosted_';
+
+/// Text for codes this app words itself, or `null`. Codes may carry the
+/// API's `buzz_hosted_` prefix.
+String? _ownedHostedAgentCopy(String code) {
+  final bare = code.startsWith(_hostedCodePrefix)
+      ? code.substring(_hostedCodePrefix.length)
+      : code;
+  if (bare.startsWith('provisioning_keys_')) {
+    return "The hosted agent service can't set up agents right now. Try again later.";
+  }
+  return switch (bare) {
+    'kiingo_agent_id_invalid' =>
+      "That existing agent can't be used. Pick it again or create a new one.",
+    'already_has_buzz_identity' =>
+      'That agent is already on Buzz. Pick another one, or create a new agent.',
+    'not_agent_owner' =>
+      'You can only bring an agent you own. Pick one of yours, or create a new agent.',
+    'agent_spec_required' =>
+      "That agent isn't set up to run yet. Finish setting it up, then try again.",
+    'scope_unconfigured' =>
+      "Hosted agents aren't set up for this community yet.",
+    _ => null,
+  };
+}
+
 /// Plain-language text for client-side and transport error codes.
-String describeHostedAgentError(String code) => switch (code) {
+String describeHostedAgentError(String code) =>
+    _ownedHostedAgentCopy(code) ?? _describeHostedAgentCode(code);
+
+String _describeHostedAgentCode(String code) => switch (code) {
   'hosted_agents_unavailable' =>
     "Hosted agents aren't available in this build or community.",
   'hosted_agents_unreachable' || 'hosted_agents_timeout' =>
@@ -65,10 +98,6 @@ String describeHostedAgentError(String code) => switch (code) {
   'agent_system_prompt_too_large' =>
     'The instructions are too long. Shorten them and try again.',
   'agent_name_invalid' => 'Give the agent a name.',
-  'kiingo_agent_id_invalid' =>
-    "That existing agent can't be used. Pick it again or create a new one.",
-  'buzz_hosted_already_has_buzz_identity' || 'already_has_buzz_identity' =>
-    'That agent is already on Buzz. Link it from your agents list instead.',
   'response_invalid' ||
   'delete_response_not_terminal' ||
   'preflight_response_invalid' =>

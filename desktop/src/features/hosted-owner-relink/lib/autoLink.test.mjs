@@ -8,6 +8,7 @@ import {
   chunk,
   createAutoLinkScheduler,
   linkedNote,
+  notLinkedNote,
   newAutoLinkMemory,
   readAutoLinkSetting,
   runAutoLinkPass,
@@ -175,7 +176,16 @@ test("permanent refusals are not signed again; retryable ones are", async () => 
   const memory = newAutoLinkMemory();
   const first = await runAutoLinkPass(api, CURRENT, memory);
   assert.deepEqual(first.linked, []);
-  await runAutoLinkPass(api, CURRENT, memory);
+  // Permanent refusals are said plainly, once; retryable ones are not.
+  assert.deepEqual(first.notLinked, [
+    { name: "theirs", reason: "Only this agent's owner can link it." },
+    {
+      name: "ada",
+      reason: "Your old key is still active, so this agent stays linked to it.",
+    },
+  ]);
+  const second = await runAutoLinkPass(api, CURRENT, memory);
+  assert.deepEqual(second.notLinked, []);
   assert.deepEqual(calls.attest, [
     ["buzz:scout", "buzz:theirs"],
     ["buzz:scout"],
@@ -203,6 +213,21 @@ test("an agent whose DM failed to open is linked, not retried", async () => {
     kiingoAgentId: null,
   };
   assert.equal(isAttested(dmFailed), true);
+  // The provider's own shape: activated, with dm_open_failed as a note.
+  const activatedNote = {
+    ...dmFailed,
+    outcome: "activated",
+  };
+  assert.equal(isAttested(activatedNote), true);
+  assert.equal(isRetryableAttest(activatedNote), false);
+  assert.equal(
+    describeAttestOutcome(activatedNote),
+    "Linked; its chat with you opens shortly",
+  );
+  assert.equal(
+    describeAttestOutcome({ ...activatedNote, code: null }),
+    "Linked",
+  );
   assert.equal(isRetryableAttest(dmFailed), false);
   assert.match(describeAttestOutcome(dmFailed), /^Linked/);
   // Already active (another device linked it) is not named again.
@@ -371,4 +396,20 @@ test("the scheduler runs on launch, on resume after a minute, and every 15 minut
   scheduler.stop();
   assert.equal(tick, null);
   assert.equal(scheduler.trigger("resume"), false);
+});
+
+test("the refused note names each agent and its reason", () => {
+  assert.equal(notLinkedNote([]), null);
+  assert.deepEqual(notLinkedNote([{ name: "ada", reason: "Nope." }]), {
+    title: "Couldn't link an agent",
+    description: "ada: Nope.",
+  });
+  const many = ["a", "b", "c", "d", "e"].map((name) => ({
+    name,
+    reason: "Nope.",
+  }));
+  assert.deepEqual(notLinkedNote(many), {
+    title: "Couldn't link 5 agents",
+    description: "a: Nope.\nb: Nope.\nc: Nope.\nAnd 2 more.",
+  });
 });

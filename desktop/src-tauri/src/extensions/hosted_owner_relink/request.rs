@@ -86,6 +86,16 @@ fn is_hex64(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+/// A provider agent id as the provider wrote it. Ids are opaque and pass
+/// back verbatim, never trimmed or re-cased; one that is blank, too long or
+/// has surrounding whitespace or control characters is not usable.
+fn is_provider_agent_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+}
+
 fn bounded_code(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 160
@@ -280,8 +290,8 @@ fn build_attestation_batch(
     let mut agents = Vec::with_capacity(selected.len());
     for agent in selected {
         let key = agent.agent_public_key.to_ascii_lowercase();
-        let id = agent.provider_agent_id.trim();
-        if id.is_empty() || id.len() > 256 || !is_hex64(&key) || !seen.insert(id.to_string()) {
+        let id = agent.provider_agent_id.as_str();
+        if !is_provider_agent_id(id) || !is_hex64(&key) || !seen.insert(id.to_string()) {
             return Err(invalid_code.into());
         }
         let agent_key = PublicKey::from_hex(&key).map_err(|_| invalid_code.to_string())?;
@@ -338,10 +348,10 @@ pub(super) fn parse_list_response(
     Ok(agents
         .iter()
         .filter_map(|agent| {
-            let id = optional_str(agent, "provider_agent_id")?.trim();
+            let id = optional_str(agent, "provider_agent_id")?;
             let key = optional_str(agent, "agent_public_key")?.to_ascii_lowercase();
             let name = optional_str(agent, "display_name")?.trim();
-            if id.is_empty() || id.len() > 256 || !is_hex64(&key) || name.chars().count() > 200 {
+            if !is_provider_agent_id(id) || !is_hex64(&key) || name.chars().count() > 200 {
                 return None;
             }
             let owner = optional_str(agent, "owner_public_key")
@@ -372,6 +382,67 @@ pub(super) fn parse_list_response(
                 deleted,
                 status: status.to_string(),
                 kiingo_agent_id,
+            })
+        })
+        .collect())
+}
+
+/// Most agents the unlinked list may return.
+pub(super) const MAX_UNLINKED_AGENTS: usize = 200;
+
+/// One of the owner's provider agents that has no Buzz identity yet, which a
+/// new hosted agent may attach to.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UnlinkedAgent {
+    /// Lowercase UUID, passed back as the attach id.
+    pub(crate) kiingo_agent_id: String,
+    pub(crate) display_name: String,
+    /// `User` or `Organization`.
+    pub(crate) owner_principal_type: String,
+}
+
+/// Parse an unlinked-agents answer to `request_id`. Malformed entries and
+/// machine defaults (agents the provider keeps for a computer, not for a
+/// person to pick) are left out, as is anything past the first
+/// [`MAX_UNLINKED_AGENTS`]. Order is the provider's (newest first).
+pub(super) fn parse_unlinked_response(
+    body: &Value,
+    request_id: &str,
+) -> Result<Vec<UnlinkedAgent>, String> {
+    if body.get("contract_version") != Some(&json!(1))
+        || optional_str(body, "correlation_id") != Some(request_id)
+    {
+        return Err("response_invalid".into());
+    }
+    let agents = body
+        .get("agents")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "response_invalid".to_string())?;
+    let mut seen = std::collections::HashSet::new();
+    Ok(agents
+        .iter()
+        .take(MAX_UNLINKED_AGENTS)
+        .filter_map(|agent| {
+            if agent.get("machine_default").and_then(Value::as_bool) != Some(false) {
+                return None;
+            }
+            let id = optional_str(agent, "kiingo_agent_id")?.to_ascii_lowercase();
+            let name = optional_str(agent, "display_name")?.trim();
+            let principal = optional_str(agent, "owner_principal_type")?;
+            if !is_uuid(&id)
+                || name.is_empty()
+                || name.chars().count() > 200
+                || name.chars().any(char::is_control)
+                || !matches!(principal, "User" | "Organization")
+                || !seen.insert(id.clone())
+            {
+                return None;
+            }
+            Some(UnlinkedAgent {
+                kiingo_agent_id: id,
+                display_name: name.to_string(),
+                owner_principal_type: principal.to_string(),
             })
         })
         .collect())
@@ -417,14 +488,18 @@ fn parse_batch_response<'a>(
         let key = optional_str(result, "agent_public_key").ok_or("response_invalid")?;
         let wanted = requested
             .iter()
-            .find(|agent| agent.provider_agent_id.trim() == id)
+            .find(|agent| agent.provider_agent_id == id)
             .ok_or("response_invalid")?;
         if !key.eq_ignore_ascii_case(&wanted.agent_public_key) || by_id.contains_key(id) {
             return Err("response_invalid".into());
         }
         let outcome = optional_str(result, "outcome").ok_or("response_invalid")?;
         let code = if successes.contains(&outcome) {
-            None
+            // A success may still carry a note, such as `dm_open_failed` on an
+            // activated agent whose owner DM the provider will retry.
+            optional_str(result, "code")
+                .filter(|code| bounded_code(code))
+                .map(|code| strip_code_prefix(code).to_string())
         } else if outcome == "rejected" {
             Some(
                 optional_str(result, "code")
@@ -448,7 +523,7 @@ fn parse_batch_response<'a>(
     Ok(requested
         .iter()
         .map(|agent| {
-            let id = agent.provider_agent_id.trim();
+            let id = agent.provider_agent_id.as_str();
             by_id.remove(id).unwrap_or_else(|| BatchResult {
                 id: id.to_string(),
                 outcome: "rejected".into(),

@@ -200,8 +200,12 @@ void main() {
         attached['kiingo_agent_id'],
         '0a1b2c3d-0000-4000-8000-00000000abcd',
       );
-      // Attaching does not change what identifies a replay of the create.
-      expect(attached['idempotency_key'], fresh['idempotency_key']);
+      // Attaching joins the replay key; a plain create keeps its old key.
+      expect(attached['idempotency_key'], isNot(fresh['idempotency_key']));
+      final replay = await build('0a1b2c3d-0000-4000-8000-00000000abcd');
+      expect(replay['idempotency_key'], attached['idempotency_key']);
+      final other = await build('0a1b2c3d-0000-4000-8000-00000000abce');
+      expect(other['idempotency_key'], isNot(attached['idempotency_key']));
       await expectLater(
         build('not-a-uuid'),
         throwsA(

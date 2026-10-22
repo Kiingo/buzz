@@ -111,6 +111,9 @@ test("whole-request errors become one sentence each", () => {
     "scope_unconfigured",
     "provisioning_keys_unconfigured",
     "provisioning_keys_invalid",
+    "provisioning_keys_unavailable",
+    "not_agent_owner",
+    "attest_pending_invalid",
     "database_unavailable",
   ]) {
     const plain = describeRequestError(code);

@@ -22,6 +22,7 @@
 //! for the signed-in key reported as pending, and the provider re-checks
 //! ownership regardless.
 
+mod attach;
 mod request;
 
 use std::collections::HashSet;
@@ -36,8 +37,10 @@ use crate::app_state::AppState;
 use crate::commands::{acceptable_base_url, community_id_for_relay};
 use crate::relay::relay_ws_url_with_override;
 
+pub(crate) use attach::{apply_attach, normalized_attach_agent_id, remember_attach};
 pub(crate) use request::{
     build_list_shaped_request, AttestResult, OwnerAgent, RebindResult, RebindSelection,
+    UnlinkedAgent,
 };
 
 const LIST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -346,6 +349,36 @@ pub async fn hosted_owner_relink_attest_pending(
     )
     .await?;
     request::parse_attest_pending_response(&response, &request_id, &owner, &agents)
+        .map_err(|code| error_string(None, &code, None))
+}
+
+/// The owner's provider agents that have no Buzz identity yet, for the
+/// create form's "attach to an existing agent" choice. Read-only: a
+/// list-shaped proof with `action=list_unlinked`, which the provider does
+/// not burn. Machine defaults are left out.
+#[tauri::command]
+pub async fn hosted_owner_relink_list_unlinked(
+    state: State<'_, AppState>,
+) -> Result<Vec<UnlinkedAgent>, String> {
+    let route = route().ok_or_else(|| error_string(None, "hosted_relink_unavailable", None))?;
+    let community_id = community_id_for_relay(&relay_ws_url_with_override(&state));
+    if community_id.is_empty() {
+        return Err(error_string(None, "hosted_relink_unavailable", None));
+    }
+    let keys = state.signing_keys()?;
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let body = request::build_list_shaped_request(
+        &keys,
+        "list_unlinked",
+        &route.provider_id,
+        &community_id,
+        &request_id,
+        serde_json::Map::new(),
+        now_seconds()?,
+    )
+    .map_err(|code| error_string(None, &code, None))?;
+    let response = post(&route, "/owner/agents/unlinked", &body, LIST_TIMEOUT).await?;
+    request::parse_unlinked_response(&response, &request_id)
         .map_err(|code| error_string(None, &code, None))
 }
 

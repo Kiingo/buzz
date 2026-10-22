@@ -112,6 +112,17 @@ test("messages say what happened in plain words", () => {
   );
 });
 
+test("an attach the provider refused is said in plain words", () => {
+  assert.equal(
+    failedRemoteCreateMessage(
+      "Fizz",
+      "Agent already linked. (buzz_hosted_already_has_buzz_identity)",
+      { clean: true, leftovers: [], remaining: null },
+    ),
+    "Fizz couldn't start: That agent is already on Buzz. Pick another one, or create a new agent. Nothing was kept, so you can fix this and try again.",
+  );
+});
+
 test("surfaces without a retry path point at Agents instead", () => {
   assert.match(
     failedRemoteCreateMessage(

@@ -8,6 +8,7 @@ import {
   type HostedOwnerAgent,
   type HostedOwnerAgents,
   type RebindResult,
+  type UnlinkedAgent,
 } from "./relink";
 
 type Transport = {
@@ -19,6 +20,7 @@ type Transport = {
   attestPending: (
     agents: { providerAgentId: string; agentPublicKey: string }[],
   ) => Promise<AttestResult[]>;
+  listUnlinked: () => Promise<UnlinkedAgent[]>;
 };
 
 const tauriTransport: Transport = {
@@ -30,6 +32,8 @@ const tauriTransport: Transport = {
     invokeTauri<AttestResult[]>("hosted_owner_relink_attest_pending", {
       agents,
     }),
+  listUnlinked: () =>
+    invokeTauri<UnlinkedAgent[]>("hosted_owner_relink_list_unlinked"),
 };
 
 let transport: Transport = tauriTransport;
@@ -100,6 +104,18 @@ export const hostedOwnerRelinkApi = {
           agentPublicKey: agent.agentPublicKey,
         })),
       );
+    } catch (error) {
+      throw toRelinkRequestError(error);
+    }
+  },
+
+  /**
+   * The owner's agents that have no Buzz identity yet, newest first, without
+   * machine defaults; read-only. A new hosted agent may attach to one.
+   */
+  listUnlinked: async () => {
+    try {
+      return await transport.listUnlinked();
     } catch (error) {
       throw toRelinkRequestError(error);
     }

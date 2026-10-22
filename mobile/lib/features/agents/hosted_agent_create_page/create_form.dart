@@ -74,6 +74,17 @@ class _CreateForm extends HookConsumerWidget {
     final submitting = useState(false);
     final failure = useState<HostedCreateFailed?>(null);
     final retryingCleanup = useState(false);
+    // An existing agent to attach to, for a create only. A pick that is no
+    // longer offered (attached elsewhere meanwhile) counts as a new agent.
+    final attachPick = useState<String?>(null);
+    final unlinkedState = existing == null
+        ? ref.watch(hostedUnlinkedAgentsProvider)
+        : null;
+    final unlinked = unlinkedState?.value ?? const <HostedUnlinkedAgent>[];
+    HostedUnlinkedAgent? attachTo;
+    for (final agent in unlinked) {
+      if (agent.kiingoAgentId == attachPick.value) attachTo = agent;
+    }
 
     final typedConfig = coerceProviderConfig(config.value, schema);
     final configKey = stableJson(typedConfig);
@@ -149,11 +160,12 @@ class _CreateForm extends HookConsumerWidget {
             label: 'The instructions',
             multiline: true,
           );
+    // An attached agent keeps its own name and instructions, so the form's
+    // are not asked for.
     final canCreate =
         complete &&
         preflight.value.allowsCreate(configKey) &&
-        nameProblem == null &&
-        promptProblem == null &&
+        (attachTo != null || (nameProblem == null && promptProblem == null)) &&
         !submitting.value &&
         !retryingCleanup.value;
 
@@ -200,9 +212,10 @@ class _CreateForm extends HookConsumerWidget {
           .create(
             catalog: catalog,
             draft: HostedAgentDraft(
-              displayName: name.trim(),
-              systemPrompt: prompt,
+              displayName: attachTo?.displayName ?? name.trim(),
+              systemPrompt: attachTo == null ? prompt : '',
               providerConfig: typedConfig,
+              kiingoAgentId: attachTo?.kiingoAgentId,
             ),
             harnessLabel: harnessLabel,
             modelLabel: modelLabel,
@@ -245,6 +258,18 @@ class _CreateForm extends HookConsumerWidget {
       ),
       children: [
         _WhereItRunsSection(providerName: catalog.providerName),
+        if (existing == null)
+          _AttachSection(
+            agents: unlinked,
+            failed: unlinkedState?.hasError == true && unlinked.isEmpty,
+            onRetry: () => ref.invalidate(hostedUnlinkedAgentsProvider),
+            selected: attachTo?.kiingoAgentId,
+            enabled: !busy,
+            onChanged: (id) {
+              failure.value = null;
+              attachPick.value = id;
+            },
+          ),
         const SizedBox(height: Grid.sm),
         _ExecutionFields(
           schema: schema,
@@ -257,41 +282,42 @@ class _CreateForm extends HookConsumerWidget {
           onRecheck: () => recheck.value++,
         ),
         const SizedBox(height: Grid.sm),
-        AppListCard(
-          label: 'Name and instructions',
-          verticalPadding: Grid.twelve,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: Grid.xs),
-              child: TextField(
-                key: const ValueKey('hosted-agent-name'),
-                controller: nameController,
-                enabled: !busy,
-                textCapitalization: TextCapitalization.words,
-                maxLength: 256,
-                decoration: InputDecoration(
-                  labelText: 'Name',
-                  counterText: '',
-                  errorText: name.isEmpty ? null : nameProblem,
+        if (attachTo == null)
+          AppListCard(
+            label: 'Name and instructions',
+            verticalPadding: Grid.twelve,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: Grid.xs),
+                child: TextField(
+                  key: const ValueKey('hosted-agent-name'),
+                  controller: nameController,
+                  enabled: !busy,
+                  textCapitalization: TextCapitalization.words,
+                  maxLength: 256,
+                  decoration: InputDecoration(
+                    labelText: 'Name',
+                    counterText: '',
+                    errorText: name.isEmpty ? null : nameProblem,
+                  ),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: Grid.xs),
-              child: TextField(
-                key: const ValueKey('hosted-agent-instructions'),
-                controller: promptController,
-                enabled: !busy,
-                minLines: 3,
-                maxLines: 8,
-                decoration: InputDecoration(
-                  labelText: 'Instructions',
-                  errorText: promptProblem,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: Grid.xs),
+                child: TextField(
+                  key: const ValueKey('hosted-agent-instructions'),
+                  controller: promptController,
+                  enabled: !busy,
+                  minLines: 3,
+                  maxLines: 8,
+                  decoration: InputDecoration(
+                    labelText: 'Instructions',
+                    errorText: promptProblem,
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
         if (existing == null)
           const _Caption('It answers only you to start with.')
         else if (name.trim() != existing.displayName)

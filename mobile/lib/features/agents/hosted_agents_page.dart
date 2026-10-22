@@ -154,6 +154,8 @@ class _AgentsUnavailable extends StatelessWidget {
 /// Plain label for an agent's live state.
 String _stateLabel(HostedAgentSnapshot agent) {
   if (agent.isDeleted) return 'Deleting';
+  if (agent.isPendingAttestation) return 'Waiting to be linked';
+  if (!agent.isActive) return 'Unavailable';
   if (agent.isPaused) {
     return agent.observedState == 'paused' ? 'Paused' : 'Pausing';
   }

@@ -1,3 +1,5 @@
+import { describeAttachFailure } from "@/features/hosted-owner-relink/lib/attach";
+
 import type { ProviderCreateRollback } from "./providerCreateApi";
 
 /**
@@ -87,7 +89,8 @@ export function failedRemoteCreateMessage(
   rollback: RollbackResult,
   options: { submitLabel?: string; retriesCleanup?: boolean } = {},
 ): string {
-  const base = `${agentName} couldn't start: ${startError}`;
+  const reason = describeAttachFailure(startError) ?? startError;
+  const base = `${agentName} couldn't start: ${reason}`;
   if (rollback.clean) {
     return `${base} Nothing was kept, so you can fix this and try again.`;
   }

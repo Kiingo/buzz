@@ -36,5 +36,8 @@ export async function buildProviderOwnedInstanceInput(
       id: backendIntent.id,
       config: backendIntent.config,
     },
+    ...(backendIntent.attachAgentId
+      ? { attachAgentId: backendIntent.attachAgentId }
+      : {}),
   };
 }

@@ -39,6 +39,16 @@ export type AttestResult = {
   kiingoAgentId: string | null;
 };
 
+/**
+ * One of the owner's agents that has no Buzz identity yet. Machine defaults
+ * are already left out by the native side.
+ */
+export type UnlinkedAgent = {
+  kiingoAgentId: string;
+  displayName: string;
+  ownerPrincipalType: "User" | "Organization";
+};
+
 /** Most agents one re-link or attest request may name. */
 export const MAX_REBIND_AGENTS = 20;
 
@@ -137,8 +147,9 @@ export function describeOutcome(result: RebindResult): string {
 }
 
 /**
- * Whether an attest result means the agent is now linked. `dm_open_failed`
- * is a reject code, but the agent was activated; the provider retries the DM.
+ * Whether an attest result means the agent is now linked. The provider
+ * reports `dm_open_failed` as a note on an activated agent (it retries the
+ * DM); a rejected result with that code is treated the same way.
  */
 export function isAttested(result: AttestResult | undefined): boolean {
   return (
@@ -174,6 +185,8 @@ export function describeAttestRejection(code: string | null): string {
       return "The hosted service didn't accept your approval for this agent.";
     case "not_agent_owner":
       return "Only this agent's owner can link it.";
+    case "dm_open_failed":
+      return "Linked; its chat with you opens shortly.";
     case "identity_unreadable":
       return "The agent's identity couldn't be read; contact support.";
     case "activate_failed":
@@ -187,9 +200,11 @@ export function describeAttestRejection(code: string | null): string {
 
 /** Plain words for one agent's attest result. */
 export function describeAttestOutcome(result: AttestResult): string {
+  if (isAttested(result) && result.code === "dm_open_failed") {
+    return "Linked; its chat with you opens shortly";
+  }
   if (result.outcome === "activated") return "Linked";
   if (result.outcome === "already_active") return "Already linked";
-  if (isAttested(result)) return "Linked; its chat with you opens shortly";
   return describeAttestRejection(result.code);
 }
 
@@ -214,7 +229,12 @@ export class RelinkRequestError extends Error {
 
 /** One sentence for a failure of the whole request. */
 export function describeRequestError(code: string): string {
-  switch (code.replace(/^buzz_hosted_/, "")) {
+  const bare = code.replace(/^buzz_hosted_/, "");
+  // Every provisioning_keys_* 503 means the service isn't set up to sign.
+  if (bare.startsWith("provisioning_keys_")) {
+    return "The hosted service can't link agents right now; try again later.";
+  }
+  switch (bare) {
     case "rebind_invalid":
     case "rebind_selection_invalid":
       return "The re-link request wasn't accepted; update Buzz and try again.";
@@ -231,11 +251,10 @@ export function describeRequestError(code: string): string {
       return "Your current key isn't linked to your account yet; link it, then try again.";
     case "owner_ambiguous":
       return "More than one account matches your key; contact support.";
+    case "not_agent_owner":
+      return "Only the agent's owner can do this; sign in with that account and try again.";
     case "scope_unconfigured":
-      return "Re-linking isn't available for this community yet.";
-    case "provisioning_keys_unconfigured":
-    case "provisioning_keys_invalid":
-      return "The hosted service can't re-link agents right now; try again later.";
+      return "Linking agents isn't available for this community yet.";
     case "database_unavailable":
       return "The hosted service is temporarily unavailable; try again in a moment.";
     case "hosted_agents_unreachable":
@@ -247,7 +266,7 @@ export function describeRequestError(code: string): string {
     case "response_too_large":
       return "The hosted service sent an answer Buzz doesn't understand.";
     case "hosted_relink_unavailable":
-      return "Re-linking isn't available in this build or community.";
+      return "Linking agents isn't available in this build or community.";
     default:
       return "The hosted service couldn't complete this request; try again.";
   }

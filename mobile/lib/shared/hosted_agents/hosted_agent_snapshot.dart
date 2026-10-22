@@ -68,7 +68,10 @@ class HostedAgentSnapshot {
       observedState == 'deleted' ||
       observedState == 'deletion_pending';
 
-  bool get isPaused => desiredState == 'paused';
+  /// Paused by its owner. Keyed off [status] first: a pending agent's
+  /// desired state also reads `paused` until it is attested, and that is not
+  /// a pause the owner chose.
+  bool get isPaused => isActive && desiredState == 'paused';
 
   String? get harness => providerConfig['harness'] is String
       ? providerConfig['harness'] as String

@@ -1,4 +1,6 @@
 import {
+  describeAttestRejection,
+  describeRejection,
   isAttested,
   isRetryable,
   isRetryableAttest,
@@ -29,6 +31,7 @@ export const AUTO_LINK_RESUME_GAP_MS = 60_000;
 export const relinkQueryKeys = {
   available: ["hosted-owner-relink", "available"] as const,
   agents: ["hosted-owner-relink", "agents"] as const,
+  unlinked: ["hosted-owner-relink", "unlinked"] as const,
 };
 
 // ---- Setting ---------------------------------------------------------------
@@ -99,6 +102,11 @@ const memoryKey = (owner: string, agent: HostedOwnerAgent) =>
 export type AutoLinkPassResult = {
   /** Names of agents this pass attested or re-linked, in list order. */
   linked: string[];
+  /**
+   * Agents this pass could not link for good, with the reason in plain
+   * words. Each is reported once: refused agents are not sent again.
+   */
+  notLinked: { name: string; reason: string }[];
   /** Whole-request error codes, if any request failed. */
   errors: string[];
   /** False when the pass did not run (wrong key, nothing to do). */
@@ -124,7 +132,12 @@ export async function runAutoLinkPass(
   ownerPublicKey: string,
   memory: AutoLinkMemory,
 ): Promise<AutoLinkPassResult> {
-  const result: AutoLinkPassResult = { linked: [], errors: [], sent: false };
+  const result: AutoLinkPassResult = {
+    linked: [],
+    notLinked: [],
+    errors: [],
+    sent: false,
+  };
   let view: HostedOwnerAgents;
   try {
     view = await api.list();
@@ -159,6 +172,10 @@ export async function runAutoLinkPass(
           }
         } else if (!isRetryableAttest(outcome)) {
           memory.refused.add(memoryKey(owner, agent));
+          result.notLinked.push({
+            name: agent.displayName,
+            reason: describeAttestRejection(outcome?.code ?? null),
+          });
         }
       }
     }
@@ -176,6 +193,10 @@ export async function runAutoLinkPass(
           !isRetryable(outcome)
         ) {
           memory.refused.add(memoryKey(owner, agent));
+          result.notLinked.push({
+            name: agent.displayName,
+            reason: describeRejection(outcome?.code ?? null),
+          });
         }
       }
     }
@@ -188,6 +209,28 @@ export async function runAutoLinkPass(
     }
   }
   return result;
+}
+
+/**
+ * The note for agents a pass could not link, or null when there are none:
+ * a title and one "name: reason" line per agent (at most three, then a
+ * count).
+ */
+export function notLinkedNote(
+  agents: readonly { name: string; reason: string }[],
+): { title: string; description: string } | null {
+  if (agents.length === 0) return null;
+  const lines = agents
+    .slice(0, 3)
+    .map((agent) => `${agent.name.trim() || "An agent"}: ${agent.reason}`);
+  if (agents.length > 3) lines.push(`And ${agents.length - 3} more.`);
+  return {
+    title:
+      agents.length === 1
+        ? "Couldn't link an agent"
+        : `Couldn't link ${agents.length} agents`,
+    description: lines.join("\n"),
+  };
 }
 
 /** The quiet note after a pass, or null when it linked nothing. */

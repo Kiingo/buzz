@@ -445,4 +445,83 @@ void main() {
       }
     });
   });
+
+  group('provider shapes', () {
+    test("the provider's exact pending entry is pending, not paused", () {
+      const id = 'buzz:0A1B2C3D-0000-4000-8000-00000000ABCD';
+      final snapshot = parseHostedAgentSnapshot({
+        'contract_version': 1,
+        'status': 'pending_attestation',
+        'provider_agent_id': id,
+        'agent_public_key': _adaKey,
+        'kiingo_agent_id': _kiingoId,
+        'display_name': 'Scout',
+        'owner_public_key': null,
+        'desired_state': 'paused',
+        'observed_state': 'pending_attestation',
+        'profile_revision': 0,
+      })!;
+      expect(snapshot.isPendingAttestation, isTrue);
+      // Keyed off status: the pending agent's desired "paused" is not a pause.
+      expect(snapshot.isPaused, isFalse);
+      expect(snapshot.isDeleted, isFalse);
+      expect(snapshot.profileRevision, 0);
+      // The id passes back exactly as the provider wrote it.
+      expect(snapshot.providerAgentId, id);
+      expect(
+        buildHostedAttestBody(
+          ownerSecretHex: _ownerSecret,
+          requestId: 'r',
+          selected: [snapshot],
+        )['agents'],
+        [
+          isA<Map>().having(
+            (agent) => agent['provider_agent_id'],
+            'provider_agent_id',
+            id,
+          ),
+        ],
+      );
+    });
+
+    test('an activated agent keeps the dm_open_failed note', () {
+      final outcome = parseHostedAttestResponse(
+        _answer(
+          {'request_id': 'r'},
+          [
+            _result(
+              'buzz:ada',
+              _adaKey,
+              'activated',
+              code: 'buzz_hosted_dm_open_failed',
+            ),
+          ],
+        ),
+        requestId: 'r',
+        ownerPublicKey: _owner,
+        requested: [_pending('buzz:ada', _adaKey)],
+      ).single;
+      expect(outcome.status, HostedAttestStatus.activated);
+      expect(outcome.code, 'dm_open_failed');
+      expect(outcome.linked, isTrue);
+      expect(outcome.retryable, isFalse);
+      expect(outcome.label, 'Linked; its chat with you opens shortly');
+    });
+
+    test('service and ownership codes read as plain sentences', () {
+      for (final code in [
+        'buzz_hosted_provisioning_keys_unavailable',
+        'buzz_hosted_provisioning_keys_unconfigured',
+        'buzz_hosted_scope_unconfigured',
+        'buzz_hosted_not_agent_owner',
+        'buzz_hosted_attest_pending_invalid',
+      ]) {
+        final text = describeAttestRequestError(
+          HostedAgentException(code, status: 503, serverMessage: code),
+        );
+        expect(text, isNot(contains('_')), reason: code);
+        expect(text.split('.').length, 2, reason: code);
+      }
+    });
+  });
 }

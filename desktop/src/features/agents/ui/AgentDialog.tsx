@@ -172,6 +172,7 @@ function AgentCreateDialogRouter({
         createRunSection={(effortOptions) => (
           <>
             <WhereToRunSection
+              allowAttach
               draft={runDraft}
               isPending={isDefinitionPending}
               onDraftChange={setRunDraft}

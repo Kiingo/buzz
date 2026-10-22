@@ -2,6 +2,7 @@ import { AlertTriangle } from "lucide-react";
 import * as React from "react";
 
 import { useBackendProvidersQuery } from "@/features/agents/hooks";
+import { HostedAttachAgentPicker } from "@/features/hosted-owner-relink/ui/HostedAttachAgentPicker";
 import { probeBackendProvider } from "@/shared/api/tauri";
 import { isMacPlatform } from "@/shared/lib/platform";
 
@@ -32,10 +33,13 @@ import type { WhereToRunDraftSource } from "./usePreferredWhereToRunDraft";
  * offers exactly that destination and this computer, under "Where it runs".
  */
 export function WhereToRunSection({
+  allowAttach = false,
   draft,
   isPending,
   onDraftChange,
 }: {
+  /** Offer attaching one new agent to an existing hosted agent. */
+  allowAttach?: boolean;
   draft: WhereToRunDraft;
   isPending: boolean;
   onDraftChange: (
@@ -169,6 +173,15 @@ export function WhereToRunSection({
               </p>
             </div>
           )}
+          {allowAttach && selectedIsShippedProvider ? (
+            <HostedAttachAgentPicker
+              disabled={isPending}
+              onChange={(attachAgentId) =>
+                onDraftChange({ ...draft, attachAgentId })
+              }
+              value={draft.attachAgentId}
+            />
+          ) : null}
           {probeError ? (
             <p className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {selectedIsShippedProvider

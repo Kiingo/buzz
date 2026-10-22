@@ -17,6 +17,7 @@ import 'hosted_agent_responses.dart';
 import 'hosted_agent_snapshot.dart';
 import 'hosted_owner_attest.dart';
 import 'hosted_owner_rebind.dart';
+import 'hosted_unlinked_agents.dart';
 import 'session_controls.dart';
 
 const _maxResponseBytes = 2 * 1024 * 1024;
@@ -404,6 +405,38 @@ class HostedAgentClient implements HostedAgentProvisioner {
       ownerPublicKey: ownerPublicKey(),
       requested: selected,
     );
+  }
+
+  /// The owner's agents that have no Buzz identity yet, newest first,
+  /// without machine defaults. Read-only; a new hosted agent may attach to
+  /// one of them.
+  Future<List<HostedUnlinkedAgent>> listUnlinked({
+    required HostedAgentCatalog catalog,
+  }) async {
+    final requestId = const Uuid().v4();
+    final (status, body) = await _send(
+      'POST',
+      '/owner/agents/unlinked',
+      timeout: const Duration(seconds: 20),
+      body: {
+        'contract_version': 1,
+        'request_id': requestId,
+        'owner_proof': buildListUnlinkedProof(
+          ownerSecretHex: ownerSecretHex(),
+          providerId: catalog.providerId,
+          requestId: requestId,
+          communityId: route.communityId,
+        ),
+      },
+    );
+    if (!_ok(status)) {
+      throw hostedAgentFailure(
+        body,
+        status: status,
+        fallbackCode: 'list_failed',
+      );
+    }
+    return parseHostedUnlinkedAgents(body, requestId);
   }
 
   /// One owner write. The request id is fixed for the operation, so a retry

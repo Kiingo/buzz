@@ -182,6 +182,10 @@ const _capabilityPolicy = {
 
 /// The deterministic key that lets the API recognize a replay of the same
 /// create (used by rollback to learn whether an uncertain create landed).
+///
+/// [kiingoAgentId] joins the key only when the owner attached an existing
+/// agent, so a plain create keeps the key it always had, and attaching the
+/// same identity to a different agent is a different create.
 String hostedAgentIdempotencyKey({
   required String communityId,
   required String agentPublicKey,
@@ -189,6 +193,7 @@ String hostedAgentIdempotencyKey({
   required String providerConfigSha256,
   required Map<String, Object?> agentInstructions,
   required String displayName,
+  String? kiingoAgentId,
 }) => stableJsonSha256({
   'identity_envelope_version': hostedIdentityEnvelopeVersion,
   'community_id': communityId,
@@ -198,6 +203,7 @@ String hostedAgentIdempotencyKey({
   'agent_instructions': agentInstructions,
   'display_name': displayName,
   'response_policy': hostedAgentResponsePolicy,
+  'kiingo_agent_id': ?kiingoAgentId,
 });
 
 /// Build the full `POST /agents` body. A replay with the same identity, draft
@@ -251,6 +257,7 @@ Future<Map<String, Object?>> buildHostedProvisionRequest({
       providerConfigSha256: configHash,
       agentInstructions: instructions,
       displayName: displayName,
+      kiingoAgentId: kiingoAgentId,
     ),
     'community_id': scope.communityId,
     'relay_url': scope.relayUrl,

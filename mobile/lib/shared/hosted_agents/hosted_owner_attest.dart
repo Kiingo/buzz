@@ -69,15 +69,17 @@ class HostedAttestOutcome {
   final String providerAgentId;
   final HostedAttestStatus status;
 
-  /// Reject code without the `buzz_hosted_` prefix.
+  /// Code without the `buzz_hosted_` prefix: why a rejected agent was not
+  /// activated, or a note on an activated one (`dm_open_failed`).
   final String? code;
 
   /// Whether the provider opened the owner DM as the agent.
   final bool dmOpened;
   final String? kiingoAgentId;
 
-  /// The agent is linked now. `dm_open_failed` is a reject code, but the
-  /// agent was activated and the provider retries the DM itself.
+  /// The agent is linked now. The API reports `dm_open_failed` as a note on
+  /// an activated agent (it retries the DM itself); a rejected result with
+  /// that code is treated the same way.
   bool get linked =>
       status != HostedAttestStatus.rejected || code == 'dm_open_failed';
 
@@ -86,6 +88,8 @@ class HostedAttestOutcome {
 
   /// Plain words for the owner.
   String get label => switch (status) {
+    _ when linked && code == 'dm_open_failed' =>
+      'Linked; its chat with you opens shortly',
     HostedAttestStatus.activated => 'Linked',
     HostedAttestStatus.alreadyActive => 'Already linked',
     HostedAttestStatus.rejected when linked =>
@@ -179,7 +183,7 @@ List<HostedAttestOutcome> parseHostedAttestResponse(
       status: status,
       code: status == HostedAttestStatus.rejected
           ? (_stripPrefix(raw['code']) ?? 'activate_failed')
-          : null,
+          : _stripPrefix(raw['code']),
       dmOpened: raw['dm_opened'] == true,
       kiingoAgentId:
           kiingoAgentId is String && _uuid.hasMatch(kiingoAgentId.toLowerCase())
