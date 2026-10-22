@@ -151,6 +151,9 @@ earshot = "1.0"
 rubato = "3.0"
 audioadapter-buffers = "3.0"
 tempfile = "3"
+# Curated CA bundle for Buzz's own git subprocesses (src/git_ca_bundle).
+rustls-webpki = "0.103.16"
+webpki-root-certs = "1.0.10"
 strip-ansi-escapes = "0.2"
 tracing = "0.1"
 

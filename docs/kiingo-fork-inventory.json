@@ -1921,6 +1921,23 @@
       "purpose": "October 2026 security advisories. The Buzz-private Node runtime for agent adapters moves to Node 24.22.1 (Brotli decoder RCE CVE-2026-111497, TLS hostname checks, randomUUID snapshot entropy, eMudhra CA removal), with SHA-256 pins from the release's SHASUMS256.txt and one version constant shared by the install path and the download code; the Hermit dev toolchain moves to the same Node; the feature-flag fixture lockfile resolves rustls-webpki 0.103.16 (RUSTSEC-2026-0382); and the macOS minimum system version is stated in the base Tauri config at the 10.15 the release config and deployment target already use.",
       "removalCondition": "Drop when upstream pins Node 24.22.1 or later for the managed runtime and Hermit, its fixture lockfile resolves rustls-webpki 0.103.16 or later, and its base Tauri config states the macOS minimum.",
       "upstreamStatus": "Generic, provider-neutral security update; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "paths": [
+        "desktop/src-tauri/Cargo.toml",
+        "desktop/src-tauri/src/commands/project_git_exec.rs",
+        "desktop/src-tauri/src/git_ca_bundle/fixtures/aaa-certificate-services.pem",
+        "desktop/src-tauri/src/git_ca_bundle/fixtures/emsign-ecc-root-ca-g3.pem",
+        "desktop/src-tauri/src/git_ca_bundle/fixtures/operator-appended-ca.pem",
+        "desktop/src-tauri/src/git_ca_bundle/mod.rs",
+        "desktop/src-tauri/src/git_ca_bundle/tests.rs",
+        "desktop/src-tauri/src/managed_agents/runtime.rs"
+      ],
+      "purpose": "October 2026 security response. Apple's system git and libcurl trust /etc/ssl/cert.pem, which macOS trust updates do not touch; it still held emSign ECC Root CA - G3 and AAA Certificate Services, the roots behind eight eMudhra intermediates with guessable private keys. On macOS Desktop writes a curated CA bundle (the system bundle, or Mozilla's compiled-in webpki-root-certs when that yields nothing, minus every emSign/eMudhra root and AAA Certificate Services) and passes it as http.sslCAInfo to its own git, which already ignores user and system git config, and scoped to the active relay's git URLs for agent harnesses. Operator-appended CAs in the system bundle are kept; GIT_SSL_CAINFO or GIT_SSL_CAPATH in the environment wins and disables the bundle. Desktop's Cargo.lock and lib.rs changes (the two direct dependencies and the module declaration) are covered by their existing groups.",
+      "removalCondition": "Drop when upstream Desktop passes a CA bundle without the distrusted eMudhra and AAA roots to its git subprocesses on macOS, or when Apple's /etc/ssl/cert.pem no longer contains them on every supported macOS version.",
+      "upstreamStatus": "Generic, provider-neutral security hardening; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [

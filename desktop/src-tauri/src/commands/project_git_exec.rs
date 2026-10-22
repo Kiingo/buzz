@@ -49,6 +49,9 @@ pub(crate) struct GitAuthConfig {
     credential_helper: Option<std::path::PathBuf>,
     nsec: String,
     allow_file_transport: bool,
+    /// Curated CA bundle for git's TLS (`git_ca_bundle`); `None` keeps git's
+    /// default trust.
+    ssl_ca_info: Option<std::path::PathBuf>,
 }
 
 fn read_pipe_lossy(pipe: Option<impl Read>) -> String {
@@ -168,6 +171,9 @@ fn configure_git_auth(command: &mut Command, auth: &GitAuthConfig, needs_credent
             .to_string(),
         ),
     ];
+    if let Some(bundle) = &auth.ssl_ca_info {
+        entries.push(("http.sslCAInfo", bundle.to_string_lossy().into_owned()));
+    }
     if needs_credentials {
         let Some(cred_helper) = &auth.credential_helper else {
             return apply_git_config(command, &entries);
@@ -214,6 +220,7 @@ pub(crate) fn build_git_clone_auth_config(
             credential_helper: None,
             nsec: String::new(),
             allow_file_transport: false,
+            ssl_ca_info: crate::git_ca_bundle::git_ssl_ca_info(),
         });
     }
     build_git_auth_config(state)
@@ -231,6 +238,7 @@ pub(crate) fn build_git_auth_config_for_keys(keys: &Keys) -> Result<GitAuthConfi
         credential_helper,
         nsec,
         allow_file_transport: false,
+        ssl_ca_info: crate::git_ca_bundle::git_ssl_ca_info(),
     })
 }
 
@@ -393,10 +401,52 @@ fn validate_clone_url_against_relay(clone_url: &str, relay_base: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::{
-        clean_branch, clean_target_ref, credential_helper_config_value, git_needs_credentials,
-        git_subcommand, validate_clone_url, validate_clone_url_against_relay,
-        validate_local_clone_url,
+        clean_branch, clean_target_ref, configure_git_auth, credential_helper_config_value,
+        git_needs_credentials, git_subcommand, validate_clone_url,
+        validate_clone_url_against_relay, validate_local_clone_url, GitAuthConfig,
     };
+
+    #[test]
+    fn git_uses_the_curated_ca_bundle_for_every_invocation() {
+        let mut auth = GitAuthConfig {
+            git_path: "git".into(),
+            credential_helper: None,
+            nsec: String::new(),
+            allow_file_transport: false,
+            ssl_ca_info: Some("/tmp/buzz-git-ca.pem".into()),
+        };
+        let config = |auth: &GitAuthConfig, needs_credentials: bool| {
+            let mut command = std::process::Command::new("git");
+            configure_git_auth(&mut command, auth, needs_credentials);
+            let env: std::collections::HashMap<String, String> = command
+                .get_envs()
+                .filter_map(|(key, value)| {
+                    Some((key.to_str()?.to_owned(), value?.to_str()?.to_owned()))
+                })
+                .collect();
+            let count: usize = env["GIT_CONFIG_COUNT"].parse().expect("count");
+            (0..count)
+                .map(|index| {
+                    (
+                        env[&format!("GIT_CONFIG_KEY_{index}")].clone(),
+                        env[&format!("GIT_CONFIG_VALUE_{index}")].clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let ca_entry = (
+            "http.sslCAInfo".to_string(),
+            "/tmp/buzz-git-ca.pem".to_string(),
+        );
+        // Remote operations without a credential helper return early; local
+        // ones skip credentials entirely. Both still carry the bundle.
+        assert!(config(&auth, true).contains(&ca_entry));
+        assert!(config(&auth, false).contains(&ca_entry));
+        auth.ssl_ca_info = None;
+        assert!(config(&auth, true)
+            .iter()
+            .all(|(key, _)| key != "http.sslCAInfo"));
+    }
 
     #[test]
     fn credential_helper_config_value_uses_forward_slashes() {
