@@ -14955,10 +14955,15 @@ mod tests {
         /// huddle; the human is on the owner pod. The agent's frames reach the
         /// owner-pod human behind the agent's owner-assigned index, and the
         /// human's frames come back to the agent behind the human's index.
+        /// A second client on the same ingress pod makes the fan-out
+        /// observable: each ingress client receives the owner-pod human's
+        /// frame exactly once.
         ///
         /// Mutation: forward the ingress client's frames to the local room
-        /// instead of `RemoteHuddleSession::forward_media`, or drop the
-        /// owner's remote-peer sink → RED.
+        /// instead of `RemoteHuddleSession::forward_media`, drop the owner's
+        /// remote-peer sink, or send one datagram per remote client instead
+        /// of one per destination pod (each ingress client hears the frame
+        /// twice) → RED.
         #[tokio::test]
         #[ignore = "requires Postgres — runs in postgres-ci nextest lane"]
         async fn attested_agent_on_ingress_pod_exchanges_audio_with_owner_pod_human() {
@@ -15027,7 +15032,47 @@ mod tests {
                 next_audio_binary(&mut agent_ws).await,
                 relayed(human_index, &from_human)
             );
+
+            // A second human on the ingress pod: two co-located remote
+            // clients, so one owner datagram per client would double every
+            // frame on that pod.
+            let listener = nostr::Keys::generate();
+            add_channel_member(&h.pool, &h.tenant, h.channel_id, &listener).await;
+            let (mut listener_ws, listener_server, _listener_joined) =
+                open_v2_audio_socket(&h.state, &h.tenant, h.channel_id, &listener, None).await;
+            let from_human = v2_frame(2, b"human-opus-2");
+            owner_room.broadcast_frame(human_id, bytes::Bytes::from(from_human.clone()));
+            for (who, ws) in [("agent", &mut agent_ws), ("listener", &mut listener_ws)] {
+                assert_eq!(
+                    next_audio_binary(ws).await,
+                    relayed(human_index, &from_human),
+                    "{who} receives the owner-pod frame"
+                );
+                assert_no_audio_binary(ws, std::time::Duration::from_millis(500))
+                    .await
+                    .unwrap_or_else(|dup| panic!("{who} received the frame twice: {dup:?}"));
+            }
+            listener_server.abort();
             agent_server.abort();
+        }
+
+        /// `Err(frame)` if a binary frame arrives within `window`; control
+        /// messages and pings are skipped.
+        async fn assert_no_audio_binary(
+            client: &mut AudioWsClient,
+            window: std::time::Duration,
+        ) -> Result<(), Vec<u8>> {
+            let deadline = tokio::time::Instant::now() + window;
+            loop {
+                match tokio::time::timeout_at(deadline, client.next()).await {
+                    Err(_) => return Ok(()),
+                    Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(b)))) => {
+                        return Err(b.to_vec())
+                    }
+                    Ok(Some(Ok(_))) => continue,
+                    Ok(other) => panic!("audio socket closed while listening: {other:?}"),
+                }
+            }
         }
 
         /// R2: two sockets for one agent key are two admissions. Both are
