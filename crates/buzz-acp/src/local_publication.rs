@@ -64,6 +64,13 @@ const TERMINAL_RECEIPT_CACHE_CAPACITY: usize = 128;
 // window no retry can ever be accepted.
 const RELAY_TIMESTAMP_TOLERANCE_SECS: u64 = 900;
 const RELAY_TIMESTAMP_REJECTION: &str = "event timestamp too far from server time";
+/// The relay's exact `POST /events` rejection reason (buzz-relay
+/// `validate_event_timestamp`). The completion API matches it byte for byte.
+const RELAY_TIMESTAMP_REJECTION_REASON: &str = "invalid: event timestamp too far from server time";
+/// Error phase for a chat publication the relay definitively refused as
+/// outside its timestamp window, after an exact-ID absence read. It carries
+/// the frozen event id so the failure report can name the refused event.
+const RELAY_TIMESTAMP_REJECTED_PHASE: &str = "publication relay timestamp rejected";
 const STALE_STATUS_FENCE_CACHE_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -686,10 +693,20 @@ impl LocalPublicationWorker {
             .find_existing_event(&event, &intent.channel_id, &fence_tag_value)
             .await?;
         if !already_published {
-            tokio::time::timeout(Duration::from_secs(5), self.rest.submit_event(&event))
-                .await
-                .map_err(|_| "publication relay submission timed out".to_string())?
-                .map_err(|error| format!("publication relay submission failed: {error}"))?;
+            let submitted =
+                tokio::time::timeout(Duration::from_secs(5), self.rest.submit_event(&event))
+                    .await
+                    .map_err(|_| "publication relay submission timed out".to_string())?;
+            if let Err(error) = submitted {
+                let error = error.to_string();
+                // The exact-ID read above found no copy of this event, and the
+                // relay refused it for its frozen timestamp: re-sending the
+                // same signature can never be accepted.
+                if is_relay_timestamp_rejection(&error) {
+                    return Err(relay_timestamp_rejected_error(&event_id, &error));
+                }
+                return Err(format!("publication relay submission failed: {error}"));
+            }
         }
         if self.reconcile_reactions {
             if let Some(state) = reaction_state_for_publication_kind(&intent.publication_kind) {
@@ -876,6 +893,37 @@ fn is_status_event_publication(intent: &LocalPublicationIntent) -> bool {
 fn status_publication_outside_relay_window(intent: &LocalPublicationIntent, now_secs: u64) -> bool {
     is_status_event_publication(intent)
         && intent.event_created_at.abs_diff(now_secs) > RELAY_TIMESTAMP_TOLERANCE_SECS
+}
+
+/// True only for the relay's own `400` timestamp-window rejection: the JSON
+/// body's `error` must equal [`RELAY_TIMESTAMP_REJECTION_REASON`] exactly, so
+/// no other refusal, proxy page or reworded reason is mistaken for it.
+fn is_relay_timestamp_rejection(error: &str) -> bool {
+    let Some((_, body)) = error.split_once(" returned HTTP 400 Bad Request: ") else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(body).is_ok_and(|value| {
+        value.get("error").and_then(serde_json::Value::as_str)
+            == Some(RELAY_TIMESTAMP_REJECTION_REASON)
+    })
+}
+
+fn relay_timestamp_rejected_error(event_id: &str, relay_error: &str) -> String {
+    format!("{RELAY_TIMESTAMP_REJECTED_PHASE}: frozen_event_id={event_id}: {relay_error}")
+}
+
+/// The frozen event id from a [`relay_timestamp_rejected_error`], if `error`
+/// is one and names a well-formed lowercase 64-hex event id.
+fn relay_timestamp_rejected_event_id(error: &str) -> Option<&str> {
+    let rest = error
+        .strip_prefix(RELAY_TIMESTAMP_REJECTED_PHASE)?
+        .strip_prefix(": frozen_event_id=")?;
+    let (event_id, _) = rest.split_once(':')?;
+    (event_id.len() == 64
+        && event_id
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')))
+    .then_some(event_id)
 }
 
 fn publication_retry_max_elapsed(intent: &LocalPublicationIntent) -> Duration {

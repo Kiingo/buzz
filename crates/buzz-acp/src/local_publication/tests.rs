@@ -587,6 +587,269 @@ async fn relay_timestamp_rejection_of_status_is_terminal_without_retry() {
     .expect("stale status rejection must not retry");
 }
 
+#[test]
+fn only_the_relays_exact_timestamp_rejection_is_classified_as_one() {
+    let rejection = |status: &str, body: &str| {
+        format!("HTTP error: POST /events returned HTTP {status}: {body}")
+    };
+    assert!(is_relay_timestamp_rejection(&rejection(
+        "400 Bad Request",
+        r#"{"error":"invalid: event timestamp too far from server time"}"#
+    )));
+    // JSON layout is not the reason; the reason itself must match exactly.
+    assert!(is_relay_timestamp_rejection(&rejection(
+        "400 Bad Request",
+        r#"{ "error" : "invalid: event timestamp too far from server time" }"#
+    )));
+    for drifted in [
+        rejection(
+            "400 Bad Request",
+            r#"{"error":"event timestamp too far from server time"}"#,
+        ),
+        rejection(
+            "400 Bad Request",
+            r#"{"error":"invalid: event timestamp too far from server time "}"#,
+        ),
+        rejection(
+            "400 Bad Request",
+            r#"{"error":" invalid: event timestamp too far from server time"}"#,
+        ),
+        rejection(
+            "400 Bad Request",
+            r#"{"error":"Invalid: event timestamp too far from server time"}"#,
+        ),
+        rejection(
+            "400 Bad Request",
+            r#"{"error":"restricted: invalid: event timestamp too far from server time"}"#,
+        ),
+        rejection(
+            "400 Bad Request",
+            "invalid: event timestamp too far from server time",
+        ),
+        rejection(
+            "401 Unauthorized",
+            r#"{"error":"invalid: event timestamp too far from server time"}"#,
+        ),
+        rejection(
+            "500 Internal Server Error",
+            r#"{"error":"invalid: event timestamp too far from server time"}"#,
+        ),
+        "HTTP error: POST /events returned HTTP 400 Bad Request".to_string(),
+    ] {
+        assert!(!is_relay_timestamp_rejection(&drifted), "{drifted}");
+    }
+}
+
+#[tokio::test]
+async fn relay_timestamp_rejection_of_an_answer_reports_its_frozen_event_once() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let keys = Keys::generate();
+        // A final frozen long ago: the relay refuses its signed timestamp.
+        let saved = intent(keys.public_key().to_hex());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let worker = LocalPublicationWorker {
+            rest: RestClient {
+                base_url: base.clone(),
+                ..rest(keys)
+            },
+            community_id: saved.community_id.clone(),
+            completion_api_base_url: base,
+            internal_token: "stale-answer-test-token".into(),
+            reconcile_reactions: false,
+            retry_pacing: Default::default(),
+        };
+        let server_saved = saved.clone();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, body) = receive_http(&mut stream).await;
+            assert!(headers.starts_with(&format!(
+                "POST /api/buzz-bridge/publications/{}/authorize ",
+                server_saved.fence_id
+            )));
+            respond_http(&mut stream, 200, authorization_response(&body, true)).await;
+
+            // The exact-ID absence read precedes the submission.
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, _) = receive_http(&mut stream).await;
+            assert!(headers.starts_with("POST /query "), "{headers}");
+            respond_http(&mut stream, 200, serde_json::json!([])).await;
+
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, body) = receive_http(&mut stream).await;
+            assert!(headers.starts_with("POST /events "), "{headers}");
+            let event: nostr::Event = serde_json::from_value(body).unwrap();
+            assert_eq!(event.created_at.as_secs(), server_saved.event_created_at);
+            respond_http(
+                &mut stream,
+                400,
+                serde_json::json!({
+                    "error": "invalid: event timestamp too far from server time"
+                }),
+            )
+            .await;
+
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, body) = receive_http(&mut stream).await;
+            assert!(
+                headers.starts_with(&format!(
+                    "POST /api/buzz-bridge/publications/{}/failure ",
+                    server_saved.fence_id
+                )),
+                "{headers}"
+            );
+            assert_eq!(
+                body,
+                serde_json::json!({
+                    "fence_id": server_saved.fence_id,
+                    "receipt_id": server_saved.receipt_id,
+                    "community_id": server_saved.community_id,
+                    "agent_public_key": server_saved.agent_public_key,
+                    "failure_code": "relay_timestamp_rejected",
+                    "relay_rejection": "invalid: event timestamp too far from server time",
+                    "frozen_event_id": event.id.to_hex(),
+                    "frozen_event_created_at": server_saved.event_created_at,
+                })
+            );
+            respond_http(
+                &mut stream,
+                200,
+                serde_json::json!({"refreshed": true, "parked": false}),
+            )
+            .await;
+            // The refused signature is never resubmitted, and the fence is
+            // never completed with it; the outbox re-offers the re-stamped one.
+            assert!(
+                tokio::time::timeout(Duration::from_millis(300), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        assert!(worker.publish_with_retry(&saved).await.is_none());
+        server.await.unwrap();
+    })
+    .await
+    .expect("stale answer rejection is reported once without a resubmission");
+}
+
+#[test]
+fn restamped_answer_is_queued_again_after_its_receipt_went_terminal() {
+    let keys = Keys::generate();
+    let stale = intent(keys.public_key().to_hex());
+    let mut state = LocalPublicationQueueState::default();
+    state.accept(stale.clone());
+    assert_eq!(
+        state.take_next().unwrap().event_created_at,
+        stale.event_created_at
+    );
+    // Only status for a terminal receipt is suppressed; the fence's re-stamped
+    // final (same fence_id, new frozen time) is a fresh delivery.
+    let mut restamped = stale.clone();
+    restamped.event_created_at = stale.event_created_at + 86_400;
+    state.accept(restamped.clone());
+    let next = state.take_next().unwrap();
+    assert_eq!(next.fence_id, stale.fence_id);
+    assert_eq!(next.event_created_at, restamped.event_created_at);
+}
+
+#[tokio::test]
+async fn restamped_answer_after_a_rejected_failure_report_is_signed_and_authorized_fresh() {
+    tokio::time::timeout(Duration::from_secs(8), async {
+        let keys = Keys::generate();
+        let stale = intent(keys.public_key().to_hex());
+        let mut restamped = stale.clone();
+        restamped.event_created_at = stale.event_created_at + 86_400;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let worker = LocalPublicationWorker {
+            rest: RestClient {
+                base_url: base.clone(),
+                ..rest(keys)
+            },
+            community_id: stale.community_id.clone(),
+            completion_api_base_url: base,
+            internal_token: "restamp-test-token".into(),
+            reconcile_reactions: false,
+            retry_pacing: Default::default(),
+        };
+        let (stale_for_server, restamped_for_server) = (stale.clone(), restamped.clone());
+        let (quiet_tx, quiet_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            // 1. The frozen answer is refused, and the failure report itself is
+            //    refused (the API already re-stamped it, or the identity moved).
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (_, body) = receive_http(&mut stream).await;
+            assert_eq!(body["event_created_at"], stale_for_server.event_created_at);
+            respond_http(&mut stream, 200, authorization_response(&body, true)).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let _ = receive_http(&mut stream).await;
+            respond_http(&mut stream, 200, serde_json::json!([])).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (_, body) = receive_http(&mut stream).await;
+            let refused: nostr::Event = serde_json::from_value(body).unwrap();
+            respond_http(
+                &mut stream,
+                400,
+                serde_json::json!({
+                    "error": "invalid: event timestamp too far from server time"
+                }),
+            )
+            .await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, _) = receive_http(&mut stream).await;
+            assert!(headers.contains("/failure "), "{headers}");
+            respond_http(
+                &mut stream,
+                409,
+                serde_json::json!({"error": "buzz_publication_stale_identity_mismatch"}),
+            )
+            .await;
+            // A refused report is never retried and never triggers a resubmission.
+            assert!(
+                tokio::time::timeout(Duration::from_millis(300), listener.accept())
+                    .await
+                    .is_err()
+            );
+            quiet_tx.send(()).unwrap();
+
+            // 2. Recovery re-offers the re-stamped fence: fresh authorization for
+            //    the new frozen time, a new signature, a lookup of the new id.
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, body) = receive_http(&mut stream).await;
+            assert!(headers.contains("/authorize "), "{headers}");
+            assert_eq!(body, serde_json::to_value(&restamped_for_server).unwrap());
+            respond_http(&mut stream, 200, authorization_response(&body, true)).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, body) = receive_http(&mut stream).await;
+            assert!(headers.starts_with("POST /query "), "{headers}");
+            assert_ne!(body[0]["ids"], serde_json::json!([refused.id.to_hex()]));
+            respond_http(&mut stream, 200, serde_json::json!([])).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, body) = receive_http(&mut stream).await;
+            assert!(headers.starts_with("POST /events "), "{headers}");
+            let published: nostr::Event = serde_json::from_value(body).unwrap();
+            published.verify().unwrap();
+            assert_eq!(
+                published.created_at.as_secs(),
+                restamped_for_server.event_created_at
+            );
+            assert_ne!(published.id, refused.id);
+            respond_http(&mut stream, 200, serde_json::json!({"accepted": true})).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, _) = receive_http(&mut stream).await;
+            assert!(headers.contains("/complete "), "{headers}");
+            respond_http(&mut stream, 200, serde_json::json!({"status": "published"})).await;
+            published.id.to_hex()
+        });
+        assert!(worker.publish_with_retry(&stale).await.is_none());
+        quiet_rx.await.unwrap();
+        let published = worker.publish_with_retry(&restamped).await;
+        assert_eq!(published, Some(server.await.unwrap()));
+    })
+    .await
+    .expect("re-stamped answer is a fresh, bounded delivery");
+}
+
 #[tokio::test]
 async fn stale_status_is_never_submitted_from_any_route() {
     tokio::time::timeout(Duration::from_secs(5), async {
