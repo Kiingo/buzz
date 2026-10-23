@@ -2030,6 +2030,18 @@
       "purpose": "Bare links in message bodies. Desktop and mobile make link-like prose clickable when it is not a Markdown link: bare domains with a real TLD (plus port, path, query or fragment) and www. hosts open over https, emails open mailto:, clearly formatted phone numbers open tel:. Code, existing links, mentions and entity pills are never linked; trailing punctuation is peeled with balanced parentheses kept; versions, filenames, times, decimals, dates and IPv4 addresses are not links. Desktop uses linkifyjs in a remark plugin and lets matching tel: hrefs through the Markdown URL transform; mobile uses a TLD-allowlist regex in the link normalizer and opens mailto:/tel: taps in the system handler. Both run one shared case table (test-fixtures/bare-links.json); the spec is docs/bare-links.md.",
       "removalCondition": "Drop when upstream desktop and mobile linkify bare domains, www. hosts, emails and phone numbers in message bodies with equivalent guards.",
       "upstreamStatus": "Generic, provider-neutral client feature; not yet submitted to block/buzz."
+    },
+    {
+      "id": "dependabot-rust-rmcp-3-2026-10",
+      "classification": "retain-generic",
+      "owner": "Buzz agent maintainers",
+      "purpose": "October 2026 Dependabot Rust advisories. buzz-agent moves its MCP client from rmcp 1.8 to the rmcp 3 line already in both lockfiles (GHSA-33f5-2c5q-wgwj, GHSA-9pj6-vhgr-3mwh, GHSA-c9xm-49cp-xcr9, GHSA-9g45-5xwm-f3wc). The only code change is that tool-result content is now the flat rmcp::model::ContentBlock union instead of Content/RawContent, with unknown future block kinds elided. The lockfile-only bumps (hickory-resolver 0.26.3, xxhash-rust 0.8.19, cmov 0.5.4, and ctutils 0.4.5 for RUSTSEC-2026-0385, which also moves the feature-flag fixture lockfile) ride on the existing Cargo.lock deltas.",
+      "upstreamStatus": "Generic, provider-neutral security update; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream buzz-agent depends on rmcp 2.1 or later.",
+      "paths": [
+        "crates/buzz-agent/Cargo.toml",
+        "crates/buzz-agent/src/mcp.rs"
+      ]
     }
   ],
   "budgetAmendments": [
