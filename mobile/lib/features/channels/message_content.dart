@@ -660,6 +660,11 @@ class MessageContent extends HookConsumerWidget {
           }
           return;
         }
+        // Linkified emails and phone numbers open the system handler.
+        if (uri.scheme == 'mailto' || uri.scheme == 'tel') {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          return;
+        }
         if (uri.scheme != 'http' && uri.scheme != 'https') return;
 
         final auth = ref.read(mediaGetAuthServiceProvider);

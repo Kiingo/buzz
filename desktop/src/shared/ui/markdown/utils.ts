@@ -167,6 +167,8 @@ export function isInsideHiddenSpoiler(element: Element): boolean {
   );
 }
 
+const TEL_HREF = /^tel:\+?\d{6,15}$/;
+
 /**
  * `urlTransform` for `<ReactMarkdown>` that preserves `buzz://` deep links
  * used by Buzz — both `buzz://message?…` links and `buzz://pr|issue|repo?…`
@@ -179,12 +181,15 @@ export function isInsideHiddenSpoiler(element: Element): boolean {
  *   message-link pill renderer).
  * - `buzz://pr|issue|repo` hrefs — preserved only when `parseEntityLink`
  *   succeeds, keeping the sanitizer active against arbitrary `buzz://` URIs.
+ * - `tel:` hrefs — preserved only as `tel:` plus an optional `+` and 6–15
+ *   digits (the form linkified phone numbers take; see `bareLinks.ts`).
  * - Everything else delegates to `defaultUrlTransform`.
  */
 export function buzzDeepLinkUrlTransform(value: string, key: string): string {
   if (key !== "href") return defaultUrlTransform(value);
   if (isMessageLink(value) || isChannelLink(value)) return value;
   if (parseEntityLink(value).ok) return value;
+  if (TEL_HREF.test(value)) return value;
   return defaultUrlTransform(value);
 }
 

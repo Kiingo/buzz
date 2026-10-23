@@ -9,6 +9,7 @@ import remarkEntityLinks from "@/features/messages/lib/remarkEntityLinks";
 import rehypeImageGallery from "@/shared/lib/rehypeImageGallery";
 import rehypeLeadingInlineContent from "@/shared/lib/rehypeLeadingInlineContent";
 import rehypeSearchHighlight from "@/shared/lib/rehypeSearchHighlight";
+import remarkBareLinks from "@/shared/lib/remarkBareLinks";
 import remarkChannelLinks from "@/shared/lib/remarkChannelLinks";
 import remarkCustomEmoji, {
   type CustomEmoji,
@@ -114,6 +115,8 @@ function buildMarkdownElement(input: MarkdownParseInputs): React.ReactElement {
       [remarkMentions, { mentionNames: input.mentionNames }],
       [remarkChannelLinks, { channelNames: input.channelNames }],
       [remarkCustomEmoji, { customEmoji: input.customEmoji }],
+      // Last: it only linkifies plain text the plugins above left alone.
+      remarkBareLinks,
       // biome-ignore lint/suspicious/noExplicitAny: PluggableList type not directly importable
     ] as any[],
     rehypePlugins,
