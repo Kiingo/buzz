@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BZZ00000000000000000030 /* AgentCallPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = BZZ00000000000000000031 /* AgentCallPlugin.swift */; };
+		BZZ00000000000000000034 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = BZZ00000000000000000033 /* WebRTC */; };
 		DAAB00000000000000000001 /* NativeTabler.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAB00000000000000000002; };
 		4A71C0192F40D00100A17E02 /* MeAvatarLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A71C01A2F40D00100A17E02 /* MeAvatarLoader.swift */; };
 		C0AF00000000000000000001 /* NativeConfirmationDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0AF00000000000000000002 /* NativeConfirmationDialog.swift */; };
@@ -95,6 +97,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BZZ00000000000000000031 /* AgentCallPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallPlugin.swift; sourceTree = "<group>"; };
 		DAAB00000000000000000002 /* NativeTabler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTabler.swift; sourceTree = "<group>"; };
 		4A71C01A2F40D00100A17E02 /* MeAvatarLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeAvatarLoader.swift; sourceTree = "<group>"; };
 		C0AF00000000000000000002 /* NativeConfirmationDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeConfirmationDialog.swift; sourceTree = "<group>"; };
@@ -185,6 +188,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BZZ00000000000000000025 /* BuzzPushKit in Frameworks */,
+				BZZ00000000000000000034 /* WebRTC in Frameworks */,
 				33ADD70AB275E0EC81295559 /* Pods_Runner.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -290,6 +294,7 @@
 				4A71C0102F40800100A17E01 /* NativeEmojiPickerModel.swift */,
 				4A71C0122F40900100A17E01 /* NativeEmojiPickerView.swift */,
 				4A71C0142F40A00100A17E01 /* NativeMessageActionSurface.swift */,
+				BZZ00000000000000000031 /* AgentCallPlugin.swift */,
 				4A71C0162F40B00100A17E01 /* HuddleMediaPlugin.swift */,
 				4A71C0182F40C00100A17E01 /* HuddleAudioEngine.swift */,
 				C0AF00000000000000000002 /* NativeConfirmationDialog.swift */,
@@ -373,6 +378,7 @@
 			name = Runner;
 			packageProductDependencies = (
 				BZZ00000000000000000022 /* BuzzPushKit */,
+				BZZ00000000000000000033 /* WebRTC */,
 			);
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
@@ -432,6 +438,7 @@
 			mainGroup = 97C146E51CF9000F007C117D;
 			packageReferences = (
 				BZZ00000000000000000021 /* XCLocalSwiftPackageReference "BuzzPushKit" */,
+				BZZ00000000000000000032 /* XCRemoteSwiftPackageReference "WebRTC" */,
 			);
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
@@ -629,6 +636,7 @@
 				4A71C00F2F40800100A17E01 /* NativeEmojiPickerModel.swift in Sources */,
 				4A71C0112F40900100A17E01 /* NativeEmojiPickerView.swift in Sources */,
 				4A71C0132F40A00100A17E01 /* NativeMessageActionSurface.swift in Sources */,
+				BZZ00000000000000000030 /* AgentCallPlugin.swift in Sources */,
 				4A71C0152F40B00100A17E01 /* HuddleMediaPlugin.swift in Sources */,
 				4A71C0172F40C00100A17E01 /* HuddleAudioEngine.swift in Sources */,
 				C0AF00000000000000000001 /* NativeConfirmationDialog.swift in Sources */,
@@ -665,11 +673,27 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		BZZ00000000000000000032 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC";
+			requirement = {
+				kind = exactVersion;
+				version = 154.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		BZZ00000000000000000022 /* BuzzPushKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = BZZ00000000000000000021 /* XCLocalSwiftPackageReference "BuzzPushKit" */;
 			productName = BuzzPushKit;
+		};
+		BZZ00000000000000000033 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BZZ00000000000000000032 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */
 

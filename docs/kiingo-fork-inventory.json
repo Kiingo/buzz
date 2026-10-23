@@ -1797,6 +1797,24 @@
     },
     {
       "classification": "retain-generic",
+      "owner": "Buzz mobile maintainers",
+      "purpose": "iOS 1:1 agent calls from an agent DM, matching the desktop call: a proper voice call with the agent through its host's voice core (WebRTC to the host's realtime voice provider, the host answering the SDP offer), not a huddle. A Call action beside the sessions action in a 1:1 agent DM header (native navigation action and Flutter button) opens the call screen and starts the call with the agent key and the DM channel id; the host answers only after proving the signer is the verified requester of that private 1:1 DM with the agent. Requests go to <guest route origin>/api/buzz-voice/ios, NIP-98 signed by the signed-in user over the exact URL, method and body bytes, with X-Buzz-Community. AgentCallPlugin (method channel buzz/agent_call) owns the media: the stasel/WebRTC 154.0.0 binary package pinned exactly (revision 0c0ad84d, binary checksum a2bcdda9...), an outgoing CallKit call created from a provider built at engine start (kept out of Recents, system mute and end), WebRTC in manual-audio mode activated by CallKit (playAndRecord, voiceChat), an in-app audio fallback when CallKit refuses, and interruption, route-change and media-services-reset handling; UIBackgroundModes audio and voip keep the call alive on the lock screen. The Dart controller follows the host's call screen feed by long-poll (asks, the open question's option taps, per-ask cancel and archive, the recap), refuses while a huddle holds the audio, and hangs up on a community switch. Hooks: one plugin property and construction in AppDelegate.swift, the plugin file, the WebRTC package reference and product in project.pbxproj and Package.resolved, the background modes and microphone string in Info.plist, and one native action plus one button in channel_detail_page.dart.",
+      "upstreamStatus": "Generic mechanism configured by the build-time guest route URL; not yet proposed upstream.",
+      "removalCondition": "Remove when block/buzz offers agent voice calls or the host stops serving the call routes.",
+      "paths": [
+        "mobile/ios/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+        "mobile/ios/Runner/AgentCallPlugin.swift",
+        "mobile/ios/Runner/Info.plist",
+        "mobile/lib/features/agent_call/agent_call_api.dart",
+        "mobile/lib/features/agent_call/agent_call_controller.dart",
+        "mobile/lib/features/agent_call/agent_call_feed.dart",
+        "mobile/lib/features/agent_call/agent_call_media.dart",
+        "mobile/lib/features/agent_call/agent_call_screen.dart",
+        "mobile/test/features/agent_call/agent_call_test.dart"
+      ]
+    },
+    {
+      "classification": "retain-generic",
       "owner": "Buzz messaging maintainers",
       "purpose": "Desktop voice call card for agent DMs (contract B-B2, matching the mobile reader in #234): a quiet kind 40002 voice mirror (buzz-mirror surface voice, role agent) with exactly one [\"buzz-call\", inbound|outbound, duration seconds, surface] tag renders as a collapsed card titled \"Call · N min\" from the tag (rounded, at least one minute) with the direction and the summary from the content; \"Show transcript\" expands everything after the Transcript line. A voice mirror without a valid buzz-call tag is an ordinary mirror badged \"via voice call\". Call cards stay quiet like every mirror. The parser, title and content split live beside the other marker parsers; the timeline projection marks the row as a call.",
       "upstreamStatus": "Generic, provider-neutral extension of the agent DM markers; not yet submitted to block/buzz.",
