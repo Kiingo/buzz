@@ -1,3 +1,5 @@
+import { invokeTauri } from "@/shared/api/tauri";
+
 import {
   type StartAgentCallResponse,
   describeAgentCallError,
@@ -31,6 +33,12 @@ import {
  *
  * Hang-up ends the call only. It never cancels the agent's work; its answers
  * land in the DM. Stop does that, through the host's stop control.
+ *
+ * One audio owner: a call never runs beside a huddle. A call refuses to start
+ * while a huddle is active or starting (checked before and again after the
+ * mic opens), and a huddle refuses to start or join while a call is busy
+ * (`assertNoAgentCallForHuddle`). Otherwise huddle members would be heard as
+ * the caller's asks and the agent's voice would play into the room.
  */
 
 export type AgentCallPhase =
@@ -47,6 +55,7 @@ export type AgentCallClientErrorKind =
   | "mic_denied"
   | "mic_unavailable"
   | "unsupported"
+  | "huddle_active"
   | "connection_failed";
 
 export type AgentCallEndReason =
@@ -105,6 +114,10 @@ const STOP_STATUS_RESET_MS = 4_000;
 /** The feed long-poll's wait, and how long it is followed after hang-up. */
 const FEED_WAIT_S = 20;
 const FEED_AFTER_END_MS = 90_000;
+/** How long a call may stay connecting before it ends as `media_failed`. */
+const CONNECT_TIMEOUT_MS = 20_000;
+const HUDDLE_ACTIVE_MESSAGE =
+  "You're in a huddle. Leave it to call your agent.";
 
 export function feedRetryDelay(failures: number): number {
   return Math.min(15_000, 1_000 * 2 ** Math.max(0, failures - 1));
@@ -119,8 +132,37 @@ type Transport = {
   stopWork: typeof stopAgentCallWork;
   getFeed: typeof getAgentCallFeed;
   isSupported: () => boolean;
+  /** Whether a huddle holds (or is taking) the mic in this app. */
+  isHuddleActive: () => Promise<boolean>;
+  connectTimeoutMs: number;
   now: () => number;
 };
+
+let huddleAudioProbe: (() => boolean) | null = null;
+
+/**
+ * The huddle provider that owns the app's audio session registers how to tell
+ * whether a huddle is active or starting. Returns the unregister function.
+ */
+export function registerHuddleAudioProbe(probe: () => boolean): () => void {
+  huddleAudioProbe = probe;
+  return () => {
+    if (huddleAudioProbe === probe) huddleAudioProbe = null;
+  };
+}
+
+/** The registered probe, then the native huddle state (any window's huddle). */
+async function webviewHuddleActive(): Promise<boolean> {
+  if (huddleAudioProbe?.()) return true;
+  try {
+    const state = await invokeTauri<{ phase?: string } | null>(
+      "get_huddle_state",
+    );
+    return Boolean(state?.phase && state.phase !== "idle");
+  } catch {
+    return false;
+  }
+}
 
 /** Whether this webview can place a call at all (WebRTC and a mic API). */
 export function isAgentCallSupported(): boolean {
@@ -149,8 +191,16 @@ const webviewTransport = (): Transport => ({
   stopWork: stopAgentCallWork,
   getFeed: getAgentCallFeed,
   isSupported: isAgentCallSupported,
+  isHuddleActive: webviewHuddleActive,
+  connectTimeoutMs: CONNECT_TIMEOUT_MS,
   now: () => Date.now(),
 });
+
+function stopTracks(stream: MediaStream) {
+  for (const track of stream.getTracks()) {
+    track.stop();
+  }
+}
 
 function describeMicError(error: unknown): {
   kind: AgentCallClientErrorKind;
@@ -196,9 +246,13 @@ export class AgentCallController {
   private audio: HTMLAudioElement | null = null;
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The attempt the connect timeout ended, so its late answer ends as such. */
+  private timedOutAttempt = 0;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(transport?: Partial<Transport>) {
     this.transport = {
+      connectTimeoutMs: CONNECT_TIMEOUT_MS,
       ...(typeof window !== "undefined" ? webviewTransport() : {}),
       ...transport,
     } as Transport;
@@ -269,9 +323,13 @@ export class AgentCallController {
     // Unlock playback inside the gesture; the stream is attached later.
     this.audio = this.transport.createAudioElement();
     void this.audio.play().catch(() => undefined);
+    if (await this.abandonForHuddle(attempt)) {
+      return;
+    }
 
+    let stream: MediaStream;
     try {
-      this.stream = await this.transport.getUserMedia({
+      stream = await this.transport.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -286,17 +344,28 @@ export class AgentCallController {
       return;
     }
     if (attempt !== this.attempt) {
-      this.releaseMedia();
+      // Superseded while the mic opened: close only this attempt's stream.
+      stopTracks(stream);
+      return;
+    }
+    this.stream = stream;
+    // A huddle may have started while the mic permission was pending.
+    if (await this.abandonForHuddle(attempt)) {
       return;
     }
     this.set({ phase: "connecting" });
+    this.connectTimer = this.later(
+      () => this.onConnectTimeout(attempt),
+      this.transport.connectTimeoutMs,
+    );
 
+    let peer: RTCPeerConnection | null = null;
     let offerSdp: string;
     try {
-      const peer = this.transport.createPeerConnection();
+      peer = this.transport.createPeerConnection();
       this.peer = peer;
-      for (const track of this.stream.getAudioTracks()) {
-        peer.addTrack(track, this.stream);
+      for (const track of stream.getAudioTracks()) {
+        peer.addTrack(track, stream);
       }
       peer.ontrack = (event) => {
         if (!this.audio) {
@@ -329,6 +398,17 @@ export class AgentCallController {
       }
       return;
     }
+    if (attempt !== this.attempt) {
+      // Hung up while the offer was made: never ask the host to answer it.
+      if (this.peer !== peer) {
+        try {
+          peer.close();
+        } catch {
+          // Already closed.
+        }
+      }
+      return;
+    }
 
     let response: StartAgentCallResponse;
     try {
@@ -348,9 +428,12 @@ export class AgentCallController {
       return;
     }
     if (attempt !== this.attempt) {
-      // Hung up while the host was answering: end the call it opened.
+      // Hung up (or timed out) while the host was answering: end the call it
+      // opened.
+      const reason =
+        this.timedOutAttempt === attempt ? "media_failed" : "hangup";
       void this.transport
-        .endCall(response.callId, "hangup")
+        .endCall(response.callId, reason)
         .catch(() => undefined);
       return;
     }
@@ -376,6 +459,46 @@ export class AgentCallController {
     }
     this.scheduleLimit(attempt, response.executeUntil);
   };
+
+  /**
+   * Refuses the call while a huddle owns the mic. Also true when the attempt
+   * was superseded meanwhile, so the caller stops either way.
+   */
+  private async abandonForHuddle(attempt: number): Promise<boolean> {
+    let active: boolean;
+    try {
+      active = await this.transport.isHuddleActive();
+    } catch {
+      active = false;
+    }
+    if (attempt !== this.attempt) {
+      return true;
+    }
+    if (active) {
+      this.fail({ kind: "huddle_active", message: HUDDLE_ACTIVE_MESSAGE });
+    }
+    return active;
+  }
+
+  /** Still connecting after the timeout: end as `media_failed`, close the mic. */
+  private onConnectTimeout(attempt: number) {
+    if (attempt !== this.attempt || this.state.phase !== "connecting") {
+      return;
+    }
+    const callId = this.state.callId;
+    if (callId) {
+      void this.transport
+        .endCall(callId, "media_failed")
+        .catch(() => undefined);
+    } else {
+      this.timedOutAttempt = attempt;
+    }
+    this.fail({
+      kind: "connection_failed",
+      message:
+        "The call couldn't connect. Check your connection and try again.",
+    });
+  }
 
   private scheduleLimit(attempt: number, executeUntil: string | null) {
     const until = executeUntil ? Date.parse(executeUntil) : Number.NaN;
@@ -404,6 +527,11 @@ export class AgentCallController {
         this.disconnectTimer = null;
       }
       if (this.state.phase === "connecting") {
+        if (this.connectTimer) {
+          clearTimeout(this.connectTimer);
+          this.timers.delete(this.connectTimer);
+          this.connectTimer = null;
+        }
         this.set({ phase: "live", connectedAt: this.transport.now() });
       }
       return;
@@ -644,8 +772,8 @@ export class AgentCallController {
   }
 
   private releaseMedia() {
-    for (const track of this.stream?.getTracks() ?? []) {
-      track.stop();
+    if (this.stream) {
+      stopTracks(this.stream);
     }
     this.stream = null;
     if (this.channel) {
@@ -678,6 +806,23 @@ export class AgentCallController {
 }
 
 export const agentCallController = new AgentCallController();
+
+/**
+ * Huddle start/join guard: a huddle never starts beside a busy agent call
+ * (the huddle is refused; the call is never ended for it).
+ */
+export function assertNoAgentCallForHuddle(
+  action: "start" | "join",
+  controller: AgentCallController = agentCallController,
+) {
+  if (!controller.isBusy) {
+    return;
+  }
+  const name = controller.getState().agentName;
+  throw new Error(
+    `End your call with ${name ?? "your agent"} before you ${action} a huddle.`,
+  );
+}
 
 /** Community switch seam (`resetCommunityState`). */
 export function resetAgentCall() {

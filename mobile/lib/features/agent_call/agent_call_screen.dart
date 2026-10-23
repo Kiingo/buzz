@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -65,7 +66,8 @@ IosNavigationAction agentCallNavigationAction(
   ),
 );
 
-/// The "Call" button in a 1:1 agent DM header.
+/// The "Call" button in a 1:1 agent DM header. Calls run on iOS only (the
+/// native media is iOS), so elsewhere there is no button.
 class AgentCallButton extends ConsumerWidget {
   const AgentCallButton({
     super.key,
@@ -80,6 +82,9 @@ class AgentCallButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      return const SizedBox.shrink();
+    }
     final call = ref.watch(agentCallProvider);
     final onThisCall = call.isBusy && call.agentPubkey == agentPubkey;
     final label = onThisCall ? 'Back to the call' : 'Call $agentName';
@@ -182,6 +187,7 @@ class AgentCallScreen extends HookConsumerWidget {
             if (call.phase == AgentCallPhase.error)
               Text(call.error ?? "The call couldn't start.")
             else ...[
+              if (busy && call.systemCallUI == 'in_app') const _InAppBanner(),
               if (feed?.openQuestion case final question?)
                 _QuestionCard(question: question),
               if (feed != null)
@@ -442,6 +448,32 @@ class _Recap extends StatelessWidget {
   }
 }
 
+/// CallKit refused this call, so it runs without the system call screen.
+class _InAppBanner extends StatelessWidget {
+  const _InAppBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('agent-call-in-app-banner'),
+      margin: const EdgeInsets.only(bottom: Grid.xs),
+      padding: const EdgeInsets.all(Grid.xs),
+      decoration: BoxDecoration(
+        color: context.colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(Radii.md),
+      ),
+      child: Text(
+        "This call isn't on the iPhone's call screen. Mute and hang up here, "
+        'and keep Buzz open.',
+        style: context.textTheme.bodySmall,
+      ),
+    );
+  }
+}
+
+/// The link's host, shown beside its label so a label can't disguise it.
+String _linkHost(String url) => Uri.tryParse(url)?.host ?? '';
+
 class _Links extends StatelessWidget {
   const _Links({required this.links});
 
@@ -462,7 +494,7 @@ class _Links extends StatelessWidget {
               }
             },
             child: Text(
-              link.label,
+              '${link.label} (${_linkHost(link.url)})',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),

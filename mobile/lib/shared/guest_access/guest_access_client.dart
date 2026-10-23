@@ -27,7 +27,9 @@ const guestRouteRelayUrl = String.fromEnvironment(
 );
 
 const _requestTimeout = Duration(seconds: 20);
-const _maxResponseBytes = 2 * 1024 * 1024;
+
+/// The largest answer read from the hosted API (shared with agent calls).
+const guestAccessMaxResponseBytes = 2 * 1024 * 1024;
 
 /// A route error: the contract's `error` code plus the HTTP status, if any.
 class GuestAccessException implements Exception {
@@ -182,7 +184,7 @@ class GuestAccessClient {
         streamed,
       ).timeout(_requestTimeout);
       final status = response.statusCode;
-      if (response.bodyBytes.length > _maxResponseBytes) {
+      if (response.bodyBytes.length > guestAccessMaxResponseBytes) {
         throw GuestAccessException('response_too_large', status: status);
       }
       Object? decoded;

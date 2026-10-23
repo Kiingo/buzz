@@ -49,7 +49,7 @@ final class HuddleMediaPlugin {
     if let mediaServicesResetObserver {
       NotificationCenter.default.removeObserver(mediaServicesResetObserver)
     }
-    if audioSessionPrepared {
+    if audioSessionPrepared, !VoiceAudioSessionOwner.agentCallActive {
       try? audioSession.overrideOutputAudioPort(.none)
       try? audioSession.setActive(
         false,
@@ -158,6 +158,17 @@ final class HuddleMediaPlugin {
         FlutterError(
           code: "unsupported",
           message: "This iOS device does not expose native Opus encode/decode.",
+          details: nil
+        )
+      )
+      return
+    }
+    // An agent call holds the audio session: never take it over.
+    guard !VoiceAudioSessionOwner.agentCallActive else {
+      result(
+        FlutterError(
+          code: "audio_busy",
+          message: "End your agent call before joining a Huddle.",
           details: nil
         )
       )
@@ -418,7 +429,7 @@ final class HuddleMediaPlugin {
   }
 
   private func handleInterruption(_ notification: Notification) {
-    guard audioSessionPrepared,
+    guard audioSessionPrepared, !VoiceAudioSessionOwner.agentCallActive,
       let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey]
         as? NSNumber,
       let type = AVAudioSession.InterruptionType(rawValue: rawType.uintValue)
@@ -466,7 +477,9 @@ final class HuddleMediaPlugin {
   private func stop(result: @escaping FlutterResult) {
     audioEngine?.stop()
     audioEngine = nil
-    guard audioSessionPrepared else {
+    guard audioSessionPrepared, !VoiceAudioSessionOwner.agentCallActive else {
+      // Never deactivate the session an agent call holds.
+      audioSessionPrepared = false
       speakerEnabled = false
       result(nil)
       return

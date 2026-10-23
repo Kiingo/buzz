@@ -21,6 +21,10 @@ import 'agent_call_media.dart';
 ///
 /// Hang-up ends the call only; the agent's work goes on and its answers
 /// land in the DM. Stop stops the work.
+///
+/// One audio owner: the call refuses while a Huddle is in session (checked
+/// at the tap and again once the native call is up), and while it is busy it
+/// holds `agentCallAudioBusyProvider`, which refuses Huddle starts and joins.
 
 enum AgentCallPhase { idle, connecting, live, ending, ended, error }
 
@@ -40,6 +44,7 @@ class AgentCallState {
     this.error,
     this.endReason,
     this.feed,
+    this.systemCallUI,
   });
 
   final AgentCallPhase phase;
@@ -53,6 +58,10 @@ class AgentCallState {
   final String? error;
   final String? endReason;
   final AgentCallFeed? feed;
+
+  /// `callkit`, or `in_app` when CallKit refused and the call runs without
+  /// the system call screen.
+  final String? systemCallUI;
 
   bool get isBusy =>
       phase == AgentCallPhase.connecting ||
@@ -68,6 +77,7 @@ class AgentCallState {
     String? error,
     String? endReason,
     AgentCallFeed? feed,
+    String? systemCallUI,
   }) => AgentCallState(
     phase: phase ?? this.phase,
     agentPubkey: agentPubkey,
@@ -80,6 +90,7 @@ class AgentCallState {
     error: error ?? this.error,
     endReason: endReason ?? this.endReason,
     feed: feed ?? this.feed,
+    systemCallUI: systemCallUI ?? this.systemCallUI,
   );
 }
 
@@ -109,6 +120,12 @@ final agentCallHuddleBusyProvider = Provider<bool>(
   (ref) => ref.watch(huddleSessionProvider).isInSession,
 );
 
+/// How long a call may stay connecting once the native call is up before it
+/// ends as `media_failed` (overridden in tests).
+final agentCallConnectTimeoutProvider = Provider<Duration>(
+  (ref) => const Duration(seconds: 20),
+);
+
 final agentCallProvider = NotifierProvider<AgentCallNotifier, AgentCallState>(
   AgentCallNotifier.new,
 );
@@ -125,6 +142,7 @@ const _endedDismiss = Duration(seconds: 4);
 const _stopStatusReset = Duration(seconds: 4);
 const _feedAfterEnd = Duration(seconds: 90);
 const _resumeTimeout = Duration(seconds: 8);
+const _huddleRefusal = 'Leave the huddle first, then call.';
 
 class AgentCallNotifier extends Notifier<AgentCallState> {
   int _attempt = 0;
@@ -134,10 +152,15 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
   final List<Timer> _timers = [];
   Timer? _resumeTimer;
 
+  /// The attempt the connect timeout ended, so its late answer ends as such.
+  int _timedOutAttempt = 0;
+
   @override
   AgentCallState build() {
     final media = ref.watch(agentCallMediaProvider);
     _events = media.events.listen(_onMediaEvent);
+    final audio = ref.read(agentCallAudioBusyProvider.notifier);
+    listenSelf((_, next) => audio.update(next.isBusy));
     final unregister = ref
         .read(communityTransitionProvider)
         .register(() async => reset());
@@ -187,7 +210,7 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
       channelId: channelId,
     );
     if (ref.read(agentCallHuddleBusyProvider)) {
-      _fail('Leave the huddle first, then call.');
+      _fail(_huddleRefusal);
       return;
     }
     final api = ref.read(agentCallApiProvider);
@@ -208,6 +231,17 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
       unawaited(_media.end());
       return;
     }
+    // A Huddle may have joined while the microphone prompt was up.
+    if (ref.read(agentCallHuddleBusyProvider)) {
+      unawaited(_media.end());
+      _fail(_huddleRefusal);
+      return;
+    }
+    state = state.copyWith(systemCallUI: offer.systemCallUI);
+    _later(
+      ref.read(agentCallConnectTimeoutProvider),
+      () => _onConnectTimeout(attempt),
+    );
 
     AgentCallStart started;
     try {
@@ -226,8 +260,10 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
       return;
     }
     if (attempt != _attempt) {
-      // Hung up while the host was answering: end the call it opened.
-      unawaited(_quietEnd(api, started.callId, 'hangup'));
+      // Hung up (or timed out) while the host was answering: end the call it
+      // opened.
+      final reason = _timedOutAttempt == attempt ? 'media_failed' : 'hangup';
+      unawaited(_quietEnd(api, started.callId, reason));
       return;
     }
     state = state.copyWith(callId: started.callId);
@@ -251,6 +287,23 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
         }
       });
     }
+  }
+
+  /// Still connecting after the timeout: end as `media_failed` and close
+  /// the microphone.
+  void _onConnectTimeout(int attempt) {
+    if (attempt != _attempt || state.phase != AgentCallPhase.connecting) {
+      return;
+    }
+    final api = _api;
+    final callId = state.callId;
+    if (api != null && callId != null) {
+      unawaited(_quietEnd(api, callId, 'media_failed'));
+    } else {
+      _timedOutAttempt = attempt;
+    }
+    unawaited(_media.end());
+    _fail("The call couldn't connect. Check your connection and try again.");
   }
 
   void _onMediaEvent(AgentCallMediaEventData data) {

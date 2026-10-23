@@ -142,6 +142,10 @@ final class MobileHuddleController extends Notifier<bool> {
 
   Future<void> _start({required String parentChannelId}) async {
     if (state) return;
+    // Refuse before announcing a Huddle that could not take the audio.
+    if (ref.read(agentCallAudioBusyProvider)) {
+      throw StateError(agentCallHuddleRefusal);
+    }
     final generation = ++_generation;
     final admissionEpoch = ++_admissionEpoch;
     state = true;

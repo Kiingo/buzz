@@ -5,6 +5,13 @@ import UIKit
 import os
 @preconcurrency import WebRTC
 
+/// Which feature holds the shared `AVAudioSession` (main thread only). An
+/// agent call holds it from `begin` until its media is torn down; while it
+/// does, huddle media never configures, reactivates or deactivates it.
+enum VoiceAudioSessionOwner {
+  nonisolated(unsafe) static var agentCallActive = false
+}
+
 /// Native media for 1:1 agent calls from an agent DM (`buzz/agent_call`).
 ///
 /// A proper voice call with the agent through its host's voice core, not a
@@ -77,7 +84,7 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     let arguments = call.arguments as? [String: Any] ?? [:]
     switch call.method {
     case "begin":
-      let name = (arguments["agentName"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Agent"
+      let name = Self.callerName(arguments["agentName"] as? String)
       Task { @MainActor in await self.begin(agentName: name, result: result) }
     case "accept":
       guard let sdp = arguments["sdp"] as? String, !sdp.isEmpty else {
@@ -96,6 +103,17 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  /// The agent's name as CallKit shows it: trimmed, control characters
+  /// dropped, at most 60 characters, "Agent" when nothing is left.
+  static func callerName(_ raw: String?) -> String {
+    let cleaned = String(
+      String.UnicodeScalarView(
+        (raw ?? "").unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
+    ).trimmingCharacters(in: .whitespacesAndNewlines)
+    let name = String(cleaned.prefix(60)).trimmingCharacters(in: .whitespacesAndNewlines)
+    return name.isEmpty ? "Agent" : name
   }
 
   private func emit(_ type: String, _ extra: [String: Any] = [:]) {
@@ -119,6 +137,7 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     callId = id
     closed = false
     connected = false
+    VoiceAudioSessionOwner.agentCallActive = true
     let handle = CXHandle(type: .generic, value: agentName)
     let action = CXStartCallAction(call: id, handle: handle)
     action.isVideo = false
@@ -223,6 +242,7 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     inApp = false
     connected = false
     closed = true
+    VoiceAudioSessionOwner.agentCallActive = false
   }
 
   private func endInAppAudio() {
@@ -477,18 +497,27 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
   nonisolated func peerConnection(
     _ peerConnection: RTCPeerConnection, didChange newState: RTCPeerConnectionState
   ) {
+    // Every event acts only for the call's current peer connection, never a
+    // closed earlier one (a stale timer must not end a newer call).
     switch newState {
     case .connected:
-      Task { @MainActor in self.peerConnected() }
+      Task { @MainActor in
+        guard peerConnection === self.connection else { return }
+        self.peerConnected()
+      }
     case .failed:
-      Task { @MainActor in self.endedRemotely("connectionLost") }
+      Task { @MainActor in
+        guard peerConnection === self.connection else { return }
+        self.endedRemotely("connectionLost")
+      }
     case .disconnected:
       // `disconnected` can recover; give it a few seconds.
       Task { @MainActor in
         try? await Task.sleep(nanoseconds: 5_000_000_000)
-        if let connection = self.connection, connection.connectionState != .connected {
-          self.endedRemotely("connectionLost")
-        }
+        guard peerConnection === self.connection,
+          peerConnection.connectionState != .connected
+        else { return }
+        self.endedRemotely("connectionLost")
       }
     default:
       break
@@ -524,7 +553,10 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
 
   nonisolated func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
     guard dataChannel.readyState == .closed else { return }
-    Task { @MainActor in self.endedRemotely("remoteClosed") }
+    Task { @MainActor in
+      guard dataChannel === self.dataChannel else { return }
+      self.endedRemotely("remoteClosed")
+    }
   }
 
   /// Only the event type matters (`session.closed`); nothing from the
@@ -536,6 +568,9 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
       let event = try? JSONSerialization.jsonObject(with: buffer.data) as? [String: Any],
       event["type"] as? String == "session.closed"
     else { return }
-    Task { @MainActor in self.endedRemotely("remoteClosed") }
+    Task { @MainActor in
+      guard dataChannel === self.dataChannel else { return }
+      self.endedRemotely("remoteClosed")
+    }
   }
 }

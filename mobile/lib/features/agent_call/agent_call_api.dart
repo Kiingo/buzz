@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
@@ -83,32 +84,50 @@ class AgentCallApi {
       request.headers['Content-Type'] = 'application/json';
       request.bodyBytes = bytes;
     }
-    http.Response response;
+    int status;
+    Uint8List responseBytes;
     try {
       final streamed = await _client.send(request).timeout(_requestTimeout);
-      response = await http.Response.fromStream(
-        streamed,
-      ).timeout(_requestTimeout);
+      status = streamed.statusCode;
+      responseBytes = await _readCapped(streamed).timeout(_requestTimeout);
     } on TimeoutException {
       throw const AgentCallApiException(null, 'voice_route_timeout');
     } on http.ClientException {
       throw const AgentCallApiException(null, 'network');
     }
     Object? decoded;
-    if (response.bodyBytes.isNotEmpty) {
+    if (responseBytes.isNotEmpty) {
       try {
-        decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        decoded = jsonDecode(utf8.decode(responseBytes));
       } on FormatException {
         decoded = null;
       }
     }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
+    if (status < 200 || status >= 300) {
       final code = decoded is Map && decoded['error'] is String
           ? decoded['error'] as String
           : null;
-      throw AgentCallApiException(response.statusCode, code);
+      throw AgentCallApiException(status, code);
     }
     return decoded;
+  }
+
+  /// The answer's bytes, at most [guestAccessMaxResponseBytes]: a larger
+  /// declared length is refused before reading, and reading stops past it.
+  static Future<Uint8List> _readCapped(http.StreamedResponse response) async {
+    final status = response.statusCode;
+    final declared = response.contentLength;
+    if (declared != null && declared > guestAccessMaxResponseBytes) {
+      throw AgentCallApiException(status, 'response_too_large');
+    }
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response.stream) {
+      if (bytes.length + chunk.length > guestAccessMaxResponseBytes) {
+        throw AgentCallApiException(status, 'response_too_large');
+      }
+      bytes.add(chunk);
+    }
+    return bytes.takeBytes();
   }
 
   String _call(String callId) => 'calls/${Uri.encodeComponent(callId)}';

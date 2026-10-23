@@ -60,17 +60,21 @@ pub(crate) fn community_id_for_relay(relay_url: &str) -> String {
         .unwrap_or_default()
 }
 
-/// HTTPS, or HTTP on loopback for local development (same rule as buzz-acp).
+/// HTTPS, or HTTP on loopback in debug builds for local development (same
+/// rule as buzz-acp). Release builds accept HTTPS only.
 pub(crate) fn acceptable_base_url(url: &str) -> bool {
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };
     match parsed.scheme() {
         "https" => true,
-        "http" => matches!(
-            parsed.host_str(),
-            Some("localhost") | Some("127.0.0.1") | Some("[::1]") | Some("::1")
-        ),
+        "http" => {
+            cfg!(debug_assertions)
+                && matches!(
+                    parsed.host_str(),
+                    Some("localhost") | Some("127.0.0.1") | Some("[::1]") | Some("::1")
+                )
+        }
         _ => false,
     }
 }

@@ -17,6 +17,10 @@ import type {
   HuddleContextValue,
   HuddleLevelsValue,
 } from "./HuddleContext.types";
+import {
+  assertNoAgentCallForHuddle,
+  registerHuddleAudioProbe,
+} from "@/features/agent-call/lib/agentCallController";
 
 /**
  * Huddle lifecycle (React context):
@@ -117,6 +121,20 @@ export function HuddleProvider({
   const [ephemeralChannelId, setEphemeralChannelId] = React.useState<
     string | null
   >(null);
+  const ephemeralChannelIdRef = React.useRef(ephemeralChannelId);
+  ephemeralChannelIdRef.current = ephemeralChannelId;
+  // One audio owner: an agent call refuses to start while this huddle is
+  // active or starting (see `assertNoAgentCallForHuddle` for the reverse).
+  React.useEffect(() => {
+    if (!ownsAudioSession) return;
+    return registerHuddleAudioProbe(
+      () =>
+        busyRef.current ||
+        rustActiveRef.current ||
+        micConnectedRef.current ||
+        ephemeralChannelIdRef.current !== null,
+    );
+  }, [ownsAudioSession]);
   /** Self pubkey — fetched once, used to filter out own messages from TTS */
   const selfPubkeyRef = React.useRef<string | null>(null);
   const { activeSpeakers, resetSpeakerActivity, speakerLevels } =
@@ -629,6 +647,7 @@ export function HuddleProvider({
       channelName?: string,
     ) => {
       if (busyRef.current) return;
+      assertNoAgentCallForHuddle("start");
       busyRef.current = true;
 
       tokenRef.current += 1;
@@ -709,6 +728,7 @@ export function HuddleProvider({
       huddleThreadEventId?: string,
     ) => {
       if (busyRef.current) return;
+      assertNoAgentCallForHuddle("join");
       busyRef.current = true;
       tokenRef.current += 1;
       const myToken = tokenRef.current;

@@ -1,5 +1,6 @@
 import { Phone } from "lucide-react";
 
+import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import type { Channel } from "@/shared/api/types";
 import { normalizePubkey } from "@/shared/lib/pubkey";
@@ -12,6 +13,10 @@ import { useAgentCall } from "./useAgentCall";
  * "Call <agent>" in a 1:1 agent DM header: a proper voice call with the
  * agent (its host's voice core), not a huddle. The host checks that this is
  * the caller's own private DM with the agent before it answers.
+ *
+ * Only hosted agents take calls: an agent this app runs locally (a managed
+ * agent on this device) has no voice host, so it gets no Call button. The
+ * host stays the authority for everything else and refuses with a reason.
  */
 export function AgentCallButton({
   agentName,
@@ -25,10 +30,16 @@ export function AgentCallButton({
   isAgentHint: boolean;
 }) {
   const knownAgents = useKnownAgentPubkeys();
+  const managedAgents = useManagedAgentsQuery().data;
   const call = useAgentCall();
   const key = normalizePubkey(agentPubkey);
   const isAgent = isAgentHint || knownAgents.has(key);
-  if (channel.channelType !== "dm" || !isAgent) return null;
+  const runsOnThisDevice = (managedAgents ?? []).some(
+    (agent) => normalizePubkey(agent.pubkey) === key,
+  );
+  if (channel.channelType !== "dm" || !isAgent || runsOnThisDevice) {
+    return null;
+  }
 
   const busy =
     call.phase === "requesting_mic" ||

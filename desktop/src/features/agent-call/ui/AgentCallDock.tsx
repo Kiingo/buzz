@@ -382,6 +382,15 @@ function Recap({ feed }: { feed: AgentCallFeed }) {
   );
 }
 
+/** The link's host, shown beside its label so a label can't disguise it. */
+function linkHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
+
 function LinkList({ links }: { links: { label: string; url: string }[] }) {
   const safe = links
     .map((link) => ({ label: link.label, url: safeHttpsUrl(link.url) }))
@@ -398,9 +407,13 @@ function LinkList({ links }: { links: { label: string; url: string }[] }) {
                 toast.error("Failed to open link");
               });
             }}
+            title={link.url}
             type="button"
           >
-            {link.label}
+            {link.label}{" "}
+            <span className="text-muted-foreground">
+              ({linkHost(link.url)})
+            </span>
           </button>
         </li>
       ))}

@@ -4,14 +4,17 @@
 //! phone apps), not a huddle: audio runs WebRTC between this webview and the
 //! host's realtime voice provider, and the host answers the SDP offer. This
 //! module carries the host's call routes (`<origin>/api/buzz-voice/desktop/…`,
-//! the origin taken from the guest route URL, or
+//! the origin taken from the guest route URL, or in debug builds only
 //! `BUZZ_DESKTOP_AGENT_VOICE_URL`):
 //!
 //! - every request is NIP-98 (kind 27235, exact URL with query, method and
 //!   the SHA-256 of the exact body bytes) signed by the signed-in user, with
 //!   `X-Buzz-Community`, so the key never reaches the webview;
 //! - only the call routes are reachable (start, view, feed long-poll, end,
-//!   stop, answers and the per-ask routes, preferences), nothing else;
+//!   stop, answers and the per-ask routes, preferences), nothing else; the
+//!   request URL is parsed once, its normalised path checked, and that same
+//!   URL is signed and sent;
+//! - answers are capped at 2 MiB (declared length first, then while read);
 //! - the answer is returned as `{ status, body }` for every HTTP status, so
 //!   the webview can show the host's error codes; transport failures are
 //!   errors.
@@ -48,13 +51,39 @@ fn is_uuid(value: &str) -> bool {
         })
 }
 
+/// A human-ask id path segment: `[A-Za-z0-9._:-]` and percent escapes of
+/// printable characters other than `.`, `/` and `\` (so no escape can turn
+/// into traversal once the host decodes it), never only dots.
 fn is_ask_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 190
-        && !value.bytes().all(|b| b == b'.')
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-' | b'%'))
+    if value.is_empty() || value.len() > 190 || value.bytes().all(|b| b == b'.') {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'%' {
+            let Some(hex) = value.get(index + 1..index + 3) else {
+                return false;
+            };
+            if !hex.bytes().all(|h| h.is_ascii_hexdigit()) {
+                return false;
+            }
+            let Ok(decoded) = u8::from_str_radix(hex, 16) else {
+                return false;
+            };
+            if !decoded.is_ascii_graphic() || matches!(decoded, b'.' | b'/' | b'\\') {
+                return false;
+            }
+            index += 3;
+            continue;
+        }
+        if !(byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')) {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }
 
 /// The call route `path` (relative to the mount) if it is one this command
@@ -114,8 +143,27 @@ fn voice_origin(override_url: Option<String>, guest_route: Option<String>) -> Op
     (origin != "null").then_some(origin)
 }
 
-fn request_url(origin: &str, path: &str) -> String {
-    format!("{}{MOUNT}/{path}", origin.trim_end_matches('/'))
+/// The one URL that is both signed and sent: parsed once, and only if its
+/// normalised path and query are exactly the allowed route under the mount.
+fn request_url(origin: &str, path: &str) -> Option<url::Url> {
+    let raw = format!("{}{MOUNT}/{path}", origin.trim_end_matches('/'));
+    let url = url::Url::parse(&raw).ok()?;
+    let (route, query) = match path.split_once('?') {
+        Some((route, query)) => (route, Some(query)),
+        None => (path, None),
+    };
+    (url.path() == format!("{MOUNT}/{route}") && url.query() == query && url.fragment().is_none())
+        .then_some(url)
+}
+
+/// `BUZZ_DESKTOP_AGENT_VOICE_URL` points development builds at another host;
+/// release builds always use the guest route's origin.
+fn voice_url_override() -> Option<String> {
+    if cfg!(debug_assertions) {
+        std::env::var("BUZZ_DESKTOP_AGENT_VOICE_URL").ok()
+    } else {
+        None
+    }
 }
 
 /// One signed request to the host's call routes as the signed-in user.
@@ -140,18 +188,20 @@ pub async fn agent_voice_request(
     if method == "GET" && body.is_some() {
         return Err(error(None, "body_not_allowed"));
     }
-    let origin = voice_origin(
-        std::env::var("BUZZ_DESKTOP_AGENT_VOICE_URL").ok(),
-        guest_route_url(),
-    )
-    .ok_or_else(|| error(None, "voice_route_unavailable"))?;
+    let origin = voice_origin(voice_url_override(), guest_route_url())
+        .ok_or_else(|| error(None, "voice_route_unavailable"))?;
     let community_id = community_id_for_relay(&relay_ws_url_with_override(&state));
     if community_id.is_empty() {
         return Err(error(None, "community_invalid"));
     }
     let keys = state.signing_keys()?;
-    let url = request_url(&origin, &path);
-    let authorization = nip98_header(&keys, &method, &url, body.as_deref().map(str::as_bytes))?;
+    let url = request_url(&origin, &path).ok_or_else(|| error(None, "path_not_allowed"))?;
+    let authorization = nip98_header(
+        &keys,
+        &method,
+        url.as_str(),
+        body.as_deref().map(str::as_bytes),
+    )?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(REQUEST_TIMEOUT)
@@ -160,7 +210,7 @@ pub async fn agent_voice_request(
     let http_method = reqwest::Method::from_bytes(method.as_bytes())
         .map_err(|_| error(None, "method_invalid"))?;
     let mut request = client
-        .request(http_method, &url)
+        .request(http_method, url)
         .header("Accept", "application/json")
         .header("Authorization", authorization)
         .header("X-Buzz-Community", community_id);
@@ -182,12 +232,23 @@ pub async fn agent_voice_request(
         )
     })?;
     let status = response.status().as_u16();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|_| error(Some(status), "response_unreadable"))?;
-    if bytes.len() > MAX_RESPONSE_BYTES {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+    {
         return Err(error(Some(status), "response_too_large"));
+    }
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| error(Some(status), "response_unreadable"))?
+    {
+        if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err(error(Some(status), "response_too_large"));
+        }
+        bytes.extend_from_slice(&chunk);
     }
     let body = if bytes.is_empty() {
         Value::Null
@@ -216,6 +277,16 @@ mod tests {
         assert!(allowed_path("POST", &format!("calls/{CALL}/human-asks/q:1-a/answer")).is_some());
         assert!(allowed_path("POST", &format!("calls/{CALL}/human-asks/q%3A1/answer")).is_some());
         assert!(allowed_path("POST", &format!("calls/{CALL}/human-asks/../answer")).is_none());
+        // Escapes that decode to traversal or a separator, and bad escapes.
+        for ask in [
+            "%2e%2e", "%2E%2e", "a%2fb", "a%2Fb", "a%5cb", "a%5C", "%2e", "a%", "a%4", "a%+1",
+            "a%00",
+        ] {
+            assert!(
+                allowed_path("POST", &format!("calls/{CALL}/human-asks/{ask}/answer")).is_none(),
+                "{ask}"
+            );
+        }
         assert!(allowed_path("PUT", "preferences").is_some());
         // Anything else, another method, a query off the feed, or traversal.
         assert!(allowed_path("GET", "calls").is_none());
@@ -254,15 +325,33 @@ mod tests {
             request_url(
                 "https://api.example.com",
                 &format!("calls/{CALL}/feed?rev=a")
-            ),
-            format!("https://api.example.com/api/buzz-voice/desktop/calls/{CALL}/feed?rev=a")
+            )
+            .map(String::from),
+            Some(format!(
+                "https://api.example.com/api/buzz-voice/desktop/calls/{CALL}/feed?rev=a"
+            ))
+        );
+    }
+
+    #[test]
+    fn the_signed_url_is_the_sent_url_or_nothing() {
+        let origin = "https://api.example.com";
+        // A dot-segment the URL parser would normalise never gets signed.
+        assert!(request_url(origin, &format!("calls/{CALL}/human-asks/%2e%2e/answer")).is_none());
+        assert!(request_url(origin, &format!("calls/{CALL}/human-asks/./answer")).is_none());
+        assert!(request_url(origin, &format!("calls/{CALL}/end#x")).is_none());
+        let url =
+            request_url(origin, &format!("calls/{CALL}/human-asks/q%3A1/answer")).expect("allowed");
+        assert_eq!(
+            url.as_str(),
+            format!("{origin}/api/buzz-voice/desktop/calls/{CALL}/human-asks/q%3A1/answer")
         );
     }
 
     #[test]
     fn a_body_is_bound_by_its_payload_hash() {
         let keys = nostr::Keys::parse(&"1".repeat(64)).expect("keys");
-        let url = request_url("https://api.example.com", "calls");
+        let url = String::from(request_url("https://api.example.com", "calls").expect("url"));
         let header =
             nip98_header(&keys, "POST", &url, Some(br#"{"sdpOffer":"v=0"}"#)).expect("header");
         let encoded = header.strip_prefix("Nostr ").expect("scheme");
