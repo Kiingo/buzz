@@ -224,6 +224,25 @@ test("a call is refused while a huddle owns the mic", async () => {
   assert.equal(h.log.starts.length, 0);
 });
 
+test("an unreadable huddle state refuses the call (fails closed)", async () => {
+  let asked = false;
+  const h = harness({
+    isHuddleActive: async () => {
+      throw new Error("ipc_failed");
+    },
+    getUserMedia: async () => {
+      asked = true;
+      return fakeMedia().stream;
+    },
+  });
+  await h.controller.start({ agentPubkey: AGENT, channelId: CHANNEL });
+  assert.equal(h.controller.getState().phase, "error");
+  assert.equal(h.controller.getState().error?.kind, "huddle_active");
+  assert.match(h.controller.getState().error?.message ?? "", /couldn't check/);
+  assert.equal(asked, false);
+  assert.equal(h.log.starts.length, 0);
+});
+
 test("a huddle that starts while the mic opens refuses the call", async () => {
   let checks = 0;
   const h = harness({

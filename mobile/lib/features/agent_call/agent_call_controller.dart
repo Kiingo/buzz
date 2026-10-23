@@ -115,9 +115,12 @@ final agentCallApiProvider = Provider<AgentCallApi?>((ref) {
   return api;
 });
 
-/// Whether a huddle holds the audio now (a call waits for it to end).
+/// Whether a huddle holds the audio now, or a huddle start is under way (a
+/// call waits for it to end).
 final agentCallHuddleBusyProvider = Provider<bool>(
-  (ref) => ref.watch(huddleSessionProvider).isInSession,
+  (ref) =>
+      ref.watch(huddleSessionProvider).isInSession ||
+      ref.watch(huddleStartingProvider),
 );
 
 /// How long a call may stay connecting once the native call is up before it

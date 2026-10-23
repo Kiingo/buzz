@@ -350,6 +350,17 @@ void main() {
       expect(media.calls, isEmpty);
     });
 
+    test('a Huddle start under way keeps the call from starting', () async {
+      final starting = build([]);
+      starting.read(huddleStartingProvider.notifier).update(true);
+      await starting
+          .read(agentCallProvider.notifier)
+          .start(agentPubkey: _agent, channelId: _channel, agentName: 'Alfred');
+      expect(starting.read(agentCallProvider).phase, AgentCallPhase.error);
+      expect(media.calls, isEmpty);
+      expect(requests, isEmpty);
+    });
+
     test('a Huddle that joins while the call is set up refuses it', () async {
       final busy = build([
         agentCallHuddleBusyProvider.overrideWith(

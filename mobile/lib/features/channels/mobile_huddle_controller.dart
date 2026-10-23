@@ -103,6 +103,9 @@ final class MobileHuddleController extends Notifier<bool> {
 
   @override
   bool build() {
+    // This controller's state is "a start is under way"; agent calls read it.
+    final starting = ref.read(huddleStartingProvider.notifier);
+    listenSelf((_, next) => starting.update(next));
     final unregisterBeforePause = ref
         .read(relaySessionProvider.notifier)
         .registerBeforePause(_leaveForBackground);

@@ -30,13 +30,17 @@ export function AgentCallButton({
   isAgentHint: boolean;
 }) {
   const knownAgents = useKnownAgentPubkeys();
-  const managedAgents = useManagedAgentsQuery().data;
+  const managedAgents = useManagedAgentsQuery();
   const call = useAgentCall();
   const key = normalizePubkey(agentPubkey);
   const isAgent = isAgentHint || knownAgents.has(key);
-  const runsOnThisDevice = (managedAgents ?? []).some(
-    (agent) => normalizePubkey(agent.pubkey) === key,
-  );
+  // Wait for the local inventory so the button never flashes for a local
+  // agent; a failed inventory read still shows it (the host decides).
+  const runsOnThisDevice =
+    managedAgents.isPending ||
+    (managedAgents.data ?? []).some(
+      (agent) => normalizePubkey(agent.pubkey) === key,
+    );
   if (channel.channelType !== "dm" || !isAgent || runsOnThisDevice) {
     return null;
   }

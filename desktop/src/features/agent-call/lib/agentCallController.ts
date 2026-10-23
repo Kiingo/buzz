@@ -118,6 +118,8 @@ const FEED_AFTER_END_MS = 90_000;
 const CONNECT_TIMEOUT_MS = 20_000;
 const HUDDLE_ACTIVE_MESSAGE =
   "You're in a huddle. Leave it to call your agent.";
+const HUDDLE_UNKNOWN_MESSAGE =
+  "Buzz couldn't check whether a huddle is using the microphone, so the call didn't start. Try again.";
 
 export function feedRetryDelay(failures: number): number {
   return Math.min(15_000, 1_000 * 2 ** Math.max(0, failures - 1));
@@ -151,17 +153,19 @@ export function registerHuddleAudioProbe(probe: () => boolean): () => void {
   };
 }
 
-/** The registered probe, then the native huddle state (any window's huddle). */
+/**
+ * The registered probe, then the native huddle state (any window's huddle).
+ * Throws when the native state can't be read; the call then refuses.
+ */
 async function webviewHuddleActive(): Promise<boolean> {
   if (huddleAudioProbe?.()) return true;
-  try {
-    const state = await invokeTauri<{ phase?: string } | null>(
-      "get_huddle_state",
-    );
-    return Boolean(state?.phase && state.phase !== "idle");
-  } catch {
-    return false;
+  const state = await invokeTauri<{ phase?: unknown } | null>(
+    "get_huddle_state",
+  );
+  if (typeof state?.phase !== "string") {
+    throw new Error("huddle_state_unreadable");
   }
+  return state.phase !== "idle";
 }
 
 /** Whether this webview can place a call at all (WebRTC and a mic API). */
@@ -461,17 +465,22 @@ export class AgentCallController {
   };
 
   /**
-   * Refuses the call while a huddle owns the mic. Also true when the attempt
-   * was superseded meanwhile, so the caller stops either way.
+   * Refuses the call while a huddle owns the mic, and fails closed when the
+   * huddle state can't be read. Also true when the attempt was superseded
+   * meanwhile, so the caller stops either way.
    */
   private async abandonForHuddle(attempt: number): Promise<boolean> {
-    let active: boolean;
+    let active: boolean | null;
     try {
       active = await this.transport.isHuddleActive();
     } catch {
-      active = false;
+      active = null;
     }
     if (attempt !== this.attempt) {
+      return true;
+    }
+    if (active === null) {
+      this.fail({ kind: "huddle_active", message: HUDDLE_UNKNOWN_MESSAGE });
       return true;
     }
     if (active) {
