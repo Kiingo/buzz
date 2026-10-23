@@ -91,7 +91,68 @@ void main() {
       'research',
       'deep-research',
     ]);
-    expect(filterAgentCommands(commands, ''), commands);
+    expect(filterAgentCommands(commands, '').map((c) => c.name), [
+      'sessions',
+      'deep-research',
+      'research',
+    ]);
+  });
+
+  group('registry skills', () {
+    test('parse keeps the source and display name', () {
+      final commands = parseAgentCommands(
+        _body([
+          {
+            'kind': 'skill',
+            'name': 'deep-research',
+            'skill_id': 'reg-1',
+            'description': 'Research a topic.',
+            'argument_hint': null,
+            'source': 'registry',
+            'display_name': 'Deep Research',
+          },
+        ]),
+        agentPublicKey: _agent,
+      );
+      expect(commands, [
+        const AgentCommand.skill(
+          name: 'deep-research',
+          skillId: 'reg-1',
+          description: 'Research a topic.',
+          source: AgentSkillSource.registry,
+          displayName: 'Deep Research',
+        ),
+      ]);
+      expect(commands!.single.section, AgentCommandSection.skills);
+    });
+
+    test('sections order the list; descriptions match from three letters', () {
+      const commands = [
+        AgentCommand.skill(
+          name: 'notes',
+          skillId: 'r1',
+          description: 'Write review notes',
+          source: AgentSkillSource.registry,
+        ),
+        AgentCommand.skill(name: 'review', skillId: 'i1'),
+        AgentCommand.session(name: 'new', description: 'Start fresh'),
+      ];
+      expect(filterAgentCommands(commands, '').map((c) => c.name), [
+        'new',
+        'review',
+        'notes',
+      ]);
+      expect(filterAgentCommands(commands, 'review').map((c) => c.name), [
+        'review',
+        'notes',
+      ]);
+      expect(filterAgentCommands(commands, 're').map((c) => c.name), [
+        'review',
+      ]);
+      expect(filterAgentCommands(commands, 'rvw').map((c) => c.name), [
+        'review',
+      ]);
+    });
   });
 
   group('agentSkillInvocationTags', () {

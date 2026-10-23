@@ -10,6 +10,7 @@ import {
   MAX_SKILL_ARGS,
   parseSkillInvocation,
   slashCommandNeedsConfirm,
+  slashCommandSection,
   slashCommandText,
 } from "./slashQuery.ts";
 
@@ -40,6 +41,54 @@ const RENEW = {
   argumentHint: null,
 };
 const COMMANDS = [SESSION_NEW, SESSION_LIST, REVIEW, RENEW];
+
+const RESEARCH = {
+  kind: "skill",
+  name: "deep-research",
+  skillId: "reg-research",
+  description: "Research a topic in depth",
+  argumentHint: null,
+  source: "registry",
+  displayName: "Deep Research",
+};
+const NOTES = {
+  kind: "skill",
+  name: "notes",
+  skillId: "reg-notes",
+  description: "Write review notes",
+  argumentHint: null,
+  source: "registry",
+  displayName: null,
+};
+
+test("sections: commands, then this agent's skills, then registry skills", () => {
+  assert.equal(slashCommandSection(SESSION_NEW), "commands");
+  assert.equal(slashCommandSection(REVIEW), "agent-skills");
+  assert.equal(slashCommandSection(RESEARCH), "skills");
+  assert.deepEqual(
+    filterSlashCommands([RESEARCH, REVIEW, SESSION_NEW], "").map(
+      (command) => command.name,
+    ),
+    ["new", "review", "deep-research"],
+  );
+});
+
+test("matching covers word prefixes, letters in order and descriptions", () => {
+  const all = [...COMMANDS, RESEARCH, NOTES];
+  assert.deepEqual(
+    filterSlashCommands(all, "research").map((command) => command.name),
+    ["deep-research"],
+  );
+  assert.deepEqual(
+    filterSlashCommands(all, "dpr").map((command) => command.name),
+    ["deep-research"],
+  );
+  assert.deepEqual(
+    filterSlashCommands(all, "review").map((command) => command.name),
+    ["review", "notes"],
+    "a description match ranks after name matches",
+  );
+});
 
 test("the menu opens only for a leading / while the caret is in the first token", () => {
   assert.deepEqual(detectSlashQuery("/", 1), { query: "", tokenEnd: 1 });

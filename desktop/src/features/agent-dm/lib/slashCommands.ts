@@ -2,8 +2,9 @@ import { invokeTauri } from "@/shared/api/tauri";
 
 /**
  * An agent's "/" commands for the DM composer menu, from the guest route's
- * `GET /agents/<agent>/commands` (NIP-98 as the signed-in user, signed
- * natively). Looked up lazily the first time the menu opens for an agent and
+ * `GET /agents/<agent>/commands?audience=private` (NIP-98 as the signed-in
+ * user, signed natively): its session commands, the skills it installs, and
+ * the other registry skills the user may use with it (run for that turn). Looked up lazily the first time the menu opens for an agent and
  * cached per agent key with the server's ETag; later opens revalidate with
  * `If-None-Match` at most once a minute. Any error, or a body that fails
  * validation, leaves the agent with no commands, so no menu shows.
@@ -22,11 +23,15 @@ export type AgentSkillCommand = {
   skillId: string;
   description: string | null;
   argumentHint: string | null;
+  /** Installed for this agent, or another registry skill. */
+  source: "installed" | "registry";
+  /** The registry's human name, when it differs from `name`. */
+  displayName: string | null;
 };
 
 export type AgentSlashCommand = AgentSessionCommand | AgentSkillCommand;
 
-export const MAX_AGENT_COMMANDS = 200;
+export const MAX_AGENT_COMMANDS = 500;
 export const COMMANDS_REVALIDATE_MS = 60_000;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const HEX64_RE = /^[0-9a-f]{64}$/;
@@ -83,6 +88,9 @@ export function parseAgentCommandsBody(
         skillId,
         description: optionalText(entry.description, 300),
         argumentHint: optionalText(entry.argument_hint, 200),
+        // Older servers list only installed skills.
+        source: entry.source === "registry" ? "registry" : "installed",
+        displayName: optionalText(entry.display_name, 200),
       });
     }
   }
@@ -105,10 +113,15 @@ type FetchResult = {
 type Transport = (input: {
   agentPublicKey: string;
   etag: string | null;
+  audience: "private";
 }) => Promise<FetchResult>;
 
-const tauriTransport: Transport = ({ agentPublicKey, etag }) =>
-  invokeTauri<FetchResult>("agent_commands_fetch", { agentPublicKey, etag });
+const tauriTransport: Transport = ({ agentPublicKey, etag, audience }) =>
+  invokeTauri<FetchResult>("agent_commands_fetch", {
+    agentPublicKey,
+    etag,
+    audience,
+  });
 
 let transport: Transport = tauriTransport;
 let now: () => number = () => Date.now();
@@ -174,9 +187,11 @@ export function refreshAgentCommands(agentPublicKey: string): Promise<void> {
   const request = (async () => {
     let next: Entry;
     try {
+      // The menu is a 1:1 DM's, so the list is the private one.
       const result = await transport({
         agentPublicKey: key,
         etag: cached?.etag ?? null,
+        audience: "private",
       });
       if (result.notModified && cached?.etag) {
         next = { ...cached, checkedAt: now() };

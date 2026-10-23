@@ -1,8 +1,9 @@
 part of '../compose_bar.dart';
 
-/// The composer's "/" autocomplete in a 1:1 agent DM: conversation commands
-/// and the agent's skills, fetched lazily from the hosted route the first
-/// time "/" opens for that agent.
+/// The composer's "/" autocomplete in a 1:1 agent DM: conversation commands,
+/// the agent's skills and the other registry skills the person may use,
+/// fetched lazily from the hosted route the first time "/" opens for that
+/// agent.
 class _AgentCommandAutocomplete {
   const _AgentCommandAutocomplete({
     required this.suggestions,
@@ -100,7 +101,7 @@ class _AgentCommandSuggestions extends StatelessWidget {
       shape: appPopoverShape(context),
       clipBehavior: Clip.hardEdge,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 240),
+        constraints: const BoxConstraints(maxHeight: 320),
         child: ListView.builder(
           shrinkWrap: true,
           padding: const EdgeInsets.symmetric(vertical: Grid.xxs),
@@ -109,7 +110,10 @@ class _AgentCommandSuggestions extends StatelessWidget {
             final command = suggestions[index];
             final hint = command.argumentHint;
             final detail = command.description;
-            return ListTile(
+            final displayName = command.displayName;
+            final startsSection =
+                index == 0 || suggestions[index - 1].section != command.section;
+            final tile = ListTile(
               key: ValueKey(
                 'agent-command-${command.kind.name}-${command.name}',
               ),
@@ -119,6 +123,13 @@ class _AgentCommandSuggestions extends StatelessWidget {
                 TextSpan(
                   text: '/${command.name}',
                   children: [
+                    if (displayName != null)
+                      TextSpan(
+                        text: '  $displayName',
+                        style: TextStyle(
+                          color: context.colors.onSurfaceVariant,
+                        ),
+                      ),
                     if (hint != null)
                       TextSpan(
                         text: '  $hint',
@@ -128,6 +139,8 @@ class _AgentCommandSuggestions extends StatelessWidget {
                       ),
                   ],
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: context.textTheme.titleSmall,
               ),
               subtitle: detail == null || detail.isEmpty
@@ -141,6 +154,32 @@ class _AgentCommandSuggestions extends StatelessWidget {
                       ),
                     ),
               onTap: () => _runComposerAction(() => onSelect(command)),
+            );
+            if (!startsSection) return tile;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  key: ValueKey(
+                    'agent-command-section-${command.section.name}',
+                  ),
+                  padding: const EdgeInsets.fromLTRB(
+                    Grid.xs,
+                    Grid.xxs,
+                    Grid.xs,
+                    Grid.half,
+                  ),
+                  child: Text(
+                    command.section.label,
+                    style: context.textTheme.labelSmall?.copyWith(
+                      color: context.colors.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                tile,
+              ],
             );
           },
         ),
