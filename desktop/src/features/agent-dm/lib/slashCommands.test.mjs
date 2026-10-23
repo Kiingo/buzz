@@ -65,6 +65,8 @@ test("bodies are validated and malformed entries dropped", () => {
       skillId: "sk-1",
       description: "Review a PR",
       argumentHint: "<pr url>",
+      source: "installed",
+      displayName: null,
     },
   ]);
   assert.equal(
@@ -96,6 +98,32 @@ test("bodies are validated and malformed entries dropped", () => {
     ).map((command) => `${command.kind}:${command.name}`),
     ["session:new", "skill:dup"],
   );
+});
+
+test("registry skills keep their source and display name", () => {
+  const [registry] = parseAgentCommandsBody(
+    body([
+      {
+        kind: "skill",
+        name: "deep-research",
+        skill_id: "reg-1",
+        description: "Research a topic",
+        argument_hint: null,
+        source: "registry",
+        display_name: "Deep Research",
+      },
+    ]),
+    AGENT,
+  );
+  assert.deepEqual(registry, {
+    kind: "skill",
+    name: "deep-research",
+    skillId: "reg-1",
+    description: "Research a topic",
+    argumentHint: null,
+    source: "registry",
+    displayName: "Deep Research",
+  });
 });
 
 function harness(respond) {
@@ -133,7 +161,11 @@ test("lazy fetch caches the list with its ETag and revalidates with If-None-Matc
   assert.equal(h.calls.length, 1, "a fresh answer is reused");
   h.advance(COMMANDS_REVALIDATE_MS);
   await refreshAgentCommands(AGENT);
-  assert.deepEqual(h.calls[1], { agentPublicKey: AGENT, etag: '"v1"' });
+  assert.deepEqual(h.calls[1], {
+    agentPublicKey: AGENT,
+    etag: '"v1"',
+    audience: "private",
+  });
   assert.equal(getAgentCommands(AGENT).length, 3, "304 keeps the cached list");
 });
 

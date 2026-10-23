@@ -18,6 +18,7 @@ import {
 } from "@/shared/ui/popoverSurface";
 
 import type { AgentSlashCommand } from "../lib/slashCommands";
+import { SLASH_SECTION_LABELS, slashCommandSection } from "../lib/slashQuery";
 import type { UseAgentSlashCommandsResult } from "./useAgentSlashCommands";
 
 function commandDescription(command: AgentSlashCommand) {
@@ -27,10 +28,11 @@ function commandDescription(command: AgentSlashCommand) {
 }
 
 /**
- * The agent DM composer's "/" menu (Claude Code style). The editor keeps
- * focus and owns the keys (arrows move, Tab/Enter choose, Esc closes);
- * pointer users choose with a click. While the composer holds just a
- * skill's `/<name>`, its argument hint shows instead.
+ * The agent DM composer's "/" menu (Claude Code style): sections for the
+ * session commands, the agent's own skills and the other registry skills.
+ * The editor keeps focus and owns the keys (arrows move, Tab/Enter choose,
+ * Esc closes); pointer users choose with a click. While the composer holds
+ * just a skill's `/<name>`, its argument hint shows instead.
  */
 export function AgentSlashCommandMenu({
   composerOwnsFocus,
@@ -46,9 +48,9 @@ export function AgentSlashCommandMenu({
   const { argumentHint, isOpen, selectedIndex, suggestions } = slash;
 
   React.useEffect(() => {
-    const active = listRef.current?.children[selectedIndex] as
-      | HTMLElement
-      | undefined;
+    const active = listRef.current?.querySelector<HTMLElement>(
+      `[data-option-index="${selectedIndex}"]`,
+    );
     active?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
@@ -100,7 +102,7 @@ export function AgentSlashCommandMenu({
       <div
         aria-label="Commands"
         className={cn(
-          "max-h-64 overflow-y-auto rounded-xl p-1 origin-bottom slide-in-from-bottom-1",
+          "max-h-80 overflow-y-auto rounded-xl p-1 origin-bottom slide-in-from-bottom-1",
           POPOVER_CUSTOM_ENTER_MOTION_CLASS,
           POPOVER_SURFACE_CLASS,
         )}
@@ -113,39 +115,65 @@ export function AgentSlashCommandMenu({
       >
         {suggestions.map((command, index) => {
           const description = commandDescription(command);
+          const section = slashCommandSection(command);
+          const previous = index > 0 ? suggestions[index - 1] : undefined;
+          const startsSection =
+            !previous || slashCommandSection(previous) !== section;
+          const displayName =
+            command.kind === "skill" ? command.displayName : null;
           return (
-            <button
-              aria-selected={index === selectedIndex}
-              className={cn(
-                "flex w-full cursor-pointer flex-col items-start rounded-lg px-3 py-1.5 text-left",
-                index === selectedIndex
-                  ? "bg-accent text-accent-foreground"
-                  : "text-popover-foreground hover:bg-accent/50",
-              )}
-              data-command-kind={command.kind}
-              key={`${command.kind}:${command.name}`}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                onChoose(command);
-              }}
-              role="option"
-              tabIndex={-1}
-              type="button"
-            >
-              <span className="flex items-baseline gap-2 text-sm">
-                <span className="font-medium">/{command.name}</span>
-                {command.kind === "skill" && command.argumentHint ? (
-                  <span className="text-xs text-muted-foreground">
-                    {command.argumentHint}
+            <React.Fragment key={`${command.kind}:${command.name}`}>
+              {startsSection ? (
+                <div
+                  aria-hidden="true"
+                  className="px-3 pb-0.5 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+                  data-testid="agent-slash-section"
+                  role="presentation"
+                >
+                  {SLASH_SECTION_LABELS[section]}
+                </div>
+              ) : null}
+              <button
+                aria-selected={index === selectedIndex}
+                className={cn(
+                  "flex w-full cursor-pointer flex-col items-start rounded-lg px-3 py-1.5 text-left",
+                  index === selectedIndex
+                    ? "bg-accent text-accent-foreground"
+                    : "text-popover-foreground hover:bg-accent/50",
+                )}
+                data-command-kind={command.kind}
+                data-command-source={
+                  command.kind === "skill" ? command.source : undefined
+                }
+                data-option-index={index}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onChoose(command);
+                }}
+                role="option"
+                tabIndex={-1}
+                type="button"
+              >
+                <span className="flex items-baseline gap-2 text-sm">
+                  <span className="font-medium">/{command.name}</span>
+                  {displayName ? (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {displayName}
+                    </span>
+                  ) : null}
+                  {command.kind === "skill" && command.argumentHint ? (
+                    <span className="text-xs text-muted-foreground">
+                      {command.argumentHint}
+                    </span>
+                  ) : null}
+                </span>
+                {description ? (
+                  <span className="line-clamp-1 text-xs text-muted-foreground">
+                    {description}
                   </span>
                 ) : null}
-              </span>
-              {description ? (
-                <span className="line-clamp-1 text-xs text-muted-foreground">
-                  {description}
-                </span>
-              ) : null}
-            </button>
+              </button>
+            </React.Fragment>
           );
         })}
       </div>

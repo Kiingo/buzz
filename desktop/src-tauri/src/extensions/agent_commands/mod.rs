@@ -1,7 +1,10 @@
 //! An agent's slash commands for the DM composer's "/" menu.
 //!
 //! `GET <guest route>/agents/<agent pubkey>/commands` lists the session
-//! commands and skills the agent accepts. It is authenticated with NIP-98
+//! commands and skills the agent accepts, then the other registry skills the
+//! signed-in user may use with it. `?audience=private` asks for the list of
+//! a one-to-one DM (the server re-checks every pick against the actual
+//! conversation). It is authenticated with NIP-98
 //! signed by the signed-in user (read-only, no prompt) and scoped by
 //! `X-Buzz-Community`, like the other guest-route calls. The renderer keeps
 //! the ETag and sends it back as `If-None-Match`; a 304 means its cached list
@@ -20,7 +23,7 @@ use crate::managed_agents::access_policy::guest_route_url;
 use crate::relay::relay_ws_url_with_override;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_RESPONSE_BYTES: usize = 256 * 1024;
+const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_ETAG_BYTES: usize = 256;
 
 /// One commands lookup: either a fresh body with its ETag, or "unchanged".
@@ -56,8 +59,21 @@ fn sanitize_etag(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-fn commands_url(base: &str, agent: &str) -> String {
-    format!("{}/agents/{agent}/commands", base.trim_end_matches('/'))
+/// Which conversation the list is for. Only a 1:1 DM is private; anything
+/// else, or nothing, is a group.
+fn audience_query(audience: Option<&str>) -> &'static str {
+    match audience {
+        Some("private") => "?audience=private",
+        _ => "",
+    }
+}
+
+fn commands_url(base: &str, agent: &str, audience: Option<&str>) -> String {
+    format!(
+        "{}/agents/{agent}/commands{}",
+        base.trim_end_matches('/'),
+        audience_query(audience)
+    )
 }
 
 /// List the agent's slash commands as the signed-in user.
@@ -65,6 +81,7 @@ fn commands_url(base: &str, agent: &str) -> String {
 pub async fn agent_commands_fetch(
     agent_public_key: String,
     etag: Option<String>,
+    audience: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<AgentCommandsResponse, String> {
     let agent = normalize_agent_key(&agent_public_key)
@@ -77,7 +94,7 @@ pub async fn agent_commands_fetch(
         return Err(error(None, "community_invalid"));
     }
     let keys = state.signing_keys()?;
-    let url = commands_url(&base, &agent);
+    let url = commands_url(&base, &agent, audience.as_deref());
     let authorization = nip98_header(&keys, "GET", &url, None)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -159,13 +176,27 @@ mod tests {
         assert_eq!(
             commands_url(
                 "https://api.example.com/api/buzz-guest/v1/",
-                &"a".repeat(64)
+                &"a".repeat(64),
+                None
             ),
             format!(
                 "https://api.example.com/api/buzz-guest/v1/agents/{}/commands",
                 "a".repeat(64)
             )
         );
+        assert_eq!(
+            commands_url(
+                "https://api.example.com/api/buzz-guest/v1",
+                &"a".repeat(64),
+                Some("private")
+            ),
+            format!(
+                "https://api.example.com/api/buzz-guest/v1/agents/{}/commands?audience=private",
+                "a".repeat(64)
+            )
+        );
+        assert_eq!(audience_query(Some("group")), "");
+        assert_eq!(audience_query(Some("private&x=1")), "");
     }
 
     #[test]
@@ -183,7 +214,11 @@ mod tests {
     #[test]
     fn get_proof_names_the_exact_url_and_method() {
         let keys = nostr::Keys::parse(&"1".repeat(64)).expect("keys");
-        let url = commands_url("https://api.example.com/api/buzz-guest/v1", &"a".repeat(64));
+        let url = commands_url(
+            "https://api.example.com/api/buzz-guest/v1",
+            &"a".repeat(64),
+            Some("private"),
+        );
         let header = nip98_header(&keys, "GET", &url, None).expect("header");
         let encoded = header.strip_prefix("Nostr ").expect("scheme");
         let json = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded)

@@ -20,20 +20,25 @@ final _skillIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
 final _namePattern = RegExp(r'^\S{1,256}$');
 
 /// One entry of an agent's "/" autocomplete: a conversation command the
-/// server intercepts (`/new`, `/sessions`), or a skill the agent can use,
-/// sent as a native skill invocation rather than prose.
+/// server intercepts (`/new`, `/sessions`), or a skill, sent as a native skill
+/// invocation rather than prose. A skill is either installed for the agent or
+/// another registry skill the person may use with it (run for that turn).
 @immutable
 class AgentCommand {
   const AgentCommand.session({required this.name, required this.description})
     : kind = AgentCommandKind.session,
       skillId = null,
-      argumentHint = null;
+      argumentHint = null,
+      source = null,
+      displayName = null;
 
   const AgentCommand.skill({
     required this.name,
     required String this.skillId,
     this.description,
     this.argumentHint,
+    AgentSkillSource this.source = AgentSkillSource.installed,
+    this.displayName,
   }) : kind = AgentCommandKind.skill;
 
   final AgentCommandKind kind;
@@ -42,6 +47,19 @@ class AgentCommand {
   final String? description;
   final String? argumentHint;
 
+  /// Where a skill comes from; null for a session command.
+  final AgentSkillSource? source;
+
+  /// The registry's human name, when it differs from [name].
+  final String? displayName;
+
+  /// The popup section this command is listed under.
+  AgentCommandSection get section => kind == AgentCommandKind.session
+      ? AgentCommandSection.commands
+      : source == AgentSkillSource.registry
+      ? AgentCommandSection.skills
+      : AgentCommandSection.agentSkills;
+
   @override
   bool operator ==(Object other) =>
       other is AgentCommand &&
@@ -49,11 +67,34 @@ class AgentCommand {
       other.name == name &&
       other.skillId == skillId &&
       other.description == description &&
-      other.argumentHint == argumentHint;
+      other.argumentHint == argumentHint &&
+      other.source == source &&
+      other.displayName == displayName;
 
   @override
-  int get hashCode =>
-      Object.hash(kind, name, skillId, description, argumentHint);
+  int get hashCode => Object.hash(
+    kind,
+    name,
+    skillId,
+    description,
+    argumentHint,
+    source,
+    displayName,
+  );
+}
+
+/// Installed for the agent, or another registry skill.
+enum AgentSkillSource { installed, registry }
+
+/// The popup's sections, in order.
+enum AgentCommandSection {
+  commands('Commands'),
+  agentSkills("This agent's skills"),
+  skills('Skills');
+
+  const AgentCommandSection(this.label);
+
+  final String label;
 }
 
 enum AgentCommandKind { session, skill }
@@ -99,6 +140,11 @@ List<AgentCommand>? parseAgentCommands(
             skillId: skillId,
             description: _optionalText(entry['description']),
             argumentHint: _optionalText(entry['argument_hint']),
+            // Older servers list only installed skills.
+            source: entry['source'] == 'registry'
+                ? AgentSkillSource.registry
+                : AgentSkillSource.installed,
+            displayName: _optionalText(entry['display_name']),
           ),
         );
     }
@@ -126,25 +172,56 @@ AgentCommandQuery? findAgentCommandQuery(String text, int cursor) {
   return AgentCommandQuery(typed.toLowerCase());
 }
 
-/// Commands matching [query]: name prefixes first, then other name matches,
-/// in the server's order within each group.
+/// How well [command] matches [query] (higher is better, 0 is no match): the
+/// name itself, a name prefix, a word prefix, a substring, and from three
+/// letters on the letters in order, then a description match.
+int agentCommandMatchScore(AgentCommand command, String query) {
+  final q = query.trim().toLowerCase();
+  if (q.isEmpty) return 1;
+  final name = command.name.toLowerCase();
+  final display = (command.displayName ?? '').toLowerCase();
+  if (name == q) return 100;
+  if (name.startsWith(q)) return 90;
+  final words = '$name $display'.split(RegExp(r'[\s._:-]+'));
+  if (words.any((word) => word.startsWith(q))) return 80;
+  if (name.contains(q) || display.contains(q)) return 70;
+  // Short queries match names only: two letters in order, or inside a
+  // description, match almost everything.
+  if (q.length < 3) return 0;
+  var at = 0;
+  for (final letter in name.split('')) {
+    if (letter == q[at]) {
+      at += 1;
+      if (at == q.length) return 50;
+    }
+  }
+  return (command.description ?? '').toLowerCase().contains(q) ? 30 : 0;
+}
+
+/// Commands matching [query], grouped by section (commands, this agent's
+/// skills, other skills) and best match first within each; ties keep the
+/// server's order.
 List<AgentCommand> filterAgentCommands(
   List<AgentCommand> commands,
   String query, {
-  int limit = 8,
+  int limit = 40,
 }) {
-  final q = query.toLowerCase();
-  final prefix = <AgentCommand>[];
-  final other = <AgentCommand>[];
-  for (final command in commands) {
-    final name = command.name.toLowerCase();
-    if (name.startsWith(q)) {
-      prefix.add(command);
-    } else if (q.isNotEmpty && name.contains(q)) {
-      other.add(command);
+  final scored = <({AgentCommand command, int index, int score})>[];
+  for (var index = 0; index < commands.length; index++) {
+    final score = agentCommandMatchScore(commands[index], query);
+    if (score > 0) {
+      scored.add((command: commands[index], index: index, score: score));
     }
   }
-  return [...prefix, ...other].take(limit).toList();
+  scored.sort((left, right) {
+    final section = left.command.section.index.compareTo(
+      right.command.section.index,
+    );
+    if (section != 0) return section;
+    final score = right.score.compareTo(left.score);
+    return score != 0 ? score : left.index.compareTo(right.index);
+  });
+  return scored.take(limit).map((entry) => entry.command).toList();
 }
 
 /// The `["buzz-skill", skill_id, args]` tag for a message that begins with a
@@ -187,13 +264,15 @@ class AgentCommandsClient {
   final http.Client? _http;
 
   /// The commands and their ETag, or `null` commands when the server says
-  /// the list for [etag] is unchanged (304).
+  /// the list for [etag] is unchanged (304). The popup is a 1:1 DM's, so it
+  /// asks for the private list (the server re-checks every pick against the
+  /// conversation it is sent in).
   Future<({List<AgentCommand>? commands, String? etag})> fetch(
     String agentPublicKey, {
     String? etag,
   }) async {
     final url =
-        '${route.baseUrl}/agents/${Uri.encodeComponent(agentPublicKey)}/commands';
+        '${route.baseUrl}/agents/${Uri.encodeComponent(agentPublicKey)}/commands?audience=private';
     final request = http.Request('GET', Uri.parse(url))
       ..followRedirects = false
       ..headers['Authorization'] = buildNip98AuthHeader(
