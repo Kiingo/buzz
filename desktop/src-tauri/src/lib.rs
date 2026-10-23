@@ -12,6 +12,7 @@ mod egress_guard;
 mod event_sync;
 mod events;
 mod extensions;
+mod git_ca_bundle;
 #[cfg_attr(not(test), allow(dead_code))]
 mod hpke_key_backup;
 mod huddle;
