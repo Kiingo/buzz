@@ -217,6 +217,9 @@ final class MobileHuddleController extends Notifier<bool> {
     required String startedEventId,
   }) async {
     ++_generation;
+    // A join supersedes an in-flight start, whose finally then skips the
+    // reset: clear "starting" here so calls and new starts aren't refused.
+    state = false;
     final admissionEpoch = ++_admissionEpoch;
     _latestAdmissionTargetBackingChannelId = ephemeralChannelId;
     final currentPubkey = ref.read(currentPubkeyProvider);
