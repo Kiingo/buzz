@@ -102,7 +102,7 @@ export function startAgentCall(input: {
 }): Promise<StartAgentCallResponse> {
   return request<StartAgentCallResponse>("POST", "calls", {
     ...input,
-    clientDiagnostics: { systemCallUI: "in_app" },
+    clientDiagnostics: { systemCallUI: "none" },
   });
 }
 

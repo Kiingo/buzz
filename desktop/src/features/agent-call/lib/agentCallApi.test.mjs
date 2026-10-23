@@ -42,7 +42,7 @@ test("a call starts from the DM with the agent key, channel and offer", async ()
     agentPubkey: "b".repeat(64),
     channelId: "0192a6b0-0000-7000-8000-0000000000af",
     sdpOffer: "v=0 offer",
-    clientDiagnostics: { systemCallUI: "in_app" },
+    clientDiagnostics: { systemCallUI: "none" },
   });
 });
 
