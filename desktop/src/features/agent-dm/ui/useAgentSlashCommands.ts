@@ -5,10 +5,22 @@ import { toast } from "sonner";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { channelsQueryKey } from "@/features/channels/hooks";
 import type { AutocompleteEdit } from "@/features/messages/lib/useRichTextEditor";
-import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import {
+  resolveUserLabel,
+  type UserProfileLookup,
+} from "@/features/profile/lib/identity";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { Channel } from "@/shared/api/types";
 
+import {
+  detectGroupSlashQuery,
+  groupSkillTag,
+  parseGroupSkillInvocation,
+  resolveSlashTarget,
+  slashTokenStart,
+  type GroupSlashQuery,
+  type SlashTarget,
+} from "../lib/groupSlash";
 import { sendAgentDmTaggedMessage } from "../lib/send";
 import {
   getAgentCommands,
@@ -16,6 +28,7 @@ import {
   refreshAgentCommands,
   subscribeAgentCommands,
   type AgentSlashCommand,
+  type SlashAudience,
 } from "../lib/slashCommands";
 import {
   agentDmPeer,
@@ -27,9 +40,13 @@ import {
   parseSkillInvocation,
   slashCommandNeedsConfirm,
   slashCommandText,
-  type SlashQuery,
 } from "../lib/slashQuery";
 
+/** An agent to pick when a channel's "/" could be for several. */
+export type SlashAgentChoice = { kind: "agent"; pubkey: string; label: string };
+export type SlashMenuItem = AgentSlashCommand | SlashAgentChoice;
+
+const NO_ITEMS: SlashMenuItem[] = [];
 const NO_COMMANDS: AgentSlashCommand[] = [];
 
 type ChooseActions = {
@@ -37,31 +54,53 @@ type ChooseActions = {
   submit: () => void;
 };
 
-function applyChoice(
-  command: AgentSlashCommand,
-  tokenEnd: number,
-  actions: ChooseActions,
-) {
-  actions.applyEdit({
-    replaceFromOffset: 0,
-    replaceToOffset: tokenEnd,
-    insertText: slashCommandText(command),
-  });
-  if (command.kind === "session") actions.submit();
+/**
+ * What a channel or thread composer tells the menu: which agents a draft
+ * mentions, which agents the conversation already addresses (a thread with
+ * an agent), the channel's agent members, and how to insert a real mention.
+ */
+export type GroupSlashContext = {
+  agentMentionsIn: (text: string) => string[];
+  addressedAgents: readonly string[];
+  channelAgents: readonly string[];
+  mentionEdit: (input: {
+    pubkey: string;
+    label: string;
+    replaceFromOffset: number;
+    replaceToOffset: number;
+  }) => AutocompleteEdit;
+};
+
+/** Extra addressing and tags for a channel or thread send. */
+export type GroupSlashSend =
+  | { ok: true; addressedAgents: string[]; markerTags: string[][] }
+  | { ok: false; message: string };
+
+function agentChoiceMatches(choice: SlashAgentChoice, query: string) {
+  const q = query.trim().toLowerCase();
+  return !q || choice.label.toLowerCase().includes(q);
 }
 
 /**
- * The DM composer's "/" menu for an agent DM: lists the agent's session
- * commands and skills while the composer starts with "/", and sends a
- * chosen skill with its `buzz-skill` tag.
+ * The composer's "/" menu. In a 1:1 agent DM it lists that agent's session
+ * commands and skills and sends a chosen skill with its `buzz-skill` tag. In
+ * a channel or thread (with `group`) the "/" may follow a mention of the
+ * agent it is for; otherwise it is for the agent the conversation addresses
+ * or its only agent, and with several the menu first offers them. A group
+ * pick keeps its text (`@Name /skill args`), adds the tag and addresses the
+ * agent; the list is the group one, so it never offers personal skills.
  */
 export function useAgentSlashCommands({
   channelId,
   enabled,
+  group = null,
+  inThread = false,
   profiles,
 }: {
   channelId: string | null;
   enabled: boolean;
+  group?: GroupSlashContext | null;
+  inThread?: boolean;
   profiles?: UserProfileLookup;
 }) {
   const queryClient = useQueryClient();
@@ -71,7 +110,7 @@ export function useAgentSlashCommands({
     queryKey: channelsQueryKey,
     queryFn: skipToken,
   }).data?.find((candidate) => candidate.id === channelId);
-  const agentPubkey = enabled
+  const dmPeer = enabled
     ? agentDmPeer(
         channel,
         selfPubkey,
@@ -79,41 +118,115 @@ export function useAgentSlashCommands({
           knownAgents.has(pubkey) || profiles?.[pubkey]?.isAgent === true,
       )
     : null;
+  // A thread inside a 1:1 DM has no menu: the DM send path is top-level only.
+  const mode: "dm" | "group" | null = dmPeer
+    ? inThread
+      ? null
+      : "dm"
+    : enabled && group && channel && channel.channelType !== "forum"
+      ? "group"
+      : null;
+  const audience: SlashAudience = mode === "dm" ? "private" : "group";
+  const groupRef = React.useRef(group);
+  groupRef.current = group;
+  /** The agent a chosen channel session command is for: its text drops the
+   * mention, so the send cannot read the agent back from it. */
+  const sessionTargetRef = React.useRef<{
+    text: string;
+    pubkey: string;
+  } | null>(null);
 
   React.useSyncExternalStore(
     subscribeAgentCommands,
     getAgentCommandsVersion,
     getAgentCommandsVersion,
   );
-  const commands = agentPubkey ? getAgentCommands(agentPubkey) : NO_COMMANDS;
 
-  const [slashQuery, setSlashQuery] = React.useState<SlashQuery | null>(null);
+  const [slashQuery, setSlashQuery] = React.useState<GroupSlashQuery | null>(
+    null,
+  );
   const [text, setText] = React.useState("");
   const [dismissed, setDismissed] = React.useState(false);
   const [selectedIndex, setSelectedIndex] = React.useState(0);
   const [pendingConfirm, setPendingConfirm] = React.useState<{
     command: AgentSlashCommand;
-    tokenEnd: number;
+    edit: AutocompleteEdit;
     actions: ChooseActions;
   } | null>(null);
 
-  const suggestions = React.useMemo(
-    () =>
-      slashQuery && !dismissed
-        ? filterSlashCommands(commands, slashQuery.query)
-        : NO_COMMANDS,
-    [commands, dismissed, slashQuery],
+  /** The agent a group draft's "/" is for (see `resolveSlashTarget`). */
+  const groupTargetFor = React.useCallback(
+    (draft: string): SlashTarget | null => {
+      const context = groupRef.current;
+      if (!context) return null;
+      const trimmed = draft.trimStart();
+      const start = slashTokenStart(trimmed);
+      const prefix = start === null ? "" : trimmed.slice(0, start);
+      return resolveSlashTarget({
+        hasPrefix: prefix.length > 0,
+        prefixAgents: prefix ? context.agentMentionsIn(prefix) : [],
+        addressedAgents: context.addressedAgents,
+        channelAgents: context.channelAgents,
+      });
+    },
+    [],
   );
-  const isOpen = agentPubkey !== null && suggestions.length > 0;
-  const argumentHint = agentPubkey ? argumentHintFor(text, commands) : null;
+
+  const target: SlashTarget | null =
+    mode === "dm" && dmPeer
+      ? { kind: "agent", pubkey: dmPeer }
+      : mode === "group"
+        ? groupTargetFor(text)
+        : null;
+  const agentPubkey = target?.kind === "agent" ? target.pubkey : null;
+  const commands = agentPubkey
+    ? getAgentCommands(agentPubkey, audience)
+    : NO_COMMANDS;
+  const labelFor = React.useCallback(
+    (pubkey: string) => resolveUserLabel({ pubkey, profiles }),
+    [profiles],
+  );
+
+  const suggestions = React.useMemo<SlashMenuItem[]>(() => {
+    if (!slashQuery || dismissed || !target) return NO_ITEMS;
+    if (target.kind === "choose") {
+      return target.pubkeys
+        .map<SlashAgentChoice>((pubkey) => ({
+          kind: "agent",
+          pubkey,
+          label: labelFor(pubkey),
+        }))
+        .filter((choice) => agentChoiceMatches(choice, slashQuery.query));
+    }
+    return filterSlashCommands(commands, slashQuery.query);
+  }, [commands, dismissed, labelFor, slashQuery, target]);
+  const isOpen = mode !== null && suggestions.length > 0;
+  const commandText =
+    mode === "group" ? text.slice(slashTokenStart(text) ?? 0) : text;
+  const argumentHint = agentPubkey
+    ? argumentHintFor(commandText, commands)
+    : null;
+  /** Names the agent in a channel's menu ("Skills for @Scout"). */
+  const targetLabel =
+    mode === "group" && agentPubkey ? labelFor(agentPubkey) : null;
 
   const updateQuery = React.useCallback(
     (nextText: string, cursor: number) => {
-      // Outside an agent DM every setter below is a no-op bail-out.
-      setText(agentPubkey ? nextText : "");
-      const next = agentPubkey ? detectSlashQuery(nextText, cursor) : null;
+      // Outside a menu-capable composer every setter below is a no-op bail-out.
+      setText(mode ? nextText : "");
+      const next: GroupSlashQuery | null =
+        mode === "dm"
+          ? (() => {
+              const query = detectSlashQuery(nextText, cursor);
+              return query ? { ...query, tokenStart: 0, prefix: "" } : null;
+            })()
+          : mode === "group"
+            ? detectGroupSlashQuery(nextText, cursor)
+            : null;
       setSlashQuery((current) =>
-        current?.query === next?.query && current?.tokenEnd === next?.tokenEnd
+        current?.query === next?.query &&
+        current?.tokenEnd === next?.tokenEnd &&
+        current?.tokenStart === next?.tokenStart
           ? current
           : next,
       );
@@ -122,16 +235,22 @@ export function useAgentSlashCommands({
         setDismissed(false);
         return;
       }
-      // Lazy: the first "/" for this agent loads its commands.
-      if (agentPubkey) void refreshAgentCommands(agentPubkey);
+      // Lazy: the first "/" for an agent loads its commands.
+      const nextTarget =
+        mode === "dm" && dmPeer
+          ? ({ kind: "agent", pubkey: dmPeer } as const)
+          : groupTargetFor(nextText);
+      if (nextTarget?.kind === "agent") {
+        void refreshAgentCommands(nextTarget.pubkey, audience);
+      }
     },
-    [agentPubkey],
+    [audience, dmPeer, groupTargetFor, mode],
   );
 
   const handleKeyDown = React.useCallback(
     (
       event: React.KeyboardEvent,
-    ): { handled: boolean; choice?: AgentSlashCommand } => {
+    ): { handled: boolean; choice?: SlashMenuItem } => {
       if (!isOpen) return { handled: false };
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -164,32 +283,74 @@ export function useAgentSlashCommands({
   );
 
   /**
-   * Put the chosen command in the composer. A session command is then sent
-   * as the plain message it has always been (`/new` only after the person
-   * confirms); a skill waits for arguments.
+   * Put the chosen item in the composer. An agent choice inserts its mention
+   * and reopens the menu for it. A session command is then sent as the plain
+   * message it has always been (`/new` only after the person confirms; in a
+   * channel without the mention, so the server reads it as the command); a
+   * skill waits for arguments, after the agent's mention in a channel.
    */
   const choose = React.useCallback(
-    (command: AgentSlashCommand, actions: ChooseActions) => {
-      const tokenEnd = slashQuery?.tokenEnd ?? 0;
+    (item: SlashMenuItem, actions: ChooseActions) => {
+      const query = slashQuery;
       setSlashQuery(null);
       setSelectedIndex(0);
-      if (slashCommandNeedsConfirm(command)) {
-        setPendingConfirm({ command, tokenEnd, actions });
+      if (!query) return;
+      const context = groupRef.current;
+      if (item.kind === "agent") {
+        if (!context) return;
+        const edit = context.mentionEdit({
+          pubkey: item.pubkey,
+          label: item.label,
+          replaceFromOffset: 0,
+          replaceToOffset: query.tokenEnd,
+        });
+        actions.applyEdit({ ...edit, insertText: `${edit.insertText}/` });
         return;
       }
-      applyChoice(command, tokenEnd, actions);
+      let edit: AutocompleteEdit = {
+        replaceFromOffset: mode === "group" ? 0 : query.tokenStart,
+        replaceToOffset: query.tokenEnd,
+        insertText: slashCommandText(item),
+      };
+      if (mode === "group" && item.kind === "session" && agentPubkey) {
+        sessionTargetRef.current = {
+          text: slashCommandText(item),
+          pubkey: agentPubkey,
+        };
+      }
+      if (mode === "group" && item.kind === "skill") {
+        if (query.prefix) {
+          edit = { ...edit, replaceFromOffset: query.tokenStart };
+        } else if (context && agentPubkey) {
+          const mention = context.mentionEdit({
+            pubkey: agentPubkey,
+            label: labelFor(agentPubkey),
+            replaceFromOffset: 0,
+            replaceToOffset: query.tokenEnd,
+          });
+          edit = {
+            ...mention,
+            insertText: `${mention.insertText}${slashCommandText(item)}`,
+          };
+        }
+      }
+      if (slashCommandNeedsConfirm(item)) {
+        setPendingConfirm({ command: item, edit, actions });
+        return;
+      }
+      actions.applyEdit(edit);
+      if (item.kind === "session") actions.submit();
     },
-    [slashQuery],
+    [agentPubkey, labelFor, mode, slashQuery],
   );
 
   const confirmPending = React.useCallback(() => {
     if (!pendingConfirm) return;
     setPendingConfirm(null);
-    applyChoice(
-      pendingConfirm.command,
-      pendingConfirm.tokenEnd,
-      pendingConfirm.actions,
-    );
+    pendingConfirm.actions.applyEdit(pendingConfirm.edit);
+    if (pendingConfirm.command.kind === "session") {
+      pendingConfirm.actions.submit();
+    }
   }, [pendingConfirm]);
 
   const cancelPending = React.useCallback(() => {
@@ -201,10 +362,11 @@ export function useAgentSlashCommands({
    * Send the composer text as a skill invocation when it starts with a
    * listed skill. Returns true when it handled the send (sent, or refused
    * with a visible reason); false sends the text as an ordinary message.
+   * 1:1 DM only; a channel or thread send uses `groupSend`.
    */
   const sendSkillIfInvoked = React.useCallback(
     async (plainText: string, onSent: () => void): Promise<boolean> => {
-      if (!agentPubkey || !channelId) return false;
+      if (mode !== "dm" || !dmPeer || !channelId) return false;
       const invocation = parseSkillInvocation(plainText, commands);
       if (!invocation) return false;
       const message = buildSkillMessage(invocation);
@@ -230,7 +392,50 @@ export function useAgentSlashCommands({
       }
       return true;
     },
-    [agentPubkey, channelId, commands, queryClient, selfPubkey],
+    [channelId, commands, dmPeer, mode, queryClient, selfPubkey],
+  );
+
+  /**
+   * For a channel or thread send: a listed skill (`[@Name ]/skill args`)
+   * adds its `buzz-skill` tag; a listed session command (`/new`) is kept as
+   * its plain text. Either addresses the target agent. Null for anything
+   * else, which sends as an ordinary message.
+   */
+  const groupSend = React.useCallback(
+    (plainText: string): GroupSlashSend | null => {
+      if (mode !== "group") return null;
+      const trimmed = plainText.trim();
+      const chosenSession = sessionTargetRef.current;
+      sessionTargetRef.current = null;
+      const sendTarget: SlashTarget | null =
+        chosenSession && chosenSession.text === trimmed
+          ? { kind: "agent", pubkey: chosenSession.pubkey }
+          : groupTargetFor(plainText);
+      if (sendTarget?.kind !== "agent") return null;
+      const listed = getAgentCommands(sendTarget.pubkey, "group");
+      const invocation = parseGroupSkillInvocation(plainText, listed);
+      if (invocation) {
+        const tag = groupSkillTag(invocation);
+        return tag
+          ? {
+              ok: true,
+              addressedAgents: [sendTarget.pubkey],
+              markerTags: [tag],
+            }
+          : {
+              ok: false,
+              message: `Skill arguments can be at most ${MAX_SKILL_ARGS.toLocaleString()} characters.`,
+            };
+      }
+      const session = listed.find(
+        (command) =>
+          command.kind === "session" && trimmed === `/${command.name}`,
+      );
+      return session
+        ? { ok: true, addressedAgents: [sendTarget.pubkey], markerTags: [] }
+        : null;
+    },
+    [groupTargetFor, mode],
   );
 
   return {
@@ -239,11 +444,14 @@ export function useAgentSlashCommands({
     choose,
     confirmPending,
     pendingConfirm: pendingConfirm?.command ?? null,
+    groupSend,
     handleKeyDown,
     isOpen,
+    mode,
     selectedIndex,
     sendSkillIfInvoked,
     suggestions,
+    targetLabel,
     updateQuery,
   };
 }

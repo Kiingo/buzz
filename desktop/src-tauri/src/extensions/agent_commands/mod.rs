@@ -1,10 +1,10 @@
-//! An agent's slash commands for the DM composer's "/" menu.
+//! An agent's slash commands for the composer's "/" menu.
 //!
 //! `GET <guest route>/agents/<agent pubkey>/commands` lists the session
 //! commands and skills the agent accepts, then the other registry skills the
 //! signed-in user may use with it. `?audience=private` asks for the list of
-//! a one-to-one DM (the server re-checks every pick against the actual
-//! conversation). It is authenticated with NIP-98
+//! a one-to-one DM and `?audience=group` for a channel or thread (the server
+//! re-checks every pick against the actual conversation). It is authenticated with NIP-98
 //! signed by the signed-in user (read-only, no prompt) and scoped by
 //! `X-Buzz-Community`, like the other guest-route calls. The renderer keeps
 //! the ETag and sends it back as `If-None-Match`; a 304 means its cached list
@@ -59,11 +59,12 @@ fn sanitize_etag(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Which conversation the list is for. Only a 1:1 DM is private; anything
-/// else, or nothing, is a group.
+/// Which conversation the list is for: a 1:1 DM is private, a channel or
+/// thread a group. Anything else sends no audience (the server's default).
 fn audience_query(audience: Option<&str>) -> &'static str {
     match audience {
         Some("private") => "?audience=private",
+        Some("group") => "?audience=group",
         _ => "",
     }
 }
@@ -195,8 +196,9 @@ mod tests {
                 "a".repeat(64)
             )
         );
-        assert_eq!(audience_query(Some("group")), "");
+        assert_eq!(audience_query(Some("group")), "?audience=group");
         assert_eq!(audience_query(Some("private&x=1")), "");
+        assert_eq!(audience_query(None), "");
     }
 
     #[test]

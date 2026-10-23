@@ -1,11 +1,13 @@
 import { invokeTauri } from "@/shared/api/tauri";
 
 /**
- * An agent's "/" commands for the DM composer menu, from the guest route's
- * `GET /agents/<agent>/commands?audience=private` (NIP-98 as the signed-in
- * user, signed natively): its session commands, the skills it installs, and
- * the other registry skills the user may use with it (run for that turn). Looked up lazily the first time the menu opens for an agent and
- * cached per agent key with the server's ETag; later opens revalidate with
+ * An agent's "/" commands for the composer menu, from the guest route's
+ * `GET /agents/<agent>/commands?audience=private|group` (NIP-98 as the
+ * signed-in user, signed natively): the session commands the user may run,
+ * the skills it installs, and the other registry skills the user may use with
+ * it (run for that turn). A 1:1 DM asks for the private list, a channel or
+ * thread for the group one. Looked up lazily the first time the menu opens
+ * for an agent and cached per agent key and audience with the server's ETag; later opens revalidate with
  * `If-None-Match` at most once a minute. Any error, or a body that fails
  * validation, leaves the agent with no commands, so no menu shows.
  */
@@ -30,6 +32,9 @@ export type AgentSkillCommand = {
 };
 
 export type AgentSlashCommand = AgentSessionCommand | AgentSkillCommand;
+
+/** Which conversation a list is for: a 1:1 DM, or a channel or thread. */
+export type SlashAudience = "private" | "group";
 
 export const MAX_AGENT_COMMANDS = 500;
 export const COMMANDS_REVALIDATE_MS = 60_000;
@@ -113,7 +118,7 @@ type FetchResult = {
 type Transport = (input: {
   agentPublicKey: string;
   etag: string | null;
-  audience: "private";
+  audience: SlashAudience;
 }) => Promise<FetchResult>;
 
 const tauriTransport: Transport = ({ agentPublicKey, etag, audience }) =>
@@ -163,10 +168,17 @@ function normalize(agentPublicKey: string): string | null {
   return HEX64_RE.test(key) ? key : null;
 }
 
+function cacheKey(agent: string, audience: SlashAudience) {
+  return `${agent}:${audience}`;
+}
+
 /** The agent's cached commands; empty when unknown or after an error. */
-export function getAgentCommands(agentPublicKey: string): AgentSlashCommand[] {
-  const key = normalize(agentPublicKey);
-  return (key && entries.get(key)?.commands) || EMPTY;
+export function getAgentCommands(
+  agentPublicKey: string,
+  audience: SlashAudience = "private",
+): AgentSlashCommand[] {
+  const agent = normalize(agentPublicKey);
+  return (agent && entries.get(cacheKey(agent, audience))?.commands) || EMPTY;
 }
 
 /**
@@ -174,9 +186,13 @@ export function getAgentCommands(agentPublicKey: string): AgentSlashCommand[] {
  * or the cached answer was checked within the last minute. Errors clear the
  * agent's commands and are not retried until that minute has passed.
  */
-export function refreshAgentCommands(agentPublicKey: string): Promise<void> {
-  const key = normalize(agentPublicKey);
-  if (!key) return Promise.resolve();
+export function refreshAgentCommands(
+  agentPublicKey: string,
+  audience: SlashAudience = "private",
+): Promise<void> {
+  const agent = normalize(agentPublicKey);
+  if (!agent) return Promise.resolve();
+  const key = cacheKey(agent, audience);
   const cached = entries.get(key);
   if (cached && now() - cached.checkedAt < COMMANDS_REVALIDATE_MS) {
     return Promise.resolve();
@@ -187,18 +203,17 @@ export function refreshAgentCommands(agentPublicKey: string): Promise<void> {
   const request = (async () => {
     let next: Entry;
     try {
-      // The menu is a 1:1 DM's, so the list is the private one.
       const result = await transport({
-        agentPublicKey: key,
+        agentPublicKey: agent,
         etag: cached?.etag ?? null,
-        audience: "private",
+        audience,
       });
       if (result.notModified && cached?.etag) {
         next = { ...cached, checkedAt: now() };
       } else {
         const commands = result.notModified
           ? null
-          : parseAgentCommandsBody(result.body, key);
+          : parseAgentCommandsBody(result.body, agent);
         next = commands
           ? { etag: result.etag ?? null, commands, checkedAt: now() }
           : { etag: null, commands: EMPTY, checkedAt: now() };

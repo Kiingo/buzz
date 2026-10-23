@@ -188,6 +188,7 @@ export async function sendInboxReply({
     mediaTags: imetaTags,
     emojiTags,
     mentionTags,
+    skillTag,
   } = splitOutgoingTags(mediaTags);
   const recipientPubkeys = await resolveInboxReplyRecipientPubkeys({
     channel,
@@ -205,6 +206,12 @@ export async function sendInboxReply({
     undefined,
     emojiTags,
     mentionTags,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    skillTag ?? undefined,
   );
   return { emojiTags, imetaTags, mentionTags, result };
 }

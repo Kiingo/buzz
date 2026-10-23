@@ -169,6 +169,23 @@ test("lazy fetch caches the list with its ETag and revalidates with If-None-Matc
   assert.equal(getAgentCommands(AGENT).length, 3, "304 keeps the cached list");
 });
 
+test("a channel's group list is cached apart from the DM's private one", async () => {
+  const h = harness((input) => ({
+    notModified: false,
+    etag: `"${input.audience}"`,
+    body: body(input.audience === "group" ? LISTED.slice(0, 1) : LISTED),
+  }));
+  await refreshAgentCommands(AGENT, "group");
+  assert.equal(getAgentCommands(AGENT, "group").length, 1);
+  assert.deepEqual(getAgentCommands(AGENT), [], "the private list is separate");
+  await refreshAgentCommands(AGENT);
+  assert.equal(getAgentCommands(AGENT).length, 3);
+  assert.deepEqual(
+    h.calls.map((call) => call.audience),
+    ["group", "private"],
+  );
+});
+
 test("any error or invalid body shows no commands and does not retry at once", async () => {
   let fail = false;
   const h = harness(() => {

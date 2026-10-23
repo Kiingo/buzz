@@ -1030,6 +1030,12 @@ class ThreadDetailPage extends HookConsumerWidget {
                       ),
                       ComposeBar(
                         channelId: channelId,
+                        // A thread in a 1:1 DM has no "/": the DM send path
+                        // is top-level only.
+                        groupAgentCommands:
+                            channel != null &&
+                            !channel.isForum &&
+                            !_isOneToOneDm(channel),
                         focusNode: composerFocusNode,
                         onFocusRestorerChanged: (restoreFocus) =>
                             restoreComposerFocus.value = restoreFocus,
@@ -1081,3 +1087,12 @@ class ThreadDetailPage extends HookConsumerWidget {
     );
   }
 }
+
+bool _isOneToOneDm(Channel channel) =>
+    channel.isDm &&
+    channel.participantPubkeys
+            .map((pubkey) => pubkey.trim().toLowerCase())
+            .where((pubkey) => pubkey.isNotEmpty)
+            .toSet()
+            .length ==
+        2;

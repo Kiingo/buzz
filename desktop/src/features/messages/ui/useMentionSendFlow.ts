@@ -723,6 +723,7 @@ export function useMentionSendFlow({
       pendingImeta,
       queuedAttachments = [],
       linkPreviewTags = [],
+      markerTags = [],
       preparedLinkPreviews = null,
       sentDraftKey,
       recoveryDraftKey,
@@ -832,6 +833,7 @@ export function useMentionSendFlow({
         const outgoingTags = [
           ...buildCustomEmojiTags(trimmed, customEmoji),
           ...linkPreviewTags,
+          ...markerTags,
         ];
         const nonMemberPubkeys =
           channelType === null ||

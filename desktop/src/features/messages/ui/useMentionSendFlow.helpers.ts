@@ -105,6 +105,8 @@ export type SendMessageWithMentionFlowInput = {
   pendingImeta: ImetaMedia[];
   queuedAttachments?: QueuedMediaAttachment[];
   linkPreviewTags?: string[][];
+  /** Tags a "/" skill pick adds (`buzz-skill`), sent as they are. */
+  markerTags?: string[][];
   preparedLinkPreviews?: PreparedBackgroundLinkPreviews | null;
   sentDraftKey: string | null | undefined;
   recoveryDraftKey: string | null | undefined;

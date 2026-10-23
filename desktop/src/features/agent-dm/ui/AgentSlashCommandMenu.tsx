@@ -17,19 +17,43 @@ import {
   POPOVER_SURFACE_CLASS,
 } from "@/shared/ui/popoverSurface";
 
-import type { AgentSlashCommand } from "../lib/slashCommands";
-import { SLASH_SECTION_LABELS, slashCommandSection } from "../lib/slashQuery";
-import type { UseAgentSlashCommandsResult } from "./useAgentSlashCommands";
+import {
+  SLASH_SECTION_LABELS,
+  slashCommandSection,
+  type SlashCommandSection,
+} from "../lib/slashQuery";
+import type {
+  SlashMenuItem,
+  UseAgentSlashCommandsResult,
+} from "./useAgentSlashCommands";
 
-function commandDescription(command: AgentSlashCommand) {
-  return command.kind === "session"
-    ? command.description || command.usage
-    : command.description;
+function itemDescription(item: SlashMenuItem) {
+  if (item.kind === "agent") return null;
+  return item.kind === "session"
+    ? item.description || item.usage
+    : item.description;
+}
+
+function itemSection(item: SlashMenuItem): SlashCommandSection | "agents" {
+  return item.kind === "agent" ? "agents" : slashCommandSection(item);
+}
+
+function sectionLabel(
+  section: SlashCommandSection | "agents",
+  targetLabel: string | null,
+) {
+  if (section === "agents") return "Choose an agent";
+  // In a channel the agent's own skills are named after it.
+  if (section === "agent-skills" && targetLabel) {
+    return `Skills for @${targetLabel}`;
+  }
+  return SLASH_SECTION_LABELS[section];
 }
 
 /**
- * The agent DM composer's "/" menu (Claude Code style): sections for the
- * session commands, the agent's own skills and the other registry skills.
+ * The composer's "/" menu (Claude Code style): sections for the session
+ * commands, the agent's own skills and the other registry skills; in a
+ * channel with several agents, first the agents to choose from.
  * The editor keeps focus and owns the keys (arrows move, Tab/Enter choose,
  * Esc closes); pointer users choose with a click. While the composer holds
  * just a skill's `/<name>`, its argument hint shows instead.
@@ -40,12 +64,13 @@ export function AgentSlashCommandMenu({
   slash,
 }: {
   composerOwnsFocus: boolean;
-  onChoose: (command: AgentSlashCommand) => void;
+  onChoose: (item: SlashMenuItem) => void;
   slash: UseAgentSlashCommandsResult;
 }) {
   const listRef = React.useRef<HTMLDivElement>(null);
   const listId = React.useId();
-  const { argumentHint, isOpen, selectedIndex, suggestions } = slash;
+  const { argumentHint, isOpen, selectedIndex, suggestions, targetLabel } =
+    slash;
 
   React.useEffect(() => {
     const active = listRef.current?.querySelector<HTMLElement>(
@@ -113,16 +138,18 @@ export function AgentSlashCommandMenu({
         role="listbox"
         style={POPOVER_SHADOW_STYLE}
       >
-        {suggestions.map((command, index) => {
-          const description = commandDescription(command);
-          const section = slashCommandSection(command);
+        {suggestions.map((item, index) => {
+          const description = itemDescription(item);
+          const section = itemSection(item);
           const previous = index > 0 ? suggestions[index - 1] : undefined;
-          const startsSection =
-            !previous || slashCommandSection(previous) !== section;
-          const displayName =
-            command.kind === "skill" ? command.displayName : null;
+          const startsSection = !previous || itemSection(previous) !== section;
+          const secondary = item.kind === "skill" ? item.displayName : null;
+          const key =
+            item.kind === "agent"
+              ? `agent:${item.pubkey}`
+              : `${item.kind}:${item.name}`;
           return (
-            <React.Fragment key={`${command.kind}:${command.name}`}>
+            <React.Fragment key={key}>
               {startsSection ? (
                 <div
                   aria-hidden="true"
@@ -130,7 +157,7 @@ export function AgentSlashCommandMenu({
                   data-testid="agent-slash-section"
                   role="presentation"
                 >
-                  {SLASH_SECTION_LABELS[section]}
+                  {sectionLabel(section, targetLabel)}
                 </div>
               ) : null}
               <button
@@ -141,29 +168,31 @@ export function AgentSlashCommandMenu({
                     ? "bg-accent text-accent-foreground"
                     : "text-popover-foreground hover:bg-accent/50",
                 )}
-                data-command-kind={command.kind}
+                data-command-kind={item.kind}
                 data-command-source={
-                  command.kind === "skill" ? command.source : undefined
+                  item.kind === "skill" ? item.source : undefined
                 }
                 data-option-index={index}
                 onMouseDown={(event) => {
                   event.preventDefault();
-                  onChoose(command);
+                  onChoose(item);
                 }}
                 role="option"
                 tabIndex={-1}
                 type="button"
               >
                 <span className="flex items-baseline gap-2 text-sm">
-                  <span className="font-medium">/{command.name}</span>
-                  {displayName ? (
+                  <span className="font-medium">
+                    {item.kind === "agent" ? `@${item.label}` : `/${item.name}`}
+                  </span>
+                  {secondary ? (
                     <span className="truncate text-xs text-muted-foreground">
-                      {displayName}
+                      {secondary}
                     </span>
                   ) : null}
-                  {command.kind === "skill" && command.argumentHint ? (
+                  {item.kind === "skill" && item.argumentHint ? (
                     <span className="text-xs text-muted-foreground">
-                      {command.argumentHint}
+                      {item.argumentHint}
                     </span>
                   ) : null}
                 </span>

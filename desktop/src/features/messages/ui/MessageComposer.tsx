@@ -1,5 +1,6 @@
 import * as React from "react";
 import { EditorContent } from "@tiptap/react";
+import { toast } from "sonner";
 import {
   useChannelLinks,
   type ChannelSuggestion,
@@ -67,9 +68,12 @@ import { useComposerLinkPreviews } from "./useComposerLinkPreviews";
 import { useAddressedAgentMentionRestore } from "./useAddressedAgentMentionRestore";
 import { scheduleSettleGatedAutoSubmit } from "./messageComposerAutoSubmit";
 import type { MessageComposerProps } from "./MessageComposer.types";
-import type { AgentSlashCommand } from "@/features/agent-dm/lib/slashCommands";
 import { AgentSlashCommandMenu } from "@/features/agent-dm/ui/AgentSlashCommandMenu";
-import { useAgentSlashCommands } from "@/features/agent-dm/ui/useAgentSlashCommands";
+import {
+  useAgentSlashCommands,
+  type GroupSlashContext,
+  type SlashMenuItem,
+} from "@/features/agent-dm/ui/useAgentSlashCommands";
 function MessageComposerImpl({
   audienceContext = null,
   channelId = null,
@@ -153,10 +157,44 @@ function MessageComposerImpl({
   const channelLinks = useChannelLinks();
   const customEmoji = useCustomEmoji();
   const emojiAutocomplete = useEmojiAutocomplete(customEmoji);
+  const { audience: persistentAudience, keepMentionedAgentsPinned } =
+    useThreadAgentAudience({
+      isAgentPubkey: mentions.isAgentPubkey,
+      rootTags: audienceContext?.rootTags ?? [],
+      scope: audienceScope,
+    });
+  const slashChannelAgents = React.useMemo(
+    () => [...mentions.memberPubkeys].filter(mentions.isAgentPubkey),
+    [mentions.isAgentPubkey, mentions.memberPubkeys],
+  );
+  const slashGroup = React.useMemo<GroupSlashContext>(
+    () => ({
+      agentMentionsIn: (text) =>
+        mentions.extractMentionPubkeys(text).filter(mentions.isAgentPubkey),
+      addressedAgents: persistentAudience.pubkeys,
+      channelAgents: slashChannelAgents,
+      mentionEdit: ({ label, pubkey, replaceFromOffset, replaceToOffset }) =>
+        mentions.insertResolvedMention({
+          displayName: label,
+          pubkey,
+          replaceFromOffset,
+          replaceToOffset,
+          isAgent: true,
+        }),
+    }),
+    [
+      mentions.extractMentionPubkeys,
+      mentions.insertResolvedMention,
+      mentions.isAgentPubkey,
+      persistentAudience.pubkeys,
+      slashChannelAgents,
+    ],
+  );
   const agentSlash = useAgentSlashCommands({
     channelId,
-    enabled:
-      editTarget == null && replyTarget == null && audienceContext == null,
+    enabled: editTarget == null && replyTarget == null,
+    group: slashGroup,
+    inThread: audienceContext != null,
     profiles,
   });
   const notifyTyping = useTypingBroadcast(
@@ -334,12 +372,6 @@ function MessageComposerImpl({
   onLinkSelectionChangeRef.current = linkEditor.showFromCursor;
   onLinkShortcutRef.current = linkEditor.openFromShortcut;
   useComposerSpoilerParticles(richText.editor, composerScrollRef);
-  const { audience: persistentAudience, keepMentionedAgentsPinned } =
-    useThreadAgentAudience({
-      isAgentPubkey: mentions.isAgentPubkey,
-      rootTags: audienceContext?.rootTags ?? [],
-      scope: audienceScope,
-    });
   const addressPulse = useAddressMentionPulse();
   const {
     completeOptionsReveal: completeMentionOptionsReveal,
@@ -518,7 +550,7 @@ function MessageComposerImpl({
     ],
   );
   const chooseAgentSlashCommand = React.useCallback(
-    (command: AgentSlashCommand) =>
+    (command: SlashMenuItem) =>
       agentSlash.choose(command, {
         applyEdit: applyAutocompleteEdit,
         submit: () => submitMessageRef.current(),
@@ -669,13 +701,25 @@ function MessageComposerImpl({
       ) {
         return;
       }
+      // A "/" pick in a channel or thread: its skill tag, addressed to the
+      // agent it is for (the text stays as typed).
+      const slashSend = agentSlash.groupSend(
+        richText.getPlainTextAndCursor().text,
+      );
+      if (slashSend && !slashSend.ok) {
+        toast.error(slashSend.message);
+        return;
+      }
       const preparedLinkPreviews = getReadyLinkPreviewTags().some(
         (tag) => tag[1] === "none",
       )
         ? null
         : prepareBackgroundLinkPreviews(getLiveLinkPreviewCandidates());
       await mentionSendFlow.sendMessageWithMentionFlow({
-        addressedAgentPubkeys: persistentAudience.pubkeys,
+        addressedAgentPubkeys: slashSend
+          ? [...persistentAudience.pubkeys, ...slashSend.addressedAgents]
+          : persistentAudience.pubkeys,
+        markerTags: slashSend?.markerTags,
         capturedChannelId: channelId,
         capturedThreadContext,
         pendingImeta: currentPendingImeta,
@@ -696,6 +740,7 @@ function MessageComposerImpl({
       onPreparingMentionSendChange?.(false);
     }
   }, [
+    agentSlash.groupSend,
     agentSlash.sendSkillIfInvoked,
     channelId,
     channelLinks.clearChannels,

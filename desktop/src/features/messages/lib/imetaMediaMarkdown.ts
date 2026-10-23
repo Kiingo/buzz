@@ -361,20 +361,26 @@ export function mergeOutgoingTags(
  * tags, so the send path can route each to its own validated Tauri arg. Emoji
  * and mention tags must never ride the imeta-only `media` channel (its guard
  * rejects any non-imeta prefix). Any other prefix stays with `mediaTags` — the
- * imeta guard will reject it, which is the intended injection defense.
+ * imeta guard will reject it, which is the intended injection defense. The
+ * one `["buzz-skill", ...]` tag of a "/" skill pick goes to `skillTag` (the
+ * native send validates its shape); a second one stays with `mediaTags`.
  */
 export function splitOutgoingTags(tags: string[][] | undefined): {
   mediaTags: string[][];
   emojiTags: string[][];
   mentionTags: string[][];
   linkPreviewTags: string[][];
+  skillTag: string[] | null;
 } {
   const mediaTags: string[][] = [];
   const emojiTags: string[][] = [];
   const mentionTags: string[][] = [];
   const linkPreviewTags: string[][] = [];
+  let skillTag: string[] | null = null;
   for (const tag of tags ?? []) {
-    if (tag[0] === "emoji") {
+    if (tag[0] === "buzz-skill" && skillTag === null) {
+      skillTag = tag;
+    } else if (tag[0] === "emoji") {
       emojiTags.push(tag);
     } else if (tag[0] === "mention") {
       mentionTags.push(tag);
@@ -384,5 +390,5 @@ export function splitOutgoingTags(tags: string[][] | undefined): {
       mediaTags.push(tag);
     }
   }
-  return { mediaTags, emojiTags, mentionTags, linkPreviewTags };
+  return { mediaTags, emojiTags, mentionTags, linkPreviewTags, skillTag };
 }

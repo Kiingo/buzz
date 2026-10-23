@@ -22,7 +22,9 @@ final _namePattern = RegExp(r'^\S{1,256}$');
 /// One entry of an agent's "/" autocomplete: a conversation command the
 /// server intercepts (`/new`, `/sessions`), or a skill, sent as a native skill
 /// invocation rather than prose. A skill is either installed for the agent or
-/// another registry skill the person may use with it (run for that turn).
+/// another registry skill the person may use with it (run for that turn). In
+/// a channel with several agents, the popup first offers the agents
+/// ([AgentCommand.agent], named by its mention label).
 @immutable
 class AgentCommand {
   const AgentCommand.session({required this.name, required this.description})
@@ -30,7 +32,19 @@ class AgentCommand {
       skillId = null,
       argumentHint = null,
       source = null,
-      displayName = null;
+      displayName = null,
+      agentPubkey = null;
+
+  /// An agent to choose in a channel; [name] is its mention label.
+  const AgentCommand.agent({
+    required this.name,
+    required String this.agentPubkey,
+  }) : kind = AgentCommandKind.agent,
+       skillId = null,
+       description = null,
+       argumentHint = null,
+       source = null,
+       displayName = null;
 
   const AgentCommand.skill({
     required this.name,
@@ -39,7 +53,8 @@ class AgentCommand {
     this.argumentHint,
     AgentSkillSource this.source = AgentSkillSource.installed,
     this.displayName,
-  }) : kind = AgentCommandKind.skill;
+  }) : kind = AgentCommandKind.skill,
+       agentPubkey = null;
 
   final AgentCommandKind kind;
   final String name;
@@ -53,12 +68,18 @@ class AgentCommand {
   /// The registry's human name, when it differs from [name].
   final String? displayName;
 
+  /// The agent an [AgentCommand.agent] row picks.
+  final String? agentPubkey;
+
   /// The popup section this command is listed under.
-  AgentCommandSection get section => kind == AgentCommandKind.session
-      ? AgentCommandSection.commands
-      : source == AgentSkillSource.registry
-      ? AgentCommandSection.skills
-      : AgentCommandSection.agentSkills;
+  AgentCommandSection get section => switch (kind) {
+    AgentCommandKind.agent => AgentCommandSection.agents,
+    AgentCommandKind.session => AgentCommandSection.commands,
+    AgentCommandKind.skill =>
+      source == AgentSkillSource.registry
+          ? AgentCommandSection.skills
+          : AgentCommandSection.agentSkills,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -69,7 +90,8 @@ class AgentCommand {
       other.description == description &&
       other.argumentHint == argumentHint &&
       other.source == source &&
-      other.displayName == displayName;
+      other.displayName == displayName &&
+      other.agentPubkey == agentPubkey;
 
   @override
   int get hashCode => Object.hash(
@@ -80,6 +102,7 @@ class AgentCommand {
     argumentHint,
     source,
     displayName,
+    agentPubkey,
   );
 }
 
@@ -88,6 +111,7 @@ enum AgentSkillSource { installed, registry }
 
 /// The popup's sections, in order.
 enum AgentCommandSection {
+  agents('Choose an agent'),
   commands('Commands'),
   agentSkills("This agent's skills"),
   skills('Skills');
@@ -97,7 +121,7 @@ enum AgentCommandSection {
   final String label;
 }
 
-enum AgentCommandKind { session, skill }
+enum AgentCommandKind { session, skill, agent }
 
 String? _optionalText(Object? value) =>
     value is String && value.trim().isNotEmpty ? value.trim() : null;
@@ -264,15 +288,16 @@ class AgentCommandsClient {
   final http.Client? _http;
 
   /// The commands and their ETag, or `null` commands when the server says
-  /// the list for [etag] is unchanged (304). The popup is a 1:1 DM's, so it
-  /// asks for the private list (the server re-checks every pick against the
-  /// conversation it is sent in).
+  /// the list for [etag] is unchanged (304). A 1:1 DM asks for the private
+  /// list, a channel or thread for the group one (the server re-checks every
+  /// pick against the conversation it is sent in).
   Future<({List<AgentCommand>? commands, String? etag})> fetch(
     String agentPublicKey, {
     String? etag,
+    AgentCommandAudience audience = AgentCommandAudience.private,
   }) async {
     final url =
-        '${route.baseUrl}/agents/${Uri.encodeComponent(agentPublicKey)}/commands?audience=private';
+        '${route.baseUrl}/agents/${Uri.encodeComponent(agentPublicKey)}/commands?audience=${audience.name}';
     final request = http.Request('GET', Uri.parse(url))
       ..followRedirects = false
       ..headers['Authorization'] = buildNip98AuthHeader(
@@ -315,32 +340,58 @@ final agentCommandsClientProvider = Provider<AgentCommandsClient?>((ref) {
   return AgentCommandsClient(route: route, nsec: nsec);
 });
 
-/// Last good list and ETag per agent key, for revalidation.
+/// Which conversation a command list is for: a 1:1 DM, or a channel or
+/// thread (only the organization's and public skills, and session commands
+/// only for the agent's owner).
+enum AgentCommandAudience { private, group }
+
+/// Last good list and ETag per agent key and audience, for revalidation.
 final _agentCommandsCacheProvider =
     Provider<Map<String, ({List<AgentCommand> commands, String? etag})>>(
       (ref) => {},
     );
 
-/// The "/" commands for the agent with this lowercase key. Fetched lazily
-/// the first time the popup opens for that agent and reused for
-/// [agentCommandsTtl]; any failure is an empty list (no popup).
+Future<List<AgentCommand>> _loadAgentCommands(
+  Ref ref,
+  String agentPublicKey,
+  AgentCommandAudience audience,
+) async {
+  final client = ref.watch(agentCommandsClientProvider);
+  if (client == null) return const [];
+  final keepAlive = ref.keepAlive();
+  final expiry = Timer(agentCommandsTtl, keepAlive.close);
+  ref.onDispose(expiry.cancel);
+  final cache = ref.read(_agentCommandsCacheProvider);
+  final agent = agentPublicKey.toLowerCase();
+  final key = '$agent:${audience.name}';
+  final cached = cache[key];
+  try {
+    final fetched = await client.fetch(
+      agent,
+      etag: cached?.etag,
+      audience: audience,
+    );
+    final commands = fetched.commands ?? cached?.commands ?? const [];
+    cache[key] = (commands: commands, etag: fetched.etag);
+    return commands;
+  } catch (error) {
+    debugPrint('[AgentCommands] fetch failed: $error');
+    return const [];
+  }
+}
+
+/// The "/" commands for the agent with this lowercase key in a 1:1 DM.
+/// Fetched lazily the first time the popup opens for that agent and reused
+/// for [agentCommandsTtl]; any failure is an empty list (no popup).
 final agentCommandsProvider = FutureProvider.autoDispose
-    .family<List<AgentCommand>, String>((ref, agentPublicKey) async {
-      final client = ref.watch(agentCommandsClientProvider);
-      if (client == null) return const [];
-      final keepAlive = ref.keepAlive();
-      final expiry = Timer(agentCommandsTtl, keepAlive.close);
-      ref.onDispose(expiry.cancel);
-      final cache = ref.read(_agentCommandsCacheProvider);
-      final key = agentPublicKey.toLowerCase();
-      final cached = cache[key];
-      try {
-        final fetched = await client.fetch(key, etag: cached?.etag);
-        final commands = fetched.commands ?? cached?.commands ?? const [];
-        cache[key] = (commands: commands, etag: fetched.etag);
-        return commands;
-      } catch (error) {
-        debugPrint('[AgentCommands] fetch failed: $error');
-        return const [];
-      }
-    });
+    .family<List<AgentCommand>, String>(
+      (ref, agentPublicKey) =>
+          _loadAgentCommands(ref, agentPublicKey, AgentCommandAudience.private),
+    );
+
+/// The same for a channel or thread: the group list.
+final agentGroupCommandsProvider = FutureProvider.autoDispose
+    .family<List<AgentCommand>, String>(
+      (ref, agentPublicKey) =>
+          _loadAgentCommands(ref, agentPublicKey, AgentCommandAudience.group),
+    );
