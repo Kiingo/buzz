@@ -157,6 +157,7 @@ void _expandComposer({
 
 Widget _composerSuggestionPanel({
   List<AgentCommand> commandSuggestions = const [],
+  String? commandTitle,
   ValueChanged<AgentCommand>? onCommandSelect,
   required List<Channel> channelSuggestions,
   required List<MentionCandidate> mentionSuggestions,
@@ -174,6 +175,7 @@ Widget _composerSuggestionPanel({
         child: _AgentCommandSuggestions(
           suggestions: commandSuggestions,
           onSelect: onCommandSelect,
+          title: commandTitle,
         ),
       )
     : channelSuggestions.isNotEmpty

@@ -535,6 +535,7 @@ export function useSendMessageMutation(
         emojiTags,
         mentionTags,
         linkPreviewTags,
+        skillTag,
       } = splitOutgoingTags(mediaTags);
       const recipientPubkeys = await resolveMessageRecipientPubkeys({
         channel: effectiveChannel,
@@ -564,7 +565,8 @@ export function useSendMessageMutation(
         parentEventId ||
         imetaTags.length > 0 ||
         emojiTags.length > 0 ||
-        linkPreviewTags.length > 0
+        linkPreviewTags.length > 0 ||
+        skillTag !== null
       ) {
         const cachedMessages =
           queryClient.getQueryData<RelayEvent[]>(
@@ -595,6 +597,7 @@ export function useSendMessageMutation(
           undefined,
           undefined,
           suppliedRootEventId,
+          skillTag ?? undefined,
         );
 
         // Build tags matching relay-emitted shape: h, author p, mention ps, reply es, imeta, emoji.
@@ -634,6 +637,7 @@ export function useSendMessageMutation(
             ...mentionTags,
             ...linkPreviewTags,
             ...(sentFromThreadTag ? [sentFromThreadTag] : []),
+            ...(skillTag ? [skillTag] : []),
           ],
           content: content.trim(),
           sig: "",

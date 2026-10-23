@@ -16,6 +16,8 @@ export async function sendChannelMessage(
   expectedRelayUrl?: string,
   expectedSignerPubkey?: string,
   rootEventId?: string | null,
+  /** The `["buzz-skill", skill_id, args]` tag of a "/" skill pick. */
+  skillTag?: string[],
 ): Promise<SendChannelMessageResult> {
   const response = await invokeTauri<RawSendChannelMessageResult>(
     "send_channel_message",
@@ -38,6 +40,7 @@ export async function sendChannelMessage(
       // closed when the active identity no longer matches, so a community
       // switch cannot re-sign the captured tenant's content as the new one.
       expectedSignerPubkey: expectedSignerPubkey ?? null,
+      skillTag: skillTag ?? null,
     },
   );
   return {

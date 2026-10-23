@@ -980,6 +980,10 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
                       ComposeBar(
                         channelId: channel.id,
                         commandAgentPubkey: dmAgent,
+                        groupAgentCommands:
+                            !personalChat &&
+                            !isOneToOneDm &&
+                            !resolvedChannel.isForum,
                         focusNode: composerFocusNode,
                         onFocusRestorerChanged: (restoreFocus) =>
                             restoreComposerFocus.value = restoreFocus,

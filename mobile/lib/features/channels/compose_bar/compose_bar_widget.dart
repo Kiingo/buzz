@@ -21,8 +21,12 @@ class ComposeBar extends HookConsumerWidget {
 
   /// The agent in a 1:1 agent DM, which enables the "/" autocomplete.
   final String? commandAgentPubkey;
+
+  /// A channel or thread whose "/" autocomplete is for its agents.
+  final bool groupAgentCommands;
   const ComposeBar({
     this.commandAgentPubkey,
+    this.groupAgentCommands = false,
     super.key,
     required this.channelId,
     this.channelName = '',
@@ -300,8 +304,8 @@ class ComposeBar extends HookConsumerWidget {
     final isModifyingText = useRef(false);
     final lastObservedEditingValue = useRef(controller.value);
 
-    // Insert a selected mention into the text field.
-    void insertMention(MentionCandidate candidate) {
+    // Record a picked mention and return the label to insert.
+    String bindMention(MentionCandidate candidate) {
       final name = selectedMentionLabel(candidate.label, candidate.pubkey, {
         for (final entry in mentionMap.value.entries)
           entry.key: entry.value.pubkey,
@@ -312,7 +316,12 @@ class ComposeBar extends HookConsumerWidget {
       ref
           .read(mentionHistoryProvider.notifier)
           .remember(channelId, candidate.pubkey);
+      return name;
+    }
 
+    // Insert a selected mention into the text field.
+    void insertMention(MentionCandidate candidate) {
+      final name = bindMention(candidate);
       final start = mentionStartIdx.value.clamp(0, controller.text.length);
       isModifyingText.value = true;
       try {
@@ -430,9 +439,35 @@ class ComposeBar extends HookConsumerWidget {
       return () => controller.removeListener(listener);
     }, [controller]);
 
+    // Set once `send` exists below: a confirmed "/new" sends at once.
+    final submitDraft = useRef<VoidCallback?>(null);
     final agentCommands = _useAgentCommandAutocomplete(
       ref,
       agentPubkey: commandAgentPubkey,
+      confirmNewSession: (agentName) =>
+          _confirmNewAgentSession(context, agentName),
+      submit: () => submitDraft.value?.call(),
+      group: groupAgentCommands && commandAgentPubkey == null
+          ? _GroupAgentCommandContext(
+              agents: [
+                for (final candidate in buildMentionCandidates(
+                  members: channelMembersForAutocomplete(
+                    membersAsync: membersAsync,
+                    sessionStatus: sessionStatus,
+                    cachedMembers: cachedMembers,
+                  ),
+                  relayAgents: const [],
+                  sharedChannelIds: const {},
+                  userCache: userCache,
+                  ownerByAgentPubkey: agentOwners ?? const {},
+                  currentPubkey: currentPubkey,
+                ))
+                  if (candidate.isAgent) candidate,
+              ],
+              mentionMap: mentionMap.value,
+              bindMention: bindMention,
+            )
+          : null,
       controller: controller,
       focusNode: focusNode,
     );
@@ -525,6 +560,7 @@ class ComposeBar extends HookConsumerWidget {
       }
       final submittedOrigin = ComposerSendOrigin.capture(sendSurfaceKey);
       final skillTags = agentCommands.tagsFor(text);
+      final commandMentions = agentCommands.mentionsFor(text);
       Future<void> sendWithOrigin(
         String content,
         List<String> mentionPubkeys, {
@@ -533,7 +569,7 @@ class ComposeBar extends HookConsumerWidget {
         submittedOrigin,
         () => onSend(
           content,
-          mentionPubkeys,
+          {...mentionPubkeys, ...commandMentions}.toList(),
           mediaTags: [...mediaTags, ...skillTags],
         ),
       );
@@ -998,8 +1034,11 @@ class ComposeBar extends HookConsumerWidget {
       expand: expandComposer,
     );
 
+    submitDraft.value = () => unawaited(send());
+
     final suggestionPanel = _composerSuggestionPanel(
       commandSuggestions: agentCommands.suggestions,
+      commandTitle: agentCommands.title,
       onCommandSelect: agentCommands.select,
       channelSuggestions: channelSuggestions,
       mentionSuggestions: suggestions,

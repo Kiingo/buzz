@@ -677,6 +677,7 @@ test("splitOutgoingTags: undefined input yields three empty arrays", () => {
     emojiTags: [],
     mentionTags: [],
     linkPreviewTags: [],
+    skillTag: null,
   });
 });
 
@@ -726,6 +727,21 @@ test("splitOutgoingTags: unknown prefixes stay with mediaTags (injection defense
   assert.deepEqual(emojiTags, [EMOJI_A]);
   assert.deepEqual(mentionTags, []);
   assert.deepEqual(linkPreviewTags, []);
+});
+
+test("splitOutgoingTags: routes one buzz-skill tag to skillTag", () => {
+  const skill = ["buzz-skill", "deep-research", "topic"];
+  const second = ["buzz-skill", "other", ""];
+  const { mediaTags, emojiTags, skillTag } = splitOutgoingTags([
+    skill,
+    EMOJI_A,
+    second,
+  ]);
+  assert.deepEqual(skillTag, skill);
+  assert.deepEqual(emojiTags, [EMOJI_A]);
+  // A second skill tag stays with mediaTags, where the native guard rejects it.
+  assert.deepEqual(mediaTags, [second]);
+  assert.equal(splitOutgoingTags([IMETA]).skillTag, null);
 });
 
 test("splitOutgoingTags is the inverse of mergeOutgoingTags", () => {

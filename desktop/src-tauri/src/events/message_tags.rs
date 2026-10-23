@@ -122,9 +122,69 @@ pub(super) fn append_client_tags(
     Ok(())
 }
 
+/// Longest `args` a skill tag may carry (characters), as the agent host reads it.
+const MAX_SKILL_ARGS_CHARS: usize = 4000;
+
+/// Validate the `["buzz-skill", skill_id, args]` tag of a skill picked in the
+/// "/" menu. The shape matches what the agent host accepts (an id of ASCII
+/// letters, digits, `-` and `_`, at most 128 bytes; args without control
+/// characters other than newline and tab), so a tag this builds is never
+/// silently dropped there.
+pub fn skill_invocation_tag(tag: &[String]) -> Result<Tag, String> {
+    let [name, skill_id, args] = tag else {
+        return Err("skill tag must be [\"buzz-skill\", skill_id, args]".into());
+    };
+    if name != "buzz-skill" {
+        return Err(format!(
+            "skill tag must use 'buzz-skill' prefix (got {name:?})"
+        ));
+    }
+    if skill_id.is_empty()
+        || skill_id.len() > 128
+        || !skill_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("skill tag has an invalid skill id".into());
+    }
+    if args.chars().count() > MAX_SKILL_ARGS_CHARS
+        || args
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
+        return Err("skill tag has invalid arguments".into());
+    }
+    Tag::parse(["buzz-skill", skill_id.as_str(), args.as_str()])
+        .map_err(|error| format!("invalid skill tag: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn strings(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| part.to_string()).collect()
+    }
+
+    #[test]
+    fn skill_invocation_tag_accepts_only_the_agent_host_shape() {
+        let tag = skill_invocation_tag(&strings(&["buzz-skill", "deep-research", "a\nb"]))
+            .expect("valid skill tag");
+        assert_eq!(tag.as_slice(), ["buzz-skill", "deep-research", "a\nb"]);
+        assert!(skill_invocation_tag(&strings(&["buzz-skill", "a", ""])).is_ok());
+        for bad in [
+            strings(&["buzz-skill", "a"]),
+            strings(&["buzz-skill", "a", "x", "y"]),
+            strings(&["client", "a", "x"]),
+            strings(&["buzz-skill", "", "x"]),
+            strings(&["buzz-skill", "a b", "x"]),
+            strings(&["buzz-skill", "a", "bell\u{7}"]),
+        ] {
+            assert!(skill_invocation_tag(&bad).is_err(), "{bad:?}");
+        }
+        let long = "x".repeat(MAX_SKILL_ARGS_CHARS + 1);
+        assert!(skill_invocation_tag(&strings(&["buzz-skill", "a", &long])).is_err());
+    }
 
     const PUBKEY: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     const ROOT_HEX: &str = "d24da132115ca0a46233cf4c2ad8338fbf914250cbcaa9181a6dd59533cb5ac1";

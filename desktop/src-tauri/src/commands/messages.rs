@@ -421,6 +421,7 @@ pub async fn send_channel_message(
     kind: Option<u32>,
     expected_relay_url: Option<String>,
     expected_signer_pubkey: Option<String>,
+    skill_tag: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<SendChannelMessageResponse, String> {
     let channel_uuid = uuid::Uuid::parse_str(&channel_id)
@@ -454,6 +455,14 @@ pub async fn send_channel_message(
     }
     if root_event_id.is_some() && parent_event_id.is_none() {
         return Err("root_event_id requires parent_event_id".into());
+    }
+    // A "/" skill pick rides only a stream message (top level or thread reply).
+    let skill_tag = skill_tag
+        .as_deref()
+        .map(events::skill_invocation_tag)
+        .transpose()?;
+    if skill_tag.is_some() && kind_num != buzz_core_pkg::kind::KIND_STREAM_MESSAGE {
+        return Err("a skill pick requires a stream message".into());
     }
 
     let mut resolved_root: Option<String> = None;
@@ -516,6 +525,7 @@ pub async fn send_channel_message(
                 sent_from_thread_tag.as_deref(),
                 &relay_base,
             )?
+            .tags(skill_tag)
         }
     };
 
