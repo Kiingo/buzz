@@ -8,7 +8,8 @@ import { resolve } from "node:path";
 // not a copy of the base config.
 //
 // For OSS release builds this script emits:
-// 1. bundle.macOS.minimumSystemVersion = "10.15" for broad compatibility.
+// 1. bundle.macOS.minimumSystemVersion = "12.0", matching the base config.
+//    macOS releases older than 12 no longer receive Apple security fixes.
 // 2. bundle.createUpdaterArtifacts = true so Tauri produces the .tar.gz
 //    archive and .sig signature during the build.
 // 3. plugins.updater with the public key and endpoint from env vars.
@@ -40,7 +41,7 @@ if (missing.length > 0) {
 const releaseConfig = {
   bundle: {
     macOS: {
-      minimumSystemVersion: "10.15",
+      minimumSystemVersion: "12.0",
     },
     createUpdaterArtifacts: true,
   },
