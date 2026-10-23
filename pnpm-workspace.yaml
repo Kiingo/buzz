@@ -18,6 +18,31 @@ overrides:
   # 5.0.1 / 5.0.2 respectively; pin >=5.0.2 to cover both. Removable once
   # markdown-it resolves linkify-it >=5.0.2 on its own.
   linkify-it: "^5.0.2"
+  # Security floors for transitive packages that the direct dependency ranges
+  # alone would leave on vulnerable versions (Dependabot, October 2026). Each
+  # stays within the major its parents already accept, except
+  # postcss-selector-parser: @tailwindcss/typography pins 6.0.10 and only 7.1.6
+  # fixes GHSA-rj75-hqrm-r3gf (7.0's sole breaking change is safe insertion
+  # during iteration). Removable once the parents resolve these floors on
+  # their own.
+  #   seroval: GHSA-p6vx-979v-rg4c, GHSA-jp82-f5mq-hwhp (via @tanstack/router-core)
+  #   markdown-it: GHSA-6v5v-wf23-fmfq, GHSA-253c-mchw-3w2r, GHSA-r7fv-28h4-cvq7,
+  #     GHSA-gfr2-rv44-r23c, GHSA-vfgh-jcmw-g37q (via tiptap-markdown)
+  #   browserslist: GHSA-c83g-rgw3-j3cx, GHSA-73wf-gq98-2v4g
+  #   baseline-browser-mapping: GHSA-w5vr-8v7q-w6rv
+  #   @babel/core: GHSA-4x5r-pxfx-6jf8 (via @tanstack/router-plugin)
+  #   nanoid: GHSA-2v37-7h3g-55p8 (via postcss)
+  #   source-map-js: GHSA-68fv-2mgg-jv7q (via postcss)
+  #   prosemirror-view: GHSA-c8x8-7fp4-3x9w (via @tiptap/pm)
+  seroval: "^1.6.3"
+  markdown-it: "^14.3.3"
+  browserslist: "^4.28.7"
+  baseline-browser-mapping: "^2.11.0"
+  "@babel/core": "^7.29.6"
+  "nanoid@3": "^3.3.18"
+  source-map-js: "^1.2.2"
+  prosemirror-view: "^1.42.3"
+  postcss-selector-parser: "^7.1.6"
 patchedDependencies:
   isomorphic-git: patches/isomorphic-git.patch
   virtua@0.49.3: patches/virtua@0.49.3.patch

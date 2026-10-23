@@ -1997,6 +1997,18 @@
       "purpose": "October 2026 security response. Apple's system git and libcurl trust /etc/ssl/cert.pem, which macOS trust updates do not touch; it still held emSign ECC Root CA - G3 and AAA Certificate Services, the roots behind eight eMudhra intermediates with guessable private keys. On macOS Desktop writes a curated CA bundle (the system bundle, or Mozilla's compiled-in webpki-root-certs when that yields nothing, minus every emSign/eMudhra root and AAA Certificate Services) and passes it as http.sslCAInfo to its own git, which already ignores user and system git config, and scoped to the active relay's git URLs for agent harnesses. Operator-appended CAs in the system bundle are kept; GIT_SSL_CAINFO or GIT_SSL_CAPATH in the environment wins and disables the bundle. Desktop's Cargo.lock and lib.rs changes (the two direct dependencies and the module declaration) are covered by their existing groups.",
       "removalCondition": "Drop when upstream Desktop passes a CA bundle without the distrusted eMudhra and AAA roots to its git subprocesses on macOS, or when Apple's /etc/ssl/cert.pem no longer contains them on every supported macOS version.",
       "upstreamStatus": "Generic, provider-neutral security hardening; not yet submitted to block/buzz."
+    },
+    {
+      "id": "dependabot-npm-security-floors-2026-10",
+      "classification": "retain-generic",
+      "owner": "Buzz desktop and web maintainers",
+      "purpose": "October 2026 Dependabot npm advisories. The workspace lockfile moves vite to 8.3.x, vitest to 4.1.12, postcss to 8.5.31 and the tiptap packages to 3.32.0 within their existing package.json ranges, and pnpm-workspace.yaml adds security floors for transitive packages the ranges alone left vulnerable: seroval, markdown-it, browserslist, baseline-browser-mapping, @babel/core, nanoid 3, source-map-js, prosemirror-view and postcss-selector-parser (7.1.6, past @tailwindcss/typography's exact 6.0.10 pin).",
+      "upstreamStatus": "Generic, provider-neutral security update; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream's lockfile resolves these packages at or above the patched versions and its parents no longer need the overrides.",
+      "paths": [
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml"
+      ]
     }
   ],
   "budgetAmendments": [
