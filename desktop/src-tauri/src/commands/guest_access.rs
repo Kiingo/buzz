@@ -287,7 +287,11 @@ mod tests {
         assert!(acceptable_base_url(
             "https://api.example.com/api/buzz-guest/v1"
         ));
-        assert!(acceptable_base_url("http://127.0.0.1:8080/v1"));
+        // Loopback HTTP is for development builds only.
+        assert_eq!(
+            acceptable_base_url("http://127.0.0.1:8080/v1"),
+            cfg!(debug_assertions)
+        );
         assert!(!acceptable_base_url("http://api.example.com/v1"));
         assert!(!acceptable_base_url("ftp://api.example.com"));
     }
