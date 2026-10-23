@@ -8,6 +8,7 @@ import { AppShellProvider } from "@/app/AppShellContext";
 import { AppShellOverlays, TerminalBootstrap } from "@/app/AppShellOverlays";
 import { AppShellChannelSurface } from "@/app/AppShellChannelSurface";
 import { AppHuddleShell } from "@/app/AppHuddleShell";
+import { AgentCallDock } from "@/features/agent-call/ui/AgentCallDock";
 import { AppTopChrome } from "@/app/AppTopChrome";
 import {
   type TerminalContextOverride,
@@ -992,6 +993,7 @@ export function AppShell() {
                     }}
                     relayUrl={communitiesHook.activeCommunity?.relayUrl}
                   />
+                  <AgentCallDock />
                   <SendFeedbackController
                     onOpenChange={setIsSendFeedbackOpen}
                     open={isSendFeedbackOpen}
