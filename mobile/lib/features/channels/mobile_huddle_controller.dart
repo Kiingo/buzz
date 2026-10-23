@@ -103,6 +103,9 @@ final class MobileHuddleController extends Notifier<bool> {
 
   @override
   bool build() {
+    // This controller's state is "a start is under way"; agent calls read it.
+    final starting = ref.read(huddleStartingProvider.notifier);
+    listenSelf((_, next) => starting.update(next));
     final unregisterBeforePause = ref
         .read(relaySessionProvider.notifier)
         .registerBeforePause(_leaveForBackground);
@@ -142,6 +145,10 @@ final class MobileHuddleController extends Notifier<bool> {
 
   Future<void> _start({required String parentChannelId}) async {
     if (state) return;
+    // Refuse before announcing a Huddle that could not take the audio.
+    if (ref.read(agentCallAudioBusyProvider)) {
+      throw StateError(agentCallHuddleRefusal);
+    }
     final generation = ++_generation;
     final admissionEpoch = ++_admissionEpoch;
     state = true;
@@ -210,6 +217,9 @@ final class MobileHuddleController extends Notifier<bool> {
     required String startedEventId,
   }) async {
     ++_generation;
+    // A join supersedes an in-flight start, whose finally then skips the
+    // reset: clear "starting" here so calls and new starts aren't refused.
+    state = false;
     final admissionEpoch = ++_admissionEpoch;
     _latestAdmissionTargetBackingChannelId = ephemeralChannelId;
     final currentPubkey = ref.read(currentPubkeyProvider);

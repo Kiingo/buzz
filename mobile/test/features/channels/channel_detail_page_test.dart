@@ -8819,6 +8819,53 @@ void main() {
       },
     );
 
+    testWidgets('a join during an in-flight Huddle start clears starting', (
+      tester,
+    ) async {
+      final createGate = Completer<void>();
+      final relaySession = _ReconnectingRelaySession(
+        huddleCreatePublishGate: createGate.future,
+      );
+
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          users: const {'self': UserProfile(pubkey: 'self')},
+          relayConfigNotifier: _HuddleRelayConfigNotifier(),
+          relaySessionNotifier: relaySession,
+          huddleCurrentPubkey: 'self',
+          huddleMediaFactory: _HuddleTestMedia.new,
+          huddleTransportFactory: (_) => _HuddleTestTransport(),
+          createChannelActions: (ref) => _FakeChannelActions(ref),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('channel-huddle-button')));
+      await relaySession.huddleCreatePublishStarted.future;
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(MobileHuddleShell)),
+      );
+      expect(container.read(huddleStartingProvider), isTrue);
+
+      final join = container
+          .read(mobileHuddleControllerProvider.notifier)
+          .join(
+            parentChannelId: _channelId,
+            ephemeralChannelId: _huddleChannelId,
+            startedBy: 'desktop',
+            startedEventId: 'superseding-join',
+          );
+      expect(container.read(huddleStartingProvider), isFalse);
+
+      createGate.complete();
+      await join.catchError((_) {});
+      await tester.pump(const Duration(seconds: 1));
+      expect(container.read(huddleStartingProvider), isFalse);
+      await container.read(mobileHuddleControllerProvider.notifier).leave();
+      await tester.pump(const Duration(seconds: 1));
+    });
+
     testWidgets(
       'community transition leaves a newer call after background cleanup',
       (tester) async {

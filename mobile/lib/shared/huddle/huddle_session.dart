@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../../features/age_gate/age_signal_provider.dart';
+import 'agent_call_audio.dart';
 import 'huddle_auth.dart';
 import 'huddle_media.dart';
 import 'huddle_transport.dart';
@@ -219,6 +220,18 @@ final class HuddleSessionNotifier extends Notifier<HuddleSessionState> {
   }) async {
     if (_ageRestricted) {
       throw StateError('Huddle unavailable while age-restricted');
+    }
+    if (ref.read(agentCallAudioBusyProvider)) {
+      // An agent call holds the audio: refuse, never take it over.
+      if (!state.isInSession) {
+        state = HuddleSessionState(
+          phase: HuddleSessionPhase.failed,
+          parentChannelId: parameters.parentChannelId,
+          ephemeralChannelId: parameters.ephemeralChannelId,
+          error: agentCallHuddleRefusal,
+        );
+      }
+      return;
     }
     if (state.isInSession) {
       if (state.ephemeralChannelId == parameters.ephemeralChannelId) return;

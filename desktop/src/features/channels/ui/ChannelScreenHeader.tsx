@@ -17,6 +17,7 @@ import {
 import { AgentManagementMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 import { AgentSessionsPicker } from "@/features/agent-dm/ui/AgentSessionsPicker";
 import { AgentDmPrewarm } from "@/features/agent-dm/ui/AgentDmPrewarm";
+import { AgentCallButton } from "@/features/agent-call/ui/AgentCallButton";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { UserNameIndicators } from "@/features/user-status/ui/UserNameIndicators";
 import { Button } from "@/shared/ui/button";
@@ -137,6 +138,12 @@ export function ChannelScreenHeader({
           isAgentHint={activeDmParticipant.isAgent === true}
         />
         <AgentSessionsPicker
+          agentPubkey={activeDmParticipant.pubkey}
+          channel={activeChannel}
+          isAgentHint={activeDmParticipant.isAgent === true}
+        />
+        <AgentCallButton
+          agentName={activeDmParticipant.displayName}
           agentPubkey={activeDmParticipant.pubkey}
           channel={activeChannel}
           isAgentHint={activeDmParticipant.isAgent === true}

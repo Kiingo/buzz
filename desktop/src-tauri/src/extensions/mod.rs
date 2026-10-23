@@ -22,6 +22,9 @@ pub(crate) use identity_rotation::{
 pub(crate) mod agent_summary;
 pub(crate) use agent_summary::{agent_prewarm, agent_summary_fetch};
 
+pub(crate) mod agent_voice;
+pub(crate) use agent_voice::agent_voice_request;
+
 pub(crate) fn try_handle_deep_link(app: &tauri::AppHandle, url: &url::Url) -> bool {
     identity_rotation::try_handle_deep_link(app, url)
 }

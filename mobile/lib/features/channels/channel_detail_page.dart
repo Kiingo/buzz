@@ -1,5 +1,6 @@
 import 'agent_dm/agent_dm_scope.dart';
 import 'agent_dm/agent_dm_sessions_button.dart';
+import '../agent_call/agent_call_screen.dart';
 import '../../shared/agent_commands/agent_prewarm.dart';
 import 'agent_reply_handoff.dart';
 import 'huddle_timeline.dart';
@@ -753,6 +754,14 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
               channel: resolvedChannel,
               agentPubkey: sessionsAgent,
             ),
+          if (dmAgent != null)
+            agentCallNavigationAction(
+              context,
+              ref,
+              agentPubkey: dmAgent,
+              channelId: resolvedChannel.id,
+              agentName: dmHeader?.label ?? resolvedChannel.name,
+            ),
         ],
         iconColor: context.colors.primary,
         titleContentHeight: appBarTitleContentHeight,
@@ -777,6 +786,12 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
             AgentDmSessionsButton(
               channel: resolvedChannel,
               agentPubkey: sessionsAgent,
+            ),
+          if (dmAgent != null)
+            AgentCallButton(
+              agentPubkey: dmAgent,
+              channelId: resolvedChannel.id,
+              agentName: dmHeader?.label ?? resolvedChannel.name,
             ),
         ],
       ),
