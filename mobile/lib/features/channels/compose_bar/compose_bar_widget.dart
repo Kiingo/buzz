@@ -439,9 +439,14 @@ class ComposeBar extends HookConsumerWidget {
       return () => controller.removeListener(listener);
     }, [controller]);
 
+    // Set once `send` exists below: a confirmed "/new" sends at once.
+    final submitDraft = useRef<VoidCallback?>(null);
     final agentCommands = _useAgentCommandAutocomplete(
       ref,
       agentPubkey: commandAgentPubkey,
+      confirmNewSession: (agentName) =>
+          _confirmNewAgentSession(context, agentName),
+      submit: () => submitDraft.value?.call(),
       group: groupAgentCommands && commandAgentPubkey == null
           ? _GroupAgentCommandContext(
               agents: [
@@ -1028,6 +1033,8 @@ class ComposeBar extends HookConsumerWidget {
       focusNode: focusNode,
       expand: expandComposer,
     );
+
+    submitDraft.value = () => unawaited(send());
 
     final suggestionPanel = _composerSuggestionPanel(
       commandSuggestions: agentCommands.suggestions,

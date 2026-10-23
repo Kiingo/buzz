@@ -76,6 +76,8 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
   required _GroupAgentCommandContext? group,
   required TextEditingController controller,
   required FocusNode focusNode,
+  required Future<bool> Function(String? agentName) confirmNewSession,
+  required VoidCallback submit,
 }) {
   final query = useState<String?>(null);
   final groupQuery = useState<GroupAgentCommandQuery?>(null);
@@ -157,8 +159,28 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     focusNode.requestFocus();
   }
 
+  /// `/new` resets the agent's session (in a channel, a shared thread's), so
+  /// picking it asks first and then sends it at once.
+  Future<void> startNewSession(String? pubkey, String? agentName) async {
+    query.value = null;
+    groupQuery.value = null;
+    if (!await confirmNewSession(agentName)) return;
+    if (groupMode && pubkey != null) {
+      sessionTarget.value = (text: '/new', pubkey: pubkey);
+    }
+    controller.value = const TextEditingValue(
+      text: '/new',
+      selection: TextSelection.collapsed(offset: 4),
+    );
+    submit();
+  }
+
   void select(AgentCommand command) {
     final text = controller.text;
+    if (command.kind == AgentCommandKind.session && command.name == 'new') {
+      unawaited(startNewSession(commandAgent, targetLabel));
+      return;
+    }
     if (!groupMode || open == null) {
       if (command.kind == AgentCommandKind.skill) {
         chosen.value[command.name] = command;
@@ -220,6 +242,35 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     },
   );
 }
+
+/// Asks before a picked `/new` ends the agent's current session.
+Future<bool> _confirmNewAgentSession(
+  BuildContext context,
+  String? agentName,
+) async =>
+    await showBuzzDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog.adaptive(
+        title: const Text('Start a new session?'),
+        content: Text(
+          '${agentName ?? 'The agent'} ends its current session. Your next '
+          'message starts a fresh one.',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('agent-command-new-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('agent-command-new-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('New session'),
+          ),
+        ],
+      ),
+    ) ==
+    true;
 
 class _AgentCommandSuggestions extends StatelessWidget {
   const _AgentCommandSuggestions({
