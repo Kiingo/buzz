@@ -1953,6 +1953,18 @@
       "upstreamStatus": "Generic, provider-neutral security hardening; not yet submitted to block/buzz."
     },
     {
+      "id": "dependabot-npm-security-floors-2026-10",
+      "classification": "retain-generic",
+      "owner": "Buzz desktop and web maintainers",
+      "purpose": "October 2026 Dependabot npm advisories. The workspace lockfile moves vite to 8.3.x, vitest to 4.1.12, postcss to 8.5.31 and the tiptap packages to 3.32.0 within their existing package.json ranges, and pnpm-workspace.yaml adds security floors for transitive packages the ranges alone left vulnerable: seroval, markdown-it, browserslist, baseline-browser-mapping, @babel/core, nanoid 3, source-map-js, prosemirror-view and postcss-selector-parser (7.1.6, past @tailwindcss/typography's exact 6.0.10 pin).",
+      "upstreamStatus": "Generic, provider-neutral security update; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream's lockfile resolves these packages at or above the patched versions and its parents no longer need the overrides.",
+      "paths": [
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml"
+      ]
+    },
+    {
       "classification": "retain-generic",
       "owner": "Buzz desktop and mobile maintainers",
       "paths": [

@@ -188,3 +188,36 @@ model" after a visible failure.
   ref is an ordinary message. The button carries no authority of its own.
 - After a successful tap the client disables every button on that message.
   The runtime acknowledges an applied action without a chat reply.
+
+## 6. Council card: `buzz-council`
+
+The result of a council on one of the requester's tasks: several agents
+proposed answers and a judge wrote the synthesis and, when the task gates an
+action, a verdict.
+
+- Kind `40002`, agent-signed, `h` plus exactly one `["p", <requester pubkey>]`,
+  only in the requester's private 1:1 DM, under the same publisher rules as the
+  addressed mirror in §1. It wakes the requester's phone once and is otherwise
+  quiet.
+- `["buzz-council", <council_id>, <round>, <decision or "">, <item_id>, <agent_id>]`
+  - `decision` is `proceed`, `proceed_after_fixes` or `do_not_proceed`, or
+    `""` when the task gates no action.
+  - `council_id`, `item_id` (the task) and `agent_id` are UUIDs; `round`
+    counts from 1.
+- Up to 24 members, in order:
+  `["buzz-council-member", <member_id>, <agent_name>, <harness>, <model or "">, <status>, <verdict or "">]`
+  - `member_id` is `m1`, `m2`, ...; `harness` is `claude-code`, `codex` or
+    `antigravity`; `status` is `queued`, `running`, `proposed`, `failed` or
+    `cancelled`; `verdict` uses the decision values.
+- Exactly one `["buzz-council-judge", <agent_name>, <harness>, <model or "">]`.
+- Content: the readable fallback (the synthesis and the verdict), no URLs, at
+  most 8,000 characters.
+
+Details: the members' full answers come from
+`GET /api/buzz-voice/<desktop|ios>/agents/<agent_id>/queue/council?itemId=<item_id>`,
+for the requester only.
+
+Rendering: optional. A card shows the verdict, the judge and one row per
+member (name, harness, model, status, verdict), with Details fetching the full
+answers. Without it, clients show the content as a plain agent message, which is
+acceptable for v1.
