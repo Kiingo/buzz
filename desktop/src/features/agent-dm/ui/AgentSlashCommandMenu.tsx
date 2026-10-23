@@ -126,7 +126,7 @@ export function AgentSlashCommandMenu({
               {startsSection ? (
                 <div
                   aria-hidden="true"
-                  className="px-3 pb-0.5 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+                  className="px-3 pb-0.5 pt-1.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground"
                   data-testid="agent-slash-section"
                   role="presentation"
                 >
