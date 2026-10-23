@@ -1,0 +1,194 @@
+{
+  "description": "Shared behavior table for bare-link detection in message bodies (desktop findBareLinks in desktop/src/shared/lib/bareLinks.ts, mobile findBareLinks in mobile/lib/features/channels/message_content/bare_links.dart). Each case lists the links detected in a plain-text run, in order. Scheme URLs (http://, https://, buzz://) are out of scope here: each platform's existing autolinker owns them. The spec is in docs/bare-links.md.",
+  "fileExtensionTlds": [
+    "ac",
+    "am",
+    "app",
+    "cc",
+    "in",
+    "json",
+    "md",
+    "ml",
+    "mov",
+    "pl",
+    "pm",
+    "ps",
+    "py",
+    "rs",
+    "sh",
+    "so",
+    "tf",
+    "ts",
+    "zip"
+  ],
+  "cases": [
+    {
+      "name": "bare domain",
+      "input": "visit kiingo.com today",
+      "links": [{ "text": "kiingo.com", "href": "https://kiingo.com", "kind": "url" }]
+    },
+    {
+      "name": "bare domain with path, trailing period peeled",
+      "input": "see github.com/example/repo/pull/42.",
+      "links": [
+        {
+          "text": "github.com/example/repo/pull/42",
+          "href": "https://github.com/example/repo/pull/42",
+          "kind": "url"
+        }
+      ]
+    },
+    {
+      "name": "bare domain with path and query",
+      "input": "docs.google.com/document/d/abc123/edit?usp=sharing",
+      "links": [
+        {
+          "text": "docs.google.com/document/d/abc123/edit?usp=sharing",
+          "href": "https://docs.google.com/document/d/abc123/edit?usp=sharing",
+          "kind": "url"
+        }
+      ]
+    },
+    {
+      "name": "fragment",
+      "input": "read example.org/guide#setup, then reply",
+      "links": [
+        {
+          "text": "example.org/guide#setup",
+          "href": "https://example.org/guide#setup",
+          "kind": "url"
+        }
+      ]
+    },
+    {
+      "name": "port and path",
+      "input": "health at status.example.com:8080/health now",
+      "links": [
+        {
+          "text": "status.example.com:8080/health",
+          "href": "https://status.example.com:8080/health",
+          "kind": "url"
+        }
+      ]
+    },
+    {
+      "name": "multi-label country domain",
+      "input": "shop.example.co.uk/basket",
+      "links": [
+        {
+          "text": "shop.example.co.uk/basket",
+          "href": "https://shop.example.co.uk/basket",
+          "kind": "url"
+        }
+      ]
+    },
+    {
+      "name": "wrapped in parentheses",
+      "input": "(see kiingo.com)",
+      "links": [{ "text": "kiingo.com", "href": "https://kiingo.com", "kind": "url" }]
+    },
+    {
+      "name": "balanced parentheses in the path stay, the outer one is peeled",
+      "input": "(en.wikipedia.org/wiki/Mercury_(planet))",
+      "links": [
+        {
+          "text": "en.wikipedia.org/wiki/Mercury_(planet)",
+          "href": "https://en.wikipedia.org/wiki/Mercury_(planet)",
+          "kind": "url"
+        }
+      ]
+    },
+    {
+      "name": "question mark peeled",
+      "input": "is it kiingo.com?",
+      "links": [{ "text": "kiingo.com", "href": "https://kiingo.com", "kind": "url" }]
+    },
+    {
+      "name": "emphasis delimiters are not part of the link",
+      "input": "**kiingo.com**",
+      "links": [{ "text": "kiingo.com", "href": "https://kiingo.com", "kind": "url" }]
+    },
+    {
+      "name": "two-letter TLD that is not a file extension",
+      "input": "try x.ai",
+      "links": [{ "text": "x.ai", "href": "https://x.ai", "kind": "url" }]
+    },
+    {
+      "name": "www",
+      "input": "go to www.example.com.",
+      "links": [{ "text": "www.example.com", "href": "https://www.example.com", "kind": "www" }]
+    },
+    {
+      "name": "www with a file-extension TLD is still a link",
+      "input": "www.example.md",
+      "links": [{ "text": "www.example.md", "href": "https://www.example.md", "kind": "www" }]
+    },
+    {
+      "name": "file-extension TLD with a path is a link",
+      "input": "linear.app/team/issue/ENG-1",
+      "links": [
+        {
+          "text": "linear.app/team/issue/ENG-1",
+          "href": "https://linear.app/team/issue/ENG-1",
+          "kind": "url"
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "input": "Email alex@example.com.",
+      "links": [{ "text": "alex@example.com", "href": "mailto:alex@example.com", "kind": "email" }]
+    },
+    {
+      "name": "email with plus and dots, domain not linked separately",
+      "input": "cc first.last+buzz@mail.example.org",
+      "links": [
+        {
+          "text": "first.last+buzz@mail.example.org",
+          "href": "mailto:first.last+buzz@mail.example.org",
+          "kind": "email"
+        }
+      ]
+    },
+    {
+      "name": "international phone",
+      "input": "Call +1 (555) 123-4567 now",
+      "links": [{ "text": "+1 (555) 123-4567", "href": "tel:+15551234567", "kind": "phone" }]
+    },
+    {
+      "name": "international phone with spaces",
+      "input": "London: +44 20 7946 0958.",
+      "links": [{ "text": "+44 20 7946 0958", "href": "tel:+442079460958", "kind": "phone" }]
+    },
+    {
+      "name": "North American formats",
+      "input": "555-123-4567 or (555) 123-4567 or 555.123.4567",
+      "links": [
+        { "text": "555-123-4567", "href": "tel:5551234567", "kind": "phone" },
+        { "text": "(555) 123-4567", "href": "tel:5551234567", "kind": "phone" },
+        { "text": "555.123.4567", "href": "tel:5551234567", "kind": "phone" }
+      ]
+    },
+    {
+      "name": "mixed kinds in order",
+      "input": "kiingo.com, alex@example.com and +1 555 123 4567",
+      "links": [
+        { "text": "kiingo.com", "href": "https://kiingo.com", "kind": "url" },
+        { "text": "alex@example.com", "href": "mailto:alex@example.com", "kind": "email" },
+        { "text": "+1 555 123 4567", "href": "tel:+15551234567", "kind": "phone" }
+      ]
+    },
+    { "name": "version number", "input": "upgrade to 1.2.3 or v2.10.4", "links": [] },
+    { "name": "filenames", "input": "edit README.md, foo.ts, main.rs and file.dart", "links": [] },
+    { "name": "more filenames", "input": "run setup.py, install.sh, data.json, Buzz.app, archive.zip", "links": [] },
+    { "name": "time and decimals", "input": "at 10:30, pi is 3.14 and 0.5", "links": [] },
+    { "name": "dates", "input": "due 2026-10-23 or 10/23/2026", "links": [] },
+    { "name": "IPv4 address", "input": "ping 192.168.1.10", "links": [] },
+    { "name": "localhost", "input": "open localhost:3000", "links": [] },
+    { "name": "abbreviations", "input": "e.g. this, i.e. that, etc.", "links": [] },
+    { "name": "domain after a slash", "input": "path foo/bar.com", "links": [] },
+    { "name": "domain after an at sign", "input": "ping @kiingo.com", "links": [] },
+    { "name": "plain digit run is not a phone", "input": "order 5551234567", "links": [] },
+    { "name": "short international-looking number", "input": "+1 23", "links": [] }
+  ]
+}

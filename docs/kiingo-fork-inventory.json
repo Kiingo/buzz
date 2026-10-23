@@ -1951,6 +1951,27 @@
       "purpose": "October 2026 security response. Apple's system git and libcurl trust /etc/ssl/cert.pem, which macOS trust updates do not touch; it still held emSign ECC Root CA - G3 and AAA Certificate Services, the roots behind eight eMudhra intermediates with guessable private keys. On macOS Desktop writes a curated CA bundle (the system bundle, or Mozilla's compiled-in webpki-root-certs when that yields nothing, minus every emSign/eMudhra root and AAA Certificate Services) and passes it as http.sslCAInfo to its own git, which already ignores user and system git config, and scoped to the active relay's git URLs for agent harnesses. Operator-appended CAs in the system bundle are kept; GIT_SSL_CAINFO or GIT_SSL_CAPATH in the environment wins and disables the bundle. Desktop's Cargo.lock and lib.rs changes (the two direct dependencies and the module declaration) are covered by their existing groups.",
       "removalCondition": "Drop when upstream Desktop passes a CA bundle without the distrusted eMudhra and AAA roots to its git subprocesses on macOS, or when Apple's /etc/ssl/cert.pem no longer contains them on every supported macOS version.",
       "upstreamStatus": "Generic, provider-neutral security hardening; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop and mobile maintainers",
+      "paths": [
+        "desktop/src/shared/lib/bareLinks.test.mjs",
+        "desktop/src/shared/lib/bareLinks.ts",
+        "desktop/src/shared/lib/remarkBareLinks.test.mjs",
+        "desktop/src/shared/lib/remarkBareLinks.ts",
+        "desktop/src/shared/ui/markdown/nodeCache.ts",
+        "desktop/src/shared/ui/markdown/utils.ts",
+        "docs/bare-links.md",
+        "mobile/lib/features/channels/message_content.dart",
+        "mobile/lib/features/channels/message_content/bare_links.dart",
+        "mobile/lib/features/channels/message_content/link_normalizer.dart",
+        "mobile/test/features/channels/message_content/bare_links_test.dart",
+        "test-fixtures/bare-links.json"
+      ],
+      "purpose": "Bare links in message bodies. Desktop and mobile make link-like prose clickable when it is not a Markdown link: bare domains with a real TLD (plus port, path, query or fragment) and www. hosts open over https, emails open mailto:, clearly formatted phone numbers open tel:. Code, existing links, mentions and entity pills are never linked; trailing punctuation is peeled with balanced parentheses kept; versions, filenames, times, decimals, dates and IPv4 addresses are not links. Desktop uses linkifyjs in a remark plugin and lets matching tel: hrefs through the Markdown URL transform; mobile uses a TLD-allowlist regex in the link normalizer and opens mailto:/tel: taps in the system handler. Both run one shared case table (test-fixtures/bare-links.json); the spec is docs/bare-links.md.",
+      "removalCondition": "Drop when upstream desktop and mobile linkify bare domains, www. hosts, emails and phone numbers in message bodies with equivalent guards.",
+      "upstreamStatus": "Generic, provider-neutral client feature; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [

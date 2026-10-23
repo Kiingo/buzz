@@ -1,3 +1,5 @@
+import 'bare_links.dart';
+
 /// Escapes destination characters that the mobile Markdown renderer treats as
 /// syntax. Apply the same conversion to metadata keys to preserve media types.
 String normalizeMarkdownDestination(String url) =>
@@ -266,7 +268,41 @@ String _normalizeProseLinks(String segment) {
     _bareLinkPattern,
     (match) => _normalizeBareLink(normalized, match),
   );
-  return normalized;
+  return _linkifyBareText(normalized);
+}
+
+// Markdown links produced above (and scheme URLs left as labels). Their
+// destinations never contain `)`: bare-link matches stop at it.
+final _markdownLinkPattern = RegExp(r'!?\[[^\]\n]*\]\([^)\s]*\)');
+
+/// Links bare domains, `www.` hosts, emails and phone numbers in prose that
+/// is outside every Markdown link (see `bare_links.dart`).
+String _linkifyBareText(String segment) {
+  final result = StringBuffer();
+  var offset = 0;
+  for (final link in _markdownLinkPattern.allMatches(segment)) {
+    result
+      ..write(_linkifyPlain(segment.substring(offset, link.start)))
+      ..write(link[0]);
+    offset = link.end;
+  }
+  result.write(_linkifyPlain(segment.substring(offset)));
+  return result.toString();
+}
+
+String _linkifyPlain(String text) {
+  final links = findBareLinks(text);
+  if (links.isEmpty) return text;
+  final result = StringBuffer();
+  var offset = 0;
+  for (final link in links) {
+    result
+      ..write(text.substring(offset, link.start))
+      ..write('[${link.text}](${normalizeMarkdownDestination(link.href)})');
+    offset = link.end;
+  }
+  result.write(text.substring(offset));
+  return result.toString();
 }
 
 String _normalizeBareLink(String segment, Match match) {
