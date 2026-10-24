@@ -2053,6 +2053,18 @@
         "crates/buzz-agent/Cargo.toml",
         "crates/buzz-agent/src/mcp.rs"
       ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz push maintainers",
+      "paths": [
+        "crates/buzz-push-gateway/src/app_attest/authenticator.rs",
+        "crates/buzz-push-gateway/src/app_attest/certificate.rs",
+        "crates/buzz-push-gateway/src/app_attest_assertion_tests.rs"
+      ],
+      "purpose": "RUSTSEC-2026-0387 (crypto-bigint 0.5 constant-time issues): buzz-push-gateway moves from p256 0.13 to p256 0.14 (elliptic-curve 0.14, crypto-bigint 0.7.6). The only code change is the renamed SEC1 trait (ToEncodedPoint::to_encoded_point to ToSec1Point::to_sec1_point) in App Attest public-key parsing and its tests. The deny.toml advisory ignore is removed in the same change.",
+      "removalCondition": "Drop when upstream buzz-push-gateway is on p256 0.14 or later.",
+      "upstreamStatus": "Generic dependency security bump; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
