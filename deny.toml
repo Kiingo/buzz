@@ -49,16 +49,6 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); transitive via zbus 5.19 for the Linux keyring; no compatible upgrade yet" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); transitive via zbus 5.19 for the Linux keyring; no compatible upgrade yet" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); transitive via zbus 5.19 for the Linux keyring; no compatible upgrade yet" },
-    # crypto-bigint 0.5.5: operations meant to be constant-time can branch on
-    # their inputs (timing side channel on secret integers). Pulled only by
-    # p256 0.13 (elliptic-curve 0.13) in buzz-push-gateway, whose shipped code
-    # uses it for App Attest public-key parsing and signature verification:
-    # public inputs only, no secret scalars (signing is test-only, behind
-    # #[cfg(test)]). If any non-test code adds SigningKey/SecretKey/ECDH on
-    # p256, this ignore is no longer valid. The fix is crypto-bigint >= 0.7.6
-    # via p256/elliptic-curve 0.14; that bump removes this ignore in the same
-    # change. Review by 2026-11-07.
-    { id = "RUSTSEC-2026-0387", reason = "public-key verification only (App Attest); no secret scalars; crypto-bigint 0.5.5 via p256 0.13 in buzz-push-gateway; review by 2026-11-07" },
 ]
 
 [licenses]
