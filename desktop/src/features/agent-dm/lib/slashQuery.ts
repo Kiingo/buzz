@@ -1,11 +1,17 @@
 import type { Channel } from "@/shared/api/types";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
-import type { AgentSkillCommand, AgentSlashCommand } from "./slashCommands";
+import {
+  MAX_AGENT_COMMANDS,
+  type AgentSkillCommand,
+  type AgentSlashCommand,
+} from "./slashCommands";
 
 /** Skill arguments sent in the `buzz-skill` tag are at most this long. */
 export const MAX_SKILL_ARGS = 4_000;
-const MAX_MENU_ITEMS = 80;
+/** The menu lists every match (it scrolls): a shorter cut made a plain "/"
+ * look as if skills past the first screenful were never loaded. */
+const MAX_MENU_ITEMS = MAX_AGENT_COMMANDS;
 
 export type SlashQuery = {
   /** Text typed after "/" up to the caret. */

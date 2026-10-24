@@ -192,4 +192,31 @@ void main() {
       );
     });
   });
+
+  test('a cut-short body is flagged and searches are normalized', () {
+    expect(agentCommandsBodyTruncated({'truncated': true}), isTrue);
+    expect(agentCommandsBodyTruncated({'truncated': 'yes'}), isFalse);
+    expect(agentCommandsBodyTruncated(null), isFalse);
+    expect(normalizeAgentCommandQuery('  Kiingo-FR '), 'kiingo-fr');
+    expect(normalizeAgentCommandQuery('x' * 100).length, 64);
+  });
+
+  test('the popup lists every match, not just a first screenful', () {
+    final many = [
+      for (var index = 0; index < 300; index++)
+        AgentCommand.skill(
+          name: 'skill-${index.toString().padLeft(3, '0')}',
+          skillId: 'sk-$index',
+          source: AgentSkillSource.registry,
+        ),
+    ];
+    expect(filterAgentCommands(many, '').length, 300);
+    expect(
+      mergeAgentCommands(
+        [many.first],
+        [many.first, many[1]],
+      ).map((command) => command.name),
+      ['skill-000', 'skill-001'],
+    );
+  });
 }

@@ -94,6 +94,28 @@ export function resolveSlashTarget(input: {
   return null;
 }
 
+/** What is known of an agent's "/" list here. */
+export type SlashListState = "unknown" | "empty" | "some";
+
+/**
+ * Narrow a choice of several agents by what each offers: an agent whose list
+ * came back empty (nothing the viewer may use with it) is no choice, and once
+ * every other list is known to be empty the "/" is for the one left. Agents
+ * still loading stay on offer. Null when none is left.
+ */
+export function narrowSlashChoice(
+  target: SlashTarget | null,
+  listState: (pubkey: string) => SlashListState,
+): SlashTarget | null {
+  if (target?.kind !== "choose") return target;
+  const open = target.pubkeys.filter((pubkey) => listState(pubkey) !== "empty");
+  const [only] = open;
+  if (open.length === 1 && only && listState(only) === "some") {
+    return { kind: "agent", pubkey: only };
+  }
+  return open.length > 0 ? { kind: "choose", pubkeys: open } : null;
+}
+
 /** The skill a channel or thread message invokes (`[@Name ]/<skill> args`). */
 export function parseGroupSkillInvocation(
   text: string,
