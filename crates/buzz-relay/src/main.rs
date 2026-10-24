@@ -1291,6 +1291,7 @@ async fn run_relay_main(boot: BootTracker) -> anyhow::Result<()> {
                         channel_id,
                     )
                     .await;
+                    reaper_state.end_huddle_audio_clusterwide(&tenant, channel_id, None);
                 }
             }
         });

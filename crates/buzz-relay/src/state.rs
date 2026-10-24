@@ -49,6 +49,10 @@ pub(crate) enum CommunityDisconnectReason {
     AuthorizationDenied,
     /// The authenticated pubkey lost access to the community (e.g. a ban).
     AccessRevoked,
+    /// The huddle behind this audio socket was archived or deleted.
+    HuddleEnded,
+    /// This audio socket's pubkey is no longer a member of the huddle.
+    RemovedFromHuddle,
 }
 
 impl CommunityDisconnectReason {
@@ -70,7 +74,49 @@ impl CommunityDisconnectReason {
                 code: axum::extract::ws::close_code::POLICY,
                 reason: WsUtf8Bytes::from_static("access revoked"),
             })),
+            Self::HuddleEnded => WsMessage::Close(Some(axum::extract::ws::CloseFrame {
+                code: axum::extract::ws::close_code::NORMAL,
+                reason: WsUtf8Bytes::from_static("huddle ended"),
+            })),
+            Self::RemovedFromHuddle => WsMessage::Close(Some(axum::extract::ws::CloseFrame {
+                code: axum::extract::ws::close_code::POLICY,
+                reason: WsUtf8Bytes::from_static("removed from huddle"),
+            })),
         }
+    }
+}
+
+/// Why a live huddle audio socket is cut by the relay (see
+/// [`AppState::end_huddle_audio_clusterwide`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HuddleAudioEnd {
+    /// The huddle channel was archived or deleted: every peer leaves.
+    Ended,
+    /// One member was removed from the huddle channel: that member leaves.
+    Removed,
+}
+
+impl HuddleAudioEnd {
+    fn reason(self) -> CommunityDisconnectReason {
+        match self {
+            Self::Ended => CommunityDisconnectReason::HuddleEnded,
+            Self::Removed => CommunityDisconnectReason::RemovedFromHuddle,
+        }
+    }
+
+    /// The terminal error frame the client reads before the close. It reuses
+    /// the frames a refused join gets, so a client that already ends on a
+    /// refused join (`room_ended`, "not a member") ends here too.
+    pub(crate) fn frame(self) -> WsMessage {
+        let frame = match self {
+            Self::Ended => serde_json::json!({
+                "type": "error", "code": "room_ended", "message": "huddle has ended"
+            }),
+            Self::Removed => serde_json::json!({
+                "type": "error", "code": "removed_from_huddle", "message": "not a member"
+            }),
+        };
+        WsMessage::Text(frame.to_string().into())
     }
 }
 
@@ -105,6 +151,8 @@ pub(crate) struct CommunityConnectionControl {
     owner: Arc<std::sync::OnceLock<[u8; 32]>>,
     /// Shadow-mode observation of this socket; no enforce path reads it.
     nip_fi_shadow: Arc<std::sync::OnceLock<Arc<crate::nip_fi_shadow_session::ShadowSession>>>,
+    /// Huddle channel of an audio socket; root sockets leave it unset.
+    audio_channel: Arc<std::sync::OnceLock<Uuid>>,
 }
 
 impl CommunityConnectionControl {
@@ -118,6 +166,7 @@ impl CommunityConnectionControl {
             pubkey: Arc::default(),
             owner: Arc::default(),
             nip_fi_shadow: Arc::default(),
+            audio_channel: Arc::default(),
         }
     }
 
@@ -148,6 +197,45 @@ impl CommunityConnectionControl {
     /// socket without a database lookup.
     pub(crate) fn bind_owner(&self, owner: [u8; 32]) {
         let _ = self.owner.set(owner);
+    }
+
+    /// Records the huddle channel an audio socket serves, so a huddle end or
+    /// a member removal reaches it (see
+    /// [`CommunityConnectionRegistry::disconnect_huddle_audio`]).
+    pub(crate) fn bind_audio_channel(&self, channel_id: Uuid) {
+        let _ = self.audio_channel.set(channel_id);
+    }
+
+    /// Whether this is an audio socket for `channel_id`, and, with `pubkey`,
+    /// whether it is bound to that pubkey.
+    fn matches_huddle_audio(&self, channel_id: Uuid, pubkey: Option<&[u8]>) -> bool {
+        self.audio_channel.get() == Some(&channel_id)
+            && pubkey.is_none_or(|pubkey| self.pubkey.get().map(|k| &k[..]) == Some(pubkey))
+    }
+
+    /// Cut this audio socket because its huddle ended or its pubkey was
+    /// removed from it. Like the other terminal transitions the first reason
+    /// wins: only the winner enqueues the error frame on the audio terminal
+    /// channel (drained before the close), and a reason already chosen is not
+    /// overwritten. Always cancels.
+    fn end_huddle_audio(&self, end: HuddleAudioEnd) {
+        let slot = self
+            .terminal_frame_tx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let won = self.reason_tx.send_if_modified(|current| {
+            current.is_none() && {
+                *current = Some(end.reason());
+                true
+            }
+        });
+        if won {
+            if let Some(tx) = slot.as_ref() {
+                let _ = tx.try_send(end.frame());
+            }
+        }
+        drop(slot);
+        self.cancel.cancel();
     }
 
     fn matches_revocation(&self, pubkey: &[u8], unowned_only: bool) -> bool {
@@ -440,6 +528,44 @@ impl CommunityConnectionRegistry {
             }
         }
         closed
+    }
+
+    /// Cuts the audio sockets serving huddle `channel_id` in `community_id`:
+    /// all of them for [`HuddleAudioEnd::Ended`], or those bound to `pubkey`
+    /// for [`HuddleAudioEnd::Removed`]. Each gets the end's error frame and
+    /// close. Pod-local; see [`AppState::end_huddle_audio_clusterwide`].
+    ///
+    /// Returns the number of sockets cut.
+    pub fn disconnect_huddle_audio(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: Option<&[u8]>,
+        end: HuddleAudioEnd,
+    ) -> usize {
+        let mut closed = 0;
+        for entry in self.connections.iter() {
+            let (community, control) = entry.value();
+            if *community == community_id && control.matches_huddle_audio(channel_id, pubkey) {
+                control.end_huddle_audio(end);
+                closed += 1;
+            }
+        }
+        closed
+    }
+
+    /// Whether this pod holds an audio socket that
+    /// [`Self::disconnect_huddle_audio`] with the same arguments would cut.
+    pub fn has_huddle_audio(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: Option<&[u8]>,
+    ) -> bool {
+        self.connections.iter().any(|entry| {
+            let (community, control) = entry.value();
+            *community == community_id && control.matches_huddle_audio(channel_id, pubkey)
+        })
     }
 
     /// Returns the distinct communities with live sockets on this pod.
@@ -2170,6 +2296,120 @@ impl AppState {
         closed
     }
 
+    /// Cut the live audio of huddle `channel_id` on every pod: all of its
+    /// sockets when `removed` is `None` (the huddle channel was archived or
+    /// deleted), else the sockets of the `removed` member.
+    ///
+    /// The relay otherwise only refuses new admissions on these changes, so a
+    /// peer that never acts on the events itself (or cannot read them any
+    /// more: a removed member loses read access to the private huddle) would
+    /// keep sending and receiving audio. Call it after the durable change has
+    /// committed. This pod cuts its sockets at once; every other pod re-reads
+    /// the durable state before cutting (see [`Self::apply_huddle_audio_end`]).
+    /// The publish is fire-and-forget, like the ban disconnect: a lost publish
+    /// leaves a socket open on another pod, but its next admission is refused
+    /// for an archived huddle.
+    ///
+    /// Returns the number of sockets cut on this pod.
+    pub fn end_huddle_audio_clusterwide(
+        &self,
+        tenant: &TenantContext,
+        channel_id: Uuid,
+        removed: Option<&[u8]>,
+    ) -> usize {
+        let end = match removed {
+            Some(_) => HuddleAudioEnd::Removed,
+            None => HuddleAudioEnd::Ended,
+        };
+        let closed = self.community_connections.disconnect_huddle_audio(
+            tenant.community(),
+            channel_id,
+            removed,
+            end,
+        );
+        if closed > 0 {
+            tracing::info!(
+                channel = %channel_id,
+                closed,
+                ?end,
+                "cut live huddle audio sockets"
+            );
+        }
+        let pubsub = Arc::clone(&self.pubsub);
+        let tenant = tenant.clone();
+        let command = ConnControl::EndHuddleAudio {
+            channel_id,
+            pubkey: removed.map(<[u8]>::to_vec),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = pubsub.publish_conn_control(&tenant, &command).await {
+                tracing::warn!("Failed to publish huddle audio end: {e}");
+            }
+        });
+        closed
+    }
+
+    /// Applies a cross-pod `EndHuddleAudio` command to this pod's sockets,
+    /// only while the durable state still says so: the huddle channel is
+    /// archived or deleted, or the member is no longer an active member. A
+    /// command that arrives after an unarchive or a re-add is a no-op, and so
+    /// is the origin pod's own echo (its sockets are already cut). A failed
+    /// read keeps the sockets: the end is not proven.
+    pub async fn apply_huddle_audio_end(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        removed: Option<Vec<u8>>,
+    ) -> usize {
+        // Most removals and archives are of channels with no audio here: skip
+        // the durable read unless this pod holds a socket the command names.
+        if !self.community_connections.has_huddle_audio(
+            community_id,
+            channel_id,
+            removed.as_deref(),
+        ) {
+            return 0;
+        }
+        let proven = match removed.as_deref() {
+            None => match self.db.get_channel(community_id, channel_id).await {
+                Ok(channel) => channel.archived_at.is_some(),
+                Err(buzz_db::DbError::ChannelNotFound(_)) => true,
+                Err(error) => {
+                    tracing::warn!(
+                        channel = %channel_id,
+                        %error,
+                        "could not verify huddle end; keeping its audio sockets"
+                    );
+                    false
+                }
+            },
+            Some(pubkey) => match self.db.is_member(community_id, channel_id, pubkey).await {
+                Ok(is_member) => !is_member,
+                Err(error) => {
+                    tracing::warn!(
+                        channel = %channel_id,
+                        %error,
+                        "could not verify huddle removal; keeping the member's audio socket"
+                    );
+                    false
+                }
+            },
+        };
+        if !proven {
+            return 0;
+        }
+        let end = match removed {
+            Some(_) => HuddleAudioEnd::Removed,
+            None => HuddleAudioEnd::Ended,
+        };
+        self.community_connections.disconnect_huddle_audio(
+            community_id,
+            channel_id,
+            removed.as_deref(),
+            end,
+        )
+    }
+
     /// Disconnect a community locally and publish the command to every relay pod.
     ///
     /// Publication is awaited so the archive API can distinguish durable state
@@ -2250,6 +2490,15 @@ impl AppState {
                             &reason,
                             unowned_only,
                         );
+                    }
+                    ConnControl::EndHuddleAudio { channel_id, pubkey } => {
+                        let state = Arc::clone(&self);
+                        let community_id = scoped.community_id;
+                        tokio::spawn(async move {
+                            state
+                                .apply_huddle_audio_end(community_id, channel_id, pubkey)
+                                .await;
+                        });
                     }
                 },
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -3580,6 +3829,81 @@ pub(crate) mod tests {
         for untouched in [other_pubkey, other_community, unbound] {
             assert!(!untouched.cancellation_token().is_cancelled());
         }
+    }
+
+    #[test]
+    fn huddle_audio_end_cuts_only_that_huddles_audio_sockets_with_its_frame() {
+        let registry = CommunityConnectionRegistry::new();
+        let community_a = CommunityId::from_uuid(Uuid::from_u128(0xa));
+        let community_b = CommunityId::from_uuid(Uuid::from_u128(0xb));
+        let (huddle, other_huddle) = (Uuid::from_u128(0x41), Uuid::from_u128(0x42));
+        let (removed, kept) = ([1u8; 32], [2u8; 32]);
+        let audio = |community, channel: Option<Uuid>, pubkey: [u8; 32]| {
+            let control = CommunityConnectionControl::new(CancellationToken::new());
+            let (tx, rx) = mpsc::channel(1);
+            control.set_terminal_frame_sender(tx);
+            if let Some(channel) = channel {
+                control.bind_audio_channel(channel);
+            }
+            control.bind_pubkey(pubkey);
+            let guard = registry.register(Uuid::new_v4(), community, control.clone());
+            (control, rx, guard)
+        };
+        let frame_text = |rx: &mut mpsc::Receiver<WsMessage>| match rx.try_recv() {
+            Ok(WsMessage::Text(text)) => {
+                serde_json::from_str::<serde_json::Value>(text.as_str()).ok()
+            }
+            _ => None,
+        };
+
+        let (removed_peer, mut removed_rx, _g1) = audio(community_a, Some(huddle), removed);
+        let (kept_peer, mut kept_rx, _g2) = audio(community_a, Some(huddle), kept);
+        let (elsewhere, _rx3, _g3) = audio(community_a, Some(other_huddle), removed);
+        let (other_tenant, _rx4, _g4) = audio(community_b, Some(huddle), removed);
+        let (root_socket, _rx5, _g5) = audio(community_a, None, removed);
+
+        // A removal cuts only the removed member's socket in that huddle.
+        assert!(registry.has_huddle_audio(community_a, huddle, Some(&removed)));
+        assert_eq!(
+            registry.disconnect_huddle_audio(
+                community_a,
+                huddle,
+                Some(&removed),
+                HuddleAudioEnd::Removed
+            ),
+            1
+        );
+        assert!(removed_peer.cancellation_token().is_cancelled());
+        assert_eq!(
+            *removed_peer.disconnect_reason().borrow(),
+            Some(CommunityDisconnectReason::RemovedFromHuddle)
+        );
+        let frame = frame_text(&mut removed_rx).expect("removal frame");
+        assert_eq!(frame["code"], "removed_from_huddle");
+        assert_eq!(frame["message"], "not a member");
+        for untouched in [&kept_peer, &elsewhere, &other_tenant, &root_socket] {
+            assert!(!untouched.cancellation_token().is_cancelled());
+        }
+
+        // An end cuts every audio socket of the huddle; the first reason wins.
+        assert_eq!(
+            registry.disconnect_huddle_audio(community_a, huddle, None, HuddleAudioEnd::Ended),
+            2
+        );
+        assert!(kept_peer.cancellation_token().is_cancelled());
+        assert_eq!(
+            frame_text(&mut kept_rx).expect("end frame")["code"],
+            "room_ended"
+        );
+        assert_eq!(
+            *removed_peer.disconnect_reason().borrow(),
+            Some(CommunityDisconnectReason::RemovedFromHuddle)
+        );
+        assert!(frame_text(&mut removed_rx).is_none());
+        for untouched in [&elsewhere, &other_tenant, &root_socket] {
+            assert!(!untouched.cancellation_token().is_cancelled());
+        }
+        assert!(!registry.has_huddle_audio(community_a, other_huddle, Some(&kept)));
     }
 
     #[test]
