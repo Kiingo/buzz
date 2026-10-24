@@ -12,7 +12,10 @@
 
 use buzz_audio_client::encoder::{AudioEncoder, FRAME_SAMPLES};
 use futures_util::{SinkExt, StreamExt};
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tokio_tungstenite::tungstenite::Message as WsMsg;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -117,6 +120,7 @@ pub(crate) async fn connect_audio_relay(
         remote_stt_pipeline,
         agent_pubkeys,
         human_floor,
+        huddle_generation,
     ) = {
         let hs = state.huddle()?;
         (
@@ -126,6 +130,7 @@ pub(crate) async fn connect_audio_relay(
             Arc::clone(&hs.remote_stt_pipeline),
             Arc::clone(&hs.agent_pubkeys),
             hs.human_floor.clone(),
+            hs.huddle_generation,
         )
     };
 
@@ -145,8 +150,9 @@ pub(crate) async fn connect_audio_relay(
         .unwrap_or_else(|e| e.into_inner())
         .clone();
 
+    let audio_channel_id = channel_id.to_owned();
     tokio::spawn(async move {
-        if let Err(e) = audio_relay_pipeline(AudioRelayPipelineArgs {
+        let terminal = match audio_relay_pipeline(AudioRelayPipelineArgs {
             ws_tx,
             ws_rx,
             pcm_rx,
@@ -163,16 +169,39 @@ pub(crate) async fn connect_audio_relay(
         })
         .await
         {
-            eprintln!("buzz-desktop: audio relay pipeline exited: {e}");
-        }
+            Ok(terminal) => terminal,
+            Err(e) => {
+                eprintln!("buzz-desktop: audio relay pipeline exited: {e}");
+                false
+            }
+        };
 
         // Only emit the disconnect event for UNEXPECTED exits.
         // Skip if already cancelled (teardown_huddle in progress).
         if !cancel_clone.is_cancelled() {
             cancel_clone.cancel();
             if let Some(ref app) = app_handle {
-                use tauri::Emitter;
-                let _ = app.emit("huddle-audio-disconnected", ());
+                use tauri::{Emitter, Manager};
+                // A socket from an earlier leave/rejoin of the same channel
+                // must not terminate or reconnect the replacement huddle.
+                let app_state = app.state::<AppState>();
+                let current_huddle = app_state.huddle();
+                if let Ok(huddle) = current_huddle {
+                    if huddle.huddle_generation == huddle_generation
+                        && huddle.ephemeral_channel_id.as_deref() == Some(audio_channel_id.as_str())
+                        && !matches!(
+                            huddle.phase,
+                            super::HuddlePhase::Idle | super::HuddlePhase::Leaving
+                        )
+                    {
+                        let _ = app.emit(
+                            "huddle-audio-disconnected",
+                            serde_json::json!({
+                                "channelId": audio_channel_id, "terminal": terminal,
+                            }),
+                        );
+                    }
+                }
             }
         }
     });
@@ -356,7 +385,7 @@ struct AudioRelayPipelineArgs {
     output_device_name: Option<String>,
 }
 
-async fn audio_relay_pipeline(args: AudioRelayPipelineArgs) -> Result<(), String> {
+async fn audio_relay_pipeline(args: AudioRelayPipelineArgs) -> Result<bool, String> {
     let AudioRelayPipelineArgs {
         ws_tx,
         ws_rx,
@@ -422,6 +451,7 @@ async fn audio_relay_pipeline(args: AudioRelayPipelineArgs) -> Result<(), String
         let _ = tx.send(WsMsg::Close(None)).await;
     });
 
+    let terminal_exit = Arc::new(AtomicBool::new(false));
     let recv_task = tokio::spawn(super::playout::run_playout_recv_loop(
         ws_rx,
         ws_tx,
@@ -435,6 +465,7 @@ async fn audio_relay_pipeline(args: AudioRelayPipelineArgs) -> Result<(), String
         remote_stt_pipeline,
         agent_pubkeys,
         human_floor,
+        Arc::clone(&terminal_exit),
     ));
 
     // Wait for either task to finish, then abort the survivor.
@@ -444,7 +475,7 @@ async fn audio_relay_pipeline(args: AudioRelayPipelineArgs) -> Result<(), String
         Either::Right((_, send_handle)) => send_handle.abort(),
     }
 
-    Ok(())
+    Ok(terminal_exit.load(Ordering::Acquire))
 }
 
 /// Fetch channel members with roles from the relay. Returns (pubkey, role) tuples.

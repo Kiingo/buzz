@@ -28,6 +28,14 @@ use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message as WsMsg;
+
+fn is_terminal_audio_error(frame: &serde_json::Value) -> bool {
+    frame["type"] == "error"
+        && matches!(
+            frame["code"].as_str(),
+            Some("removed_from_huddle" | "room_ended")
+        )
+}
 use tokio_util::sync::CancellationToken;
 
 use super::human_floor::HumanFloor;
@@ -283,6 +291,7 @@ pub(crate) async fn run_playout_recv_loop(
     remote_stt_pipeline: Arc<std::sync::Mutex<Option<std::sync::Weak<super::stt::SttPipeline>>>>,
     agent_pubkeys: Arc<std::sync::Mutex<Vec<String>>>,
     human_floor: HumanFloor,
+    terminal_exit: Arc<AtomicBool>,
 ) {
     use rodio::buffer::SamplesBuffer;
     use std::num::NonZero;
@@ -538,6 +547,10 @@ pub(crate) async fn run_playout_recv_loop(
                     }
                     Some(Ok(WsMsg::Text(text))) => {
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if is_terminal_audio_error(&v) {
+                                terminal_exit.store(true, Ordering::Release);
+                                break;
+                            }
                             match v["type"].as_str() {
                                 Some("joined") => {
                                     if let Some(peer_list) = v["peers"].as_array() {
@@ -668,6 +681,25 @@ pub(crate) async fn run_playout_recv_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_huddle_errors_are_distinct_from_recoverable_audio_errors() {
+        for code in ["removed_from_huddle", "room_ended"] {
+            assert!(is_terminal_audio_error(
+                &serde_json::json!({"type": "error", "code": code})
+            ));
+            assert!(!is_terminal_audio_error(
+                &serde_json::json!({"type": "joined", "code": code})
+            ));
+        }
+        for frame in [
+            serde_json::json!({"type": "error", "code": "owner_unavailable"}),
+            serde_json::json!({"type": "error"}),
+            serde_json::json!(null),
+        ] {
+            assert!(!is_terminal_audio_error(&frame));
+        }
+    }
 
     #[test]
     fn continuous_silence_does_not_extend_remote_floor_deadline() {

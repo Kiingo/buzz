@@ -352,6 +352,53 @@ pub async fn is_member_in_transaction(
     Ok(cnt > 0)
 }
 
+async fn query_huddle_rejoin_blocked<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    pubkey: &[u8],
+) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM channel_members \
+         WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3 \
+         AND removed_at IS NOT NULL AND removed_by IS DISTINCT FROM pubkey)",
+    )
+    .bind(community_id.as_uuid())
+    .bind(channel_id)
+    .bind(pubkey)
+    .fetch_one(executor)
+    .await?)
+}
+
+/// Whether huddle auto-admission would override another actor's removal.
+///
+/// A known self-leave may rejoin. Unknown removal provenance fails closed;
+/// an explicit authorized add clears both removal fields and permits rejoin.
+pub async fn huddle_rejoin_blocked(
+    pool: &PgPool,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    pubkey: &[u8],
+) -> Result<bool> {
+    let mut connection = crate::observability::acquire_writer(
+        pool,
+        crate::observability::WriterOperation::Authorization,
+    )
+    .await?;
+    query_huddle_rejoin_blocked(&mut *connection, community_id, channel_id, pubkey).await
+}
+
+/// Recheck huddle removal on the caller's admitted join transaction.
+/// The caller must hold the channel membership lock through the join commit.
+pub async fn huddle_rejoin_blocked_in_transaction(
+    tx: &mut AdmittedTx,
+    channel_id: Uuid,
+    pubkey: &[u8],
+) -> Result<bool> {
+    let community_id = tx.community();
+    query_huddle_rejoin_blocked(tx.conn(), community_id, channel_id, pubkey).await
+}
+
 /// Auto-add a member on a caller-owned transaction (for ephemeral-channel admission).
 ///
 /// Inserts or reactivates the membership row at `Member` role with the given
@@ -1863,6 +1910,17 @@ impl Db {
         pubkey: &[u8],
     ) -> Result<bool> {
         is_member(&self.pool, community_id, channel_id, pubkey).await
+    }
+
+    /// Whether huddle auto-admission would override an external removal.
+    #[datastore_span(name = "huddle_rejoin_blocked", system = "postgresql")]
+    pub async fn huddle_rejoin_blocked(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        huddle_rejoin_blocked(&self.pool, community_id, channel_id, pubkey).await
     }
 
     /// Returns `true` when the member row still has `removed_at IS NOT NULL`,

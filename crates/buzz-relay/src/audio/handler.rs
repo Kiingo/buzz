@@ -1766,10 +1766,12 @@ pub(crate) async fn handle_active_audio_connection(
             .await;
             return;
         }
-        Err(JoinCommitError::ParentMembershipLost) => {
-            // Parent membership revoked between pre-join check and commit (IMPORTANT 4).
+        Err(
+            refusal @ (JoinCommitError::ParentMembershipLost | JoinCommitError::RemovedFromHuddle),
+        ) => {
+            // Membership revoked between pre-join check and commit.
             // No `joined` frame was sent — commit-won invariant holds.
-            warn!(channel_id = %channel_id, pubkey = %pubkey_hex, "parent membership lost before join commit");
+            warn!(channel_id = %channel_id, pubkey = %pubkey_hex, "membership lost before join commit: {refusal}");
             // IMPORTANT 3: cancel + await expiry task before peer/room teardown.
             cancel.cancel();
             if let Some(t) = _nip_fi_admission_expiry.take() {
@@ -1789,7 +1791,11 @@ pub(crate) async fn handle_active_audio_connection(
                 &mut terminal_ctrl_rx,
                 nip_fi_assertion.is_some(),
                 buzz_auth::DenialClass::AuthorizationDenied,
-                serde_json::json!({"type": "error", "message": "error: not a member"}),
+                if matches!(refusal, JoinCommitError::RemovedFromHuddle) {
+                    AdmissionRefusal::RemovedFromHuddle.off_mode_frame()
+                } else {
+                    serde_json::json!({"type": "error", "message": "error: not a member"})
+                },
             )
             .await;
             return;
@@ -2768,6 +2774,7 @@ impl HuddleAdmissionGuard {
 #[derive(Debug)]
 enum AdmissionRefusal {
     Denied(&'static str),
+    RemovedFromHuddle,
     /// The caller may read the channel, but it is a permanent channel (no
     /// TTL), not a huddle's ephemeral backing channel. Huddle audio only runs
     /// in ephemeral huddle channels, so a direct join to a DM, group or stream
@@ -2784,7 +2791,9 @@ pub(crate) const NOT_A_HUDDLE_CHANNEL_CODE: &str = "not_a_huddle_channel";
 impl AdmissionRefusal {
     fn denial_class(&self) -> buzz_auth::DenialClass {
         match self {
-            Self::Denied(_) | Self::NotHuddleChannel => buzz_auth::DenialClass::AuthorizationDenied,
+            Self::Denied(_) | Self::NotHuddleChannel | Self::RemovedFromHuddle => {
+                buzz_auth::DenialClass::AuthorizationDenied
+            }
             Self::Dependency(_) => buzz_auth::DenialClass::AuthorizationUnavailable,
         }
     }
@@ -2792,6 +2801,9 @@ impl AdmissionRefusal {
     /// The legacy (non-NIP-FI) error frame for this refusal.
     fn off_mode_frame(&self) -> serde_json::Value {
         match self {
+            Self::RemovedFromHuddle => serde_json::json!({
+                "type": "error", "code": "removed_from_huddle", "message": "not a member",
+            }),
             Self::NotHuddleChannel => serde_json::json!({
                 "type": "error",
                 "code": NOT_A_HUDDLE_CHANNEL_CODE,
@@ -2808,6 +2820,7 @@ impl std::fmt::Display for AdmissionRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Denied(reason) => f.write_str(reason),
+            Self::RemovedFromHuddle => f.write_str("removed from huddle"),
             Self::NotHuddleChannel => f.write_str("not a huddle channel"),
             Self::Dependency(e) => write!(f, "db error: {e}"),
         }
@@ -2963,6 +2976,18 @@ async fn check_membership_for_admission(
         ));
     }
 
+    // A cached active membership or parent membership cannot undo a removal.
+    // Re-read durable provenance even for an open huddle; commit checks again
+    // under the same lock as removal and explicit re-invitation.
+    if state
+        .db
+        .huddle_rejoin_blocked(tenant.community(), channel_id, pubkey_bytes)
+        .await
+        .map_err(AdmissionRefusal::Dependency)?
+    {
+        return Err(AdmissionRefusal::RemovedFromHuddle);
+    }
+
     // Fast path: already a member.
     let is_member = state
         .is_member_cached(tenant.community(), channel_id, pubkey_bytes)
@@ -3030,6 +3055,8 @@ pub(crate) enum JoinCommitError {
     Archived,
     /// Parent membership was revoked between pre-join check and commit (IMPORTANT 4).
     ParentMembershipLost,
+    /// Another actor removed this member after the admission precheck.
+    RemovedFromHuddle,
     /// Creator-signed huddle_started link was deleted between pre-join check
     /// and commit (IMPORTANT 4 residual: third carried fact).
     HuddleLinkGone,
@@ -3044,6 +3071,7 @@ impl std::fmt::Display for JoinCommitError {
             JoinCommitError::ParentMembershipLost => {
                 write!(f, "parent membership revoked before commit")
             }
+            JoinCommitError::RemovedFromHuddle => write!(f, "removed from huddle before commit"),
             JoinCommitError::HuddleLinkGone => {
                 write!(f, "huddle_started creator link gone before commit")
             }
@@ -3194,6 +3222,30 @@ async fn commit_participant_join(
         return Err(JoinCommitError::Archived);
     }
 
+    // Removal must serialize with every join, including a cached Existing
+    // admission. If join wins, removal runs afterward and evicts the socket;
+    // if removal wins, this transaction cannot reactivate or publish a join.
+    #[cfg(test)]
+    if matches!(
+        membership_admission,
+        MembershipAdmission::AutoAddRequired { .. }
+    ) {
+        crate::nip_fi_test_hooks::before_membership_lock(tenant.community()).await;
+    }
+    buzz_db::channel_members::acquire_channel_membership_lock_in_transaction(&mut tx, channel_id)
+        .await?;
+    if buzz_db::channel_members::huddle_rejoin_blocked_in_transaction(
+        &mut tx,
+        channel_id,
+        pubkey_bytes,
+    )
+    .await?
+    {
+        retire_shadow();
+        let _ = tx.rollback().await;
+        return Err(JoinCommitError::RemovedFromHuddle);
+    }
+
     // 4. Under the channel membership lock: re-validate authority + auto-add if
     //    still absent. The AutoAddRequired path carries stale authority from
     //    check_membership_for_admission; the lock serialises all membership writes
@@ -3203,19 +3255,6 @@ async fn commit_participant_join(
         channel_created_by,
     } = membership_admission
     {
-        // Test hook: fires immediately before the channel membership lock is
-        // acquired. A test can insert a membership row externally here to prove
-        // the concurrent-add case is handled (re-read observes it → still_absent
-        // = false → auto-add insert is skipped → membership preserved).
-        // [nip_fi_test_hooks::audio_membership_lock_hook]
-        #[cfg(test)]
-        crate::nip_fi_test_hooks::before_membership_lock(tenant.community()).await;
-
-        buzz_db::channel_members::acquire_channel_membership_lock_in_transaction(
-            &mut tx, channel_id,
-        )
-        .await?;
-
         // IMPORTANT 4a: Re-read channel archive state under the lock. A channel
         // could be archived in the window between check_membership_for_admission
         // and now; committing a join into an archived channel violates the
@@ -7323,6 +7362,8 @@ mod tests {
 
     mod postgres_tests {
         use super::*;
+
+        include!("huddle_removal_postgres_tests.rs");
 
         // A paired, deny-clean audio AUTH refused by ordinary policy, relay
         // membership on a closed relay or channel membership, is never

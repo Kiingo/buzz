@@ -6,6 +6,7 @@ import { setupAudioWorklet, type AudioWorkletHandle } from "./lib/audioWorklet";
 import { type AudioInputDevice, useAudioDevices } from "./lib/useAudioDevices";
 import { usePipelineHotstart } from "./lib/usePipelineHotstart";
 import { formatHuddleActionError } from "./lib/huddleError";
+import { huddleAudioDisconnectAction } from "./lib/huddleAudioDisconnect";
 import {
   type VoiceInputMode,
   useHuddlePttState,
@@ -844,8 +845,24 @@ export function HuddleProvider({
 
     let cancelled = false;
     let unlisten: (() => void) | null = null;
-    listen("huddle-audio-disconnected", () => {
-      if (cancelled || audioReconnectInFlightRef.current) return;
+    const disconnectToken = tokenRef.current;
+    listen("huddle-audio-disconnected", ({ payload }) => {
+      if (
+        cancelled ||
+        tokenRef.current !== disconnectToken ||
+        ephemeralChannelIdRef.current !== ephemeralChannelId
+      )
+        return;
+      const action = huddleAudioDisconnectAction(
+        payload,
+        ephemeralChannelIdRef.current,
+      );
+      if (action === "ignore") return;
+      if (action === "leave") {
+        void leaveHuddleRef.current();
+        return;
+      }
+      if (audioReconnectInFlightRef.current) return;
       audioReconnectInFlightRef.current = true;
       const reconnectToken = tokenRef.current;
 
@@ -888,7 +905,7 @@ export function HuddleProvider({
       cancelled = true;
       unlisten?.();
     };
-  }, [ownsAudioSession]);
+  }, [ephemeralChannelId, ownsAudioSession]);
 
   // High-frequency (20-30 Hz) audio levels live in their own context so their
   // churn re-renders only the meter components, not every useHuddle consumer.
