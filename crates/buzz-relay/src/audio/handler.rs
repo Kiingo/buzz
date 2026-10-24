@@ -888,6 +888,33 @@ pub(crate) async fn handle_active_audio_connection(
             .await
         }
     };
+    // A creator-admitted removal that committed between the membership check
+    // and the bind above could not reach this socket; re-read admission now
+    // that any later removal will.
+    if denial.is_none()
+        && crate::huddle_creator_admitted::denies_bound_socket(
+            &state,
+            tenant.community(),
+            channel_id,
+            parent_id_for_event,
+            &pubkey_bytes,
+        )
+        .await
+    {
+        shadow_attempt.refused();
+        let refusal = AdmissionRefusal::Denied("not admitted by the huddle creator");
+        warn!(channel_id = %channel_id, pubkey = %pubkey_hex, "audio: denied at bound creator-admitted check");
+        exit_authorization_refusal(
+            &mut ws_send,
+            &control,
+            &mut terminal_ctrl_rx,
+            nip_fi_assertion.is_some(),
+            refusal.denial_class(),
+            refusal.off_mode_frame(),
+        )
+        .await;
+        return;
+    }
     if let Some(denial) = denial {
         shadow_attempt.refused();
         let (class, message) = (denial.class, denial.reason);
@@ -2577,6 +2604,8 @@ async fn membership_recheck_loop(
         MEMBERSHIP_RECHECK_INTERVAL,
     );
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Creator-admitted rule, failing closed on unreadable state.
+    let mut creator_admitted = crate::huddle_creator_admitted::AudioRecheck::new();
     loop {
         tokio::select! {
             _ = interval.tick() => {
@@ -2585,6 +2614,13 @@ async fn membership_recheck_loop(
                         .apply_huddle_audio_end(community_id, channel_id, Some(pubkey.clone()))
                         .await
                         > 0
+                {
+                    break;
+                }
+                if creator_admitted
+                    .tick(&state, community_id, channel_id, &pubkey)
+                    .await
+                    > 0
                 {
                     break;
                 }
@@ -2986,6 +3022,35 @@ async fn check_membership_for_admission(
         .map_err(AdmissionRefusal::Dependency)?
     {
         return Err(AdmissionRefusal::RemovedFromHuddle);
+    }
+
+    // A creator-admitted huddle admits only the creator and the members the
+    // creator put, while they stay in the parent: no open shortcut, no parent
+    // auto-add, nobody once it has expired.
+    let creator_admitted =
+        crate::huddle_creator_admitted::load(state, tenant.community(), &channel)
+            .await
+            .map_err(|_| AdmissionRefusal::Denied("creator-admitted huddle unreadable"))?;
+    if let Some(mark) = creator_admitted {
+        let admitted = crate::huddle_creator_admitted::admits(
+            state,
+            tenant.community(),
+            &channel,
+            mark,
+            lifecycle_parent_id,
+            pubkey_bytes,
+        )
+        .await
+        .map_err(AdmissionRefusal::Dependency)?;
+        return if admitted {
+            Ok(MembershipAdmission::Existing {
+                parent_channel_id: lifecycle_parent_id,
+            })
+        } else {
+            Err(AdmissionRefusal::Denied(
+                "not admitted by the huddle creator",
+            ))
+        };
     }
 
     // Fast path: already a member.
@@ -7364,6 +7429,8 @@ mod tests {
         use super::*;
 
         include!("huddle_removal_postgres_tests.rs");
+        include!("huddle_creator_admitted_postgres_tests.rs");
+        include!("huddle_service_postgres_tests.rs");
 
         // A paired, deny-clean audio AUTH refused by ordinary policy, relay
         // membership on a closed relay or channel membership, is never

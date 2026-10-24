@@ -1314,7 +1314,24 @@ async fn submit_event_authed(
     // Typing pulses arrive every few seconds per working agent, so their ban
     // check uses the same short-TTL cache as their write-restriction check.
     let auth_tag = super::relay_members::extract_auth_tag_header(headers);
-    let membership = if is_typing {
+    // A huddle service identity has no relay membership: `POST /events` is
+    // its only door, and ingest limits it to its narrow allowlist. Typing
+    // pulses skip ingest, so they are refused here.
+    let huddle_service =
+        crate::huddle_creator_admitted::is_service_key(&state.config, &pubkey_bytes);
+    if huddle_service && is_typing {
+        let response = api_error(
+            StatusCode::FORBIDDEN,
+            "restricted: a huddle service identity may not publish this kind",
+        );
+        return SubmitOutcome::Err {
+            status: response.0,
+            response,
+        };
+    }
+    let membership = if huddle_service {
+        Ok(None)
+    } else if is_typing {
         super::relay_members::enforce_relay_membership_ephemeral(
             state,
             tenant.community(),

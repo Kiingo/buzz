@@ -2117,6 +2117,30 @@
         "desktop/src/features/home/ui/inboxReopenNavigation.test.mjs",
         "desktop/src/features/projects/ui/useRetainedProjectGitViews.test.mjs"
       ]
+    },
+    {
+      "id": "huddle-creator-admitted-2026-10-24",
+      "classification": "retain-generic",
+      "owner": "Buzz relay maintainers",
+      "purpose": "Creator-admitted huddle backing channels. A kind 9007 tagged [\"admission\", \"creator\", <parent channel id>] (private, TTL-bound, creator an active parent member) fixes its mark at creation; no kind 9002 adds, changes or clears it. Only the creator puts (kind 9000, target must be an active parent member) or removes (kind 9001); members leave with kind 9022; parent owners and admins may still delete it (kind 9008). Audio admits the creator and creator-put members (invited_by stamped by the relay from the put's signer) while they stay in the parent, with no parent auto-add or open shortcut and nobody once expired; the periodic audio re-check enforces the same rule. A kind 9001 or 9022 on such a channel answers OK only after the member's local audio socket closed and the end was published to the other pods; otherwise the socket is force-dropped and the OK carries the warning \"warning: live audio close not confirmed\". Opaque call and epoch tags on puts are echoed in the kind 39002 roster as [\"put\", member, call, epoch]. The audio re-check retries an unreadable mark each tick and disconnects after three consecutive failures, and admission is re-checked after the socket is bound. Huddle service identities (BUZZ_HUDDLE_SERVICE_PUBKEYS, advertised in NIP-11 as huddle_service_pubkeys) run creator-admitted huddles without membership: NIP-98 POST /events only, marked kind 9007, kind 9000/9001/9008 on marked channels they created (puts for active parent members, member role only), and one kind 48100 then one kind 48103 per backing channel they created; everything else is refused, they are never admitted to audio and appear in no roster. Desktop and mobile render their huddle notices as system notices. Also touches crates/buzz-relay/src/lib.rs, crates/buzz-relay/src/handlers/ingest.rs, crates/buzz-relay/src/handlers/side_effects.rs, crates/buzz-relay/src/state.rs, crates/buzz-relay/src/audio/handler.rs, crates/buzz-relay/src/api/mod.rs, crates/buzz-relay/src/api/bridge.rs, crates/buzz-db/src/lib.rs, crates/buzz-db/src/store/mod.rs, crates/buzz-db/src/store/channel_members.rs, .env.example, desktop/src/features/messages/ui/TimelineMessageRow.tsx and mobile/lib/shared/huddle/huddle.dart, which other deltas already own.",
+      "upstreamStatus": "Generic NIP-29 huddle admission mode; candidate for block/buzz.",
+      "removalCondition": "Drop once upstream ships an equivalent creator-controlled huddle admission mode.",
+      "paths": [
+        "crates/buzz-db/src/store/huddle_admission.rs",
+        "crates/buzz-relay/src/huddle_creator_admitted.rs",
+        "crates/buzz-relay/src/audio/huddle_creator_admitted_postgres_tests.rs",
+        "crates/buzz-relay/src/audio/huddle_service_postgres_tests.rs",
+        "crates/buzz-relay/src/config.rs",
+        "crates/buzz-relay/src/nip11.rs",
+        "docs/huddle-creator-admission.md",
+        "desktop/src/features/huddle/components/HuddleServiceNotice.tsx",
+        "desktop/src/features/huddle/hooks/useHuddleServicePubkeys.ts",
+        "desktop/src/features/huddle/lib/huddleService.ts",
+        "desktop/src/features/huddle/lib/huddleService.test.mjs",
+        "mobile/lib/features/channels/channel_detail_page/system_rows.dart",
+        "mobile/lib/shared/huddle/huddle_service_identity.dart",
+        "mobile/test/shared/huddle/huddle_service_identity_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [

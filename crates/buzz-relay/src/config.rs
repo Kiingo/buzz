@@ -289,6 +289,16 @@ pub struct Config {
     /// skipped — a typo must not silently disable an operator.
     pub relay_operator_pubkeys: Vec<String>,
 
+    /// Huddle service identities: keys that may run creator-admitted huddles
+    /// in any channel without being a member of it, and may publish nothing
+    /// else. They need no relay membership, appear in no roster or directory,
+    /// and are advertised in NIP-11 so clients render their huddle notices as
+    /// system notices. See `huddle_creator_admitted` for the exact allowance.
+    ///
+    /// Set via `BUZZ_HUDDLE_SERVICE_PUBKEYS` as a comma-separated list of
+    /// 64-char hex pubkeys. Invalid entries are a config error.
+    pub huddle_service_pubkeys: Vec<[u8; 32]>,
+
     /// Configured operator-listener identities and their HTTP(S) delivery URLs.
     pub operator_listener_delivery_urls: HashMap<String, url::Url>,
 
@@ -455,6 +465,30 @@ fn rate_limit_config_from_env() -> Result<buzz_auth::RateLimitConfig, ConfigErro
             defaults.agent_platform_messages_per_min,
         )?,
     })
+}
+
+/// Parse `BUZZ_HUDDLE_SERVICE_PUBKEYS`: comma-separated 64-char hex keys,
+/// deduplicated. An invalid entry is an error, never skipped.
+fn parse_huddle_service_pubkeys(raw: Option<&str>) -> Result<Vec<[u8; 32]>, ConfigError> {
+    let mut keys: Vec<[u8; 32]> = Vec::new();
+    for entry in raw.unwrap_or_default().split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let key = hex::decode(entry)
+            .ok()
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .ok_or_else(|| {
+                ConfigError::InvalidValue(format!(
+                    "BUZZ_HUDDLE_SERVICE_PUBKEYS entry is not a valid 64-char hex pubkey: {entry:?}"
+                ))
+            })?;
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    Ok(keys)
 }
 
 fn parse_operator_api_origin(raw: &str) -> Result<String, ConfigError> {
@@ -864,6 +898,9 @@ impl Config {
             }
             Err(_) => Vec::new(),
         };
+        let huddle_service_pubkeys = parse_huddle_service_pubkeys(
+            std::env::var("BUZZ_HUDDLE_SERVICE_PUBKEYS").ok().as_deref(),
+        )?;
         if !relay_operator_pubkeys.is_empty() && relay_operator_api_origin.is_none() {
             // Do NOT fail closed at boot: RELAY_OPERATOR_PUBKEYS is the shared
             // allowlist for BOTH the community-provisioning endpoints and the
@@ -1409,6 +1446,7 @@ impl Config {
             relay_owner_pubkey,
             relay_operator_api_origin,
             relay_operator_pubkeys,
+            huddle_service_pubkeys,
             operator_listener_delivery_urls,
             allow_nip_oa_auth,
             klipy,

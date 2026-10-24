@@ -181,6 +181,12 @@ pub mod relay_members {
         signed_auth_created_at: Option<u64>,
         writer: bool,
     ) -> Result<MembershipDecision, String> {
+        // A huddle service identity is admitted only by `POST /events`, which
+        // skips this check for it; everywhere else it is no member, even on
+        // an open relay.
+        if crate::huddle_creator_admitted::is_service_key(&state.config, pubkey_bytes) {
+            return Ok(MembershipDecision::Denied);
+        }
         if !state.config.require_relay_membership {
             return Ok(MembershipDecision::OpenRelay);
         }

@@ -557,6 +557,35 @@ impl CommunityConnectionRegistry {
         closed
     }
 
+    /// Cancel `pubkey`'s audio sockets in `channel_id` and drop their
+    /// registrations without waiting for the socket tasks to exit. Used when
+    /// a cancelled socket has not deregistered within its close deadline;
+    /// returns how many registrations were dropped.
+    pub(crate) fn force_drop_huddle_audio(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: &[u8],
+    ) -> usize {
+        let stuck: Vec<Uuid> = self
+            .connections
+            .iter()
+            .filter(|entry| {
+                let (community, control) = entry.value();
+                *community == community_id && control.matches_huddle_audio(channel_id, Some(pubkey))
+            })
+            .map(|entry| *entry.key())
+            .collect();
+        let mut dropped = 0;
+        for connection_id in stuck {
+            if let Some((_, (_, control))) = self.connections.remove(&connection_id) {
+                control.end_huddle_audio(HuddleAudioEnd::Removed);
+                dropped += 1;
+            }
+        }
+        dropped
+    }
+
     /// Whether this pod holds an audio socket that
     /// [`Self::disconnect_huddle_audio`] with the same arguments would cut.
     pub fn has_huddle_audio(
@@ -3314,6 +3343,25 @@ pub(crate) mod tests {
         config.redis_url = "redis://127.0.0.1:1".to_string();
         config.database_url = database_url.to_owned();
         config.read_database_url = None;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(100))
+            .connect_lazy(&config.database_url)
+            .expect("lazy pg pool");
+        build_test_state(config, pool).await
+    }
+
+    /// [`test_state_with_database_url`] with `services` configured as huddle
+    /// service identities.
+    pub(crate) async fn test_state_with_huddle_services(
+        database_url: &str,
+        services: &[[u8; 32]],
+    ) -> Arc<AppState> {
+        let mut config = crate::config::Config::for_test();
+        config.require_relay_membership = false;
+        config.redis_url = "redis://127.0.0.1:1".to_string();
+        config.database_url = database_url.to_owned();
+        config.read_database_url = None;
+        config.huddle_service_pubkeys = services.to_vec();
         let pool = sqlx::postgres::PgPoolOptions::new()
             .acquire_timeout(std::time::Duration::from_millis(100))
             .connect_lazy(&config.database_url)
