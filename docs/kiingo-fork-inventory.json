@@ -2075,6 +2075,17 @@
       "purpose": "RUSTSEC-2026-0387 (crypto-bigint 0.5 constant-time issues): buzz-push-gateway moves from p256 0.13 to p256 0.14 (elliptic-curve 0.14, crypto-bigint 0.7.6). The only code change is the renamed SEC1 trait (ToEncodedPoint::to_encoded_point to ToSec1Point::to_sec1_point) in App Attest public-key parsing and its tests. The deny.toml advisory ignore is removed in the same change.",
       "removalCondition": "Drop when upstream buzz-push-gateway is on p256 0.14 or later.",
       "upstreamStatus": "Generic dependency security bump; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz runtime maintainers",
+      "paths": [
+        "crates/buzz-acp/src/git.rs",
+        "crates/buzz-acp/tests/git_bootstrap.rs"
+      ],
+      "purpose": "BUZZ_GIT_IDENTITY=off: the harness installs no Git state at all. No buzz-acp-git-* tempdir, no keyfile, no credential or signing helper links, no PATH entry and no GIT_CONFIG block; agent shells keep the inherited Git configuration and the key stays in process env only. The resolved mode is forwarded so nested harnesses stay off. Tests cover the selector, the MCP env block and a process-level check that nothing named buzz-acp-git-* and no file holding the key exists under TMPDIR or HOME while the harness runs.",
+      "removalCondition": "Drop when upstream BUZZ_GIT_IDENTITY offers an equivalent off mode.",
+      "upstreamStatus": "Generic, provider-neutral operator switch; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [

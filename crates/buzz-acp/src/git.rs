@@ -6,7 +6,8 @@ use zeroize::Zeroizing;
 
 /// Keep this guard alive until the adapter pool has shut down.
 pub(crate) struct GitEnvironment {
-    _dir: TempDir,
+    /// `None` in `off` mode, which creates nothing on disk.
+    _dir: Option<TempDir>,
     pub(crate) env: Vec<(String, String)>,
 }
 
@@ -28,8 +29,11 @@ impl GitEnvironment {
         relay_url: &str,
         executable: &Path,
     ) -> anyhow::Result<Self> {
-        let agent = GitIdentityMode::from_value(std::env::var_os(GIT_IDENTITY_ENV).as_deref())?
-            == GitIdentityMode::Agent;
+        let mode = GitIdentityMode::from_value(std::env::var_os(GIT_IDENTITY_ENV).as_deref())?;
+        if mode == GitIdentityMode::Off {
+            return Ok(Self::off(keys, relay_url));
+        }
+        let agent = mode == GitIdentityMode::Agent;
         let dir = tempfile::Builder::new().prefix("buzz-acp-git-").tempdir()?;
         set_owner_only(dir.path())?;
         symlink(executable, &dir.path().join("git-credential-nostr"))?;
@@ -104,7 +108,25 @@ impl GitEnvironment {
             GIT_IDENTITY_ENV.into(),
             if agent { "agent" } else { "user" }.into(),
         ));
-        Ok(Self { _dir: dir, env })
+        Ok(Self {
+            _dir: Some(dir),
+            env,
+        })
+    }
+
+    /// `off`: no tempdir, keyfile, helper links, PATH entry or Git config
+    /// block. Git in agent shells behaves exactly as the inherited environment
+    /// configures it. The key stays in process env only, as the CLI needs it.
+    fn off(keys: &nostr::Keys, relay_url: &str) -> Self {
+        let secret = Zeroizing::new(keys.secret_key().to_secret_hex());
+        Self {
+            _dir: None,
+            env: vec![
+                ("BUZZ_PRIVATE_KEY".into(), secret.to_string()),
+                ("BUZZ_RELAY_URL".into(), relay_url.to_owned()),
+                (GIT_IDENTITY_ENV.into(), "off".into()),
+            ],
+        }
     }
 }
 
@@ -140,18 +162,22 @@ enum GitIdentityMode {
     Agent,
     /// The operator's own git config authors commits; only relay auth is kept.
     User,
+    /// No harness Git setup at all: nothing is written to disk and relay Git
+    /// auth is not installed.
+    Off,
 }
 
 impl GitIdentityMode {
-    /// Unset means `Agent`; any value other than `agent` or `user` is an error
-    /// rather than a silent fallback.
+    /// Unset means `Agent`; any value other than `agent`, `user` or `off` is
+    /// an error rather than a silent fallback.
     fn from_value(raw: Option<&std::ffi::OsStr>) -> anyhow::Result<Self> {
         match raw.map(|value| value.to_str()) {
             None => Ok(Self::Agent),
             Some(Some("agent")) => Ok(Self::Agent),
             Some(Some("user")) => Ok(Self::User),
+            Some(Some("off")) => Ok(Self::Off),
             Some(value) => anyhow::bail!(
-                "{GIT_IDENTITY_ENV} must be `agent` or `user`, got {:?}",
+                "{GIT_IDENTITY_ENV} must be `agent`, `user` or `off`, got {:?}",
                 value.unwrap_or("<non-UTF-8>")
             ),
         }
@@ -766,16 +792,23 @@ mod git_identity_mode_tests {
             GitIdentityMode::from_value(Some(OsStr::new("user"))).unwrap(),
             GitIdentityMode::User
         );
+        assert_eq!(
+            GitIdentityMode::from_value(Some(OsStr::new("off"))).unwrap(),
+            GitIdentityMode::Off
+        );
     }
 
     #[test]
-    fn unrecognized_value_names_the_variable_and_both_modes() {
-        for raw in ["", "User", "human"] {
+    fn unrecognized_value_names_the_variable_and_every_mode() {
+        for raw in ["", "User", "OFF", "none", "human"] {
             let err = GitIdentityMode::from_value(Some(OsStr::new(raw)))
                 .unwrap_err()
                 .to_string();
             assert!(
-                err.contains(GIT_IDENTITY_ENV) && err.contains("`agent`") && err.contains("`user`"),
+                err.contains(GIT_IDENTITY_ENV)
+                    && err.contains("`agent`")
+                    && err.contains("`user`")
+                    && err.contains("`off`"),
                 "{err}"
             );
         }
