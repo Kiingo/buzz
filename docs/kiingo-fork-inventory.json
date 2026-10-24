@@ -2075,6 +2075,37 @@
       "purpose": "RUSTSEC-2026-0387 (crypto-bigint 0.5 constant-time issues): buzz-push-gateway moves from p256 0.13 to p256 0.14 (elliptic-curve 0.14, crypto-bigint 0.7.6). The only code change is the renamed SEC1 trait (ToEncodedPoint::to_encoded_point to ToSec1Point::to_sec1_point) in App Attest public-key parsing and its tests. The deny.toml advisory ignore is removed in the same change.",
       "removalCondition": "Drop when upstream buzz-push-gateway is on p256 0.14 or later.",
       "upstreamStatus": "Generic dependency security bump; not yet submitted to block/buzz."
+    },
+    {
+      "id": "desktop-unit-fixes-2026-10-24",
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "purpose": "Desktop unit-test repairs. The respond-to picker again offers a pasted npub or hex key whatever the profile search returns and asks for the member picker's page size (25); an upstream sync had dropped that fork change. Desktop resolves linkifyjs 4.3.3, the version @tiptap/extension-link uses, so Link's onCreate registers the buzz protocol on the same linkify instance the composer and bare-link code read. The router-mounting tests expose jsdom's history, addEventListener and scrollTo, which TanStack Router's scroll restoration reads as bare globals when NODE_ENV=test resolves it as a client.",
+      "upstreamStatus": "Generic; the picker change and the test globals are candidates for block/buzz, the linkify pin follows the fork's tiptap version.",
+      "removalCondition": "Drop the picker change once upstream ships equivalent direct entry; drop the linkify pin when upstream desktop and tiptap resolve one linkifyjs; drop the test globals once upstream's router tests set them.",
+      "paths": [
+        "desktop/package.json",
+        "desktop/src/features/agents/ui/RespondToField.tsx",
+        "desktop/src/features/channels/openChannelDirectoryResolver.test.mjs",
+        "desktop/src/features/home/ui/inboxReopenNavigation.test.mjs",
+        "desktop/src/features/projects/ui/useRetainedProjectGitViews.test.mjs"
+      ]
+    },
+    {
+      "id": "huddle-removal-across-reconnect-2026-10-24",
+      "classification": "retain-generic",
+      "owner": "Buzz huddle maintainers",
+      "purpose": "An authorized removal from a huddle survives audio reconnect and parent-channel auto-admission: audio admission refuses an externally removed or unknown-provenance membership (rechecked under the membership lock, with re-invitation and self-leave/rejoin preserved), and the desktop treats the relay's terminal removal/ended frame as a leave instead of reconnecting. Inventory entry for the files that change added outside the existing deltas.",
+      "upstreamStatus": "Generic huddle correctness fix; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream keeps huddle removal across audio reconnect.",
+      "paths": [
+        "crates/buzz-relay/src/audio/huddle_removal_postgres_tests.rs",
+        "desktop/src-tauri/src/huddle/playout.rs",
+        "desktop/src-tauri/src/huddle/relay_api.rs",
+        "desktop/src/features/huddle/lib/huddleAudioDisconnect.test.mjs",
+        "desktop/src/features/huddle/lib/huddleAudioDisconnect.ts",
+        "docs/implementation-plans/M-4581-huddle-removal.md"
+      ]
     }
   ],
   "budgetAmendments": [
