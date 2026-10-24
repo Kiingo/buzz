@@ -2101,6 +2101,21 @@
       "purpose": "Preserve a member's removal from a huddle across audio reconnect and parent-channel auto-admission (M-4581). Audio admission refuses an externally removed or unknown-provenance membership (using channel_members.removed_by), rechecked under the membership lock for every join commit; explicit re-invitation and voluntary leave and rejoin still work. The desktop treats the relay's terminal removal or ended frame as leave instead of reconnecting. Also touches crates/buzz-db/src/store/channel_members.rs, crates/buzz-relay/src/audio/handler.rs and desktop/src/features/huddle/HuddleContext.tsx, which other deltas already own.",
       "removalCondition": "Drop when upstream audio admission honors member removal provenance and its desktop stops reconnecting after a terminal removal frame.",
       "upstreamStatus": "Generic, provider-neutral bug fix; not yet submitted to block/buzz."
+    },
+    {
+      "id": "desktop-unit-fixes-2026-10-24",
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "purpose": "Desktop unit-test repairs. The respond-to picker again offers a pasted npub or hex key whatever the profile search returns and asks for the member picker's page size (25); an upstream sync had dropped that fork change. Desktop resolves linkifyjs 4.3.3, the version @tiptap/extension-link uses, so Link's onCreate registers the buzz protocol on the same linkify instance the composer and bare-link code read. The router-mounting tests expose jsdom's history, addEventListener and scrollTo, which TanStack Router's scroll restoration reads as bare globals when NODE_ENV=test resolves it as a client.",
+      "upstreamStatus": "Generic; the picker change and the test globals are candidates for block/buzz, the linkify pin follows the fork's tiptap version.",
+      "removalCondition": "Drop the picker change once upstream ships equivalent direct entry; drop the linkify pin when upstream desktop and tiptap resolve one linkifyjs; drop the test globals once upstream's router tests set them.",
+      "paths": [
+        "desktop/package.json",
+        "desktop/src/features/agents/ui/RespondToField.tsx",
+        "desktop/src/features/channels/openChannelDirectoryResolver.test.mjs",
+        "desktop/src/features/home/ui/inboxReopenNavigation.test.mjs",
+        "desktop/src/features/projects/ui/useRetainedProjectGitViews.test.mjs"
+      ]
     }
   ],
   "budgetAmendments": [

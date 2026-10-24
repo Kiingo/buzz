@@ -271,24 +271,80 @@ String _normalizeProseLinks(String segment) {
   return _linkifyBareText(normalized);
 }
 
-// Markdown links produced above (and scheme URLs left as labels). Their
-// destinations never contain `)`: bare-link matches stop at it.
-final _markdownLinkPattern = RegExp(r'!?\[[^\]\n]*\]\([^)\s]*\)');
-
 /// Links bare domains, `www.` hosts, emails and phone numbers in prose that
 /// is outside every Markdown link (see `bare_links.dart`).
 String _linkifyBareText(String segment) {
   final result = StringBuffer();
   var offset = 0;
-  for (final link in _markdownLinkPattern.allMatches(segment)) {
+  for (final (start, end) in _markdownLinkSpans(segment)) {
     result
-      ..write(_linkifyPlain(segment.substring(offset, link.start)))
-      ..write(link[0]);
-    offset = link.end;
+      ..write(_linkifyPlain(segment.substring(offset, start)))
+      ..write(segment.substring(start, end));
+    offset = end;
   }
   result.write(_linkifyPlain(segment.substring(offset)));
   return result.toString();
 }
+
+/// Markdown links produced above (and scheme URLs left as labels): the
+/// non-overlapping, leftmost `!?[label](destination)` spans with no `]` or
+/// newline in the label and no `)` or whitespace in the destination (bare-link
+/// matches stop at `)`). The same spans as that regex, found in one pass: a
+/// regex scan restarts at every `[` and rereads the rest of an unclosed run,
+/// which is quadratic on long malformed input.
+List<(int, int)> _markdownLinkSpans(String text) {
+  final n = text.length;
+  // First index at or after i holding the character that ends the label
+  // (`]` or a newline) or the destination (`)` or whitespace); n if none.
+  final labelStop = List<int>.filled(n + 1, n);
+  final destinationStop = List<int>.filled(n + 1, n);
+  for (var i = n - 1; i >= 0; i--) {
+    final unit = text.codeUnitAt(i);
+    labelStop[i] = unit == 0x5d || unit == 0x0a ? i : labelStop[i + 1];
+    destinationStop[i] = unit == 0x29 || _isRegExpWhitespace(unit)
+        ? i
+        : destinationStop[i + 1];
+  }
+  final spans = <(int, int)>[];
+  var i = 0;
+  while (i < n) {
+    final unit = text.codeUnitAt(i);
+    final open = unit == 0x5b
+        ? i
+        : unit == 0x21 && i + 1 < n && text.codeUnitAt(i + 1) == 0x5b
+        ? i + 1
+        : -1;
+    if (open >= 0) {
+      final close = labelStop[open + 1];
+      if (close + 1 < n &&
+          text.codeUnitAt(close) == 0x5d &&
+          text.codeUnitAt(close + 1) == 0x28) {
+        final end = destinationStop[close + 2];
+        if (end < n && text.codeUnitAt(end) == 0x29) {
+          spans.add((i, end + 1));
+          i = end + 1;
+          continue;
+        }
+      }
+    }
+    i++;
+  }
+  return spans;
+}
+
+/// The code units Dart's (non-Unicode) RegExp `\s` matches.
+bool _isRegExpWhitespace(int unit) =>
+    (unit >= 0x09 && unit <= 0x0d) ||
+    unit == 0x20 ||
+    unit == 0xa0 ||
+    unit == 0x1680 ||
+    (unit >= 0x2000 && unit <= 0x200a) ||
+    unit == 0x2028 ||
+    unit == 0x2029 ||
+    unit == 0x202f ||
+    unit == 0x205f ||
+    unit == 0x3000 ||
+    unit == 0xfeff;
 
 String _linkifyPlain(String text) {
   final links = findBareLinks(text);

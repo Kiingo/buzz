@@ -457,7 +457,17 @@ class HostedAgentClient implements HostedAgentProvisioner {
       ...fields,
     };
     final payload = stableJsonSha256(body);
+    int? lastSignedSecond;
     for (var attempt = 0; ; attempt++) {
+      // The API burns a proof by its event id, which covers `created_at` in
+      // whole seconds: a retry signed in the same second would repeat the
+      // burnt id, so it signs at least one second later.
+      final nowSecond = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final signedSecond =
+          lastSignedSecond != null && nowSecond <= lastSignedSecond
+          ? lastSignedSecond + 1
+          : nowSecond;
+      lastSignedSecond = signedSecond;
       final proof = buildOwnerWriteProof(
         ownerSecretHex: ownerSecretHex(),
         action: action,
@@ -466,6 +476,7 @@ class HostedAgentClient implements HostedAgentProvisioner {
         providerAgentId: providerAgentId,
         communityId: route.communityId,
         payloadSha256: payload,
+        now: DateTime.fromMillisecondsSinceEpoch(signedSecond * 1000),
       );
       try {
         final (status, response) = await _send(

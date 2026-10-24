@@ -19,6 +19,13 @@ Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,
   MutationObserver: dom.window.MutationObserver,
   document: dom.window.document,
+  // Under NODE_ENV=test TanStack Router treats a document-bearing process as a
+  // client and sets up scroll restoration through bare `history`,
+  // `addEventListener` and `scrollTo`; jsdom only puts them on window.
+  addEventListener: dom.window.addEventListener.bind(dom.window),
+  history: dom.window.history,
+  removeEventListener: dom.window.removeEventListener.bind(dom.window),
+  scrollTo: () => {},
   localStorage: dom.window.localStorage,
   self: dom.window,
   window: dom.window,
