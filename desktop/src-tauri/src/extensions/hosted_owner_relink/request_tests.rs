@@ -401,7 +401,10 @@ fn attest_pending_request_is_the_rebind_body_with_the_attest_action() {
         assert!(!verify_attestation(attestation, &sage));
     }
 
-    // The same agents re-linked sign the same body under a different action.
+    // The same agents re-linked build the same body under a different action.
+    // Each owner attestation is a fresh BIP-340 signature (random aux), so
+    // the bodies match field for field except the attestation strings, and
+    // each proof's payload is the hash of its own body.
     let rebind = build_rebind_request(
         &owner,
         "provider-x",
@@ -412,7 +415,38 @@ fn attest_pending_request_is_the_rebind_body_with_the_attest_action() {
     )
     .unwrap();
     assert_eq!(proof_tags(&rebind)[0][1], "rebind_owner_key");
-    assert_eq!(proof_tags(&rebind)[5], proof_tags(&body)[5]);
+    let shape = |value: &Value| {
+        let mut value = value.clone();
+        value.as_object_mut().unwrap().remove("owner_proof");
+        for agent in value["agents"].as_array_mut().unwrap() {
+            agent.as_object_mut().unwrap().remove("owner_attestation");
+        }
+        value
+    };
+    assert_eq!(shape(&rebind), shape(&body));
+    let mut rebind_without_proof = rebind.clone();
+    rebind_without_proof
+        .as_object_mut()
+        .unwrap()
+        .remove("owner_proof");
+    assert_eq!(
+        proof_tags(&rebind)[5],
+        vec![
+            "payload".to_string(),
+            canonical_sha256(&rebind_without_proof)
+        ]
+    );
+    for (agent, key) in rebind["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip([&ada, &mira])
+    {
+        assert!(verify_attestation(
+            agent["owner_attestation"].as_str().unwrap(),
+            key
+        ));
+    }
     assert_ne!(rebind["owner_proof"]["id"], body["owner_proof"]["id"]);
 }
 
