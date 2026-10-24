@@ -10396,6 +10396,48 @@ mod build_mcp_servers_tests {
     }
 
     #[test]
+    fn off_mode_installs_no_git_block_helpers_or_keyfile() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let mut config = test_config();
+        let git = install_git_with_env(
+            &config,
+            &[
+                ("BUZZ_GIT_IDENTITY".into(), "off".into()),
+                ("GIT_CONFIG_COUNT".into(), "1".into()),
+                ("GIT_CONFIG_KEY_0".into(), "user.name".into()),
+                ("GIT_CONFIG_VALUE_0".into(), "Operator".into()),
+            ],
+        )
+        .unwrap();
+        let names: Vec<&str> = git.env.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["BUZZ_PRIVATE_KEY", "BUZZ_RELAY_URL", "BUZZ_GIT_IDENTITY"],
+            "off mode must not touch PATH or the Git config block"
+        );
+        assert!(git
+            .env
+            .iter()
+            .all(|(_, value)| !value.contains("buzz-acp-git-") && !value.contains(".nostr-key")));
+        config.persona_env_vars.extend(git.env.iter().cloned());
+        let servers = build_mcp_servers(&config);
+        let env = &servers[0].env;
+        assert!(
+            !env.iter().any(|entry| entry.name.starts_with("GIT_CONFIG_")
+                || entry.name == "PATH"
+                || entry.value.contains("buzz-acp-git-")),
+            "{:?}",
+            env.iter().map(|entry| &entry.name).collect::<Vec<_>>()
+        );
+        let modes: Vec<_> = env
+            .iter()
+            .filter(|entry| entry.name == "BUZZ_GIT_IDENTITY")
+            .map(|entry| entry.value.as_str())
+            .collect();
+        assert_eq!(modes, ["off"], "nested harnesses must stay off");
+    }
+
+    #[test]
     fn user_mode_mcp_block_drops_inherited_identity_and_signing() {
         let _guard = ENV_LOCK.lock().unwrap();
         let inherited = [
