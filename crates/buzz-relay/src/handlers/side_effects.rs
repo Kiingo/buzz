@@ -132,6 +132,7 @@ pub(crate) async fn apply_kick_live_side_effects(
     // workflow-disable UPDATE on the same connection so no second pool
     // connection is needed (pool-exhaustion deadlock prevention — see module doc).
     evict_live_channel_subscriptions(tenant, state, channel_id, target_pubkey).await;
+    state.end_huddle_audio_clusterwide(tenant, channel_id, Some(target_pubkey));
     match fence
         .commit_disabling_workflows(tenant.community(), channel_id, target_pubkey)
         .await
@@ -1676,6 +1677,9 @@ async fn handle_remove_user(
         .await?;
     state.invalidate_membership(tenant, channel_id, &target_pubkey);
     evict_live_channel_subscriptions(tenant, state, channel_id, &target_pubkey).await;
+    // A removed huddle member leaves the live audio too: it can no longer
+    // read the huddle (it is private), so it may never see its own removal.
+    state.end_huddle_audio_clusterwide(tenant, channel_id, Some(target_pubkey.as_slice()));
     disable_departed_member_workflows(tenant, state, channel_id, &target_pubkey).await;
 
     let actor_hex = hex::encode(&actor_bytes);
@@ -1875,6 +1879,9 @@ async fn handle_edit_metadata(
                                 .db
                                 .archive_channel(tenant.community(), channel_id)
                                 .await?;
+                            // An archived huddle ends its live audio for every
+                            // peer, not only for new joins.
+                            state.end_huddle_audio_clusterwide(tenant, channel_id, None);
                             emit_system_message(
                                 tenant,
                                 state,
@@ -2270,6 +2277,9 @@ async fn handle_delete_group(
     // Deleted channel: clear both membership and accessible-channels caches.
     // Stale is_member=true entries would bypass the DB's deleted_at guard.
     state.invalidate_channel_deleted(tenant);
+    if deleted {
+        state.end_huddle_audio_clusterwide(tenant, channel_id, None);
+    }
 
     let actor_hex = hex::encode(&actor_bytes);
     emit_system_message(
@@ -2391,6 +2401,7 @@ async fn handle_leave_request(
         .await?;
     state.invalidate_membership(tenant, channel_id, &actor_bytes);
     evict_live_channel_subscriptions(tenant, state, channel_id, &actor_bytes).await;
+    state.end_huddle_audio_clusterwide(tenant, channel_id, Some(actor_bytes.as_slice()));
     disable_departed_member_workflows(tenant, state, channel_id, &actor_bytes).await;
 
     let actor_hex = hex::encode(&actor_bytes);

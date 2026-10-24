@@ -138,6 +138,19 @@ pub enum ConnControl {
         #[serde(default)]
         unowned_only: bool,
     },
+    /// Cut the live audio sockets of huddle `channel_id` in the carrying
+    /// community: every socket when `pubkey` is `None` (the huddle was
+    /// archived or deleted), else the sockets of that member, who was removed
+    /// from the huddle. Each receiver re-reads the durable state before
+    /// cutting, so a delayed command cannot cut a re-added member or a
+    /// restored huddle. A pod predating this variant logs and drops it.
+    EndHuddleAudio {
+        /// The huddle's ephemeral channel.
+        channel_id: Uuid,
+        /// The removed member's pubkey bytes, or `None` for the whole huddle.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pubkey: Option<Vec<u8>>,
+    },
 }
 
 /// A connection-control command received from a community-scoped Redis channel.
@@ -391,6 +404,28 @@ mod tests {
             serde_json::from_str::<ConnControl>(&known).unwrap(),
             ConnControl::DisconnectCommunity { archived_at: None }
         );
+    }
+
+    #[test]
+    fn end_huddle_audio_command_serde_round_trips() {
+        let channel_id = Uuid::from_u128(0x42);
+        let whole = ConnControl::EndHuddleAudio {
+            channel_id,
+            pubkey: None,
+        };
+        let json = serde_json::to_string(&whole).unwrap();
+        assert_eq!(
+            json,
+            format!(r#"{{"op":"EndHuddleAudio","channel_id":"{channel_id}"}}"#)
+        );
+        assert_eq!(serde_json::from_str::<ConnControl>(&json).unwrap(), whole);
+
+        let member = ConnControl::EndHuddleAudio {
+            channel_id,
+            pubkey: Some(vec![9u8; 32]),
+        };
+        let json = serde_json::to_string(&member).unwrap();
+        assert_eq!(serde_json::from_str::<ConnControl>(&json).unwrap(), member);
     }
 
     #[test]

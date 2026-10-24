@@ -495,6 +495,10 @@ pub(crate) async fn handle_active_audio_connection(
     // scan-visible, so a concurrent `disconnect_nip_fi` that finds this socket
     // can always enqueue its denial.  [FI-TRACE-DENY-SET]
     control.set_terminal_frame_sender(terminal_ctrl_tx);
+    // Bound before admission, like the terminal sender: a huddle end or a
+    // member removal after this point cuts the socket with its error frame;
+    // one before it is seen by the admission reads below.
+    control.bind_audio_channel(channel_id);
 
     // Already-expired fast path: catch a deadline already past at upgrade time
     // before spending the AUTH_TIMEOUT window. Deny through the shared
