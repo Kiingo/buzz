@@ -3,10 +3,16 @@ part of '../compose_bar.dart';
 /// The composer's "/" autocomplete. In a 1:1 agent DM: conversation commands,
 /// the agent's skills and the other registry skills the person may use,
 /// fetched lazily from the hosted route the first time "/" opens for that
-/// agent. In a channel or thread the "/" may follow a mention of the agent it
-/// is for (`@Scout /review`); otherwise it is for the channel's only agent,
-/// and with several the popup first offers them. The group list never has
-/// personal skills, and session commands only for the agent's owner.
+/// agent. In a channel or thread the "/" is for an agent mentioned before it
+/// (`@Scout /review`); otherwise for the channel's only agent, and with
+/// several the popup first offers them. The group list never has personal
+/// skills, and session commands only for the agent's owner.
+///
+/// Like `@` and `#`, the "/" opens at any word start, not only at the start
+/// of the message. A message has one skill: picking a second one replaces
+/// the first, and a skill picked mid-message is still sent as the skill,
+/// with the rest of the message as its input. Session commands (`/new`) are
+/// the whole message, so they are offered only for a leading "/".
 class _AgentCommandAutocomplete {
   const _AgentCommandAutocomplete({
     required this.suggestions,
@@ -24,7 +30,7 @@ class _AgentCommandAutocomplete {
   final String? title;
   final ValueChanged<AgentCommand> select;
 
-  /// The `buzz-skill` tag for [text] when it starts with a picked skill.
+  /// The `buzz-skill` tag for [text] when it holds a picked skill.
   final List<List<String>> Function(String text) tagsFor;
 
   /// Agents a channel session command picked from the popup is addressed to
@@ -52,22 +58,49 @@ class _GroupAgentCommandContext {
   /// Records a picked mention and returns the label to insert.
   final String Function(MentionCandidate candidate) bindMention;
 
-  /// The agent mentioned first in [prefix] (`@Name `), or null.
+  /// The agent [prefix] (the text before a "/") is for: a leading `@Name`
+  /// decides alone (a person there means none), else the first agent
+  /// mentioned anywhere in it. Null when there is none.
   MentionCandidate? agentIn(String prefix) {
-    MentionCandidate? found;
-    var length = -1;
+    ({int at, int length, MentionCandidate candidate})? first;
+    ({int at, int length, MentionCandidate candidate})? firstAgent;
+    bool before(
+      ({int at, int length, MentionCandidate candidate})? current,
+      int at,
+      int length,
+    ) =>
+        current == null ||
+        at < current.at ||
+        (at == current.at && length > current.length);
     for (final entry in mentionMap.entries) {
-      if (entry.key.length > length && prefix.startsWith('@${entry.key}')) {
-        found = entry.value;
-        length = entry.key.length;
+      final at = _mentionAt(prefix, '@${entry.key}');
+      if (at == null) continue;
+      final found = (at: at, length: entry.key.length, candidate: entry.value);
+      if (before(first, at, found.length)) first = found;
+      if (entry.value.isAgent && before(firstAgent, at, found.length)) {
+        firstAgent = found;
       }
     }
-    return found != null && found.isAgent ? found : null;
+    if (first == null) return null;
+    if (first.at == 0) return first.candidate.isAgent ? first.candidate : null;
+    return firstAgent?.candidate;
   }
 
   MentionCandidate? agent(String pubkey) => agents
       .where((candidate) => candidate.pubkey.toLowerCase() == pubkey)
       .firstOrNull;
+}
+
+/// Where [label] (`@Name`) first opens a word in [text], or null.
+int? _mentionAt(String text, String label) {
+  for (
+    var index = text.indexOf(label);
+    index >= 0;
+    index = text.indexOf(label, index + 1)
+  ) {
+    if (index == 0 || _triggerBoundary.hasMatch(text[index - 1])) return index;
+  }
+  return null;
 }
 
 _AgentCommandAutocomplete _useAgentCommandAutocomplete(
@@ -115,7 +148,7 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
   final resolved = open == null || group == null
       ? null
       : resolveGroupCommandTarget(
-          hasPrefix: open.prefix.isNotEmpty,
+          hasPrefix: mentionsSomeone(open.prefix),
           prefixAgent: group.agentIn(open.prefix)?.pubkey.toLowerCase(),
           channelAgents: [for (final agent in group.agents) agent.pubkey],
         );
@@ -168,7 +201,32 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
       : mergeAgentCommands(searched, listed);
   final List<AgentCommand> suggestions;
   if (listOpen) {
-    suggestions = filterAgentCommands(commands, query.value!);
+    // Session commands are the whole message: only a leading "/" with
+    // nothing after it offers them.
+    final text = controller.text;
+    final token = groupMode
+        ? (start: open?.tokenStart, end: open?.tokenEnd)
+        : (() {
+            final dm = findAgentCommandQuery(
+              text,
+              controller.selection.baseOffset,
+            );
+            return (start: dm?.tokenStart, end: dm?.tokenEnd);
+          })();
+    final leading = groupMode ? groupCommandTokenStart(text) : 0;
+    final wholeMessage =
+        token.start != null &&
+        token.start == leading &&
+        text.substring(token.end!).trim().isEmpty;
+    suggestions = filterAgentCommands(
+      wholeMessage
+          ? commands
+          : [
+              for (final command in commands)
+                if (command.kind != AgentCommandKind.session) command,
+            ],
+      query.value!,
+    );
   } else if (target != null && target.choices.isNotEmpty && group != null) {
     final q = query.value ?? '';
     final choices = [
@@ -216,6 +274,61 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     submit();
   }
 
+  /// [text] with the token [start]..[end] replaced by [insert] (spaces right
+  /// after it go when [insert] ends in one; line breaks stay). With
+  /// [replacesSkill], a skill picked earlier elsewhere in the message is
+  /// removed too: one skill per message. Returns the text and the caret
+  /// (after [insert]).
+  ({String text, int caret}) replaceToken(
+    String text,
+    int start,
+    int end,
+    String insert, {
+    bool replacesSkill = false,
+  }) {
+    bool isSpace(int at) => text[at] == ' ' || text[at] == '\t';
+    var to = end;
+    if (insert.endsWith(' ')) {
+      while (to < text.length && isSpace(to)) {
+        to++;
+      }
+    }
+    final previous = !replacesSkill
+        ? null
+        : agentCommandTokens(text)
+              .where(
+                (token) =>
+                    token.start != start &&
+                    chosen.value[token.name]?.kind == AgentCommandKind.skill,
+              )
+              .firstOrNull;
+    if (previous == null) {
+      return (
+        text: text.replaceRange(start, to, insert),
+        caret: start + insert.length,
+      );
+    }
+    // Remove the earlier pick with one space next to it.
+    var from = previous.start;
+    var upto = previous.end;
+    if (upto < text.length && isSpace(upto)) {
+      upto++;
+    } else if (from > 0 && isSpace(from - 1)) {
+      from--;
+    }
+    if (previous.start > start) {
+      if (from < to) from = to;
+      return (
+        text: text.replaceRange(from, upto, '').replaceRange(start, to, insert),
+        caret: start + insert.length,
+      );
+    }
+    return (
+      text: text.replaceRange(start, to, insert).replaceRange(from, upto, ''),
+      caret: start - (upto - from) + insert.length,
+    );
+  }
+
   void select(AgentCommand command) {
     final text = controller.text;
     if (command.kind == AgentCommandKind.session && command.name == 'new') {
@@ -223,45 +336,60 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
       return;
     }
     if (!groupMode || open == null) {
-      if (command.kind == AgentCommandKind.skill) {
-        chosen.value[command.name] = command;
-      }
-      final firstSpace = text.indexOf(RegExp(r'\s'));
-      final end = firstSpace < 0 ? text.length : firstSpace;
-      setText(
-        '/${command.name} ${text.substring(end).trimLeft()}',
-        command.name.length + 2,
+      final dm = findAgentCommandQuery(text, controller.selection.baseOffset);
+      if (dm == null) return;
+      final isSkill = command.kind == AgentCommandKind.skill;
+      final next = replaceToken(
+        text,
+        dm.tokenStart,
+        dm.tokenEnd,
+        '/${command.name} ',
+        replacesSkill: isSkill,
       );
+      if (isSkill) chosen.value[command.name] = command;
+      setText(next.text, next.caret);
       return;
     }
-    final afterToken = text.indexOf(RegExp(r'\s'), open.tokenStart);
-    final rest = afterToken < 0 ? '' : text.substring(afterToken).trimLeft();
     switch (command.kind) {
       case AgentCommandKind.agent:
         final agent = group.agent(command.agentPubkey!);
         if (agent == null) return;
         final label = group.bindMention(agent);
         // Keep what was typed after "/": the agent's list opens on it.
-        final prefix = '@$label /${query.value ?? ''}';
-        setText(rest.isEmpty ? prefix : '$prefix $rest', prefix.length);
+        final withAgent = replaceToken(
+          text,
+          open.tokenStart,
+          open.tokenEnd,
+          '@$label /${query.value ?? ''}',
+        );
+        setText(withAgent.text, withAgent.caret);
       case AgentCommandKind.session:
         // The server reads the bare command, so the mention is dropped and
-        // the agent is addressed with a tag instead.
+        // the agent is addressed with a tag instead. Session commands are
+        // offered only as the whole message.
         if (commandAgent == null) return;
         final typed = '/${command.name}';
         sessionTarget.value = (text: typed, pubkey: commandAgent);
         setText('$typed ', typed.length + 1);
       case AgentCommandKind.skill:
         if (commandAgent == null) return;
-        chosen.value[command.name] = command;
-        var prefix = open.prefix;
-        if (prefix.isEmpty) {
+        var mention = '';
+        if (!mentionsSomeone(open.prefix)) {
+          // Nobody is mentioned before the "/": the pick names the agent
+          // right where the "/" was.
           final agent = group.agent(commandAgent);
           if (agent == null) return;
-          prefix = '@${group.bindMention(agent)} ';
+          mention = '@${group.bindMention(agent)} ';
         }
-        final head = '$prefix/${command.name} ';
-        setText('$head$rest', head.length);
+        final withSkill = replaceToken(
+          text,
+          open.tokenStart,
+          open.tokenEnd,
+          '$mention/${command.name} ',
+          replacesSkill: true,
+        );
+        chosen.value[command.name] = command;
+        setText(withSkill.text, withSkill.caret);
     }
   }
 

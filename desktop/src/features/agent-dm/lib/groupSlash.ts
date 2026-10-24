@@ -11,23 +11,24 @@ import {
 
 /**
  * The "/" menu in a channel or thread. Unlike a 1:1 DM the conversation has
- * no single agent, so the command token may follow a leading mention of the
- * agent it is for (`@Scout /rev`), and the menu needs a target agent.
+ * no single agent, so the menu needs a target agent: one mentioned before
+ * the "/" (`@Scout /rev`, `ask @Scout to /rev`), else the agent the
+ * conversation addresses or its only agent.
  */
 
 /** Agents listed to choose from when the target is ambiguous. */
 export const MAX_SLASH_AGENT_CHOICES = 20;
 
 export type GroupSlashQuery = SlashQuery & {
-  /** Offset of the "/" (0, or just after a leading mention). */
-  tokenStart: number;
-  /** The text before the "/" (empty, or `@Name `). */
+  /** The text before the "/" (empty, `@Name `, or any words). */
   prefix: string;
 };
 
 /**
- * Where the "/" of a command starts: at the very start, or right after a
- * leading `@…` mention on the first line (`@Scout /x`). Null otherwise.
+ * Where a leading "/" command starts: at the very start, or right after a
+ * leading `@…` mention on the first line (`@Scout /x`). Null otherwise. Only
+ * a leading command can be a session command (`/new`), and only a leading
+ * skill name may be typed by hand instead of picked.
  */
 export function slashTokenStart(text: string): number | null {
   if (text.startsWith("/")) return 0;
@@ -38,21 +39,19 @@ export function slashTokenStart(text: string): number | null {
   return prefix.includes("\n") ? null : at + 1;
 }
 
-/** A "/" query while the caret is still in the command token. */
+/** A "/" query while the caret is at the end of a "/" token, anywhere. */
 export function detectGroupSlashQuery(
   text: string,
   cursor: number,
 ): GroupSlashQuery | null {
-  const tokenStart = slashTokenStart(text);
-  if (tokenStart === null) return null;
-  const query = detectSlashQuery(text.slice(tokenStart), cursor - tokenStart);
+  const query = detectSlashQuery(text, cursor);
   if (!query) return null;
-  return {
-    query: query.query,
-    tokenStart,
-    tokenEnd: tokenStart + query.tokenEnd,
-    prefix: text.slice(0, tokenStart),
-  };
+  return { ...query, prefix: text.slice(0, query.tokenStart) };
+}
+
+/** Whether a text before a "/" mentions someone (`@…` opening a word). */
+export function mentionsSomeone(prefix: string): boolean {
+  return /(^|[\s([{])@\S/.test(prefix);
 }
 
 export type SlashTarget =
@@ -116,19 +115,27 @@ export function narrowSlashChoice(
   return open.length > 0 ? { kind: "choose", pubkeys: open } : null;
 }
 
-/** The skill a channel or thread message invokes (`[@Name ]/<skill> args`). */
+/**
+ * The skill a channel or thread message invokes: `[@Name ]/<skill> args`,
+ * or a picked skill anywhere in the message (see `parseSkillInvocation`).
+ */
 export function parseGroupSkillInvocation(
   text: string,
   commands: readonly AgentSlashCommand[],
+  picked: ReadonlySet<string> = new Set(),
 ): SkillInvocation | null {
   const trimmed = text.trim();
-  const tokenStart = slashTokenStart(trimmed);
-  if (tokenStart === null) return null;
-  return parseSkillInvocation(trimmed.slice(tokenStart), commands);
+  return parseSkillInvocation(
+    trimmed,
+    commands,
+    picked,
+    slashTokenStart(trimmed) ?? -1,
+  );
 }
 
 /** The `buzz-skill` tag for a group skill pick, or null when its arguments
- * are too long. The message text stays as typed (`@Name /skill args`). */
+ * are too long. The message text stays as typed (`@Name /skill args`, or
+ * the whole message around a picked skill). */
 export function groupSkillTag(invocation: SkillInvocation): string[] | null {
   if (invocation.args.length > MAX_SKILL_ARGS) return null;
   return ["buzz-skill", invocation.command.skillId, invocation.args];

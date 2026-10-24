@@ -15,6 +15,7 @@ import type { Channel } from "@/shared/api/types";
 import {
   detectGroupSlashQuery,
   groupSkillTag,
+  mentionsSomeone,
   narrowSlashChoice,
   parseGroupSkillInvocation,
   resolveSlashTarget,
@@ -46,6 +47,8 @@ import {
   parseSkillInvocation,
   slashCommandNeedsConfirm,
   slashCommandText,
+  slashTokens,
+  type SlashToken,
 } from "../lib/slashQuery";
 
 /** An agent to pick when a channel's "/" could be for several. */
@@ -96,6 +99,36 @@ function groupListState(pubkey: string): SlashListState {
   return getAgentCommands(pubkey, "group").length > 0 ? "some" : "empty";
 }
 
+/**
+ * The text range that removes a token, with one space next to it, so a
+ * replaced pick leaves no double space behind.
+ */
+function tokenRemoval(text: string, token: SlashToken) {
+  if (/\s/.test(text[token.end] ?? "")) {
+    return { replaceFromOffset: token.start, replaceToOffset: token.end + 1 };
+  }
+  if (token.start > 0 && /\s/.test(text[token.start - 1] ?? "")) {
+    return { replaceFromOffset: token.start - 1, replaceToOffset: token.end };
+  }
+  return { replaceFromOffset: token.start, replaceToOffset: token.end };
+}
+
+/**
+ * Where the message's leading "/" starts (after any leading space, and in a
+ * channel after a leading `@Name `), or null. Only that token may be a
+ * session command or a skill typed by hand.
+ */
+function leadingSlashStart(text: string, group: boolean): number | null {
+  const trimmed = text.trimStart();
+  const lead = text.length - trimmed.length;
+  const start = group
+    ? slashTokenStart(trimmed)
+    : trimmed.startsWith("/")
+      ? 0
+      : null;
+  return start === null ? null : lead + start;
+}
+
 function mergeCommands(
   first: readonly AgentSlashCommand[],
   second: readonly AgentSlashCommand[],
@@ -114,11 +147,17 @@ function mergeCommands(
 /**
  * The composer's "/" menu. In a 1:1 agent DM it lists that agent's session
  * commands and skills and sends a chosen skill with its `buzz-skill` tag. In
- * a channel or thread (with `group`) the "/" may follow a mention of the
- * agent it is for; otherwise it is for the agent the conversation addresses
- * or its only agent, and with several the menu first offers them. A group
- * pick keeps its text (`@Name /skill args`), adds the tag and addresses the
- * agent; the list is the group one, so it never offers personal skills.
+ * a channel or thread (with `group`) the "/" is for an agent mentioned before
+ * it; otherwise for the agent the conversation addresses or its only agent,
+ * and with several the menu first offers them. A group pick keeps its text
+ * (`@Name /skill args`), adds the tag and addresses the agent; the list is
+ * the group one, so it never offers personal skills.
+ *
+ * Like `@` and `#`, the "/" opens at any word start, not only at the start
+ * of the message. A message has one skill: picking a second one replaces the
+ * first, and a skill picked mid-message is still sent as the skill, with the
+ * rest of the message as its input. Session commands (`/new`) are the whole
+ * message, so they are offered only for a leading "/".
  */
 export function useAgentSlashCommands({
   channelId,
@@ -189,18 +228,24 @@ export function useAgentSlashCommands({
     actions: ChooseActions;
   } | null>(null);
 
-  /** The agent a group draft's "/" is for (see `resolveSlashTarget`). */
+  /**
+   * The agent a group draft's "/" token (at `tokenStart`, else the leading
+   * one) is for (see `resolveSlashTarget`): a mention before it decides.
+   */
   const groupTargetFor = React.useCallback(
-    (draft: string): SlashTarget | null => {
+    (draft: string, tokenStart?: number | null): SlashTarget | null => {
       const context = groupRef.current;
       if (!context) return null;
-      const trimmed = draft.trimStart();
-      const start = slashTokenStart(trimmed);
-      const prefix = start === null ? "" : trimmed.slice(0, start);
+      const start = tokenStart ?? slashTokenStart(draft.trimStart()) ?? null;
+      const before =
+        tokenStart != null
+          ? draft.slice(0, start ?? 0)
+          : draft.trimStart().slice(0, start ?? 0);
+      const hasPrefix = start !== null && mentionsSomeone(before);
       return narrowSlashChoice(
         resolveSlashTarget({
-          hasPrefix: prefix.length > 0,
-          prefixAgents: prefix ? context.agentMentionsIn(prefix) : [],
+          hasPrefix,
+          prefixAgents: hasPrefix ? context.agentMentionsIn(before) : [],
           addressedAgents: context.addressedAgents,
           channelAgents: context.channelAgents,
         }),
@@ -214,7 +259,7 @@ export function useAgentSlashCommands({
     mode === "dm" && dmPeer
       ? { kind: "agent", pubkey: dmPeer }
       : mode === "group"
-        ? groupTargetFor(text)
+        ? groupTargetFor(text, slashQuery?.tokenStart)
         : null;
   const agentPubkey = target?.kind === "agent" ? target.pubkey : null;
   const listed = agentPubkey
@@ -259,8 +304,18 @@ export function useAgentSlashCommands({
       );
       return matching.length > 0 ? matching : choices;
     }
-    return filterSlashCommands(commands, slashQuery.query);
-  }, [commands, dismissed, labelFor, slashQuery, target]);
+    // Session commands are the whole message: only a leading "/" with
+    // nothing after it offers them.
+    const wholeMessage =
+      slashQuery.tokenStart === leadingSlashStart(text, mode === "group") &&
+      !text.slice(slashQuery.tokenEnd).trim();
+    return filterSlashCommands(
+      wholeMessage
+        ? commands
+        : commands.filter((command) => command.kind !== "session"),
+      slashQuery.query,
+    );
+  }, [commands, dismissed, labelFor, mode, slashQuery, target, text]);
   const isOpen = mode !== null && suggestions.length > 0;
   const commandText =
     mode === "group" ? text.slice(slashTokenStart(text) ?? 0) : text;
@@ -280,7 +335,9 @@ export function useAgentSlashCommands({
         mode === "dm"
           ? (() => {
               const query = detectSlashQuery(nextText, cursor);
-              return query ? { ...query, tokenStart: 0, prefix: "" } : null;
+              return query
+                ? { ...query, prefix: nextText.slice(0, query.tokenStart) }
+                : null;
             })()
           : mode === "group"
             ? detectGroupSlashQuery(nextText, cursor)
@@ -301,7 +358,7 @@ export function useAgentSlashCommands({
       const nextTarget =
         mode === "dm" && dmPeer
           ? ({ kind: "agent", pubkey: dmPeer } as const)
-          : groupTargetFor(nextText);
+          : groupTargetFor(nextText, next.tokenStart);
       if (nextTarget?.kind === "agent") {
         void refreshAgentCommands(nextTarget.pubkey, audience).then(() =>
           refreshAgentCommandSearch(nextTarget.pubkey, audience, next.query),
@@ -370,7 +427,7 @@ export function useAgentSlashCommands({
         const edit = context.mentionEdit({
           pubkey: item.pubkey,
           label: item.label,
-          replaceFromOffset: 0,
+          replaceFromOffset: query.tokenStart,
           replaceToOffset: query.tokenEnd,
         });
         // Keep what was typed after "/": the agent's menu opens on it.
@@ -381,6 +438,23 @@ export function useAgentSlashCommands({
         void refreshAgentCommands(item.pubkey, "group");
         return;
       }
+      /** The skill already in the message (picked, or a listed skill the
+       * message opens with): one skill per message, so this pick replaces
+       * it. A name merely typed mid-message is left alone. */
+      const leading = leadingSlashStart(text, mode === "group");
+      const replaced =
+        item.kind === "skill"
+          ? slashTokens(text).find(
+              (token) =>
+                token.start !== query.tokenStart &&
+                (pickedSkillsRef.current.has(token.name) ||
+                  (token.start === leading &&
+                    commands.some(
+                      (command) =>
+                        command.kind === "skill" && command.name === token.name,
+                    ))),
+            )
+          : undefined;
       if (item.kind === "skill") {
         pickedSkillsRef.current.set(item.name, item);
       }
@@ -396,13 +470,15 @@ export function useAgentSlashCommands({
         };
       }
       if (mode === "group" && item.kind === "skill") {
-        if (query.prefix) {
+        if (mentionsSomeone(query.prefix)) {
           edit = { ...edit, replaceFromOffset: query.tokenStart };
         } else if (context && agentPubkey) {
+          // Nobody is mentioned before the "/": the pick names the agent
+          // right where the "/" was.
           const mention = context.mentionEdit({
             pubkey: agentPubkey,
             label: labelFor(agentPubkey),
-            replaceFromOffset: 0,
+            replaceFromOffset: query.tokenStart,
             replaceToOffset: query.tokenEnd,
           });
           edit = {
@@ -415,10 +491,27 @@ export function useAgentSlashCommands({
         setPendingConfirm({ command: item, edit, actions });
         return;
       }
+      if (replaced) {
+        // Apply the later edit first, so the earlier one's offsets hold; the
+        // removal keeps the caret where the pick put it.
+        const removal = {
+          ...tokenRemoval(text, replaced),
+          insertText: "",
+          preserveSelection: true,
+        };
+        if (replaced.start > query.tokenStart) {
+          actions.applyEdit(removal);
+          actions.applyEdit(edit);
+        } else {
+          actions.applyEdit(edit);
+          actions.applyEdit(removal);
+        }
+        return;
+      }
       actions.applyEdit(edit);
       if (item.kind === "session") actions.submit();
     },
-    [agentPubkey, labelFor, mode, slashQuery],
+    [agentPubkey, commands, labelFor, mode, slashQuery, text],
   );
 
   const confirmPending = React.useCallback(() => {
@@ -437,14 +530,19 @@ export function useAgentSlashCommands({
 
   /**
    * Send the composer text as a skill invocation when it starts with a
-   * listed skill. Returns true when it handled the send (sent, or refused
-   * with a visible reason); false sends the text as an ordinary message.
-   * 1:1 DM only; a channel or thread send uses `groupSend`.
+   * listed skill, or holds one picked from the menu anywhere. Returns true
+   * when it handled the send (sent, or refused with a visible reason); false
+   * sends the text as an ordinary message. 1:1 DM only; a channel or thread
+   * send uses `groupSend`.
    */
   const sendSkillIfInvoked = React.useCallback(
     async (plainText: string, onSent: () => void): Promise<boolean> => {
       if (mode !== "dm" || !dmPeer || !channelId) return false;
-      const invocation = parseSkillInvocation(plainText, sendable(commands));
+      const invocation = parseSkillInvocation(
+        plainText,
+        sendable(commands),
+        new Set(pickedSkillsRef.current.keys()),
+      );
       if (!invocation) return false;
       const message = buildSkillMessage(invocation);
       if (!message.ok) {
@@ -474,10 +572,10 @@ export function useAgentSlashCommands({
   );
 
   /**
-   * For a channel or thread send: a listed skill (`[@Name ]/skill args`)
-   * adds its `buzz-skill` tag; a listed session command (`/new`) is kept as
-   * its plain text. Either addresses the target agent. Null for anything
-   * else, which sends as an ordinary message.
+   * For a channel or thread send: a listed skill (`[@Name ]/skill args`, or
+   * one picked anywhere in the message) adds its `buzz-skill` tag; a listed
+   * session command (`/new`) is kept as its plain text. Either addresses the
+   * target agent. Null for anything else, which sends as an ordinary message.
    */
   const groupSend = React.useCallback(
     (plainText: string): GroupSlashSend | null => {
@@ -485,13 +583,19 @@ export function useAgentSlashCommands({
       const trimmed = plainText.trim();
       const chosenSession = sessionTargetRef.current;
       sessionTargetRef.current = null;
+      const picked = new Set(pickedSkillsRef.current.keys());
+      // The token the send is about: the last picked skill, else the
+      // leading "/" (a typed skill or a session command).
+      const pickedToken = slashTokens(trimmed)
+        .filter((token) => picked.has(token.name))
+        .at(-1);
       const sendTarget: SlashTarget | null =
         chosenSession && chosenSession.text === trimmed
           ? { kind: "agent", pubkey: chosenSession.pubkey }
-          : groupTargetFor(plainText);
+          : groupTargetFor(trimmed, pickedToken?.start ?? null);
       if (sendTarget?.kind !== "agent") return null;
       const listed = sendable(getAgentCommands(sendTarget.pubkey, "group"));
-      const invocation = parseGroupSkillInvocation(plainText, listed);
+      const invocation = parseGroupSkillInvocation(trimmed, listed, picked);
       if (invocation) {
         const tag = groupSkillTag(invocation);
         return tag

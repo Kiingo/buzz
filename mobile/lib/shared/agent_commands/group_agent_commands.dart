@@ -1,14 +1,16 @@
 import 'agent_commands.dart';
 
 /// The "/" popup in a channel or thread. Unlike a 1:1 DM the conversation
-/// has no single agent, so the command may follow a leading mention of the
-/// agent it is for (`@Scout /rev`), and the popup needs a target agent.
+/// has no single agent, so the popup needs a target agent: one mentioned
+/// before the "/" (`@Scout /rev`, `ask @Scout to /rev`), else the channel's
+/// only agent.
 
 /// Agents offered to choose from when the target is ambiguous.
 const maxGroupCommandAgentChoices = 20;
 
-/// Where the `/` of a command starts in [text]: at the very start, or right
-/// after a leading `@…` mention on the first line. Null otherwise.
+/// Where the `/` of a leading command starts in [text]: at the very start,
+/// or right after a leading `@…` mention on the first line. Null otherwise.
+/// Only a leading command can be a session command (`/new`).
 int? groupCommandTokenStart(String text) {
   if (text.startsWith('/')) return 0;
   if (!text.startsWith('@')) return null;
@@ -22,6 +24,7 @@ class GroupAgentCommandQuery {
   const GroupAgentCommandQuery({
     required this.query,
     required this.tokenStart,
+    required this.tokenEnd,
     required this.prefix,
   });
 
@@ -31,22 +34,31 @@ class GroupAgentCommandQuery {
   /// Offset of the `/`.
   final int tokenStart;
 
-  /// The text before the `/` (empty, or `@Name `).
+  /// End offset of the token.
+  final int tokenEnd;
+
+  /// The text before the `/` (empty, `@Name `, or any words).
   final String prefix;
 }
 
-/// The "/" query at [cursor] in [text], or `null` when none is open.
+/// The "/" query at [cursor] in [text], or `null` when none is open. Like
+/// `@` and `#`, the "/" opens at any word start.
 GroupAgentCommandQuery? findGroupAgentCommandQuery(String text, int cursor) {
-  final start = groupCommandTokenStart(text);
-  if (start == null || cursor <= start) return null;
-  final open = findAgentCommandQuery(text.substring(start), cursor - start);
+  final open = findAgentCommandQuery(text, cursor);
   if (open == null) return null;
   return GroupAgentCommandQuery(
     query: open.query,
-    tokenStart: start,
-    prefix: text.substring(0, start),
+    tokenStart: open.tokenStart,
+    tokenEnd: open.tokenEnd,
+    prefix: text.substring(0, open.tokenStart),
   );
 }
+
+final _mentionStart = RegExp(r'(^|[\s(\[{])@\S');
+
+/// Whether [prefix] (the text before a "/") mentions someone: an `@` that
+/// opens a word, not one inside an email address.
+bool mentionsSomeone(String prefix) => _mentionStart.hasMatch(prefix);
 
 /// Who a channel's "/" is for: one agent, or several to choose from.
 typedef GroupCommandTarget = ({String? agent, List<String> choices});
@@ -95,14 +107,16 @@ GroupCommandTarget? narrowGroupCommandTarget(
   return (agent: null, choices: open);
 }
 
-/// The `buzz-skill` tag for a channel or thread message
-/// (`[@Name ]/skill args`) when the skill was picked from the popup.
+/// The `buzz-skill` tag for a channel or thread message holding a skill
+/// picked from the popup (`[@Name ]/skill args`, or anywhere in the message).
 List<List<String>> groupAgentSkillInvocationTags(
   String text,
   Map<String, AgentCommand> chosen,
 ) {
   final trimmed = text.trim();
-  final start = groupCommandTokenStart(trimmed);
-  if (start == null) return const [];
-  return agentSkillInvocationTags(trimmed.substring(start), chosen);
+  return agentSkillInvocationTags(
+    trimmed,
+    chosen,
+    leadingStart: groupCommandTokenStart(trimmed) ?? -1,
+  );
 }
