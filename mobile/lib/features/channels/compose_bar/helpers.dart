@@ -242,6 +242,10 @@ const _pastedImageMimeTypes = <String>[
   'image/webp',
 ];
 
+/// A trigger opens a word: at the start, or after whitespace or an opening
+/// bracket (`(#general)`), as `@` mentions and "/" commands do.
+final _triggerBoundary = RegExp(r'[\s(\[{]');
+
 /// Walk backward from [cursor] looking for [trigger] (e.g. `@` or `#`) at a
 /// word boundary. Returns the index of the trigger character, or `null` if none
 /// is found.
@@ -262,7 +266,7 @@ int? findTrigger(
     if (ch == '\n') break;
     if (stopAtSpace && ch == ' ') break;
     if (ch == trigger) {
-      if (i == 0 || text[i - 1] == ' ' || text[i - 1] == '\n') {
+      if (i == 0 || _triggerBoundary.hasMatch(text[i - 1])) {
         return i;
       }
       break;

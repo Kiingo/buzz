@@ -187,24 +187,74 @@ List<AgentCommand>? parseAgentCommands(
 bool agentCommandsBodyTruncated(Object? body) =>
     body is Map && body['truncated'] == true;
 
-/// An open "/" query: the composer starts with `/` and the cursor is still
-/// inside that first word.
+/// A "/" command token in a text: `/` and the word after it.
+@immutable
+class AgentCommandToken {
+  const AgentCommandToken({
+    required this.start,
+    required this.end,
+    required this.name,
+  });
+
+  /// Offset of the `/`.
+  final int start;
+
+  /// End offset of the token (the next whitespace, or the end of the text).
+  final int end;
+
+  /// The word after `/` (may be empty).
+  final String name;
+}
+
+final _commandTokenPattern = RegExp(r'(^|[\s(\[{])/([^\s/]*)(?=\s|$)');
+
+/// Every "/" command token in [text]. Like an `@` mention or a `#channel`, a
+/// token opens a word: the `/` is at the start or right after whitespace or
+/// an opening bracket, and the word after it runs to the next whitespace
+/// without another `/`. So `hi /rev` has a token, while a URL
+/// (`https://x/y`), a path (`~/a`, `/usr/bin`) or `a/b` never does.
+List<AgentCommandToken> agentCommandTokens(String text) => [
+  for (final match in _commandTokenPattern.allMatches(text))
+    AgentCommandToken(
+      start: match.start + match.group(1)!.length,
+      end: match.end,
+      name: match.group(2)!,
+    ),
+];
+
+/// An open "/" query: the cursor is inside a "/" token (anywhere in the
+/// message, see [agentCommandTokens]).
 @immutable
 class AgentCommandQuery {
-  const AgentCommandQuery(this.query);
+  const AgentCommandQuery(
+    this.query, {
+    required this.tokenStart,
+    required this.tokenEnd,
+  });
 
-  /// What follows the `/`, lowercased.
+  /// What follows the `/` up to the cursor, lowercased.
   final String query;
+
+  /// Offset of the `/` (the start of the text a pick replaces).
+  final int tokenStart;
+
+  /// End offset of the token (the end of the text a pick replaces).
+  final int tokenEnd;
 }
 
 /// The "/" query at [cursor] in [text], or `null` when none is open.
 AgentCommandQuery? findAgentCommandQuery(String text, int cursor) {
-  if (!text.startsWith('/') || cursor < 1 || cursor > text.length) {
-    return null;
+  if (cursor < 1 || cursor > text.length) return null;
+  for (final token in agentCommandTokens(text)) {
+    if (token.start < cursor && cursor <= token.end) {
+      return AgentCommandQuery(
+        text.substring(token.start + 1, cursor).toLowerCase(),
+        tokenStart: token.start,
+        tokenEnd: token.end,
+      );
+    }
   }
-  final typed = text.substring(1, cursor);
-  if (typed.contains(RegExp(r'\s'))) return null;
-  return AgentCommandQuery(typed.toLowerCase());
+  return null;
 }
 
 /// How well [command] matches [query] (higher is better, 0 is no match): the
@@ -259,25 +309,41 @@ List<AgentCommand> filterAgentCommands(
   return scored.take(limit).map((entry) => entry.command).toList();
 }
 
-/// The `["buzz-skill", skill_id, args]` tag for a message that begins with a
-/// skill the person picked from the popup, or none. [chosen] maps picked skill
-/// names to their commands; typing a name by hand is an ordinary message.
+/// The `["buzz-skill", skill_id, args]` tag for a message holding a skill the
+/// person picked from the popup, or none. [chosen] maps picked skill names to
+/// their commands; typing a name by hand is an ordinary message. The skill
+/// may be anywhere in the message: its input is the rest of the message (the
+/// words before the token, then the words after it). A token at
+/// [leadingStart] opens the message, so nothing before it is input (a
+/// channel's leading `@Name`). One skill per message: the last one counts.
 List<List<String>> agentSkillInvocationTags(
   String text,
-  Map<String, AgentCommand> chosen,
-) {
-  final trimmed = text.trimLeft();
-  if (!trimmed.startsWith('/')) return const [];
-  final match = RegExp(r'^/(\S+)(?:\s+([\s\S]*))?$').firstMatch(trimmed);
-  if (match == null) return const [];
-  final command = chosen[match.group(1)!];
-  final skillId = command?.skillId;
-  if (command == null ||
-      command.kind != AgentCommandKind.skill ||
-      skillId == null) {
-    return const [];
+  Map<String, AgentCommand> chosen, {
+  int leadingStart = 0,
+}) {
+  final trimmed = text.trim();
+  AgentCommandToken? found;
+  String? skillId;
+  for (final token in agentCommandTokens(trimmed)) {
+    final command = chosen[token.name];
+    if (command == null ||
+        command.kind != AgentCommandKind.skill ||
+        command.skillId == null) {
+      continue;
+    }
+    found = token;
+    skillId = command.skillId;
   }
-  final args = (match.group(2) ?? '').trim();
+  if (found == null || skillId == null) return const [];
+  final before = found.start == leadingStart
+      ? ''
+      : trimmed.substring(0, found.start).trim();
+  final after = trimmed.substring(found.end).trim();
+  final args = before.isNotEmpty && after.isNotEmpty
+      ? '$before $after'
+      : before.isNotEmpty
+      ? before
+      : after;
   if (args.runes.length > maxAgentSkillArgsChars) return const [];
   return [
     ['buzz-skill', skillId, args],

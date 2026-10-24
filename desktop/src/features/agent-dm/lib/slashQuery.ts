@@ -16,25 +16,59 @@ const MAX_MENU_ITEMS = MAX_AGENT_COMMANDS;
 export type SlashQuery = {
   /** Text typed after "/" up to the caret. */
   query: string;
+  /** Offset of the "/" (the start of the text replaced on choose). */
+  tokenStart: number;
   /** End offset of the command token (the text replaced on choose). */
   tokenEnd: number;
 };
 
+/** A "/" command token in a text: `/` and the word after it. */
+export type SlashToken = {
+  /** Offset of the "/". */
+  start: number;
+  /** End offset of the token (the next whitespace, or the end). */
+  end: number;
+  /** The word after "/" (may be empty). */
+  name: string;
+};
+
 /**
- * A "/" query at the very start of the composer while the caret is still in
- * the first token: `/`, `/rev`, but not `/review the PR` or `hi /x`.
+ * Every "/" command token in a text. A token opens a word, like an `@`
+ * mention or a `#channel`: the "/" is at the start of the text or right
+ * after whitespace or an opening bracket, and the word after it runs to the
+ * next whitespace without another "/". So `hi /rev` has a token, while a
+ * URL (`https://x/y`), a path (`~/a`, `/usr/bin`) or `a/b` never does.
+ */
+export function slashTokens(text: string): SlashToken[] {
+  const tokens: SlashToken[] = [];
+  const pattern = /(^|[\s([{])\/([^\s/]*)(?=\s|$)/g;
+  for (const match of text.matchAll(pattern)) {
+    const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    const name = match[2] ?? "";
+    tokens.push({ start, end: start + 1 + name.length, name });
+  }
+  return tokens;
+}
+
+/**
+ * The "/" query being typed at the caret: the caret is at the end of a "/"
+ * token anywhere in the text (`/`, `/rev`, `hi /rev`), not inside a word
+ * (`a/rev`), a URL or a path, and not past the token (`/review the PR`).
  */
 export function detectSlashQuery(
   text: string,
   cursor: number,
 ): SlashQuery | null {
-  if (!text.startsWith("/")) return null;
-  const whitespace = text.search(/\s/);
-  const tokenEnd = whitespace === -1 ? text.length : whitespace;
-  if (cursor < 1 || cursor !== tokenEnd) return null;
-  const query = text.slice(1, cursor);
-  if (query.includes("/")) return null;
-  return { query, tokenEnd };
+  if (cursor < 1) return null;
+  const token = slashTokens(text).find(
+    (candidate) => candidate.end === cursor && candidate.start < cursor,
+  );
+  if (!token) return null;
+  return {
+    query: text.slice(token.start + 1, cursor),
+    tokenStart: token.start,
+    tokenEnd: token.end,
+  };
 }
 
 export type SlashCommandSection = "commands" | "agent-skills" | "skills";
@@ -138,27 +172,63 @@ export function slashCommandNeedsConfirm(command: AgentSlashCommand) {
   return command.kind === "session" && command.name === "new";
 }
 
-export type SkillInvocation = { command: AgentSkillCommand; args: string };
+export type SkillInvocation = {
+  command: AgentSkillCommand;
+  /** The skill's input: the message without the skill's token, trimmed. */
+  args: string;
+  /** The whole message as typed, trimmed. */
+  text: string;
+  /** Whether the token opens the message (`/<name> args`). */
+  leading: boolean;
+};
 
 /**
- * The listed skill a composer text invokes (`/<name>` then optional
- * arguments), with the arguments trimmed, or null.
+ * The skill invocation for a token: its arguments are the rest of the
+ * message, the words before the token, then the words after it.
+ */
+export function skillInvocationAt(
+  text: string,
+  token: SlashToken,
+  command: AgentSkillCommand,
+  leadingStart = 0,
+): SkillInvocation {
+  const leading = token.start === leadingStart;
+  const before = leading ? "" : text.slice(0, token.start).trim();
+  const after = text.slice(token.end).trim();
+  return {
+    command,
+    args: before && after ? `${before} ${after}` : before || after,
+    text,
+    leading,
+  };
+}
+
+/**
+ * The listed skill a composer text invokes, with its arguments, or null.
+ * A leading `/<name>` invokes any listed skill (typed or picked). A skill
+ * token later in the message counts only when it was picked from the menu
+ * (`picked`), so a message that merely mentions `/review` stays a message.
+ * One skill per message: with several tokens the last one counts.
  */
 export function parseSkillInvocation(
   text: string,
   commands: readonly AgentSlashCommand[],
+  picked: ReadonlySet<string> = new Set(),
+  leadingStart = 0,
 ): SkillInvocation | null {
   const trimmed = text.trim();
-  if (!trimmed.startsWith("/")) return null;
-  const whitespace = trimmed.search(/\s/);
-  const name = trimmed.slice(1, whitespace === -1 ? undefined : whitespace);
-  const command = commands.find(
-    (candidate): candidate is AgentSkillCommand =>
-      candidate.kind === "skill" && candidate.name === name,
-  );
-  if (!command) return null;
-  const args = whitespace === -1 ? "" : trimmed.slice(whitespace).trim();
-  return { command, args };
+  let found: { token: SlashToken; command: AgentSkillCommand } | null = null;
+  for (const token of slashTokens(trimmed)) {
+    if (token.start !== leadingStart && !picked.has(token.name)) continue;
+    const command = commands.find(
+      (candidate): candidate is AgentSkillCommand =>
+        candidate.kind === "skill" && candidate.name === token.name,
+    );
+    if (command) found = { token, command };
+  }
+  return found
+    ? skillInvocationAt(trimmed, found.token, found.command, leadingStart)
+    : null;
 }
 
 export type SkillMessage =
@@ -166,16 +236,22 @@ export type SkillMessage =
   | { ok: false; reason: "args_too_long" };
 
 /**
- * The event for a skill invocation: content `/<name> <args>` (just
- * `/<name>` without arguments) and exactly one `buzz-skill` tag.
+ * The event for a skill invocation, with exactly one `buzz-skill` tag. A
+ * leading skill sends `/<name> <args>` (just `/<name>` without arguments);
+ * a skill picked later in a message keeps the message as typed.
  */
 export function buildSkillMessage(invocation: SkillInvocation): SkillMessage {
   const { command, args } = invocation;
   if (args.length > MAX_SKILL_ARGS)
     return { ok: false, reason: "args_too_long" };
+  const content = invocation.leading
+    ? args
+      ? `/${command.name} ${args}`
+      : `/${command.name}`
+    : invocation.text;
   return {
     ok: true,
-    content: args ? `/${command.name} ${args}` : `/${command.name}`,
+    content,
     tags: [["buzz-skill", command.skillId, args]],
   };
 }

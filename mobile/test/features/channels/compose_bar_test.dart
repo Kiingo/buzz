@@ -5822,6 +5822,13 @@ void main() {
       expect(findTrigger('foo#bar', 7, '#'), isNull);
     });
 
+    test('finds # after an opening bracket or a tab', () {
+      expect(findTrigger('see (#general', 13, '#'), 5);
+      expect(findTrigger('[#general', 9, '#'), 1);
+      expect(findTrigger('a\t#general', 10, '#'), 2);
+      expect(findTrigger('https://x.io/#top', 17, '#'), isNull);
+    });
+
     test('returns null when cursor is 0', () {
       expect(findTrigger('@hello', 0, '@'), isNull);
     });

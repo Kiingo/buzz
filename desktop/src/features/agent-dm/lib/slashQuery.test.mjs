@@ -12,6 +12,7 @@ import {
   slashCommandNeedsConfirm,
   slashCommandSection,
   slashCommandText,
+  slashTokens,
 } from "./slashQuery.ts";
 
 const SESSION_NEW = {
@@ -90,15 +91,61 @@ test("matching covers word prefixes, letters in order and descriptions", () => {
   );
 });
 
-test("the menu opens only for a leading / while the caret is in the first token", () => {
-  assert.deepEqual(detectSlashQuery("/", 1), { query: "", tokenEnd: 1 });
-  assert.deepEqual(detectSlashQuery("/rev", 4), { query: "rev", tokenEnd: 4 });
+test("the menu opens for a / at any word start while the caret ends its token", () => {
+  assert.deepEqual(detectSlashQuery("/", 1), {
+    query: "",
+    tokenStart: 0,
+    tokenEnd: 1,
+  });
+  assert.deepEqual(detectSlashQuery("/rev", 4), {
+    query: "rev",
+    tokenStart: 0,
+    tokenEnd: 4,
+  });
+  assert.deepEqual(detectSlashQuery("hi /rev", 7), {
+    query: "rev",
+    tokenStart: 3,
+    tokenEnd: 7,
+  });
+  assert.deepEqual(detectSlashQuery(" /rev", 5), {
+    query: "rev",
+    tokenStart: 1,
+    tokenEnd: 5,
+  });
+  assert.deepEqual(detectSlashQuery("line one\n/", 10), {
+    query: "",
+    tokenStart: 9,
+    tokenEnd: 10,
+  });
+  assert.deepEqual(detectSlashQuery("see (/rev", 9), {
+    query: "rev",
+    tokenStart: 5,
+    tokenEnd: 9,
+  });
+  // Mid-message, before more text: only the token is replaced on choose.
+  assert.deepEqual(detectSlashQuery("hi /re there", 6), {
+    query: "re",
+    tokenStart: 3,
+    tokenEnd: 6,
+  });
   assert.equal(detectSlashQuery("/rev", 2), null, "caret inside the token");
   assert.equal(detectSlashQuery("/review the PR", 14), null);
-  assert.equal(detectSlashQuery("hi /rev", 7), null);
-  assert.equal(detectSlashQuery(" /rev", 5), null);
   assert.equal(detectSlashQuery("/a/b", 4), null);
   assert.equal(detectSlashQuery("", 0), null);
+});
+
+test("a / inside a word, URL, email or path never opens the menu", () => {
+  assert.equal(detectSlashQuery("a/rev", 5), null);
+  assert.equal(detectSlashQuery("https://example.com/rev", 23), null);
+  assert.equal(detectSlashQuery("see https://x.io/", 17), null);
+  assert.equal(detectSlashQuery("me@example.com/rev", 18), null);
+  assert.equal(detectSlashQuery("open ~/rev", 10), null);
+  assert.equal(detectSlashQuery("open ./rev", 10), null);
+  assert.equal(detectSlashQuery("open /usr/bin", 13), null);
+  assert.deepEqual(slashTokens("a /x b/y /z"), [
+    { start: 2, end: 4, name: "x" },
+    { start: 9, end: 11, name: "z" },
+  ]);
 });
 
 test("filtering puts prefix matches before substring matches", () => {
@@ -165,6 +212,47 @@ test("only listed skills are invocations; session commands stay plain messages",
   assert.equal(parseSkillInvocation("/Review x", COMMANDS), null);
   assert.equal(parseSkillInvocation("review x", COMMANDS), null);
   assert.equal(parseSkillInvocation("/reviewer x", COMMANDS), null);
+});
+
+test("a skill picked mid-message is the invocation, with the whole message as input", () => {
+  const picked = new Set(["review"]);
+  const invocation = parseSkillInvocation(
+    "please /review https://example.com/pr/1 today",
+    COMMANDS,
+    picked,
+  );
+  assert.equal(invocation.command.name, "review");
+  assert.equal(invocation.args, "please https://example.com/pr/1 today");
+  assert.deepEqual(buildSkillMessage(invocation), {
+    ok: true,
+    content: "please /review https://example.com/pr/1 today",
+    tags: [
+      ["buzz-skill", "skill-review-1", "please https://example.com/pr/1 today"],
+    ],
+  });
+  assert.equal(
+    parseSkillInvocation("can you /review this", COMMANDS, picked).args,
+    "can you this",
+  );
+  // A name typed mid-message without picking it stays a plain message.
+  assert.equal(parseSkillInvocation("I ran /review yesterday", COMMANDS), null);
+  // A leading skill may still be typed by hand.
+  assert.equal(parseSkillInvocation("/review x", COMMANDS).args, "x");
+  // A session command is never a mid-message invocation.
+  assert.equal(
+    parseSkillInvocation("hi /new", COMMANDS, new Set(["new"])),
+    null,
+  );
+});
+
+test("one skill per message: the last picked token counts", () => {
+  const invocation = parseSkillInvocation(
+    "/renew-cert first then /review second",
+    COMMANDS,
+    new Set(["renew-cert", "review"]),
+  );
+  assert.equal(invocation.command.name, "review");
+  assert.equal(invocation.args, "/renew-cert first then second");
 });
 
 test("the argument hint shows only while the arguments are still empty", () => {

@@ -72,12 +72,37 @@ void main() {
   });
 
   group('findAgentCommandQuery', () {
-    test('opens only inside the first word after a leading slash', () {
+    test('opens inside a "/" token at any word start', () {
       expect(findAgentCommandQuery('/', 1)?.query, '');
       expect(findAgentCommandQuery('/Res', 4)?.query, 'res');
       expect(findAgentCommandQuery('/research topic', 15), isNull);
-      expect(findAgentCommandQuery('hi /res', 7), isNull);
       expect(findAgentCommandQuery('', 0), isNull);
+      final mid = findAgentCommandQuery('hi /res', 7)!;
+      expect(mid.query, 'res');
+      expect(mid.tokenStart, 3);
+      expect(mid.tokenEnd, 7);
+      expect(findAgentCommandQuery('line\n/', 6)?.tokenStart, 5);
+      expect(findAgentCommandQuery('see (/re', 8)?.tokenStart, 5);
+      // Mid-message before more text: a pick replaces only the token.
+      final before = findAgentCommandQuery('hi /re there', 6)!;
+      expect(before.tokenStart, 3);
+      expect(before.tokenEnd, 6);
+    });
+
+    test('never opens inside a word, URL, email address or path', () {
+      expect(findAgentCommandQuery('a/res', 5), isNull);
+      expect(findAgentCommandQuery('https://example.com/res', 23), isNull);
+      expect(findAgentCommandQuery('see https://x.io/', 17), isNull);
+      expect(findAgentCommandQuery('me@example.com/res', 18), isNull);
+      expect(findAgentCommandQuery('open ~/res', 10), isNull);
+      expect(findAgentCommandQuery('open ./res', 10), isNull);
+      expect(findAgentCommandQuery('open /usr/bin', 13), isNull);
+      expect(
+        agentCommandTokens(
+          'a /x b/y /z',
+        ).map((token) => (token.start, token.end, token.name)),
+        [(2, 4, 'x'), (9, 11, 'z')],
+      );
     });
   });
 
@@ -172,12 +197,48 @@ void main() {
       ]);
     });
 
-    test('a typed name, another word or long args send no tag', () {
-      expect(agentSkillInvocationTags('/research go', const {}), isEmpty);
+    test('a skill picked mid-message takes the whole message as input', () {
+      expect(
+        agentSkillInvocationTags('please /research Q3 revenue', {
+          'research': research,
+        }),
+        [
+          ['buzz-skill', 'skill-1', 'please Q3 revenue'],
+        ],
+      );
       expect(
         agentSkillInvocationTags('please /research', {'research': research}),
-        isEmpty,
+        [
+          ['buzz-skill', 'skill-1', 'please'],
+        ],
       );
+      // A URL in the message is input, never a token.
+      expect(
+        agentSkillInvocationTags('/research https://x.io/a/b', {
+          'research': research,
+        }),
+        [
+          ['buzz-skill', 'skill-1', 'https://x.io/a/b'],
+        ],
+      );
+    });
+
+    test('one skill per message: the last picked token counts', () {
+      const review = AgentCommand.skill(name: 'review', skillId: 'skill-2');
+      expect(
+        agentSkillInvocationTags('/research a then /review b', {
+          'research': research,
+          'review': review,
+        }),
+        [
+          ['buzz-skill', 'skill-2', '/research a then b'],
+        ],
+      );
+    });
+
+    test('a typed name or long args send no tag', () {
+      expect(agentSkillInvocationTags('/research go', const {}), isEmpty);
+      expect(agentSkillInvocationTags('I ran /research', const {}), isEmpty);
       expect(
         agentSkillInvocationTags('/research ${'x' * 4001}', {
           'research': research,

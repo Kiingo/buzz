@@ -6,6 +6,7 @@ import {
   detectGroupSlashQuery,
   groupSkillTag,
   MAX_SLASH_AGENT_CHOICES,
+  mentionsSomeone,
   parseGroupSkillInvocation,
   resolveSlashTarget,
   slashTokenStart,
@@ -50,6 +51,32 @@ test("detectGroupSlashQuery: reads the token after the mention", () => {
   });
   // The caret has left the token: arguments are being typed.
   assert.equal(detectGroupSlashQuery("@Scout /review x", 16), null);
+});
+
+test("detectGroupSlashQuery: a / opens at any word start", () => {
+  assert.deepEqual(detectGroupSlashQuery("ask @Scout to /re", 17), {
+    query: "re",
+    tokenStart: 14,
+    tokenEnd: 17,
+    prefix: "ask @Scout to ",
+  });
+  assert.deepEqual(detectGroupSlashQuery("hi /", 4), {
+    query: "",
+    tokenStart: 3,
+    tokenEnd: 4,
+    prefix: "hi ",
+  });
+  assert.equal(detectGroupSlashQuery("see https://x.io/re", 19), null);
+  assert.equal(detectGroupSlashQuery("me@x.io/re", 10), null);
+});
+
+test("mentionsSomeone: an @ that opens a word", () => {
+  assert.equal(mentionsSomeone("@Scout "), true);
+  assert.equal(mentionsSomeone("ask @Scout to "), true);
+  assert.equal(mentionsSomeone("(@Scout) "), true);
+  assert.equal(mentionsSomeone("hi "), false);
+  assert.equal(mentionsSomeone("me@example.com "), false);
+  assert.equal(mentionsSomeone(""), false);
 });
 
 test("resolveSlashTarget: mention, then addressed agents, then the channel's", () => {
@@ -125,13 +152,28 @@ test("parseGroupSkillInvocation and groupSkillTag keep the typed args", () => {
   const invocation = parseGroupSkillInvocation("@Scout /review the PR", [
     REVIEW,
   ]);
-  assert.deepEqual(invocation, { command: REVIEW, args: "the PR" });
+  assert.deepEqual(invocation, {
+    command: REVIEW,
+    args: "the PR",
+    text: "@Scout /review the PR",
+    leading: true,
+  });
   assert.deepEqual(groupSkillTag(invocation), [
     "buzz-skill",
     "skill-review",
     "the PR",
   ]);
   assert.equal(parseGroupSkillInvocation("please /review", [REVIEW]), null);
+  // Picked from the menu, a mid-message skill counts, with the whole
+  // message (mention included) as its input.
+  const picked = parseGroupSkillInvocation(
+    "ask @Scout to /review the PR",
+    [REVIEW],
+    new Set(["review"]),
+  );
+  assert.equal(picked.command, REVIEW);
+  assert.equal(picked.args, "ask @Scout to the PR");
+  assert.equal(picked.leading, false);
   assert.equal(
     groupSkillTag({ command: REVIEW, args: "x".repeat(MAX_SKILL_ARGS + 1) }),
     null,

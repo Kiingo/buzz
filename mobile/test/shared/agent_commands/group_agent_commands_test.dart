@@ -27,6 +27,26 @@ void main() {
     expect(findGroupAgentCommandQuery('@Scout /re', 3), isNull);
   });
 
+  test('findGroupAgentCommandQuery opens at any word start', () {
+    final open = findGroupAgentCommandQuery('ask @Scout to /re', 17)!;
+    expect(open.query, 're');
+    expect(open.tokenStart, 14);
+    expect(open.tokenEnd, 17);
+    expect(open.prefix, 'ask @Scout to ');
+    expect(findGroupAgentCommandQuery('hi /', 4)!.prefix, 'hi ');
+    expect(findGroupAgentCommandQuery('see https://x.io/re', 19), isNull);
+    expect(findGroupAgentCommandQuery('me@x.io/re', 10), isNull);
+  });
+
+  test('mentionsSomeone: an @ that opens a word', () {
+    expect(mentionsSomeone('@Scout '), isTrue);
+    expect(mentionsSomeone('ask @Scout to '), isTrue);
+    expect(mentionsSomeone('(@Scout) '), isTrue);
+    expect(mentionsSomeone('hi '), isFalse);
+    expect(mentionsSomeone('me@example.com '), isFalse);
+    expect(mentionsSomeone(''), isFalse);
+  });
+
   test('resolveGroupCommandTarget: the mention, else the only agent', () {
     expect(
       resolveGroupCommandTarget(
@@ -89,9 +109,14 @@ void main() {
         ['buzz-skill', 'skill-review', 'the PR'],
       ],
     );
+    // Picked mid-message: the whole message, mention included, is input.
     expect(
-      groupAgentSkillInvocationTags('please /review', {'review': review}),
-      isEmpty,
+      groupAgentSkillInvocationTags('ask @Scout to /review the PR', {
+        'review': review,
+      }),
+      [
+        ['buzz-skill', 'skill-review', 'ask @Scout to the PR'],
+      ],
     );
     expect(
       groupAgentSkillInvocationTags('@Scout /review x', const {}),
