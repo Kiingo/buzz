@@ -2086,6 +2086,21 @@
       "purpose": "BUZZ_GIT_IDENTITY=off: the harness installs no Git state at all. No buzz-acp-git-* tempdir, no keyfile, no credential or signing helper links, no PATH entry and no GIT_CONFIG block; agent shells keep the inherited Git configuration and the key stays in process env only. The resolved mode is forwarded so nested harnesses stay off. Tests cover the selector, the MCP env block and a process-level check that nothing named buzz-acp-git-* and no file holding the key exists under TMPDIR or HOME while the harness runs.",
       "removalCondition": "Drop when upstream BUZZ_GIT_IDENTITY offers an equivalent off mode.",
       "upstreamStatus": "Generic, provider-neutral operator switch; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz huddle maintainers",
+      "paths": [
+        "crates/buzz-relay/src/audio/huddle_removal_postgres_tests.rs",
+        "desktop/src-tauri/src/huddle/playout.rs",
+        "desktop/src-tauri/src/huddle/relay_api.rs",
+        "desktop/src/features/huddle/lib/huddleAudioDisconnect.test.mjs",
+        "desktop/src/features/huddle/lib/huddleAudioDisconnect.ts",
+        "docs/implementation-plans/M-4581-huddle-removal.md"
+      ],
+      "purpose": "Preserve a member's removal from a huddle across audio reconnect and parent-channel auto-admission (M-4581). Audio admission refuses an externally removed or unknown-provenance membership (using channel_members.removed_by), rechecked under the membership lock for every join commit; explicit re-invitation and voluntary leave and rejoin still work. The desktop treats the relay's terminal removal or ended frame as leave instead of reconnecting. Also touches crates/buzz-db/src/store/channel_members.rs, crates/buzz-relay/src/audio/handler.rs and desktop/src/features/huddle/HuddleContext.tsx, which other deltas already own.",
+      "removalCondition": "Drop when upstream audio admission honors member removal provenance and its desktop stops reconnecting after a terminal removal frame.",
+      "upstreamStatus": "Generic, provider-neutral bug fix; not yet submitted to block/buzz."
     }
   ],
   "budgetAmendments": [
