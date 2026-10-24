@@ -313,6 +313,14 @@ const EVENTS_INVENTORY: &[(&str, usize, usize)] = &[
     ("src/commands/admin/helpers.rs", 0, 3), // boundaries 9, 10, 11
     ("src/commands/admin/mod.rs", 0, 1),     // boundary 12
     ("src/commands/admin/attachment.rs", 0, 1), // boundary 13
+    // Remote signer: the device signs relay requests for the broker and
+    // never sends to the relay itself. The connected relay's `/events` URL is
+    // derived only to compare with the request's NIP-98 `u` tag; responses go
+    // to the broker, not `/events`. The other rows are test fixtures.
+    ("src/commands/remote_signer.rs", 1, 0),
+    ("src/commands/remote_signer/sign.rs", 3, 0),
+    ("src/commands/remote_signer/store_tests.rs", 1, 0),
+    ("src/commands/remote_signer/validate_tests.rs", 10, 0),
     ("src/commands/admin/routes.rs", 3, 0),
     ("src/commands/admin/reads_tests.rs", 1, 0),
     ("src/commands/admin/direct_action_tests.rs", 1, 0),
