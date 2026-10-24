@@ -2552,6 +2552,13 @@ async fn ingest_event_inner(
                 &event.pubkey.to_bytes(),
             );
     if huddle_service {
+        // Its events skip membership, so neither side may lend that to the
+        // other: the authenticated key must be the signer, gift wraps included.
+        if event.pubkey != *auth.pubkey() {
+            return Err(IngestError::Rejected(
+                crate::huddle_creator_admitted::SERVICE_NOT_OWN_EVENT.into(),
+            ));
+        }
         crate::huddle_creator_admitted::validate_service_event(state, tenant, kind_u32, &event)
             .await
             .map_err(IngestError::Rejected)?;

@@ -39,7 +39,8 @@
 //! appears in no roster or directory; NIP-11 advertises it so clients render
 //! its huddle notices as system notices. It authenticates only with NIP-98 on
 //! `POST /events` (WebSocket and audio AUTH and every other HTTP route refuse
-//! it) and may publish only:
+//! it), submits only events it signed itself (and no other key may submit its
+//! events), and may publish only:
 //!
 //! - kind:9007 carrying the admission mark (it need not belong to the parent);
 //! - kind:9000 and kind:9001 on marked channels it created, with ordinary
@@ -218,6 +219,10 @@ pub(crate) fn is_service_key(config: &crate::config::Config, key: &[u8]) -> bool
 
 const SERVICE_KIND_REFUSED: &str =
     "restricted: a huddle service identity may not publish this kind";
+/// A service key's events skip relay membership, so it may submit only events
+/// it signed, and its signature may arrive only under its own authentication.
+pub(crate) const SERVICE_NOT_OWN_EVENT: &str =
+    "restricted: a huddle service identity submits only its own events";
 const SERVICE_MARK_REQUIRED: &str =
     "restricted: a huddle service identity creates only creator-admitted channels";
 const SERVICE_FOREIGN_CHANNEL: &str =

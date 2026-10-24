@@ -45,8 +45,9 @@ other, and clients render its huddle notices as system notices rather than
 as a person.
 
 It authenticates only with NIP-98 (kind:27235) on `POST /events`. WebSocket
-AUTH, audio, and every other HTTP route refuse it. Through that route it may
-publish only:
+AUTH, audio, and every other HTTP route refuse it. It submits only events it
+signed, and no other key may submit its events (gift wraps included). Through
+that route it may publish only:
 
 | Kind | Allowed when |
 |------|--------------|

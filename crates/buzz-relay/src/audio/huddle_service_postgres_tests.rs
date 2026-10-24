@@ -70,18 +70,30 @@ impl HuddleServiceFixture {
         content: &str,
         tags: &[&[&str]],
     ) -> Result<crate::handlers::ingest::IngestResult, crate::handlers::ingest::IngestError> {
+        self.ingest_as(keys, keys, kind, content, tags).await
+    }
+
+    /// Ingests an event signed by `signer` under `auth`'s authentication.
+    async fn ingest_as(
+        &self,
+        signer: &nostr::Keys,
+        auth: &nostr::Keys,
+        kind: u16,
+        content: &str,
+        tags: &[&[&str]],
+    ) -> Result<crate::handlers::ingest::IngestResult, crate::handlers::ingest::IngestError> {
         let tags = tags
             .iter()
             .map(|tag| nostr::Tag::parse(tag.iter().copied()).expect("tag"));
         let event = nostr::EventBuilder::new(nostr::Kind::Custom(kind), content)
             .tags(tags)
-            .sign_with_keys(keys)
+            .sign_with_keys(signer)
             .expect("sign");
         crate::handlers::ingest::ingest_event(
             &self.state,
             &self.tenant,
             event,
-            crate::handlers::group_state_postgres_tests::http_auth(keys),
+            crate::handlers::group_state_postgres_tests::http_auth(auth),
         )
         .await
     }
@@ -432,5 +444,53 @@ async fn huddle_service_creates_only_marked_channels() {
             .get_channel(f.tenant.community(), child)
             .await
             .is_err());
+    }
+}
+
+/// Required deny: the service's authentication never carries another key's
+/// event, and its signed event never arrives under another key's
+/// authentication. Gift wraps, the one kind whose signer may differ from the
+/// authenticated key, are refused both ways too.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn huddle_service_submits_only_its_own_events() {
+    let f = HuddleServiceFixture::new().await;
+    let (child, parent) = (Uuid::new_v4(), f.parent.to_string());
+    let (child_text, ttl) = (child.to_string(), f.ttl());
+    let marked: [&[&str]; 5] = [
+        &["h", &child_text],
+        &["name", "borrowed-service-auth"],
+        &["visibility", "private"],
+        &["ttl", &ttl],
+        &["admission", "creator", &parent],
+    ];
+    // An ordinary member's marked 9007 under the service's NIP-98 auth.
+    assert!(f
+        .ingest_as(&f.member, &f.service, 9007, "", &marked)
+        .await
+        .is_err());
+    assert!(
+        f.state
+            .db
+            .get_channel(f.tenant.community(), child)
+            .await
+            .is_err(),
+        "no channel may be created under borrowed service authentication"
+    );
+
+    let member_hex = f.member.public_key().to_hex();
+    let service_hex = f.service.public_key().to_hex();
+    for (signer, auth, recipient) in [
+        (&f.member, &f.service, &service_hex),
+        (&f.service, &f.member, &member_hex),
+    ] {
+        let message = service_rejected(
+            f.ingest_as(signer, auth, 1059, "sealed", &[&["p", recipient]])
+                .await,
+        );
+        assert_eq!(
+            message,
+            crate::huddle_creator_admitted::SERVICE_NOT_OWN_EVENT
+        );
     }
 }
