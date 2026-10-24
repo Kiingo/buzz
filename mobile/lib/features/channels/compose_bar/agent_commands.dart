@@ -112,16 +112,32 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
   }, [controller, agentPubkey, groupMode]);
 
   final open = groupMode ? groupQuery.value : null;
-  final target = open == null || group == null
+  final resolved = open == null || group == null
       ? null
       : resolveGroupCommandTarget(
           hasPrefix: open.prefix.isNotEmpty,
           prefixAgent: group.agentIn(open.prefix)?.pubkey.toLowerCase(),
           channelAgents: [for (final agent in group.agents) agent.pubkey],
         );
+  // With several agents, load each one's list so agents that offer nothing
+  // drop out (and the one left, if only one, is the target).
+  final target = resolved == null || resolved.choices.isEmpty
+      ? resolved
+      : narrowGroupCommandTarget(resolved, (pubkey) {
+          final list = ref.watch(agentGroupCommandsProvider(pubkey));
+          final value = list.value;
+          return value == null
+              ? GroupCommandListState.unknown
+              : value.isEmpty
+              ? GroupCommandListState.empty
+              : GroupCommandListState.some;
+        });
   final commandAgent = groupMode ? target?.agent : agentPubkey;
   final listOpen = commandAgent != null && query.value != null;
-  final commands = !listOpen
+  final audience = groupMode
+      ? AgentCommandAudience.group
+      : AgentCommandAudience.private;
+  final listed = !listOpen
       ? const <AgentCommand>[]
       : ref
                 .watch(
@@ -131,17 +147,42 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
                 )
                 .value ??
             const <AgentCommand>[];
+  // A list the server cut short: what is typed is searched on the server
+  // too, so every skill the person may use can be found.
+  final search = listOpen ? normalizeAgentCommandQuery(query.value!) : '';
+  final searched =
+      search.isNotEmpty && agentCommandsTruncated(ref, commandAgent!, audience)
+      ? ref
+                .watch(
+                  agentCommandSearchProvider((
+                    agent: commandAgent,
+                    audience: audience,
+                    query: search,
+                  )),
+                )
+                .value ??
+            const <AgentCommand>[]
+      : const <AgentCommand>[];
+  final commands = searched.isEmpty
+      ? listed
+      : mergeAgentCommands(searched, listed);
   final List<AgentCommand> suggestions;
   if (listOpen) {
     suggestions = filterAgentCommands(commands, query.value!);
   } else if (target != null && target.choices.isNotEmpty && group != null) {
     final q = query.value ?? '';
-    suggestions = [
+    final choices = [
       for (final pubkey in target.choices)
         if (group.agent(pubkey) case final agent?)
-          if (agent.label.toLowerCase().contains(q))
-            AgentCommand.agent(name: agent.label, agentPubkey: pubkey),
+          AgentCommand.agent(name: agent.label, agentPubkey: pubkey),
     ];
+    // Typing a command name before choosing keeps the agents on offer; the
+    // choice then opens that agent's matches for what was typed.
+    final matching = [
+      for (final choice in choices)
+        if (choice.name.toLowerCase().contains(q)) choice,
+    ];
+    suggestions = matching.isEmpty ? choices : matching;
   } else {
     suggestions = const [];
   }
@@ -200,8 +241,9 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
         final agent = group.agent(command.agentPubkey!);
         if (agent == null) return;
         final label = group.bindMention(agent);
-        final prefix = '@$label /';
-        setText('$prefix$rest', prefix.length);
+        // Keep what was typed after "/": the agent's list opens on it.
+        final prefix = '@$label /${query.value ?? ''}';
+        setText(rest.isEmpty ? prefix : '$prefix $rest', prefix.length);
       case AgentCommandKind.session:
         // The server reads the bare command, so the mention is dropped and
         // the agent is addressed with a tag instead.

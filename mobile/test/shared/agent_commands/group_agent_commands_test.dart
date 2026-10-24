@@ -108,4 +108,52 @@ void main() {
     expect(commands.first.agentPubkey, _a);
     expect(commands.first.section, AgentCommandSection.agents);
   });
+
+  test('narrowGroupCommandTarget drops agents with nothing to offer', () {
+    final choose = (agent: null, choices: [_a, _b, _c]);
+    GroupCommandListState Function(String) states(
+      Map<String, GroupCommandListState> known,
+    ) =>
+        (pubkey) => known[pubkey] ?? GroupCommandListState.unknown;
+    expect(narrowGroupCommandTarget(choose, states({}))?.choices, [_a, _b, _c]);
+    expect(
+      narrowGroupCommandTarget(
+        choose,
+        states({_b: GroupCommandListState.empty}),
+      )?.choices,
+      [_a, _c],
+    );
+    final only = narrowGroupCommandTarget(
+      choose,
+      states({
+        _a: GroupCommandListState.some,
+        _b: GroupCommandListState.empty,
+        _c: GroupCommandListState.empty,
+      }),
+    );
+    expect(only?.agent, _a);
+    expect(only?.choices, isEmpty);
+    // The one left is still loading: keep offering it.
+    expect(
+      narrowGroupCommandTarget(
+        choose,
+        states({
+          _b: GroupCommandListState.empty,
+          _c: GroupCommandListState.empty,
+        }),
+      )?.choices,
+      [_a],
+    );
+    expect(
+      narrowGroupCommandTarget(
+        choose,
+        states({
+          _a: GroupCommandListState.empty,
+          _b: GroupCommandListState.empty,
+          _c: GroupCommandListState.empty,
+        }),
+      ),
+      isNull,
+    );
+  });
 }

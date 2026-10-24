@@ -3,8 +3,12 @@ import { afterEach, test } from "node:test";
 
 import {
   COMMANDS_REVALIDATE_MS,
+  getAgentCommandSearch,
   getAgentCommands,
+  hasAgentCommands,
+  isAgentCommandsTruncated,
   parseAgentCommandsBody,
+  refreshAgentCommandSearch,
   refreshAgentCommands,
   resetAgentCommandsCache,
   setAgentCommandsTransportForTests,
@@ -230,4 +234,62 @@ test("concurrent opens share one lookup; a community switch retires it", async (
   await first;
   assert.deepEqual(getAgentCommands(AGENT), []);
   assert.deepEqual(await refreshAgentCommands("not-hex"), undefined);
+});
+
+test("a cut-short list searches the server for what is typed", async () => {
+  const far = {
+    kind: "skill",
+    name: "kiingo-frontend-style",
+    skill_id: "sk-far",
+    description: null,
+    argument_hint: null,
+    source: "registry",
+  };
+  const h = harness((input) =>
+    input.query
+      ? { notModified: false, etag: null, body: body([far]) }
+      : {
+          notModified: false,
+          etag: '"v1"',
+          body: body(LISTED, { truncated: true }),
+        },
+  );
+  assert.equal(hasAgentCommands(AGENT, "group"), false);
+  await refreshAgentCommandSearch(AGENT, "group", "kiingo-fr");
+  assert.equal(h.calls.length, 0, "no search before the list says it is cut");
+  await refreshAgentCommands(AGENT, "group");
+  assert.equal(hasAgentCommands(AGENT, "group"), true);
+  assert.equal(isAgentCommandsTruncated(AGENT, "group"), true);
+  assert.equal(getAgentCommandSearch(AGENT, "group", "kiingo-fr"), null);
+  await refreshAgentCommandSearch(AGENT, "group", "  Kiingo-FR ");
+  assert.deepEqual(h.calls[1], {
+    agentPublicKey: AGENT,
+    etag: null,
+    audience: "group",
+    query: "kiingo-fr",
+  });
+  assert.deepEqual(
+    getAgentCommandSearch(AGENT, "group", "kiingo-fr")?.map(
+      (command) => command.name,
+    ),
+    ["kiingo-frontend-style"],
+  );
+  await refreshAgentCommandSearch(AGENT, "group", "kiingo-fr");
+  assert.equal(h.calls.length, 2, "a fresh search is reused");
+  resetAgentCommandsCache();
+  assert.equal(getAgentCommandSearch(AGENT, "group", "kiingo-fr"), null);
+});
+
+test("an uncut list never searches and a known empty list is known", async () => {
+  const h = harness(() => ({
+    notModified: false,
+    etag: '"v1"',
+    body: body([]),
+  }));
+  await refreshAgentCommands(AGENT, "group");
+  assert.equal(hasAgentCommands(AGENT, "group"), true);
+  assert.deepEqual(getAgentCommands(AGENT, "group"), []);
+  assert.equal(isAgentCommandsTruncated(AGENT, "group"), false);
+  await refreshAgentCommandSearch(AGENT, "group", "x");
+  assert.equal(h.calls.length, 1);
 });
