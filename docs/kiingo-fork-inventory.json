@@ -1950,6 +1950,16 @@
       "classification": "retain-generic",
       "owner": "Buzz relay maintainers",
       "paths": [
+        "crates/buzz-pubsub/src/conn_control.rs"
+      ],
+      "purpose": "Cut live huddle audio when a member is removed from the huddle channel (kind 9001, kick, kind 9022) or the channel is archived or deleted (kind 9002 archived, kind 9008, the TTL reaper). Previously the relay only refused new audio admissions, so a connected peer kept sending and receiving audio. The cross-pod EndHuddleAudio conn-control command carries the cut; receivers re-read durable state before cutting. Also touches crates/buzz-relay/src/state.rs, crates/buzz-relay/src/main.rs, crates/buzz-relay/src/audio/handler.rs and crates/buzz-relay/src/handlers/side_effects.rs, which other deltas already own. Kiingo/buzz#261.",
+      "removalCondition": "Drop when upstream ends live huddle audio for removed members and archived or deleted huddle channels across relay pods.",
+      "upstreamStatus": "Generic, provider-neutral bug fix; not yet submitted to block/buzz."
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz relay maintainers",
+      "paths": [
         "crates/buzz-relay/src/audio/join.rs",
         "crates/buzz-relay/src/audio/mesh.rs",
         "crates/buzz-relay/src/audio/room.rs"
