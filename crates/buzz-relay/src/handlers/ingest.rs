@@ -3193,6 +3193,16 @@ async fn ingest_event_inner(
             .transpose()
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?
             .unwrap_or_default();
+        crate::huddle_creator_admitted::validate_creation(
+            state,
+            tenant,
+            &event,
+            channel_id,
+            visibility == buzz_db::channel::ChannelVisibility::Private,
+            super::resolve_ttl(&event, state.config.ephemeral_ttl_override),
+        )
+        .await
+        .map_err(IngestError::Rejected)?;
 
         if let Some(client_uuid) = channel_id {
             let name = create_name.unwrap_or_default();
@@ -3616,6 +3626,26 @@ async fn ingest_event_inner(
         }
     }
 
+    // A creator-admitted removal is acknowledged only once the member's live
+    // audio is gone; an unconfirmed close answers with the contract warning.
+    let mut ok_message = String::new();
+    if let Some((removed_channel, removed_key)) =
+        crate::huddle_creator_admitted::removal_target(state, tenant, kind_u32, &event, channel_id)
+            .await
+    {
+        if crate::huddle_creator_admitted::confirm_audio_closed(
+            state,
+            tenant,
+            removed_channel,
+            &removed_key,
+        )
+        .await
+            == crate::huddle_creator_admitted::AudioClose::Unconfirmed
+        {
+            ok_message = crate::huddle_creator_admitted::AUDIO_CLOSE_UNCONFIRMED_WARNING.to_owned();
+        }
+    }
+
     // A freshly inserted reply changed its thread's counters (updated in the
     // same transaction as the insert) — push a fresh relay-signed 39005 so
     // subscribed clients can update badge counts without refetching the head
@@ -3675,7 +3705,7 @@ async fn ingest_event_inner(
     Ok(IngestResult {
         event_id: event_id_hex,
         accepted: true,
-        message: String::new(),
+        message: ok_message,
     })
 }
 

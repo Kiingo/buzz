@@ -568,6 +568,15 @@ pub async fn validate_admin_event(
         return Err(anyhow::anyhow!("channel is archived"));
     }
 
+    // Creator-admitted backing channels: fixed mark, creator-only puts and
+    // removes, and the parent's delete safety valve.
+    if crate::huddle_creator_admitted::validate_admin_event(state, tenant, kind, event, &channel)
+        .await?
+        == crate::huddle_creator_admitted::AdminDecision::Allow
+    {
+        return Ok(());
+    }
+
     match kind {
         9000 => {
             // An absent role tag means "no role change requested": for an existing
@@ -1236,14 +1245,28 @@ fn group_members_tags(
 
 async fn store_group_members_event(
     state: &Arc<AppState>,
+    community_id: buzz_core::CommunityId,
     member_snapshot: &mut buzz_db::channel::LockedMemberSnapshot,
 ) -> anyhow::Result<Option<buzz_core::StoredEvent>> {
     let group_id = member_snapshot.channel_id().to_string();
-    let tags = group_members_tags(
+    let mut tags = group_members_tags(
         &group_id,
         member_snapshot.identity.as_ref(),
         &member_snapshot.members,
     )?;
+    // A creator-admitted roster also echoes each member's current put.
+    if let Some(identity) = member_snapshot.identity.as_ref() {
+        tags.extend(
+            crate::huddle_creator_admitted::roster_put_tags(
+                state,
+                community_id,
+                member_snapshot.channel_id(),
+                &identity.created_by,
+                &member_snapshot.members,
+            )
+            .await?,
+        );
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1417,7 +1440,8 @@ pub async fn emit_group_discovery_events(
         .db
         .lock_member_snapshot(tenant.community(), channel_id, &relay_pubkey)
         .await?;
-    let stored_members = store_group_members_event(state, &mut member_snapshot).await?;
+    let stored_members =
+        store_group_members_event(state, tenant.community(), &mut member_snapshot).await?;
     member_snapshot.release().await?;
     dispatch_group_members_event(tenant, state, stored_members, &relay_pubkey_hex).await;
 
@@ -1612,6 +1636,14 @@ async fn handle_put_user(
             Some(&actor_bytes),
         )
         .await?;
+    crate::huddle_creator_admitted::record_put(
+        state,
+        tenant,
+        channel_id,
+        &target_pubkey,
+        &actor_bytes,
+    )
+    .await?;
     state.invalidate_membership(tenant, channel_id, &target_pubkey);
 
     let actor_hex = hex::encode(&actor_bytes);
@@ -3590,7 +3622,9 @@ pub async fn reconcile_large_channel_member_snapshots(
                 .lock_member_snapshot(candidate.community_id, channel_id, &relay_pubkey.to_bytes())
                 .await?;
             let tenant = TenantContext::resolved(candidate.community_id, candidate.host.clone());
-            let stored_members = store_group_members_event(state, &mut member_snapshot).await?;
+            let stored_members =
+                store_group_members_event(state, candidate.community_id, &mut member_snapshot)
+                    .await?;
             member_snapshot.release().await?;
             dispatch_group_members_event(&tenant, state, stored_members, &relay_pubkey_hex).await;
             Ok::<bool, anyhow::Error>(true)

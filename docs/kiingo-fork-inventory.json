@@ -2116,6 +2116,19 @@
         "desktop/src/features/home/ui/inboxReopenNavigation.test.mjs",
         "desktop/src/features/projects/ui/useRetainedProjectGitViews.test.mjs"
       ]
+    },
+    {
+      "id": "huddle-creator-admitted-2026-10-24",
+      "classification": "retain-generic",
+      "owner": "Buzz relay maintainers",
+      "purpose": "Creator-admitted huddle backing channels. A kind 9007 tagged [\"admission\", \"creator\", <parent channel id>] (private, TTL-bound, creator an active parent member) fixes its mark at creation; no kind 9002 adds, changes or clears it. Only the creator puts (kind 9000, target must be an active parent member) or removes (kind 9001); members leave with kind 9022; parent owners and admins may still delete it (kind 9008). Audio admits the creator and creator-put members (invited_by stamped by the relay from the put's signer) while they stay in the parent, with no parent auto-add or open shortcut and nobody once expired; the periodic audio re-check enforces the same rule. A kind 9001 or 9022 on such a channel answers OK only after the member's local audio socket closed and the end was published to the other pods; otherwise the socket is force-dropped and the OK carries the warning \"warning: live audio close not confirmed\". Opaque call and epoch tags on puts are echoed in the kind 39002 roster as [\"put\", member, call, epoch]. Also touches crates/buzz-relay/src/lib.rs, crates/buzz-relay/src/handlers/ingest.rs, crates/buzz-relay/src/handlers/side_effects.rs, crates/buzz-relay/src/state.rs, crates/buzz-relay/src/audio/handler.rs, crates/buzz-db/src/lib.rs and crates/buzz-db/src/store/mod.rs, which other deltas already own.",
+      "upstreamStatus": "Generic NIP-29 huddle admission mode; candidate for block/buzz.",
+      "removalCondition": "Drop once upstream ships an equivalent creator-controlled huddle admission mode.",
+      "paths": [
+        "crates/buzz-db/src/store/huddle_admission.rs",
+        "crates/buzz-relay/src/huddle_creator_admitted.rs",
+        "crates/buzz-relay/src/audio/huddle_creator_admitted_postgres_tests.rs"
+      ]
     }
   ],
   "budgetAmendments": [

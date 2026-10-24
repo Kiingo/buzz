@@ -557,6 +557,35 @@ impl CommunityConnectionRegistry {
         closed
     }
 
+    /// Cancel `pubkey`'s audio sockets in `channel_id` and drop their
+    /// registrations without waiting for the socket tasks to exit. Used when
+    /// a cancelled socket has not deregistered within its close deadline;
+    /// returns how many registrations were dropped.
+    pub(crate) fn force_drop_huddle_audio(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: &[u8],
+    ) -> usize {
+        let stuck: Vec<Uuid> = self
+            .connections
+            .iter()
+            .filter(|entry| {
+                let (community, control) = entry.value();
+                *community == community_id && control.matches_huddle_audio(channel_id, Some(pubkey))
+            })
+            .map(|entry| *entry.key())
+            .collect();
+        let mut dropped = 0;
+        for connection_id in stuck {
+            if let Some((_, (_, control))) = self.connections.remove(&connection_id) {
+                control.end_huddle_audio(HuddleAudioEnd::Removed);
+                dropped += 1;
+            }
+        }
+        dropped
+    }
+
     /// Whether this pod holds an audio socket that
     /// [`Self::disconnect_huddle_audio`] with the same arguments would cut.
     pub fn has_huddle_audio(

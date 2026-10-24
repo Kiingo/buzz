@@ -24,6 +24,8 @@ pub mod dm;
 pub mod event;
 /// App-owned push enqueue and channel TTL refresh for inserted events.
 pub(crate) mod event_follow_up;
+/// Creator-admitted huddle backing-channel reads.
+pub mod huddle_admission;
 
 #[cfg(test)]
 mod event_follow_up_postgres_tests;

@@ -2577,6 +2577,14 @@ async fn membership_recheck_loop(
         MEMBERSHIP_RECHECK_INTERVAL,
     );
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The mark is fixed at creation, so one read serves the socket's life.
+    let creator_admitted = match state.db.get_channel(community_id, channel_id).await {
+        Ok(channel) => crate::huddle_creator_admitted::load(&state, community_id, &channel)
+            .await
+            .ok()
+            .flatten(),
+        Err(_) => None,
+    };
     loop {
         tokio::select! {
             _ = interval.tick() => {
@@ -2587,6 +2595,20 @@ async fn membership_recheck_loop(
                         > 0
                 {
                     break;
+                }
+                if let Some(mark) = creator_admitted {
+                    if crate::huddle_creator_admitted::recheck(
+                        &state,
+                        community_id,
+                        channel_id,
+                        mark,
+                        &pubkey,
+                    )
+                    .await
+                        > 0
+                    {
+                        break;
+                    }
                 }
             }
             _ = cancel.cancelled() => break,
@@ -2986,6 +3008,35 @@ async fn check_membership_for_admission(
         .map_err(AdmissionRefusal::Dependency)?
     {
         return Err(AdmissionRefusal::RemovedFromHuddle);
+    }
+
+    // A creator-admitted huddle admits only the creator and the members the
+    // creator put, while they stay in the parent: no open shortcut, no parent
+    // auto-add, nobody once it has expired.
+    let creator_admitted =
+        crate::huddle_creator_admitted::load(state, tenant.community(), &channel)
+            .await
+            .map_err(|_| AdmissionRefusal::Denied("creator-admitted huddle unreadable"))?;
+    if let Some(mark) = creator_admitted {
+        let admitted = crate::huddle_creator_admitted::admits(
+            state,
+            tenant.community(),
+            &channel,
+            mark,
+            lifecycle_parent_id,
+            pubkey_bytes,
+        )
+        .await
+        .map_err(AdmissionRefusal::Dependency)?;
+        return if admitted {
+            Ok(MembershipAdmission::Existing {
+                parent_channel_id: lifecycle_parent_id,
+            })
+        } else {
+            Err(AdmissionRefusal::Denied(
+                "not admitted by the huddle creator",
+            ))
+        };
     }
 
     // Fast path: already a member.
@@ -7364,6 +7415,7 @@ mod tests {
         use super::*;
 
         include!("huddle_removal_postgres_tests.rs");
+        include!("huddle_creator_admitted_postgres_tests.rs");
 
         // A paired, deny-clean audio AUTH refused by ordinary policy, relay
         // membership on a closed relay or channel membership, is never
