@@ -61,3 +61,12 @@ that route it may publish only:
 Every other kind is refused, including messages, reactions, edits, typing
 and any parent membership or role change. The relay never admits a service
 key to huddle audio.
+
+Because a service identity appears in no roster, the relay counts its
+accepted events in `buzz_huddle_service_events_total{kind}`, so the service
+can reconcile its own records against what the relay accepted.
+
+A service kind:9001 whose target is no longer an active member is accepted
+(`OK` true) and changes nothing. Refusals the service may see are listed in
+the relay source; only `invalid: channel not found` means the channel is
+gone, and a failed read answers `error: …`, never "not found".

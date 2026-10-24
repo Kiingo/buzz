@@ -3654,6 +3654,13 @@ async fn ingest_event_inner(
         });
     }
 
+    // Service identities are absent from rosters, so their accepted events are
+    // counted by kind for reconciliation against the service's own records.
+    if huddle_service {
+        metrics::counter!("buzz_huddle_service_events_total", "kind" => kind_u32.to_string())
+            .increment(1);
+    }
+
     if !workflow_deletion && crate::handlers::side_effects::is_side_effect_kind(kind_u32) {
         if let Err(e) =
             crate::handlers::side_effects::handle_side_effects(tenant, kind_u32, &event, state)

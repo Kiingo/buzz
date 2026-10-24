@@ -227,6 +227,7 @@ const SERVICE_MARK_REQUIRED: &str =
     "restricted: a huddle service identity creates only creator-admitted channels";
 const SERVICE_FOREIGN_CHANNEL: &str =
     "restricted: a huddle service identity acts only on creator-admitted channels it created";
+const SERVICE_CHANNEL_NOT_FOUND: &str = "invalid: channel not found";
 const SERVICE_LIFECYCLE_SHAPE: &str =
     "invalid: a huddle service notice carries only the h tag and the ephemeral_channel_id";
 const SERVICE_LIFECYCLE_ORDER: &str =
@@ -255,11 +256,15 @@ pub(crate) async fn validate_service_event(
         },
         9000 | 9001 | 9008 => {
             let channel_id = h_channel(event).ok_or("invalid: missing h tag")?;
-            let channel = state
-                .db
-                .get_channel(tenant.community(), channel_id)
-                .await
-                .map_err(|_| "invalid: channel not found".to_owned())?;
+            // Only a missing channel is "not found"; a failed read stays an
+            // error, so callers never mistake an outage for a gone channel.
+            let channel = match state.db.get_channel(tenant.community(), channel_id).await {
+                Ok(channel) => channel,
+                Err(buzz_db::DbError::ChannelNotFound(_)) => {
+                    return Err(SERVICE_CHANNEL_NOT_FOUND.into())
+                }
+                Err(error) => return Err(format!("error: {error}")),
+            };
             let marked = load(state, tenant.community(), &channel)
                 .await
                 .map_err(|error| format!("error: {error}"))?
@@ -313,7 +318,10 @@ async fn validate_service_lifecycle(
         .db
         .get_channel(tenant.community(), backing_id)
         .await
-        .map_err(|_| foreign())?;
+        .map_err(|error| match error {
+            buzz_db::DbError::ChannelNotFound(_) => foreign(),
+            error => format!("error: {error}"),
+        })?;
     if backing.created_by.as_slice() != signer {
         return Err(foreign());
     }
@@ -381,7 +389,10 @@ pub(crate) async fn validate_creation(
         .db
         .get_channel(tenant.community(), mark.parent_channel_id)
         .await
-        .map_err(|_| "invalid: parent channel not found".to_owned())?;
+        .map_err(|error| match error {
+            buzz_db::DbError::ChannelNotFound(_) => "invalid: parent channel not found".to_owned(),
+            error => format!("error: {error}"),
+        })?;
     if parent.archived_at.is_some() {
         return Err("invalid: parent channel is archived".into());
     }
