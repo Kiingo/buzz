@@ -40,42 +40,66 @@ class _SystemMessageRow extends HookConsumerWidget {
       return identityNames.labelFor(pubkey);
     }
 
+    final huddleServices =
+        ref.watch(huddleServicePubkeysProvider).value ?? const <String>{};
+    // A huddle service identity is not a person: its notices render without
+    // an author name, avatar or profile affordance.
+    final isServiceNotice =
+        (systemEvent.type == SystemEventType.huddleStarted ||
+            systemEvent.type == SystemEventType.huddleEnded) &&
+        isHuddleServiceSigner(
+          systemEvent.actorPubkey ?? message.pubkey,
+          huddleServices,
+        );
+
     final target = systemEvent.targetPubkey?.trim().toLowerCase();
-    final messageStyleAction = switch (systemEvent.type) {
-      SystemEventType.memberRemoved => <InlineSpan>[
-        const TextSpan(text: 'removed '),
-        if (target == null || target.isEmpty)
-          TextSpan(text: resolveLabel(target))
-        else
-          _systemNameSpan(context, target, channelId, resolveLabel),
-        const TextSpan(text: ' from the channel'),
-      ],
-      SystemEventType.topicChanged => [
-        TextSpan(
-          text: describeChannelTextFieldChange('topic', systemEvent.topic),
-        ),
-      ],
-      SystemEventType.purposeChanged => [
-        TextSpan(
-          text: describeChannelTextFieldChange('purpose', systemEvent.purpose),
-        ),
-      ],
-      SystemEventType.memberLeft => [const TextSpan(text: 'left the channel')],
-      SystemEventType.channelArchived => [
-        const TextSpan(text: 'archived this channel'),
-      ],
-      SystemEventType.channelUnarchived => [
-        const TextSpan(text: 'unarchived this channel'),
-      ],
-      SystemEventType.channelCreated => [
-        const TextSpan(text: 'created this channel'),
-      ],
-      SystemEventType.huddleStarted => [
-        const TextSpan(text: 'started a huddle'),
-      ],
-      SystemEventType.huddleEnded => [const TextSpan(text: 'ended the huddle')],
-      _ => null,
-    };
+    final messageStyleAction = isServiceNotice
+        ? null
+        : switch (systemEvent.type) {
+            SystemEventType.memberRemoved => <InlineSpan>[
+              const TextSpan(text: 'removed '),
+              if (target == null || target.isEmpty)
+                TextSpan(text: resolveLabel(target))
+              else
+                _systemNameSpan(context, target, channelId, resolveLabel),
+              const TextSpan(text: ' from the channel'),
+            ],
+            SystemEventType.topicChanged => [
+              TextSpan(
+                text: describeChannelTextFieldChange(
+                  'topic',
+                  systemEvent.topic,
+                ),
+              ),
+            ],
+            SystemEventType.purposeChanged => [
+              TextSpan(
+                text: describeChannelTextFieldChange(
+                  'purpose',
+                  systemEvent.purpose,
+                ),
+              ),
+            ],
+            SystemEventType.memberLeft => [
+              const TextSpan(text: 'left the channel'),
+            ],
+            SystemEventType.channelArchived => [
+              const TextSpan(text: 'archived this channel'),
+            ],
+            SystemEventType.channelUnarchived => [
+              const TextSpan(text: 'unarchived this channel'),
+            ],
+            SystemEventType.channelCreated => [
+              const TextSpan(text: 'created this channel'),
+            ],
+            SystemEventType.huddleStarted => [
+              const TextSpan(text: 'started a huddle'),
+            ],
+            SystemEventType.huddleEnded => [
+              const TextSpan(text: 'ended the huddle'),
+            ],
+            _ => null,
+          };
     final messageStyleActor = messageStyleAction == null
         ? null
         : systemEvent.actorPubkey?.trim();
@@ -138,6 +162,31 @@ class _SystemMessageRow extends HookConsumerWidget {
     final actor = (systemEvent.actorPubkey ?? message.pubkey).toLowerCase();
     Widget withActor(Widget content) {
       if (!isHuddle) return content;
+      if (isServiceNotice) {
+        return Row(
+          key: ValueKey('huddle-service-notice-${message.id}'),
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            ExcludeSemantics(
+              child: SizedBox.square(
+                dimension: messageAvatarSize,
+                child: Icon(
+                  BuzzIcons.headphones,
+                  color: context.colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(width: messageAvatarContentGap),
+            Expanded(
+              child: Semantics(
+                container: true,
+                label: _huddleServiceNoticeText(systemEvent.type),
+                child: content,
+              ),
+            ),
+          ],
+        );
+      }
       return Row(
         key: ValueKey('huddle-activity-${message.id}'),
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -230,7 +279,11 @@ class _SystemMessageRow extends HookConsumerWidget {
                                 TextSpan(
                                   children: [
                                     TextSpan(
-                                      text: systemEvent.describe(resolveLabel),
+                                      text: isServiceNotice
+                                          ? _huddleServiceNoticeText(
+                                              systemEvent.type,
+                                            )
+                                          : systemEvent.describe(resolveLabel),
                                     ),
                                   ],
                                 ),
@@ -632,3 +685,9 @@ class _ThreadSummaryRow extends ConsumerWidget {
     );
   }
 }
+
+/// Author-free caption for a huddle notice signed by a huddle service identity.
+String _huddleServiceNoticeText(SystemEventType type) =>
+    type == SystemEventType.huddleEnded
+    ? 'The huddle ended'
+    : 'A huddle started';

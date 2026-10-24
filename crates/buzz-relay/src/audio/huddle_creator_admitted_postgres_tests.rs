@@ -595,31 +595,21 @@ async fn parent_removal_denies_admission_and_recheck_cuts_audio() {
     accepted_message(f.put(&f.member, "1").await);
     assert!(f.admitted(&f.member).await);
     let (cancel, _guard) = f.live_audio(&f.member, false);
-    let mark = f.mark().await.expect("marked");
     let member_bytes = f.member.public_key().to_bytes();
+    let mut recheck = crate::huddle_creator_admitted::AudioRecheck::new();
     assert_eq!(
-        crate::huddle_creator_admitted::recheck(
-            &f.state,
-            f.tenant.community(),
-            f.child,
-            mark,
-            &member_bytes
-        )
-        .await,
+        recheck
+            .tick(&f.state, f.tenant.community(), f.child, &member_bytes)
+            .await,
         0
     );
 
     accepted_message(f.remove(&f.creator, f.parent, &f.member).await);
     assert!(!f.admitted(&f.member).await);
     assert_eq!(
-        crate::huddle_creator_admitted::recheck(
-            &f.state,
-            f.tenant.community(),
-            f.child,
-            mark,
-            &member_bytes
-        )
-        .await,
+        recheck
+            .tick(&f.state, f.tenant.community(), f.child, &member_bytes)
+            .await,
         1
     );
     assert!(cancel.is_cancelled());
@@ -725,4 +715,84 @@ async fn forged_invited_by_is_ignored() {
         Some(&creator_bytes[..])
     );
     assert!(f.admitted(&f.member).await);
+}
+
+/// The re-check fails closed: a mark that stays unreadable cuts the socket
+/// after `MAX_UNREADABLE_RECHECKS` ticks, never keeping it unchecked.
+/// Mutation: keep an unreadable mark as "unmarked" → never cut → RED.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn unreadable_recheck_cuts_after_bounded_ticks() {
+    let f = CreatorAdmittedFixture::new(true).await;
+    // A socket bound to a channel id whose row cannot be read.
+    let unreadable = Uuid::new_v4();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let control = crate::state::CommunityConnectionControl::new(cancel.clone());
+    control.bind_audio_channel(unreadable);
+    control.bind_pubkey(f.member.public_key().to_bytes());
+    let _guard =
+        f.state
+            .community_connections
+            .register(Uuid::new_v4(), f.tenant.community(), control);
+    let member_bytes = f.member.public_key().to_bytes();
+    let mut recheck = crate::huddle_creator_admitted::AudioRecheck::new();
+    for _ in 1..crate::huddle_creator_admitted::MAX_UNREADABLE_RECHECKS {
+        assert_eq!(
+            recheck
+                .tick(&f.state, f.tenant.community(), unreadable, &member_bytes)
+                .await,
+            0
+        );
+        assert!(!cancel.is_cancelled());
+    }
+    assert_eq!(
+        recheck
+            .tick(&f.state, f.tenant.community(), unreadable, &member_bytes)
+            .await,
+        1
+    );
+    assert!(cancel.is_cancelled());
+}
+
+/// A creator removal that commits after the admission check but before the
+/// socket is bound acknowledges with no socket to close; the bound re-check
+/// then refuses that socket. Mutation: drop `denies_bound_socket` from the
+/// audio handler, or make it read stale admission → the socket stays → RED.
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn removal_between_admission_and_bind_is_refused_at_bind() {
+    let f = CreatorAdmittedFixture::new(true).await;
+    crate::huddle_creator_admitted::test_hooks::deliver_end_publishes(f.tenant.community());
+    accepted_message(f.put(&f.member, "1").await);
+    let member_bytes = f.member.public_key().to_bytes();
+    let bound_denied = || {
+        crate::huddle_creator_admitted::denies_bound_socket(
+            &f.state,
+            f.tenant.community(),
+            f.child,
+            f.parent,
+            &member_bytes,
+        )
+    };
+    assert!(f.admitted(&f.member).await, "admission passes first");
+    assert!(!bound_denied().await);
+
+    // The removal finds no socket yet, so it acknowledges as confirmed.
+    assert_eq!(
+        accepted_message(f.remove(&f.creator, f.child, &f.member).await),
+        ""
+    );
+    assert!(bound_denied().await, "the bound socket is refused");
+
+    let unmarked = CreatorAdmittedFixture::new(false).await;
+    assert!(
+        !crate::huddle_creator_admitted::denies_bound_socket(
+            &unmarked.state,
+            unmarked.tenant.community(),
+            unmarked.child,
+            unmarked.parent,
+            &unmarked.creator.public_key().to_bytes(),
+        )
+        .await
+    );
 }

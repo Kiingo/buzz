@@ -30,6 +30,27 @@
 //!   newest put for each active member.
 //!
 //! Unmarked channels keep their existing behavior.
+//!
+//! # Huddle service identities
+//!
+//! `BUZZ_HUDDLE_SERVICE_PUBKEYS` names keys that run creator-admitted
+//! huddles on behalf of a server, without being members of the channels they
+//! serve. Such a key needs no relay membership and gets no member row, so it
+//! appears in no roster or directory; NIP-11 advertises it so clients render
+//! its huddle notices as system notices. It authenticates only with NIP-98 on
+//! `POST /events` (WebSocket and audio AUTH and every other HTTP route refuse
+//! it) and may publish only:
+//!
+//! - kind:9007 carrying the admission mark (it need not belong to the parent);
+//! - kind:9000 and kind:9001 on marked channels it created, with ordinary
+//!   roles only; puts still need an active parent member;
+//! - kind:9008 on channels it created;
+//! - kind:48100 and kind:48103 in a parent, with only the `h` tag and the
+//!   `{"ephemeral_channel_id": …}` content, naming a backing channel it created
+//!   whose mark names that parent: one start per backing channel, then one end.
+//!
+//! Every other kind from it is refused, and its key is never admitted to
+//! audio.
 
 use std::time::Duration;
 
@@ -187,6 +208,142 @@ pub(crate) async fn load(
     load_for_creator(state, community_id, channel.id, &channel.created_by).await
 }
 
+/// Whether `key` is a configured huddle service identity.
+pub(crate) fn is_service_key(config: &crate::config::Config, key: &[u8]) -> bool {
+    config
+        .huddle_service_pubkeys
+        .iter()
+        .any(|service| service.as_slice() == key)
+}
+
+const SERVICE_KIND_REFUSED: &str =
+    "restricted: a huddle service identity may not publish this kind";
+const SERVICE_MARK_REQUIRED: &str =
+    "restricted: a huddle service identity creates only creator-admitted channels";
+const SERVICE_FOREIGN_CHANNEL: &str =
+    "restricted: a huddle service identity acts only on creator-admitted channels it created";
+const SERVICE_LIFECYCLE_SHAPE: &str =
+    "invalid: a huddle service notice carries only the h tag and the ephemeral_channel_id";
+const SERVICE_LIFECYCLE_ORDER: &str =
+    "rate-limited: a huddle service starts a backing channel once and ends it once";
+
+fn h_channel(event: &Event) -> Option<Uuid> {
+    event_tags(event)
+        .find(|tag| tag.first().map(String::as_str) == Some("h"))
+        .and_then(|tag| tag.get(1))
+        .and_then(|id| Uuid::parse_str(id).ok())
+}
+
+/// Allowlist for an event signed by a huddle service identity; runs before
+/// any other ingest check.
+pub(crate) async fn validate_service_event(
+    state: &AppState,
+    tenant: &TenantContext,
+    kind: u32,
+    event: &Event,
+) -> Result<(), String> {
+    let signer = event.pubkey.to_bytes();
+    match kind {
+        9007 => match parse_mark(event_tags(event)).map_err(str::to_owned)? {
+            Some(_) => Ok(()),
+            None => Err(SERVICE_MARK_REQUIRED.into()),
+        },
+        9000 | 9001 | 9008 => {
+            let channel_id = h_channel(event).ok_or("invalid: missing h tag")?;
+            let channel = state
+                .db
+                .get_channel(tenant.community(), channel_id)
+                .await
+                .map_err(|_| "invalid: channel not found".to_owned())?;
+            let marked = load(state, tenant.community(), &channel)
+                .await
+                .map_err(|error| format!("error: {error}"))?
+                .is_some();
+            if channel.created_by.as_slice() != signer.as_slice() || !marked {
+                return Err(SERVICE_FOREIGN_CHANNEL.into());
+            }
+            let ordinary_role = event_tags(event)
+                .filter(|tag| tag.first().map(String::as_str) == Some("role"))
+                .all(|tag| tag.get(1).map(String::as_str) == Some("member"));
+            if kind == 9000 && !ordinary_role {
+                return Err(
+                    "restricted: a huddle service identity grants only the member role".into(),
+                );
+            }
+            Ok(())
+        }
+        48100 | 48103 => validate_service_lifecycle(state, tenant, kind, event, &signer).await,
+        _ => Err(SERVICE_KIND_REFUSED.into()),
+    }
+}
+
+/// A service kind:48100 or kind:48103: fixed shape, a backing channel the
+/// service created for this parent, one start then one end.
+async fn validate_service_lifecycle(
+    state: &AppState,
+    tenant: &TenantContext,
+    kind: u32,
+    event: &Event,
+    signer: &[u8],
+) -> Result<(), String> {
+    let only_h =
+        event.tags.len() == 1 && event_tags(event).all(|tag| tag.len() == 2 && tag[0] == "h");
+    let parent_id = h_channel(event)
+        .filter(|_| only_h)
+        .ok_or(SERVICE_LIFECYCLE_SHAPE)?;
+    let content: serde_json::Value =
+        serde_json::from_str(&event.content).map_err(|_| SERVICE_LIFECYCLE_SHAPE)?;
+    let backing_id = content
+        .as_object()
+        .filter(|fields| fields.len() == 1)
+        .and_then(|fields| fields.get("ephemeral_channel_id"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .ok_or(SERVICE_LIFECYCLE_SHAPE)?;
+    let foreign = || {
+        "restricted: a huddle service notice must name a backing channel it created for this channel"
+            .to_owned()
+    };
+    let backing = state
+        .db
+        .get_channel(tenant.community(), backing_id)
+        .await
+        .map_err(|_| foreign())?;
+    if backing.created_by.as_slice() != signer {
+        return Err(foreign());
+    }
+    let mark = load(state, tenant.community(), &backing)
+        .await
+        .map_err(|error| format!("error: {error}"))?;
+    if mark.map(|mark| mark.parent_channel_id) != Some(parent_id) {
+        return Err(foreign());
+    }
+    let count = |kind: i32| {
+        state.db.huddle_service_lifecycle_count(
+            tenant.community(),
+            parent_id,
+            backing_id,
+            kind,
+            signer,
+        )
+    };
+    let started = count(48100)
+        .await
+        .map_err(|error| format!("error: {error}"))?;
+    let ended = count(48103)
+        .await
+        .map_err(|error| format!("error: {error}"))?;
+    let in_order = match kind {
+        48100 => started == 0 && ended == 0,
+        _ => started == 1 && ended == 0,
+    };
+    if in_order {
+        Ok(())
+    } else {
+        Err(SERVICE_LIFECYCLE_ORDER.into())
+    }
+}
+
 /// Validate the creation mark on a kind:9007 before the channel is created.
 ///
 /// A marked creation needs the client-chosen `h` id, private visibility, a
@@ -224,11 +381,13 @@ pub(crate) async fn validate_creation(
         return Err("invalid: parent channel is archived".into());
     }
     let creator = event.pubkey.to_bytes();
-    let in_parent = state
-        .db
-        .is_member(tenant.community(), mark.parent_channel_id, &creator)
-        .await
-        .map_err(|error| format!("error: {error}"))?;
+    // A huddle service identity serves channels it does not belong to.
+    let in_parent = is_service_key(&state.config, &creator)
+        || state
+            .db
+            .is_member(tenant.community(), mark.parent_channel_id, &creator)
+            .await
+            .map_err(|error| format!("error: {error}"))?;
     if !in_parent {
         return Err("restricted: the creator must be a member of the parent channel".into());
     }
@@ -255,9 +414,20 @@ pub(crate) async fn validate_admin_event(
         return Ok(AdminDecision::Continue);
     };
     let actor = event.pubkey.to_bytes();
+    // A huddle service creator holds no member row; its authority over the
+    // channel it created comes from the config, not a role.
+    let service_creator =
+        actor[..] == channel.created_by[..] && is_service_key(&state.config, &actor);
+    let creator_decision = if service_creator {
+        AdminDecision::Allow
+    } else {
+        AdminDecision::Continue
+    };
     match kind {
         9002 if has_tag(event, "visibility") => Err(anyhow::anyhow!(VISIBILITY_FIXED)),
         9000 | 9001 if actor[..] != channel.created_by[..] => Err(anyhow::anyhow!(ONLY_CREATOR)),
+        9001 => Ok(creator_decision),
+        9008 if service_creator => Ok(AdminDecision::Allow),
         9000 => {
             let target = p_target(event).ok_or_else(|| anyhow::anyhow!("missing p tag"))?;
             if state
@@ -265,7 +435,7 @@ pub(crate) async fn validate_admin_event(
                 .is_member(tenant.community(), mark.parent_channel_id, &target)
                 .await?
             {
-                Ok(AdminDecision::Continue)
+                Ok(creator_decision)
             } else {
                 Err(anyhow::anyhow!(
                     "creator-admitted channel: the member must belong to the parent channel"
@@ -325,7 +495,12 @@ pub(crate) async fn admits(
         || channel
             .ttl_deadline
             .is_some_and(|deadline| deadline <= chrono::Utc::now());
-    if expired || channel.archived_at.is_some() || lifecycle_parent_id != mark.parent_channel_id {
+    // A huddle service identity never holds audio itself.
+    if expired
+        || channel.archived_at.is_some()
+        || lifecycle_parent_id != mark.parent_channel_id
+        || is_service_key(&state.config, pubkey)
+    {
         return Ok(false);
     }
     if !state.db.is_member(community_id, channel.id, pubkey).await? {
@@ -347,29 +522,36 @@ pub(crate) async fn admits(
         .await
 }
 
-/// Periodic re-check of a live audio socket on a marked channel: cut it when
-/// the key is no longer admitted. A failed read keeps the socket.
-pub(crate) async fn recheck(
+/// Consecutive unreadable re-checks after which a live audio socket is cut.
+pub const MAX_UNREADABLE_RECHECKS: u32 = 3;
+
+/// Outcome of one admission re-read for a live audio socket.
+enum Recheck {
+    Admitted,
+    Cut(usize),
+    Unreadable(String),
+}
+
+/// One admission re-read for a live audio socket on a marked channel: cut it
+/// when the key is no longer admitted.
+async fn recheck(
     state: &AppState,
     community_id: CommunityId,
     channel_id: Uuid,
     mark: CreatorAdmitted,
     pubkey: &[u8],
-) -> usize {
+) -> Recheck {
     let channel = match state.db.get_channel(community_id, channel_id).await {
         Ok(channel) => channel,
         Err(buzz_db::DbError::ChannelNotFound(_)) => {
-            return state.community_connections.disconnect_huddle_audio(
+            return Recheck::Cut(state.community_connections.disconnect_huddle_audio(
                 community_id,
                 channel_id,
                 None,
                 crate::state::HuddleAudioEnd::Ended,
-            );
+            ));
         }
-        Err(error) => {
-            tracing::warn!(channel = %channel_id, %error, "creator-admitted recheck read failed");
-            return 0;
-        }
+        Err(error) => return Recheck::Unreadable(error.to_string()),
     };
     match admits(
         state,
@@ -381,17 +563,150 @@ pub(crate) async fn recheck(
     )
     .await
     {
-        Ok(true) => 0,
-        Ok(false) => state.community_connections.disconnect_huddle_audio(
+        Ok(true) => Recheck::Admitted,
+        Ok(false) => Recheck::Cut(state.community_connections.disconnect_huddle_audio(
             community_id,
             channel_id,
             Some(pubkey),
             crate::state::HuddleAudioEnd::Removed,
-        ),
-        Err(error) => {
-            tracing::warn!(channel = %channel_id, %error, "creator-admitted recheck failed");
-            0
+        )),
+        Err(error) => Recheck::Unreadable(error.to_string()),
+    }
+}
+
+/// The mark of `channel_id`, read by id.
+async fn load_by_id(
+    state: &AppState,
+    community_id: CommunityId,
+    channel_id: Uuid,
+) -> anyhow::Result<Option<CreatorAdmitted>> {
+    let channel = state.db.get_channel(community_id, channel_id).await?;
+    load(state, community_id, &channel).await
+}
+
+/// The periodic creator-admitted re-check of one live audio socket. It fails
+/// closed: an unknown mark is re-read every tick, and a socket whose mark or
+/// admission stays unreadable for [`MAX_UNREADABLE_RECHECKS`] consecutive
+/// ticks is cut.
+pub(crate) struct AudioRecheck {
+    /// `None` until the mark has been read; then whether the channel is marked.
+    mark: Option<Option<CreatorAdmitted>>,
+    unreadable: u32,
+}
+
+impl AudioRecheck {
+    /// A re-check whose mark is not read yet.
+    pub(crate) fn new() -> Self {
+        Self {
+            mark: None,
+            unreadable: 0,
         }
+    }
+
+    /// Run one tick; returns how many audio sockets it cut.
+    pub(crate) async fn tick(
+        &mut self,
+        state: &AppState,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: &[u8],
+    ) -> usize {
+        let mark = match self.mark {
+            Some(mark) => mark,
+            None => match load_by_id(state, community_id, channel_id).await {
+                Ok(mark) => {
+                    self.mark = Some(mark);
+                    mark
+                }
+                Err(error) => {
+                    return self.unreadable(
+                        state,
+                        community_id,
+                        channel_id,
+                        pubkey,
+                        &error.to_string(),
+                    )
+                }
+            },
+        };
+        let Some(mark) = mark else {
+            self.unreadable = 0;
+            return 0;
+        };
+        match recheck(state, community_id, channel_id, mark, pubkey).await {
+            Recheck::Admitted => {
+                self.unreadable = 0;
+                0
+            }
+            Recheck::Cut(cut) => cut,
+            Recheck::Unreadable(error) => {
+                self.unreadable(state, community_id, channel_id, pubkey, &error)
+            }
+        }
+    }
+
+    fn unreadable(
+        &mut self,
+        state: &AppState,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: &[u8],
+        error: &str,
+    ) -> usize {
+        self.unreadable += 1;
+        if self.unreadable < MAX_UNREADABLE_RECHECKS {
+            tracing::warn!(
+                channel = %channel_id,
+                failures = self.unreadable,
+                %error,
+                "creator-admitted audio re-check unreadable"
+            );
+            return 0;
+        }
+        tracing::error!(
+            channel = %channel_id,
+            failures = self.unreadable,
+            %error,
+            "cutting huddle audio after consecutive unreadable creator-admitted re-checks"
+        );
+        state.community_connections.disconnect_huddle_audio(
+            community_id,
+            channel_id,
+            Some(pubkey),
+            crate::state::HuddleAudioEnd::Removed,
+        )
+    }
+}
+
+/// Re-read admission once the audio socket is bound to its pubkey. A removal
+/// committed after the admission check but before the bind could not find
+/// this socket to cut; this read sees it. Any removal after the bind cuts
+/// the socket directly. Unreadable state denies.
+pub(crate) async fn denies_bound_socket(
+    state: &AppState,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    lifecycle_parent_id: Uuid,
+    pubkey: &[u8],
+) -> bool {
+    let Ok(channel) = state.db.get_channel(community_id, channel_id).await else {
+        return true;
+    };
+    match load(state, community_id, &channel).await {
+        Ok(None) => false,
+        Ok(Some(mark)) => !matches!(
+            admits(
+                state,
+                community_id,
+                &channel,
+                mark,
+                lifecycle_parent_id,
+                pubkey
+            )
+            .await,
+            Ok(true)
+        ),
+        Err(_) => true,
     }
 }
 

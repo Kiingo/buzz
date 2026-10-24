@@ -79,6 +79,10 @@ pub struct RelayInfo {
     /// Absent when the relay is in `Off` mode. [FI-TRACE-DISCOVERY-PRIVATE]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub federated_identity: Option<serde_json::Value>,
+    /// Huddle service identities (hex pubkeys). Clients render their huddle
+    /// start and end notices as system notices, not as messages from a user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub huddle_service_pubkeys: Option<Vec<String>>,
 }
 
 /// Private read-state accessory contract and enforced client request limits.
@@ -306,6 +310,7 @@ impl RelayInfo {
             gif,
             relay_self: relay_self.map(|s| s.to_string()),
             federated_identity,
+            huddle_service_pubkeys: None,
         }
     }
 }
@@ -387,6 +392,16 @@ pub(crate) async fn nip11_document(state: &crate::state::AppState, raw_host: &st
         admin_api.as_deref(),
         state.config.klipy.as_ref().map(|_| "klipy"),
     );
+    if !state.config.huddle_service_pubkeys.is_empty() {
+        info.huddle_service_pubkeys = Some(
+            state
+                .config
+                .huddle_service_pubkeys
+                .iter()
+                .map(hex::encode)
+                .collect(),
+        );
+    }
     if let Ok(tenant) = crate::tenant::bind_community(&state.db, raw_host).await {
         if state.config.buzz_v1_enabled {
             use buzz_db::personal_read::{ELIGIBLE_KINDS, MAX_CHANNELS, MAX_INTENTS};

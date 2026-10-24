@@ -3350,6 +3350,25 @@ pub(crate) mod tests {
         build_test_state(config, pool).await
     }
 
+    /// [`test_state_with_database_url`] with `services` configured as huddle
+    /// service identities.
+    pub(crate) async fn test_state_with_huddle_services(
+        database_url: &str,
+        services: &[[u8; 32]],
+    ) -> Arc<AppState> {
+        let mut config = crate::config::Config::for_test();
+        config.require_relay_membership = false;
+        config.redis_url = "redis://127.0.0.1:1".to_string();
+        config.database_url = database_url.to_owned();
+        config.read_database_url = None;
+        config.huddle_service_pubkeys = services.to_vec();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(100))
+            .connect_lazy(&config.database_url)
+            .expect("lazy pg pool");
+        build_test_state(config, pool).await
+    }
+
     /// Build test state around a caller-owned writer pool. Production-path
     /// lifecycle tests use this to hold the sole connection as a deterministic
     /// barrier while AUTH waits in the real database acquisition path.

@@ -888,6 +888,33 @@ pub(crate) async fn handle_active_audio_connection(
             .await
         }
     };
+    // A creator-admitted removal that committed between the membership check
+    // and the bind above could not reach this socket; re-read admission now
+    // that any later removal will.
+    if denial.is_none()
+        && crate::huddle_creator_admitted::denies_bound_socket(
+            &state,
+            tenant.community(),
+            channel_id,
+            parent_id_for_event,
+            &pubkey_bytes,
+        )
+        .await
+    {
+        shadow_attempt.refused();
+        let refusal = AdmissionRefusal::Denied("not admitted by the huddle creator");
+        warn!(channel_id = %channel_id, pubkey = %pubkey_hex, "audio: denied at bound creator-admitted check");
+        exit_authorization_refusal(
+            &mut ws_send,
+            &control,
+            &mut terminal_ctrl_rx,
+            nip_fi_assertion.is_some(),
+            refusal.denial_class(),
+            refusal.off_mode_frame(),
+        )
+        .await;
+        return;
+    }
     if let Some(denial) = denial {
         shadow_attempt.refused();
         let (class, message) = (denial.class, denial.reason);
@@ -2577,14 +2604,8 @@ async fn membership_recheck_loop(
         MEMBERSHIP_RECHECK_INTERVAL,
     );
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    // The mark is fixed at creation, so one read serves the socket's life.
-    let creator_admitted = match state.db.get_channel(community_id, channel_id).await {
-        Ok(channel) => crate::huddle_creator_admitted::load(&state, community_id, &channel)
-            .await
-            .ok()
-            .flatten(),
-        Err(_) => None,
-    };
+    // Creator-admitted rule, failing closed on unreadable state.
+    let mut creator_admitted = crate::huddle_creator_admitted::AudioRecheck::new();
     loop {
         tokio::select! {
             _ = interval.tick() => {
@@ -2596,19 +2617,12 @@ async fn membership_recheck_loop(
                 {
                     break;
                 }
-                if let Some(mark) = creator_admitted {
-                    if crate::huddle_creator_admitted::recheck(
-                        &state,
-                        community_id,
-                        channel_id,
-                        mark,
-                        &pubkey,
-                    )
+                if creator_admitted
+                    .tick(&state, community_id, channel_id, &pubkey)
                     .await
-                        > 0
-                    {
-                        break;
-                    }
+                    > 0
+                {
+                    break;
                 }
             }
             _ = cancel.cancelled() => break,
@@ -7416,6 +7430,7 @@ mod tests {
 
         include!("huddle_removal_postgres_tests.rs");
         include!("huddle_creator_admitted_postgres_tests.rs");
+        include!("huddle_service_postgres_tests.rs");
 
         // A paired, deny-clean audio AUTH refused by ordinary policy, relay
         // membership on a closed relay or channel membership, is never

@@ -1626,16 +1626,25 @@ async fn handle_put_user(
 
     let actor_bytes = event.pubkey.to_bytes().to_vec();
 
-    state
-        .db
-        .add_member(
-            tenant.community(),
-            channel_id,
-            &target_pubkey,
-            role,
-            Some(&actor_bytes),
-        )
-        .await?;
+    // A huddle service identity holds no member row in the channel it
+    // created, so its put does not go through the inviter-role check.
+    if crate::huddle_creator_admitted::is_service_key(&state.config, &actor_bytes) {
+        state
+            .db
+            .huddle_service_put_member(tenant.community(), channel_id, &target_pubkey, &actor_bytes)
+            .await?;
+    } else {
+        state
+            .db
+            .add_member(
+                tenant.community(),
+                channel_id,
+                &target_pubkey,
+                role,
+                Some(&actor_bytes),
+            )
+            .await?;
+    }
     crate::huddle_creator_admitted::record_put(
         state,
         tenant,
@@ -1703,10 +1712,25 @@ async fn handle_remove_user(
         }
     }
 
-    state
-        .db
-        .remove_member(tenant.community(), channel_id, &target_pubkey, &actor_bytes)
-        .await?;
+    if crate::huddle_creator_admitted::is_service_key(&state.config, &actor_bytes) {
+        if !state
+            .db
+            .huddle_service_remove_member(
+                tenant.community(),
+                channel_id,
+                &target_pubkey,
+                &actor_bytes,
+            )
+            .await?
+        {
+            return Err(anyhow::anyhow!("target is not an active member"));
+        }
+    } else {
+        state
+            .db
+            .remove_member(tenant.community(), channel_id, &target_pubkey, &actor_bytes)
+            .await?;
+    }
     state.invalidate_membership(tenant, channel_id, &target_pubkey);
     evict_live_channel_subscriptions(tenant, state, channel_id, &target_pubkey).await;
     // A removed huddle member leaves the live audio too: it can no longer
@@ -2256,6 +2280,13 @@ async fn handle_create_group(
         warn!(channel = %channel.id, error = %e, "NIP-29 group discovery emission failed");
     }
 
+    // A huddle service creator is not a member, so it was not added.
+    let creator_joined =
+        !crate::huddle_creator_admitted::is_service_key(&state.config, &actor_bytes);
+    if !creator_joined {
+        info!(channel_id = %channel.id, "NIP-29 CREATE_GROUP processed for a huddle service");
+        return Ok(());
+    }
     if let Err(e) = emit_membership_notification(
         tenant,
         state,

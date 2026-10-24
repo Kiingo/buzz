@@ -14,6 +14,9 @@ import { AgentStatusRow, AgentStatusRows } from "./AgentStatusRow";
 import { KIND_AGENT_STATUS } from "@/shared/constants/kinds";
 import { isAgentSessionDividerMessage } from "@/features/agent-dm/lib/timeline";
 import { AgentSessionDivider } from "@/features/agent-dm/ui/AgentSessionDivider";
+import { HuddleServiceNotice } from "@/features/huddle/components/HuddleServiceNotice";
+import { useHuddleServicePubkeys } from "@/features/huddle/hooks/useHuddleServicePubkeys";
+import { isHuddleServiceNotice } from "@/features/huddle/lib/huddleService";
 
 type ToggleReaction = (
   message: TimelineMessage,
@@ -133,6 +136,7 @@ export function MessageRowItem({
   videoReviewContext,
 }: MessageRowItemProps) {
   const { message, operationalStatuses, summary } = entry;
+  const huddleServicePubkeys = useHuddleServicePubkeys();
   const canManage = canManageMessageForCurrentUser(
     message,
     currentPubkey,
@@ -141,6 +145,17 @@ export function MessageRowItem({
   const canDelete = canManage && onDelete ? onDelete : undefined;
   const canEdit = canManage && onEdit ? onEdit : undefined;
   const effectiveThreadRootId = message.rootId ?? message.id;
+
+  // A huddle service's start is a system notice, never a message from an
+  // unknown user.
+  if (isHuddleServiceNotice(message, huddleServicePubkeys)) {
+    return (
+      <div className="flex flex-col gap-1 pb-2.5">
+        <HuddleServiceNotice channelId={channelId ?? null} message={message} />
+        {footer}
+      </div>
+    );
+  }
 
   if (summary && onOpenThread) {
     const isHighlighted = message.id === highlightedMessageId;

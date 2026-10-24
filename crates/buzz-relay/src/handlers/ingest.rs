@@ -2544,6 +2544,19 @@ async fn ingest_event_inner(
         ));
     }
 
+    // A huddle service identity may publish only its narrow allowlist.
+    let huddle_service =
+        crate::huddle_creator_admitted::is_service_key(&state.config, &auth.pubkey().to_bytes())
+            || crate::huddle_creator_admitted::is_service_key(
+                &state.config,
+                &event.pubkey.to_bytes(),
+            );
+    if huddle_service {
+        crate::huddle_creator_admitted::validate_service_event(state, tenant, kind_u32, &event)
+            .await
+            .map_err(IngestError::Rejected)?;
+    }
+
     let required = match required_scope_for_kind(kind_u32, &event) {
         Ok(scope) => scope,
         Err(msg) => return Err(IngestError::Rejected(msg.into())),
@@ -2788,7 +2801,10 @@ async fn ingest_event_inner(
             || kind_u32 == KIND_STREAM_MESSAGE_EDIT
             || kind_u32 == KIND_NIP29_EDIT_METADATA
             || kind_u32 == KIND_NIP29_DELETE_EVENT
-            || kind_u32 == KIND_NIP29_DELETE_GROUP;
+            || kind_u32 == KIND_NIP29_DELETE_GROUP
+            // A huddle service identity is a member of nothing; its narrow
+            // allowlist above authorized this event instead.
+            || huddle_service;
         if !skip_membership {
             // Spec AuthCheck (line 794): emit the verdict at the actual
             // call site. claimed_community comes from the event's h tag
@@ -3219,21 +3235,40 @@ async fn ingest_event_inner(
             let ttl_seconds = super::resolve_ttl(&event, state.config.ephemeral_ttl_override);
 
             let actor_bytes = event.pubkey.to_bytes().to_vec();
-            let (_, was_created) = state
-                .db
-                .create_labeled_channel_with_id(
-                    tenant.community(),
-                    client_uuid,
-                    name,
-                    channel_type,
-                    visibility,
-                    description.as_deref(),
-                    &actor_bytes,
-                    ttl_seconds,
-                    &labels,
-                )
-                .await
-                .map_err(|e| IngestError::Internal(format!("error: {e}")))?;
+            let was_created = match ttl_seconds.filter(|_| huddle_service) {
+                // A huddle service's backing channel gets no member row for it.
+                Some(ttl) => state
+                    .db
+                    .huddle_create_service_channel(
+                        tenant.community(),
+                        client_uuid,
+                        name,
+                        channel_type.as_str(),
+                        visibility.as_str(),
+                        &actor_bytes,
+                        ttl,
+                    )
+                    .await
+                    .map_err(|e| IngestError::Internal(format!("error: {e}")))?,
+                None => {
+                    state
+                        .db
+                        .create_labeled_channel_with_id(
+                            tenant.community(),
+                            client_uuid,
+                            name,
+                            channel_type,
+                            visibility,
+                            description.as_deref(),
+                            &actor_bytes,
+                            ttl_seconds,
+                            &labels,
+                        )
+                        .await
+                        .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+                        .1
+                }
+            };
 
             if !was_created {
                 return Ok(IngestResult {
