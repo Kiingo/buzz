@@ -4,7 +4,8 @@
 //! commands and skills the agent accepts, then the other registry skills the
 //! signed-in user may use with it. `?audience=private` asks for the list of
 //! a one-to-one DM and `?audience=group` for a channel or thread (the server
-//! re-checks every pick against the actual conversation). It is authenticated with NIP-98
+//! re-checks every pick against the actual conversation). `&q=` searches the
+//! full list when an earlier answer said it was cut short (`truncated`). It is authenticated with NIP-98
 //! signed by the signed-in user (read-only, no prompt) and scoped by
 //! `X-Buzz-Community`, like the other guest-route calls. The renderer keeps
 //! the ETag and sends it back as `If-None-Match`; a 304 means its cached list
@@ -23,7 +24,9 @@ use crate::managed_agents::access_policy::guest_route_url;
 use crate::relay::relay_ws_url_with_override;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_RESPONSE_BYTES: usize = 512 * 1024;
+const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+/// The server reads at most this many characters of `q`.
+const MAX_QUERY_CHARS: usize = 64;
 const MAX_ETAG_BYTES: usize = 256;
 
 /// One commands lookup: either a fresh body with its ETag, or "unchanged".
@@ -69,12 +72,32 @@ fn audience_query(audience: Option<&str>) -> &'static str {
     }
 }
 
-fn commands_url(base: &str, agent: &str, audience: Option<&str>) -> String {
-    format!(
+/// What follows "/" for a server-side search: trimmed, lowercased, bounded
+/// and without control characters. None when nothing is left.
+fn search_query(query: Option<&str>) -> Option<String> {
+    let text: String = query?
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_QUERY_CHARS)
+        .collect();
+    let text = text.trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+fn commands_url(base: &str, agent: &str, audience: Option<&str>, query: Option<&str>) -> String {
+    let mut url = format!(
         "{}/agents/{agent}/commands{}",
         base.trim_end_matches('/'),
         audience_query(audience)
-    )
+    );
+    if let Some(query) = search_query(query) {
+        url.push(if url.contains('?') { '&' } else { '?' });
+        url.push_str("q=");
+        url.extend(url::form_urlencoded::byte_serialize(query.as_bytes()));
+    }
+    url
 }
 
 /// List the agent's slash commands as the signed-in user.
@@ -83,6 +106,7 @@ pub async fn agent_commands_fetch(
     agent_public_key: String,
     etag: Option<String>,
     audience: Option<String>,
+    query: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<AgentCommandsResponse, String> {
     let agent = normalize_agent_key(&agent_public_key)
@@ -95,7 +119,7 @@ pub async fn agent_commands_fetch(
         return Err(error(None, "community_invalid"));
     }
     let keys = state.signing_keys()?;
-    let url = commands_url(&base, &agent, audience.as_deref());
+    let url = commands_url(&base, &agent, audience.as_deref(), query.as_deref());
     let authorization = nip98_header(&keys, "GET", &url, None)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -178,6 +202,7 @@ mod tests {
             commands_url(
                 "https://api.example.com/api/buzz-guest/v1/",
                 &"a".repeat(64),
+                None,
                 None
             ),
             format!(
@@ -189,12 +214,31 @@ mod tests {
             commands_url(
                 "https://api.example.com/api/buzz-guest/v1",
                 &"a".repeat(64),
-                Some("private")
+                Some("private"),
+                None
             ),
             format!(
                 "https://api.example.com/api/buzz-guest/v1/agents/{}/commands?audience=private",
                 "a".repeat(64)
             )
+        );
+        assert_eq!(
+            commands_url(
+                "https://api.example.com/api/buzz-guest/v1",
+                &"a".repeat(64),
+                Some("group"),
+                Some("  Kiingo FR&x=1 ")
+            ),
+            format!(
+                "https://api.example.com/api/buzz-guest/v1/agents/{}/commands?audience=group&q=kiingo+fr%26x%3D1",
+                "a".repeat(64)
+            )
+        );
+        assert_eq!(search_query(Some("   ")), None);
+        assert_eq!(search_query(Some("a\nb")).as_deref(), Some("ab"));
+        assert_eq!(
+            search_query(Some(&"x".repeat(100))).map(|q| q.len()),
+            Some(64)
         );
         assert_eq!(audience_query(Some("group")), "?audience=group");
         assert_eq!(audience_query(Some("private&x=1")), "");
@@ -220,6 +264,7 @@ mod tests {
             "https://api.example.com/api/buzz-guest/v1",
             &"a".repeat(64),
             Some("private"),
+            None,
         );
         let header = nip98_header(&keys, "GET", &url, None).expect("header");
         let encoded = header.strip_prefix("Nostr ").expect("scheme");

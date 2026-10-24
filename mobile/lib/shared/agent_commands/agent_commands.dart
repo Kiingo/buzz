@@ -14,8 +14,15 @@ const maxAgentSkillArgsChars = 4000;
 /// How long a fetched command list is reused before it is revalidated.
 const agentCommandsTtl = Duration(minutes: 5);
 
+/// Most commands one list holds (the server caps registry skills lower and
+/// says `truncated` when it cut the list; typing then searches with `?q=`).
+const maxAgentCommands = 1200;
+
+/// The server reads at most this many characters of a search.
+const maxAgentCommandQueryChars = 64;
+
 const _requestTimeout = Duration(seconds: 15);
-const _maxResponseBytes = 512 * 1024;
+const _maxResponseBytes = 2 * 1024 * 1024;
 final _skillIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
 final _namePattern = RegExp(r'^\S{1,256}$');
 
@@ -140,7 +147,7 @@ List<AgentCommand>? parseAgentCommands(
   final raw = body['commands'];
   if (raw is! List) return null;
   final commands = <AgentCommand>[];
-  for (final entry in raw) {
+  for (final entry in raw.take(maxAgentCommands)) {
     if (entry is! Map) continue;
     final name = entry['name'];
     if (name is! String || !_namePattern.hasMatch(name)) continue;
@@ -175,6 +182,10 @@ List<AgentCommand>? parseAgentCommands(
   }
   return commands;
 }
+
+/// Whether a commands body says the server cut the list short.
+bool agentCommandsBodyTruncated(Object? body) =>
+    body is Map && body['truncated'] == true;
 
 /// An open "/" query: the composer starts with `/` and the cursor is still
 /// inside that first word.
@@ -228,7 +239,7 @@ int agentCommandMatchScore(AgentCommand command, String query) {
 List<AgentCommand> filterAgentCommands(
   List<AgentCommand> commands,
   String query, {
-  int limit = 40,
+  int limit = maxAgentCommands,
 }) {
   final scored = <({AgentCommand command, int index, int score})>[];
   for (var index = 0; index < commands.length; index++) {
@@ -291,13 +302,17 @@ class AgentCommandsClient {
   /// the list for [etag] is unchanged (304). A 1:1 DM asks for the private
   /// list, a channel or thread for the group one (the server re-checks every
   /// pick against the conversation it is sent in).
-  Future<({List<AgentCommand>? commands, String? etag})> fetch(
+  /// With [query], the server searches the full list (for a list it cut).
+  Future<({List<AgentCommand>? commands, String? etag, bool truncated})> fetch(
     String agentPublicKey, {
     String? etag,
     AgentCommandAudience audience = AgentCommandAudience.private,
+    String? query,
   }) async {
+    final search = normalizeAgentCommandQuery(query ?? '');
     final url =
-        '${route.baseUrl}/agents/${Uri.encodeComponent(agentPublicKey)}/commands?audience=${audience.name}';
+        '${route.baseUrl}/agents/${Uri.encodeComponent(agentPublicKey)}/commands?audience=${audience.name}'
+        '${search.isEmpty ? '' : '&q=${Uri.encodeQueryComponent(search)}'}';
     final request = http.Request('GET', Uri.parse(url))
       ..followRedirects = false
       ..headers['Authorization'] = buildNip98AuthHeader(
@@ -315,18 +330,20 @@ class AgentCommandsClient {
         streamed,
       ).timeout(_requestTimeout);
       if (response.statusCode == 304 && etag != null) {
-        return (commands: null, etag: etag);
+        return (commands: null, etag: etag, truncated: false);
       }
       if (response.statusCode != 200 ||
           response.bodyBytes.length > _maxResponseBytes) {
         throw StateError('agent_commands_${response.statusCode}');
       }
-      final commands = parseAgentCommands(
-        jsonDecode(utf8.decode(response.bodyBytes)),
-        agentPublicKey: agentPublicKey,
-      );
+      final body = jsonDecode(utf8.decode(response.bodyBytes));
+      final commands = parseAgentCommands(body, agentPublicKey: agentPublicKey);
       if (commands == null) throw StateError('agent_commands_malformed');
-      return (commands: commands, etag: response.headers['etag']);
+      return (
+        commands: commands,
+        etag: response.headers['etag'],
+        truncated: agentCommandsBodyTruncated(body),
+      );
     } finally {
       if (_http == null) client.close();
     }
@@ -345,11 +362,37 @@ final agentCommandsClientProvider = Provider<AgentCommandsClient?>((ref) {
 /// only for the agent's owner).
 enum AgentCommandAudience { private, group }
 
+/// What follows "/" as the server searches it: trimmed, lowercased, bounded.
+String normalizeAgentCommandQuery(String query) {
+  final text = query.trim().toLowerCase();
+  return text.length > maxAgentCommandQueryChars
+      ? text.substring(0, maxAgentCommandQueryChars).trim()
+      : text;
+}
+
+typedef _CachedAgentCommands = ({
+  List<AgentCommand> commands,
+  String? etag,
+  bool truncated,
+});
+
 /// Last good list and ETag per agent key and audience, for revalidation.
-final _agentCommandsCacheProvider =
-    Provider<Map<String, ({List<AgentCommand> commands, String? etag})>>(
-      (ref) => {},
-    );
+final _agentCommandsCacheProvider = Provider<Map<String, _CachedAgentCommands>>(
+  (ref) => {},
+);
+
+/// Whether the last list for this agent and audience was cut short, so a
+/// typed query should also be searched on the server.
+bool agentCommandsTruncated(
+  WidgetRef ref,
+  String agentPublicKey,
+  AgentCommandAudience audience,
+) =>
+    ref
+        .read(_agentCommandsCacheProvider)['${agentPublicKey.toLowerCase()}:'
+            '${audience.name}']
+        ?.truncated ??
+    false;
 
 Future<List<AgentCommand>> _loadAgentCommands(
   Ref ref,
@@ -372,7 +415,13 @@ Future<List<AgentCommand>> _loadAgentCommands(
       audience: audience,
     );
     final commands = fetched.commands ?? cached?.commands ?? const [];
-    cache[key] = (commands: commands, etag: fetched.etag);
+    cache[key] = (
+      commands: commands,
+      etag: fetched.etag,
+      truncated: fetched.commands == null
+          ? (cached?.truncated ?? false)
+          : fetched.truncated,
+    );
     return commands;
   } catch (error) {
     debugPrint('[AgentCommands] fetch failed: $error');
@@ -395,3 +444,43 @@ final agentGroupCommandsProvider = FutureProvider.autoDispose
       (ref, agentPublicKey) =>
           _loadAgentCommands(ref, agentPublicKey, AgentCommandAudience.group),
     );
+
+/// A server search of an agent's full list: what follows "/" in a list the
+/// server cut short. Reused for [agentCommandsTtl]; failure is no matches.
+final agentCommandSearchProvider = FutureProvider.autoDispose
+    .family<
+      List<AgentCommand>,
+      ({String agent, AgentCommandAudience audience, String query})
+    >((ref, search) async {
+      final client = ref.watch(agentCommandsClientProvider);
+      final query = normalizeAgentCommandQuery(search.query);
+      if (client == null || query.isEmpty) return const [];
+      final keepAlive = ref.keepAlive();
+      final expiry = Timer(agentCommandsTtl, keepAlive.close);
+      ref.onDispose(expiry.cancel);
+      try {
+        final fetched = await client.fetch(
+          search.agent.toLowerCase(),
+          audience: search.audience,
+          query: query,
+        );
+        return fetched.commands ?? const [];
+      } catch (error) {
+        debugPrint('[AgentCommands] search failed: $error');
+        return const [];
+      }
+    });
+
+/// [first], then the entries of [second] not already listed (by kind and
+/// name).
+List<AgentCommand> mergeAgentCommands(
+  List<AgentCommand> first,
+  List<AgentCommand> second,
+) {
+  final seen = <String>{};
+  return [
+    for (final command in [...first, ...second])
+      if (seen.add('${command.kind.name}:${command.name.toLowerCase()}'))
+        command,
+  ];
+}

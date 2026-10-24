@@ -895,6 +895,7 @@ function InboxMessageDetailPane({
                   : (disabledReplyReason ??
                     "Replies are not available for this item.")
               }
+              profiles={profiles}
               replyTarget={composerReplyTarget}
             />
           </div>

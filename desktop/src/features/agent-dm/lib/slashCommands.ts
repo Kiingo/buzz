@@ -10,6 +10,10 @@ import { invokeTauri } from "@/shared/api/tauri";
  * for an agent and cached per agent key and audience with the server's ETag; later opens revalidate with
  * `If-None-Match` at most once a minute. Any error, or a body that fails
  * validation, leaves the agent with no commands, so no menu shows.
+ *
+ * The list holds every registry skill the user may use up to the server's
+ * cap. When the server says it cut the list (`truncated`), typing searches
+ * the full set with `?q=` (`refreshAgentCommandSearch`).
  */
 
 export type AgentSessionCommand = {
@@ -36,7 +40,10 @@ export type AgentSlashCommand = AgentSessionCommand | AgentSkillCommand;
 /** Which conversation a list is for: a 1:1 DM, or a channel or thread. */
 export type SlashAudience = "private" | "group";
 
-export const MAX_AGENT_COMMANDS = 500;
+export const MAX_AGENT_COMMANDS = 1_200;
+/** Searches kept per session (agent, audience, query). */
+const MAX_SEARCH_ENTRIES = 64;
+const MAX_QUERY_CHARS = 64;
 export const COMMANDS_REVALIDATE_MS = 60_000;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const HEX64_RE = /^[0-9a-f]{64}$/;
@@ -109,6 +116,15 @@ export function parseAgentCommandsBody(
   return [...sessions, ...uniqueSkills];
 }
 
+/** Whether the server cut the list short (more registry skills match). */
+export function agentCommandsBodyTruncated(body: unknown): boolean {
+  return (
+    Boolean(body) &&
+    typeof body === "object" &&
+    (body as Record<string, unknown>).truncated === true
+  );
+}
+
 type FetchResult = {
   notModified: boolean;
   etag: string | null;
@@ -119,13 +135,16 @@ type Transport = (input: {
   agentPublicKey: string;
   etag: string | null;
   audience: SlashAudience;
+  /** What follows "/", for a server-side search. */
+  query?: string | null;
 }) => Promise<FetchResult>;
 
-const tauriTransport: Transport = ({ agentPublicKey, etag, audience }) =>
+const tauriTransport: Transport = ({ agentPublicKey, etag, audience, query }) =>
   invokeTauri<FetchResult>("agent_commands_fetch", {
     agentPublicKey,
     etag,
     audience,
+    query: query ?? null,
   });
 
 let transport: Transport = tauriTransport;
@@ -148,12 +167,16 @@ export function setAgentCommandsTransportForTests(next: {
 type Entry = {
   etag: string | null;
   commands: AgentSlashCommand[];
+  /** The server cut the list: a typed query searches it with `?q=`. */
+  truncated: boolean;
   checkedAt: number;
 };
 
 const EMPTY: AgentSlashCommand[] = [];
 let entries = new Map<string, Entry>();
 let inflight = new Map<string, Promise<void>>();
+let searches = new Map<string, Entry>();
+let searchInflight = new Map<string, Promise<void>>();
 let generation = 0;
 let version = 0;
 const listeners = new Set<() => void>();
@@ -172,6 +195,14 @@ function cacheKey(agent: string, audience: SlashAudience) {
   return `${agent}:${audience}`;
 }
 
+function normalizeQuery(query: string): string {
+  return query.trim().toLowerCase().slice(0, MAX_QUERY_CHARS);
+}
+
+function searchKey(agent: string, audience: SlashAudience, query: string) {
+  return `${agent}:${audience}:${query}`;
+}
+
 /** The agent's cached commands; empty when unknown or after an error. */
 export function getAgentCommands(
   agentPublicKey: string,
@@ -179,6 +210,97 @@ export function getAgentCommands(
 ): AgentSlashCommand[] {
   const agent = normalize(agentPublicKey);
   return (agent && entries.get(cacheKey(agent, audience))?.commands) || EMPTY;
+}
+
+/**
+ * Whether the agent's list is known: fetched, even if it came back empty
+ * (an agent the user cannot command). Unknown while the first lookup runs.
+ */
+export function hasAgentCommands(
+  agentPublicKey: string,
+  audience: SlashAudience = "private",
+): boolean {
+  const agent = normalize(agentPublicKey);
+  return Boolean(agent && entries.has(cacheKey(agent, audience)));
+}
+
+/** Whether the server cut the agent's list (see `refreshAgentCommandSearch`). */
+export function isAgentCommandsTruncated(
+  agentPublicKey: string,
+  audience: SlashAudience = "private",
+): boolean {
+  const agent = normalize(agentPublicKey);
+  return Boolean(agent && entries.get(cacheKey(agent, audience))?.truncated);
+}
+
+/** The server's answer for `query` (best match first), or null before it
+ * arrives. */
+export function getAgentCommandSearch(
+  agentPublicKey: string,
+  audience: SlashAudience,
+  query: string,
+): AgentSlashCommand[] | null {
+  const agent = normalize(agentPublicKey);
+  const q = normalizeQuery(query);
+  if (!agent || !q) return null;
+  return searches.get(searchKey(agent, audience, q))?.commands ?? null;
+}
+
+/**
+ * Search the agent's full list on the server (`?q=`) when its cached list
+ * was cut short. Cached per query for a minute; errors count as no matches.
+ */
+export function refreshAgentCommandSearch(
+  agentPublicKey: string,
+  audience: SlashAudience,
+  query: string,
+): Promise<void> {
+  const agent = normalize(agentPublicKey);
+  const q = normalizeQuery(query);
+  if (!agent || !q || !isAgentCommandsTruncated(agent, audience)) {
+    return Promise.resolve();
+  }
+  const key = searchKey(agent, audience, q);
+  const cached = searches.get(key);
+  if (cached && now() - cached.checkedAt < COMMANDS_REVALIDATE_MS) {
+    return Promise.resolve();
+  }
+  const pending = searchInflight.get(key);
+  if (pending) return pending;
+  const owner = generation;
+  const request = (async () => {
+    let commands: AgentSlashCommand[] = EMPTY;
+    try {
+      const result = await transport({
+        agentPublicKey: agent,
+        etag: null,
+        audience,
+        query: q,
+      });
+      commands =
+        (!result.notModified && parseAgentCommandsBody(result.body, agent)) ||
+        EMPTY;
+    } catch {
+      commands = EMPTY;
+    }
+    if (owner !== generation) return;
+    searchInflight.delete(key);
+    searches.delete(key);
+    searches.set(key, {
+      etag: null,
+      commands,
+      truncated: false,
+      checkedAt: now(),
+    });
+    while (searches.size > MAX_SEARCH_ENTRIES) {
+      const oldest = searches.keys().next().value;
+      if (oldest === undefined) break;
+      searches.delete(oldest);
+    }
+    notify();
+  })();
+  searchInflight.set(key, request);
+  return request;
 }
 
 /**
@@ -215,11 +337,21 @@ export function refreshAgentCommands(
           ? null
           : parseAgentCommandsBody(result.body, agent);
         next = commands
-          ? { etag: result.etag ?? null, commands, checkedAt: now() }
-          : { etag: null, commands: EMPTY, checkedAt: now() };
+          ? {
+              etag: result.etag ?? null,
+              commands,
+              truncated: agentCommandsBodyTruncated(result.body),
+              checkedAt: now(),
+            }
+          : { etag: null, commands: EMPTY, truncated: false, checkedAt: now() };
       }
     } catch {
-      next = { etag: null, commands: EMPTY, checkedAt: now() };
+      next = {
+        etag: null,
+        commands: EMPTY,
+        truncated: false,
+        checkedAt: now(),
+      };
     }
     // A community switch while the lookup was in flight retires its answer.
     if (owner !== generation) return;
@@ -247,5 +379,7 @@ export function resetAgentCommandsCache() {
   generation += 1;
   entries = new Map();
   inflight = new Map();
+  searches = new Map();
+  searchInflight = new Map();
   notify();
 }

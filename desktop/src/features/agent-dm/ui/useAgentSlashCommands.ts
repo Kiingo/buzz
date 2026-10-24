@@ -15,18 +15,24 @@ import type { Channel } from "@/shared/api/types";
 import {
   detectGroupSlashQuery,
   groupSkillTag,
+  narrowSlashChoice,
   parseGroupSkillInvocation,
   resolveSlashTarget,
   slashTokenStart,
   type GroupSlashQuery,
+  type SlashListState,
   type SlashTarget,
 } from "../lib/groupSlash";
 import { sendAgentDmTaggedMessage } from "../lib/send";
 import {
   getAgentCommands,
+  getAgentCommandSearch,
   getAgentCommandsVersion,
+  hasAgentCommands,
   refreshAgentCommands,
+  refreshAgentCommandSearch,
   subscribeAgentCommands,
+  type AgentSkillCommand,
   type AgentSlashCommand,
   type SlashAudience,
 } from "../lib/slashCommands";
@@ -58,8 +64,11 @@ type ChooseActions = {
  * What a channel or thread composer tells the menu: which agents a draft
  * mentions, which agents the conversation already addresses (a thread with
  * an agent), the channel's agent members, and how to insert a real mention.
+ * `isAgent` is the composer's widest "this key is an agent" signal (directory,
+ * channel roles, profiles); the server decides what each agent offers.
  */
 export type GroupSlashContext = {
+  isAgent?: (pubkey: string) => boolean;
   agentMentionsIn: (text: string) => string[];
   addressedAgents: readonly string[];
   channelAgents: readonly string[];
@@ -79,6 +88,27 @@ export type GroupSlashSend =
 function agentChoiceMatches(choice: SlashAgentChoice, query: string) {
   const q = query.trim().toLowerCase();
   return !q || choice.label.toLowerCase().includes(q);
+}
+
+/** Whether an agent's group list is still loading, empty or has items. */
+function groupListState(pubkey: string): SlashListState {
+  if (!hasAgentCommands(pubkey, "group")) return "unknown";
+  return getAgentCommands(pubkey, "group").length > 0 ? "some" : "empty";
+}
+
+function mergeCommands(
+  first: readonly AgentSlashCommand[],
+  second: readonly AgentSlashCommand[],
+): AgentSlashCommand[] {
+  const seen = new Set<string>();
+  const merged: AgentSlashCommand[] = [];
+  for (const command of [...first, ...second]) {
+    const key = `${command.kind}:${command.name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(command);
+  }
+  return merged;
 }
 
 /**
@@ -115,7 +145,9 @@ export function useAgentSlashCommands({
         channel,
         selfPubkey,
         (pubkey) =>
-          knownAgents.has(pubkey) || profiles?.[pubkey]?.isAgent === true,
+          knownAgents.has(pubkey) ||
+          profiles?.[pubkey]?.isAgent === true ||
+          group?.isAgent?.(pubkey) === true,
       )
     : null;
   // A thread inside a 1:1 DM has no menu: the DM send path is top-level only.
@@ -129,6 +161,9 @@ export function useAgentSlashCommands({
   const audience: SlashAudience = mode === "dm" ? "private" : "group";
   const groupRef = React.useRef(group);
   groupRef.current = group;
+  /** Skills picked from the menu, so a pick found by a server search (and
+   * not in the cached list) is still sent as that skill. */
+  const pickedSkillsRef = React.useRef(new Map<string, AgentSkillCommand>());
   /** The agent a chosen channel session command is for: its text drops the
    * mention, so the send cannot read the agent back from it. */
   const sessionTargetRef = React.useRef<{
@@ -162,12 +197,15 @@ export function useAgentSlashCommands({
       const trimmed = draft.trimStart();
       const start = slashTokenStart(trimmed);
       const prefix = start === null ? "" : trimmed.slice(0, start);
-      return resolveSlashTarget({
-        hasPrefix: prefix.length > 0,
-        prefixAgents: prefix ? context.agentMentionsIn(prefix) : [],
-        addressedAgents: context.addressedAgents,
-        channelAgents: context.channelAgents,
-      });
+      return narrowSlashChoice(
+        resolveSlashTarget({
+          hasPrefix: prefix.length > 0,
+          prefixAgents: prefix ? context.agentMentionsIn(prefix) : [],
+          addressedAgents: context.addressedAgents,
+          channelAgents: context.channelAgents,
+        }),
+        groupListState,
+      );
     },
     [],
   );
@@ -179,9 +217,28 @@ export function useAgentSlashCommands({
         ? groupTargetFor(text)
         : null;
   const agentPubkey = target?.kind === "agent" ? target.pubkey : null;
-  const commands = agentPubkey
+  const listed = agentPubkey
     ? getAgentCommands(agentPubkey, audience)
     : NO_COMMANDS;
+  // A list the server cut short: what is typed is searched on the server
+  // too, so every skill the user may use can be found.
+  const searched =
+    agentPubkey && slashQuery?.query.trim()
+      ? getAgentCommandSearch(agentPubkey, audience, slashQuery.query)
+      : null;
+  const commands = React.useMemo(
+    () => (searched ? mergeCommands(searched, listed) : listed),
+    [listed, searched],
+  );
+  /** What a send is checked against: the list, plus skills picked from a
+   * search. */
+  const sendable = React.useCallback(
+    (list: readonly AgentSlashCommand[]) =>
+      pickedSkillsRef.current.size > 0
+        ? mergeCommands(list, [...pickedSkillsRef.current.values()])
+        : [...list],
+    [],
+  );
   const labelFor = React.useCallback(
     (pubkey: string) => resolveUserLabel({ pubkey, profiles }),
     [profiles],
@@ -190,13 +247,17 @@ export function useAgentSlashCommands({
   const suggestions = React.useMemo<SlashMenuItem[]>(() => {
     if (!slashQuery || dismissed || !target) return NO_ITEMS;
     if (target.kind === "choose") {
-      return target.pubkeys
-        .map<SlashAgentChoice>((pubkey) => ({
-          kind: "agent",
-          pubkey,
-          label: labelFor(pubkey),
-        }))
-        .filter((choice) => agentChoiceMatches(choice, slashQuery.query));
+      const choices = target.pubkeys.map<SlashAgentChoice>((pubkey) => ({
+        kind: "agent",
+        pubkey,
+        label: labelFor(pubkey),
+      }));
+      // Typing a command name before choosing keeps the agents on offer;
+      // the choice then opens that agent's matches for what was typed.
+      const matching = choices.filter((choice) =>
+        agentChoiceMatches(choice, slashQuery.query),
+      );
+      return matching.length > 0 ? matching : choices;
     }
     return filterSlashCommands(commands, slashQuery.query);
   }, [commands, dismissed, labelFor, slashQuery, target]);
@@ -214,6 +275,7 @@ export function useAgentSlashCommands({
     (nextText: string, cursor: number) => {
       // Outside a menu-capable composer every setter below is a no-op bail-out.
       setText(mode ? nextText : "");
+      if (!nextText.trim()) pickedSkillsRef.current.clear();
       const next: GroupSlashQuery | null =
         mode === "dm"
           ? (() => {
@@ -241,7 +303,14 @@ export function useAgentSlashCommands({
           ? ({ kind: "agent", pubkey: dmPeer } as const)
           : groupTargetFor(nextText);
       if (nextTarget?.kind === "agent") {
-        void refreshAgentCommands(nextTarget.pubkey, audience);
+        void refreshAgentCommands(nextTarget.pubkey, audience).then(() =>
+          refreshAgentCommandSearch(nextTarget.pubkey, audience, next.query),
+        );
+      } else if (nextTarget?.kind === "choose") {
+        // Load each candidate's list, so agents that offer nothing drop out.
+        for (const pubkey of nextTarget.pubkeys) {
+          void refreshAgentCommands(pubkey, "group");
+        }
       }
     },
     [audience, dmPeer, groupTargetFor, mode],
@@ -304,8 +373,16 @@ export function useAgentSlashCommands({
           replaceFromOffset: 0,
           replaceToOffset: query.tokenEnd,
         });
-        actions.applyEdit({ ...edit, insertText: `${edit.insertText}/` });
+        // Keep what was typed after "/": the agent's menu opens on it.
+        actions.applyEdit({
+          ...edit,
+          insertText: `${edit.insertText}/${query.query}`,
+        });
+        void refreshAgentCommands(item.pubkey, "group");
         return;
+      }
+      if (item.kind === "skill") {
+        pickedSkillsRef.current.set(item.name, item);
       }
       let edit: AutocompleteEdit = {
         replaceFromOffset: mode === "group" ? 0 : query.tokenStart,
@@ -367,7 +444,7 @@ export function useAgentSlashCommands({
   const sendSkillIfInvoked = React.useCallback(
     async (plainText: string, onSent: () => void): Promise<boolean> => {
       if (mode !== "dm" || !dmPeer || !channelId) return false;
-      const invocation = parseSkillInvocation(plainText, commands);
+      const invocation = parseSkillInvocation(plainText, sendable(commands));
       if (!invocation) return false;
       const message = buildSkillMessage(invocation);
       if (!message.ok) {
@@ -384,6 +461,7 @@ export function useAgentSlashCommands({
           content: message.content,
           markerTags: message.tags,
         });
+        pickedSkillsRef.current.clear();
         onSent();
       } catch (error) {
         toast.error(
@@ -392,7 +470,7 @@ export function useAgentSlashCommands({
       }
       return true;
     },
-    [channelId, commands, dmPeer, mode, queryClient, selfPubkey],
+    [channelId, commands, dmPeer, mode, queryClient, selfPubkey, sendable],
   );
 
   /**
@@ -412,7 +490,7 @@ export function useAgentSlashCommands({
           ? { kind: "agent", pubkey: chosenSession.pubkey }
           : groupTargetFor(plainText);
       if (sendTarget?.kind !== "agent") return null;
-      const listed = getAgentCommands(sendTarget.pubkey, "group");
+      const listed = sendable(getAgentCommands(sendTarget.pubkey, "group"));
       const invocation = parseGroupSkillInvocation(plainText, listed);
       if (invocation) {
         const tag = groupSkillTag(invocation);
@@ -435,7 +513,7 @@ export function useAgentSlashCommands({
         ? { ok: true, addressedAgents: [sendTarget.pubkey], markerTags: [] }
         : null;
     },
-    [groupTargetFor, mode],
+    [groupTargetFor, mode, sendable],
   );
 
   return {

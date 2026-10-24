@@ -71,6 +71,30 @@ GroupCommandTarget? resolveGroupCommandTarget({
   );
 }
 
+/// What is known of an agent's group "/" list.
+enum GroupCommandListState { unknown, empty, some }
+
+/// Narrow a choice of several agents by what each offers: an agent whose
+/// list came back empty (nothing the person may use with it) is no choice,
+/// and when only one agent with commands is left the "/" is for it. Agents
+/// still loading stay on offer. Null when none is left.
+GroupCommandTarget? narrowGroupCommandTarget(
+  GroupCommandTarget target,
+  GroupCommandListState Function(String pubkey) listState,
+) {
+  if (target.choices.isEmpty) return target;
+  final open = [
+    for (final pubkey in target.choices)
+      if (listState(pubkey) != GroupCommandListState.empty) pubkey,
+  ];
+  if (open.isEmpty) return null;
+  if (open.length == 1 &&
+      listState(open.single) == GroupCommandListState.some) {
+    return (agent: open.single, choices: const []);
+  }
+  return (agent: null, choices: open);
+}
+
 /// The `buzz-skill` tag for a channel or thread message
 /// (`[@Name ]/skill args`) when the skill was picked from the popup.
 List<List<String>> groupAgentSkillInvocationTags(

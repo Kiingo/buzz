@@ -69,6 +69,7 @@ import { useAddressedAgentMentionRestore } from "./useAddressedAgentMentionResto
 import { scheduleSettleGatedAutoSubmit } from "./messageComposerAutoSubmit";
 import type { MessageComposerProps } from "./MessageComposer.types";
 import { AgentSlashCommandMenu } from "@/features/agent-dm/ui/AgentSlashCommandMenu";
+import { useSlashAgentPredicate } from "@/features/agent-dm/ui/useSlashAgentPredicate";
 import {
   useAgentSlashCommands,
   type GroupSlashContext,
@@ -163,14 +164,20 @@ function MessageComposerImpl({
       rootTags: audienceContext?.rootTags ?? [],
       scope: audienceScope,
     });
+  const slashIsAgent = useSlashAgentPredicate(
+    channelId,
+    mentions.isAgentPubkey,
+    profiles,
+  );
   const slashChannelAgents = React.useMemo(
-    () => [...mentions.memberPubkeys].filter(mentions.isAgentPubkey),
-    [mentions.isAgentPubkey, mentions.memberPubkeys],
+    () => [...mentions.memberPubkeys].filter(slashIsAgent),
+    [mentions.memberPubkeys, slashIsAgent],
   );
   const slashGroup = React.useMemo<GroupSlashContext>(
     () => ({
+      isAgent: slashIsAgent,
       agentMentionsIn: (text) =>
-        mentions.extractMentionPubkeys(text).filter(mentions.isAgentPubkey),
+        mentions.extractMentionPubkeys(text).filter(slashIsAgent),
       addressedAgents: persistentAudience.pubkeys,
       channelAgents: slashChannelAgents,
       mentionEdit: ({ label, pubkey, replaceFromOffset, replaceToOffset }) =>
@@ -185,16 +192,18 @@ function MessageComposerImpl({
     [
       mentions.extractMentionPubkeys,
       mentions.insertResolvedMention,
-      mentions.isAgentPubkey,
       persistentAudience.pubkeys,
       slashChannelAgents,
+      slashIsAgent,
     ],
   );
+  // A reply to one message is a thread reply: the menu follows the channel
+  // or thread rules (a 1:1 DM's own path is top-level only).
   const agentSlash = useAgentSlashCommands({
     channelId,
-    enabled: editTarget == null && replyTarget == null,
+    enabled: editTarget == null,
     group: slashGroup,
-    inThread: audienceContext != null,
+    inThread: audienceContext != null || replyTarget != null,
     profiles,
   });
   const notifyTyping = useTypingBroadcast(

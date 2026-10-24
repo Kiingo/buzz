@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  narrowSlashChoice,
   detectGroupSlashQuery,
   groupSkillTag,
   MAX_SLASH_AGENT_CHOICES,
@@ -135,4 +136,39 @@ test("parseGroupSkillInvocation and groupSkillTag keep the typed args", () => {
     groupSkillTag({ command: REVIEW, args: "x".repeat(MAX_SKILL_ARGS + 1) }),
     null,
   );
+});
+
+test("narrowSlashChoice: drops agents with nothing to offer", () => {
+  const A = "a".repeat(64);
+  const B = "b".repeat(64);
+  const C = "c".repeat(64);
+  const choose = { kind: "choose", pubkeys: [A, B, C] };
+  const states = (map) => (pubkey) => map[pubkey] ?? "unknown";
+  assert.deepEqual(narrowSlashChoice(choose, states({})), choose);
+  assert.deepEqual(narrowSlashChoice(choose, states({ [B]: "empty" })), {
+    kind: "choose",
+    pubkeys: [A, C],
+  });
+  assert.deepEqual(
+    narrowSlashChoice(
+      choose,
+      states({ [A]: "some", [B]: "empty", [C]: "empty" }),
+    ),
+    { kind: "agent", pubkey: A },
+  );
+  // The one left is still loading: keep offering it rather than guessing.
+  assert.deepEqual(
+    narrowSlashChoice(choose, states({ [B]: "empty", [C]: "empty" })),
+    { kind: "choose", pubkeys: [A] },
+  );
+  assert.equal(
+    narrowSlashChoice(
+      choose,
+      states({ [A]: "empty", [B]: "empty", [C]: "empty" }),
+    ),
+    null,
+  );
+  const single = { kind: "agent", pubkey: A };
+  assert.equal(narrowSlashChoice(single, states({ [A]: "empty" })), single);
+  assert.equal(narrowSlashChoice(null, states({})), null);
 });

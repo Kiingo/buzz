@@ -200,3 +200,22 @@ test("only /new asks for confirmation; /sessions and skills do not", () => {
   assert.equal(slashCommandNeedsConfirm(SESSION_LIST), false);
   assert.equal(slashCommandNeedsConfirm(REVIEW), false);
 });
+
+test("the menu lists every match, not just a first screenful", () => {
+  const many = Array.from({ length: 300 }, (_, index) => ({
+    kind: "skill",
+    name: `skill-${String(index).padStart(3, "0")}`,
+    skillId: `sk-${index}`,
+    description: null,
+    argumentHint: null,
+    source: "registry",
+    displayName: null,
+  }));
+  assert.equal(filterSlashCommands(many, "").length, 300);
+  assert.deepEqual(
+    filterSlashCommands(many, "skill-29")
+      .slice(0, 10)
+      .map((command) => command.name),
+    Array.from({ length: 10 }, (_, index) => `skill-29${index}`),
+  );
+});
