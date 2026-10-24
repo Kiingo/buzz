@@ -86,6 +86,9 @@ impl CommunityDisconnectReason {
     }
 }
 
+/// Pause before the one retry of a failed huddle-end verification read.
+const HUDDLE_AUDIO_END_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Why a live huddle audio socket is cut by the relay (see
 /// [`AppState::end_huddle_audio_clusterwide`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2349,6 +2352,41 @@ impl AppState {
         closed
     }
 
+    /// The huddle channel row for a huddle-end check, with one retry after a
+    /// short pause on a read error (a missing channel is an answer).
+    async fn read_channel_with_retry(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+    ) -> Result<buzz_db::channel::ChannelRecord, buzz_db::DbError> {
+        match self.db.get_channel(community_id, channel_id).await {
+            Err(error) if !matches!(error, buzz_db::DbError::ChannelNotFound(_)) => {
+                tracing::debug!(channel = %channel_id, %error, "retrying huddle end read");
+                tokio::time::sleep(HUDDLE_AUDIO_END_RETRY_DELAY).await;
+                self.db.get_channel(community_id, channel_id).await
+            }
+            other => other,
+        }
+    }
+
+    /// Membership for a huddle-removal check, with one retry after a short
+    /// pause on a read error.
+    async fn read_membership_with_retry(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: &[u8],
+    ) -> Result<bool, buzz_db::DbError> {
+        match self.db.is_member(community_id, channel_id, pubkey).await {
+            Err(error) => {
+                tracing::debug!(channel = %channel_id, %error, "retrying huddle removal read");
+                tokio::time::sleep(HUDDLE_AUDIO_END_RETRY_DELAY).await;
+                self.db.is_member(community_id, channel_id, pubkey).await
+            }
+            ok => ok,
+        }
+    }
+
     /// Applies a cross-pod `EndHuddleAudio` command to this pod's sockets,
     /// only while the durable state still says so: the huddle channel is
     /// archived or deleted, or the member is no longer an active member. A
@@ -2370,8 +2408,10 @@ impl AppState {
         ) {
             return 0;
         }
+        // One retry after a short pause before keeping the sockets: a
+        // transient read error should not leave a removed member connected.
         let proven = match removed.as_deref() {
-            None => match self.db.get_channel(community_id, channel_id).await {
+            None => match self.read_channel_with_retry(community_id, channel_id).await {
                 Ok(channel) => channel.archived_at.is_some(),
                 Err(buzz_db::DbError::ChannelNotFound(_)) => true,
                 Err(error) => {
@@ -2383,7 +2423,10 @@ impl AppState {
                     false
                 }
             },
-            Some(pubkey) => match self.db.is_member(community_id, channel_id, pubkey).await {
+            Some(pubkey) => match self
+                .read_membership_with_retry(community_id, channel_id, pubkey)
+                .await
+            {
                 Ok(is_member) => !is_member,
                 Err(error) => {
                     tracing::warn!(
