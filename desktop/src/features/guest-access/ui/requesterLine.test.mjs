@@ -98,7 +98,9 @@ test("an older route's requester renders the name and link state only", () => {
   );
   assert.match(html, /Jess/);
   assert.match(html, /Not linked/);
-  assert.doesNotMatch(html, /TEST|request|linked \d/);
+  // Visible text only: the wrapper's data-testid itself contains "request".
+  const text = html.replace(/<[^>]+>/g, " ");
+  assert.doesNotMatch(text, /TEST|request|linked \d/);
 });
 
 test("with nothing requested, nothing is pre-ticked and each source says what it exposes", () => {

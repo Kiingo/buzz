@@ -82,8 +82,11 @@ class HostedAgentIdentity {
       ..add(secret)
       ..add([attestation.length >> 8, attestation.length & 0xff])
       ..add(attestation);
+    // `copy: false` keeps a reference to `secret`, so copy the bundle out
+    // before wiping it; wiping first would seal an all-zero key.
+    final bytes = bundle.toBytes();
     secret.fillRange(0, secret.length, 0);
-    return bundle.toBytes();
+    return bytes;
   }
 
   /// Drop the secret. Further signing or sealing throws.
