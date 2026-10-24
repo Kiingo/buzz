@@ -67,6 +67,12 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 /// Missed pong limit before disconnect.
 const MAX_MISSED_PONGS: u8 = 3;
 
+/// How often a live audio socket re-reads whether its huddle still exists
+/// and whether its pubkey is still a member. The cut on removal or archive
+/// is event-driven; this re-read closes the gap when that cut could not
+/// verify durable state (a failed database read keeps the socket).
+const MEMBERSHIP_RECHECK_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Auth timeout.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -1904,6 +1910,13 @@ pub(crate) async fn handle_active_audio_connection(
     let hb_cancel = cancel.clone();
     let hb_missed = Arc::clone(&missed_pongs);
     let heartbeat_task = tokio::spawn(heartbeat_loop(ctrl_tx.clone(), hb_missed, hb_cancel));
+    let recheck_task = tokio::spawn(membership_recheck_loop(
+        Arc::clone(&state),
+        tenant.community(),
+        channel_id,
+        pubkey_bytes.clone(),
+        cancel.clone(),
+    ));
 
     let fwd_cancel = cancel.child_token();
     let forward_task = tokio::spawn(audio_forward_loop(
@@ -2029,6 +2042,7 @@ pub(crate) async fn handle_active_audio_connection(
     cancel.cancel();
     let _ = send_task.await;
     let _ = heartbeat_task.await;
+    let _ = recheck_task.await;
     let _ = forward_task.await;
     // The reader task owns the owner control stream; joining it here guarantees
     // its clean-close (or teardown) completes before connection cleanup returns.
@@ -2537,6 +2551,39 @@ async fn audio_forward_loop(
                     None => break,
                 }
             }
+        }
+    }
+}
+
+/// Re-read, about once a minute, whether this socket's huddle was archived or
+/// deleted, or its pubkey removed, and cut it with that reason if so. Each
+/// re-read goes through [`AppState::apply_huddle_audio_end`], which only cuts
+/// on durable proof; an unreadable answer keeps the socket until the next one.
+async fn membership_recheck_loop(
+    state: Arc<AppState>,
+    community_id: buzz_core::CommunityId,
+    channel_id: Uuid,
+    pubkey: Vec<u8>,
+    cancel: CancellationToken,
+) {
+    let mut interval = tokio::time::interval_at(
+        tokio::time::Instant::now() + MEMBERSHIP_RECHECK_INTERVAL,
+        MEMBERSHIP_RECHECK_INTERVAL,
+    );
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                if state.apply_huddle_audio_end(community_id, channel_id, None).await > 0
+                    || state
+                        .apply_huddle_audio_end(community_id, channel_id, Some(pubkey.clone()))
+                        .await
+                        > 0
+                {
+                    break;
+                }
+            }
+            _ = cancel.cancelled() => break,
         }
     }
 }
