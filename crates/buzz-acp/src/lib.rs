@@ -3710,6 +3710,10 @@ async fn run_harness(
                                 tracing::debug!(channel_id = %buzz_event.channel_id, "dropping self-authored event");
                                 continue;
                             }
+                            if listener_trust::is_call_line_event(&buzz_event.event) {
+                                tracing::debug!(channel_id = %buzz_event.channel_id, "dropping call transcript line");
+                                continue;
+                            }
 
                             // Check: kind:9, content "!shutdown", from owner, mentions THIS agent.
                             let is_shutdown = is_owner_control_command(

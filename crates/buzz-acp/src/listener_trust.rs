@@ -75,6 +75,20 @@ pub(crate) fn should_ignore_self_event(event: &nostr::Event, agent_pubkey_hex: &
         })
 }
 
+/// Tag that marks a call transcript line (`["buzz-call-line", <call id>,
+/// <speaker kind>]`): a record of what was said on a call, posted as a thread
+/// reply. It is never a prompt, so the listener skips it before any trust,
+/// queue or subscription handling, whoever signed it and whatever it tags.
+pub(crate) const CALL_LINE_TAG: &str = "buzz-call-line";
+
+/// Whether an event is a call transcript line.
+pub(crate) fn is_call_line_event(event: &nostr::Event) -> bool {
+    event
+        .tags
+        .iter()
+        .any(|tag| tag.as_slice().first().map(String::as_str) == Some(CALL_LINE_TAG))
+}
+
 /// A non-owner channel stream message that `p`-tags (mentions) someone but
 /// not this agent is addressed to them, so this agent must not take a turn on
 /// it. Messages that mention nobody, owner messages, and DMs are unaffected.
@@ -539,5 +553,34 @@ mod tests {
             "author-a",
             ControlSignal::Cancel
         ));
+    }
+
+    #[test]
+    fn call_transcript_lines_are_recognized_and_nothing_else() {
+        let keys = Keys::generate();
+        let line = EventBuilder::new(Kind::Custom(9), "spoken words")
+            .tags([
+                Tag::parse(["e", "a".repeat(64).as_str(), "", "root"]).unwrap(),
+                Tag::parse([CALL_LINE_TAG, "call-1", "agent"]).unwrap(),
+            ])
+            .sign_with_keys(&keys)
+            .unwrap();
+        assert!(is_call_line_event(&line));
+
+        // Even one that tags this agent is a transcript line, never a prompt.
+        let mentioned = EventBuilder::new(Kind::Custom(9), "spoken words")
+            .tags([
+                Tag::parse([CALL_LINE_TAG, "call-1", "human"]).unwrap(),
+                Tag::parse(["p", keys.public_key().to_hex().as_str()]).unwrap(),
+            ])
+            .sign_with_keys(&keys)
+            .unwrap();
+        assert!(is_call_line_event(&mentioned));
+
+        let message = EventBuilder::new(Kind::Custom(9), "buzz-call-line")
+            .tags([Tag::parse(["t", CALL_LINE_TAG]).unwrap()])
+            .sign_with_keys(&keys)
+            .unwrap();
+        assert!(!is_call_line_event(&message));
     }
 }
