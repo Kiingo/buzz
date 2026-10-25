@@ -55,8 +55,13 @@ export class NodeContext {
     readonly sendMessage: (send: MessageSend, actionId: string) => void,
     /** This render's Markdown allowance (79 S2), shared by every node. */
     readonly markdown: MarkdownBudget = markdownBudget(),
-    /** Nodes drawn in this render (79 W8: at most MAX_SURFACE_NODES). */
-    readonly nodes: { count: number } = { count: 0 },
+    /**
+     * Nodes drawn for this snapshot, by key (79 W8: at most
+     * MAX_SURFACE_NODES), and where the "too large" row went.
+     */
+    readonly nodes: { seen: Set<string>; tooLargeAt?: string } = {
+      seen: new Set(),
+    },
   ) {}
 
   get surface(): Surface {

@@ -3,16 +3,33 @@ import { asNumber } from "./json";
 
 // Agent text is plain text: control characters, format characters
 // (Unicode Cf: bidi overrides, zero-width spaces and joiners, word joiners,
-// BOMs, interlinear annotations) and tag characters are dropped and lengths
-// capped, as the Swift renderer does (UiText; 79 S1/W9).
+// BOMs, interlinear annotations), every default-ignorable code point
+// (variation selectors, U+034F, U+17B4/5, Mongolian selectors) and tag
+// characters are dropped and lengths capped, as the Swift renderer does
+// (UiText; 79 S1/W9, S1 of 2026-10-25).
 
-/** Characters that draw nothing: Cf, tags U+E0000–E007F, Hangul fillers. */
-const INVISIBLE = /[\p{Cf}\u{E0000}-\u{E007F}\u115F\u1160\u3164\uFFA0]/u;
-const INVISIBLE_ALL = /[\p{Cf}\u{E0000}-\u{E007F}\u115F\u1160\u3164\uFFA0]/gu;
+/**
+ * Characters that draw nothing: Default_Ignorable_Code_Point (which holds
+ * the variation selectors U+FE00–FE0F and U+E0100–E01EF, U+034F, U+17B4/5,
+ * U+180B–180F and the Hangul fillers), Cf and the tags U+E0000–E007F.
+ */
+const INVISIBLE =
+  /[\p{Default_Ignorable_Code_Point}\p{Cf}\u{E0000}-\u{E007F}\u115F\u1160\u3164\uFFA0]/u;
+const INVISIBLE_ALL =
+  /[\p{Default_Ignorable_Code_Point}\p{Cf}\u{E0000}-\u{E007F}\u115F\u1160\u3164\uFFA0]/gu;
+
+/**
+ * The one invisible character an agent's words may hold: a single emoji
+ * presentation selector (U+FE0F) right after a pictograph ("❤️"). It only
+ * picks the emoji glyph; a run of selectors (hidden data) still counts.
+ */
+const EMOJI_PRESENTATION =
+  /(\p{Extended_Pictographic})\uFE0F(?![\uFE00-\uFE0F\u{E0100}-\u{E01EF}])/gu;
 
 /** Whether `text` holds a character that draws nothing (S1). */
 export const hasInvisibleText = (text: unknown): boolean =>
-  typeof text === "string" && INVISIBLE.test(text);
+  typeof text === "string" &&
+  INVISIBLE.test(text.replace(EMOJI_PRESENTATION, "$1"));
 
 /** `text` without the characters that draw nothing. */
 export const withoutInvisible = (text: string): string =>

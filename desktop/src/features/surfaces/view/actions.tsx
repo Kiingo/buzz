@@ -268,7 +268,7 @@ export const SuggestionChipsView = ({ component, scope }: NodeProps) => {
   const context = useNodeContext();
   const send = context.host.sendMessage;
   const chips = context.list(component, "chips", scope).slice(0, 6);
-  if (context.isUntrusted(component, "chips", scope)) {
+  if (context.isUntrustedList(component.props.chips, scope)) {
     const words = chips
       .map((chip) => chipSend(chip)?.label)
       .filter((label): label is string => Boolean(label));

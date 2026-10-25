@@ -437,7 +437,15 @@ export class SurfaceController {
     const title = new Promise<LookupItem[]>((resolve) => {
       this.refBatch.push({ keys: [key], resolve });
       this.refTimer ??= setTimeout(() => this.flushRefs(), 16);
-    }).then((items) => items.find((item) => item.id === key.id)?.title);
+    }).then(
+      // By type and id: two entities of different types may share an id.
+      (items) =>
+        items.find(
+          (item) =>
+            item.id === key.id &&
+            (item.type === undefined || item.type === key.type),
+        )?.title,
+    );
     this.refTitles.set(id, title);
     return title;
   }

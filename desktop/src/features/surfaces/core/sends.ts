@@ -11,6 +11,14 @@ import { comparableText, hasInvisibleText, plainText } from "./text";
 /** The longest words a control may send, shown in full (code points). */
 export const SENDS_MAX = 300;
 
+/**
+ * The most line breaks words may hold (79 S2): past it a caption could push
+ * the tail out of sight ("Sounds good" + 280 newlines), so it is blocked.
+ */
+export const SENDS_MAX_LINE_BREAKS = 3;
+
+const LINE_BREAKS = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/gu;
+
 /** Shown on a control that can't send here. */
 export const SENDS_BLOCKED_TEXT = "Open in Kiingo to send this";
 
@@ -20,7 +28,8 @@ export type MessageSend =
   /** The words differ: drawn in full under the label ({@link sendsCaption}). */
   | { kind: "sends"; text: string }
   /**
-   * Disabled: too long to show in full, empty, hiding something, a slash
+   * Disabled: too long to show in full (or more than
+   * {@link SENDS_MAX_LINE_BREAKS} lines), empty, hiding something, a slash
    * command, or addressed to another agent (79, r3d).
    */
   | {
@@ -90,6 +99,9 @@ export const messageSend = (
   const refused = refusedLead(words, agentName);
   if (refused) {
     return { kind: "blocked", reason: refused };
+  }
+  if ((words.match(LINE_BREAKS)?.length ?? 0) > SENDS_MAX_LINE_BREAKS) {
+    return { kind: "blocked", reason: "too_long" };
   }
   if (words === label) {
     return Array.from(words).length > SENDS_MAX

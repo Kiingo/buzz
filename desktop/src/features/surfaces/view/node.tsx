@@ -1,6 +1,7 @@
 // Generated from the Kiingo surface renderer packages; do not edit here.
 import type { ComponentType as ReactComponentType } from "react";
 import {
+  childKey,
   isVisible,
   MAX_DEPTH,
   MAX_SURFACE_NODES,
@@ -160,16 +161,19 @@ export const Node = ({
   if (!isVisible(component.visibleWhen, context.data, scope)) {
     return null;
   }
-  // At most MAX_SURFACE_NODES per surface (79 W8): past it one "too large"
-  // row, and nothing more is drawn.
-  context.nodes.count += 1;
-  if (context.nodes.count > MAX_SURFACE_NODES) {
-    if (context.nodes.count > MAX_SURFACE_NODES + 1) {
-      return null;
+  // At most MAX_SURFACE_NODES distinct nodes per surface snapshot (79 W8):
+  // past it one "too large" row, and nothing more is drawn. Counted by node
+  // key, so a redraw (a tab or modal toggled) never counts a node twice.
+  const key = childKey(componentId, scope);
+  const nodes = context.nodes;
+  if (!nodes.seen.has(key)) {
+    if (nodes.seen.size >= MAX_SURFACE_NODES) {
+      nodes.tooLargeAt ??= key;
+      return nodes.tooLargeAt === key ? (
+        <NewerAppRow text="This card is too large to show here. Open it in Kiingo." />
+      ) : null;
     }
-    return (
-      <NewerAppRow text="This card is too large to show here. Open it in Kiingo." />
-    );
+    nodes.seen.add(key);
   }
   const View = component.known
     ? viewFor(component.type as ComponentType)
