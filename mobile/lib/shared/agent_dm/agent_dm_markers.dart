@@ -621,11 +621,11 @@ class AgentDmSurface {
   const AgentDmSurface({required this.surfaceId, required this.revision});
 }
 
-/// Reads exactly one `["buzz-surface", <uuid>, <revision>]`. More than one,
-/// or a malformed one, leaves the message plain.
+/// Reads exactly one `["buzz-surface", <uuid>, <revision>]` of exactly three
+/// elements. More than one, or a malformed one, leaves the message plain.
 AgentDmSurface? readAgentDmSurface(List<List<String>> tags) {
   final named = _named(tags, 'buzz-surface');
-  if (named.length != 1 || named.single.length < 3) return null;
+  if (named.length != 1 || named.single.length != 3) return null;
   final tag = named.single;
   if (!_surfaceUuid.hasMatch(tag[1]) || !_surfaceRevision.hasMatch(tag[2])) {
     return null;

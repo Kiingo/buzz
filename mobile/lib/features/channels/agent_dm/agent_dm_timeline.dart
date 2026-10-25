@@ -115,12 +115,21 @@ class AgentDmTimeline {
     required Iterable<String> memberPubkeys,
     required String? currentPubkey,
     required Set<String> agentPubkeys,
+    Set<String> verifiedAgentPubkeys = const {},
   }) {
     if (!isDm) return empty;
     final members = normalizeAgentDmMembers(memberPubkeys);
     if (members.isEmpty) return empty;
     final self = currentPubkey?.trim().toLowerCase();
     final agents = {for (final pubkey in agentPubkeys) pubkey.toLowerCase()};
+    // Agent cards only in a 1:1 DM between the reader and an agent whose
+    // owner attestation verifies (79 S6): kind 10100 is self-published, so
+    // it alone never draws a card.
+    final verified = {
+      for (final pubkey in verifiedAgentPubkeys) pubkey.toLowerCase(),
+    };
+    final oneToOne =
+        self != null && members.length == 2 && members.contains(self);
     final signers = <String, String>{};
     final mirrors = <String, AgentDmMirror>{};
     final calls = <String, AgentDmCall>{};
@@ -183,7 +192,9 @@ class AgentDmTimeline {
       if (card != null) questions[event.id] = card;
       final buttons = readAgentDmActions(event.tags);
       if (buttons.isNotEmpty) actions[event.id] = buttons;
-      final surface = readAgentDmSurface(event.tags);
+      final surface = oneToOne && verified.contains(signer)
+          ? readAgentDmSurface(event.tags)
+          : null;
       if (surface != null) {
         surfaces[event.id] = surface;
         final newest = surfaceRevisions[surface.surfaceId];

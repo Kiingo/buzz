@@ -189,12 +189,14 @@ class _Badge extends StatelessWidget {
   }
 }
 
-/// Outside material, always quoted (§10): a bar, the source, plain text.
+/// Outside material, always quoted (§10): a bar, the source, then plain
+/// [text] or a [child] drawn inside the frame.
 class _QuoteBox extends StatelessWidget {
-  final String text;
+  final String? text;
+  final Widget? child;
   final String? source;
 
-  const _QuoteBox({required this.text, this.source});
+  const _QuoteBox({this.text, this.child, this.source});
 
   @override
   Widget build(BuildContext context) {
@@ -218,7 +220,9 @@ class _QuoteBox extends StatelessWidget {
                 style: _small(context),
               ),
             ),
-            Text(text, style: _body(context, color: muted)),
+            if (text case final text?)
+              Text(text, style: _body(context, color: muted)),
+            ?child,
           ],
         ),
       ),
@@ -255,7 +259,8 @@ class _SurfaceButton extends StatelessWidget {
           Icon(icon, size: 16),
           const SizedBox(width: Grid.half + Grid.quarter),
         ],
-        Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+        // Never ellipsized: a label may be the words a tap sends (79 M1).
+        Flexible(child: Text(label, softWrap: true)),
       ],
     );
     const padding = EdgeInsets.symmetric(
@@ -334,7 +339,10 @@ class _Panel extends StatelessWidget {
 class _NewerAppNotice extends StatelessWidget {
   final String? webUrl;
 
-  const _NewerAppNotice({this.webUrl});
+  /// Past [surfaceMaxNodes]: says it is too big to show here instead.
+  final bool tooBig;
+
+  const _NewerAppNotice({this.webUrl, this.tooBig = false});
 
   @override
   Widget build(BuildContext context) {
@@ -351,7 +359,11 @@ class _NewerAppNotice extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Expanded(child: _NewerAppRow()),
+          Expanded(
+            child: _NewerAppRow(
+              text: tooBig ? 'This card is too big to show here.' : null,
+            ),
+          ),
           if (url != null)
             _SurfaceButton(
               label: 'Open on web',

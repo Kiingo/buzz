@@ -3,6 +3,8 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../../../shared/agent_dm/agent_dm_markers.dart';
+import '../../../shared/mentions/agent_identity_provider.dart';
+import '../../../shared/profile/user_cache_provider.dart';
 import '../../../shared/relay/relay.dart';
 import '../channel.dart';
 import '../channel_management_provider.dart';
@@ -34,6 +36,18 @@ AgentDmTimeline useAgentDmTimeline(
                 .toList() ??
             channel.participantPubkeys
       : const <String>[];
+  // Agents whose owner attestation (NIP-OA) verifies: from the relay's
+  // agent profiles, or the member's own cached profile.
+  final verifiedAgentPubkeys = <String>{
+    ...?ref.watch(agentOwnersProvider).asData?.value.keys,
+    for (final member in members)
+      if (ref.watch(
+        userCacheProvider.select(
+          (cache) => cache[member.trim().toLowerCase()]?.ownerPubkey != null,
+        ),
+      ))
+        member.trim().toLowerCase(),
+  };
   return useMemoized(
     () => AgentDmTimeline.build(
       events: events ?? const [],
@@ -41,6 +55,7 @@ AgentDmTimeline useAgentDmTimeline(
       memberPubkeys: members,
       currentPubkey: currentPubkey,
       agentPubkeys: agentPubkeys,
+      verifiedAgentPubkeys: verifiedAgentPubkeys,
     ),
     [
       events,
@@ -48,6 +63,7 @@ AgentDmTimeline useAgentDmTimeline(
       Object.hashAll(members),
       currentPubkey,
       Object.hashAllUnordered(agentPubkeys),
+      Object.hashAllUnordered(verifiedAgentPubkeys),
     ],
   );
 }

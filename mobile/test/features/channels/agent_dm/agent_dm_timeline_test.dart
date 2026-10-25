@@ -36,14 +36,19 @@ TimelineMessage _message(NostrEvent event) => TimelineMessage(
   tags: event.tags,
 );
 
-AgentDmTimeline _build(List<NostrEvent> events, {bool isDm = true}) =>
-    AgentDmTimeline.build(
-      events: events,
-      isDm: isDm,
-      memberPubkeys: const [_agent, _me],
-      currentPubkey: _me,
-      agentPubkeys: const {_agent},
-    );
+AgentDmTimeline _build(
+  List<NostrEvent> events, {
+  bool isDm = true,
+  List<String> members = const [_agent, _me],
+  Set<String> verified = const {_agent},
+}) => AgentDmTimeline.build(
+  events: events,
+  isDm: isDm,
+  memberPubkeys: members,
+  currentPubkey: _me,
+  agentPubkeys: const {_agent},
+  verifiedAgentPubkeys: verified,
+);
 
 const _question = [
   ['buzz-question', 'ask-1'],
@@ -235,5 +240,28 @@ void main() {
 
     final notDm = _build([first], isDm: false);
     expect(notDm.surfaceOf('s1'), isNull);
+  });
+
+  test('draws agent cards only from a verified agent in a 1:1 DM', () {
+    const id = '0b5c1f7e-8a7d-4d1e-9a51-3c2f1e0d9b88';
+    final card = _event('s1', const [
+      ['buzz-surface', id, '1'],
+    ]);
+    // A self-published agent profile (kind 10100) alone draws nothing.
+    expect(_build([card], verified: const {}).surfaceOf('s1'), isNull);
+    // A group DM draws nothing, even from a verified agent.
+    expect(
+      _build([card], members: const [_agent, _me, _outsider]).surfaceOf('s1'),
+      isNull,
+    );
+    expect(_build([card]).surfaceOf('s1')?.revision, 1);
+  });
+
+  test('ignores a surface marker with extra elements', () {
+    const id = '0b5c1f7e-8a7d-4d1e-9a51-3c2f1e0d9b88';
+    final card = _event('s1', const [
+      ['buzz-surface', id, '1', 'extra'],
+    ]);
+    expect(_build([card]).surfaceOf('s1'), isNull);
   });
 }
