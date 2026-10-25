@@ -13,6 +13,7 @@ import {
   parseQuestionState,
   parseSessionDivider,
   parseSessionsListing,
+  parseSurface,
   sessionDividerLabel,
 } from "./markers.ts";
 
@@ -289,4 +290,32 @@ test("question state, answers and actions", () => {
     ],
   );
   assert.deepEqual(actionRefTag(actions[0]), ["buzz-action-ref", "ref-1"]);
+});
+
+test("parseSurface reads exactly one well-formed surface card marker", () => {
+  const id = "0192A6B0-0000-7000-8000-0000000000AC";
+  assert.deepEqual(
+    parseSurface([
+      ["h", "dm-1"],
+      ["buzz-surface", id, "3"],
+    ]),
+    {
+      surfaceId: id.toLowerCase(),
+      revision: 3,
+    },
+  );
+  for (const tags of [
+    [],
+    [["buzz-surface", "not-a-uuid", "3"]],
+    [["buzz-surface", id, "0"]],
+    [["buzz-surface", id, "-1"]],
+    [["buzz-surface", id, "1.5"]],
+    [["buzz-surface", id]],
+    [
+      ["buzz-surface", id, "3"],
+      ["buzz-surface", id, "4"],
+    ],
+  ]) {
+    assert.equal(parseSurface(tags), null, JSON.stringify(tags));
+  }
 });

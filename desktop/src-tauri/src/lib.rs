@@ -80,7 +80,7 @@ use extensions::{
     inspect_identity_rotation_handoff, run_identity_rotation, take_pending_identity_rotation,
     IdentityRotationExtensionState,
 };
-use extensions::{agent_prewarm, agent_summary_fetch, agent_voice_request};
+use extensions::{agent_prewarm, agent_summary_fetch, agent_ui_request, agent_voice_request};
 use extensions::{
     confirm_key_replacement, key_replacement_confirmed, key_replacement_status,
     old_owner_key_removed, remove_old_owner_key,
@@ -575,6 +575,7 @@ pub fn run() {
             agent_summary_fetch,
             agent_prewarm,
             agent_voice_request,
+            agent_ui_request,
             inspect_identity_rotation_handoff,
             run_identity_rotation,
             abort_identity_rotation,

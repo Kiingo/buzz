@@ -460,3 +460,23 @@ export function parseActions(tags: Tags): AgentAction[] {
 export function actionRefTag(action: AgentAction): string[] {
   return ["buzz-action-ref", action.ref];
 }
+
+export type AgentSurface = { surfaceId: string; revision: number };
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const REVISION_RE = /^[1-9]\d{0,8}$/;
+
+/**
+ * The surface card marker (docs/agent-dm-markers.md §7): exactly one
+ * `["buzz-surface", <surface uuid>, <revision>]`. More than one, or a
+ * malformed one, leaves the message plain.
+ */
+export function parseSurface(tags: Tags): AgentSurface | null {
+  const found = (tags ?? []).filter((tag) => tag[0] === "buzz-surface");
+  if (found.length !== 1) return null;
+  const [, surfaceId, revision] = found[0] ?? [];
+  if (!surfaceId || !UUID_RE.test(surfaceId)) return null;
+  if (!revision || !REVISION_RE.test(revision)) return null;
+  return { surfaceId: surfaceId.toLowerCase(), revision: Number(revision) };
+}

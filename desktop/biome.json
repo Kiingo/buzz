@@ -1,3 +1,26 @@
 {
-  "extends": ["../biome.json"]
+  "extends": ["../biome.json"],
+  "overrides": [
+    {
+      "includes": [
+        "src/features/surfaces/core/**",
+        "src/features/surfaces/view/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": { "noNonNullAssertion": "off" },
+          "suspicious": {
+            "noArrayIndexKey": "off",
+            "noPrototypeBuiltins": "off"
+          },
+          "a11y": {
+            "useAriaPropsSupportedByRole": "off",
+            "useSemanticElements": "off",
+            "useFocusableInteractive": "off",
+            "noNoninteractiveElementToInteractiveRole": "off"
+          }
+        }
+      }
+    }
+  ]
 }

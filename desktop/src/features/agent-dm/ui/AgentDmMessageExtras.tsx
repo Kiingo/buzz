@@ -10,6 +10,7 @@ import { AgentCallCard } from "./AgentCallCard";
 import { AgentMirrorMarker } from "./AgentMirrorMarker";
 import { AgentQuestionCard } from "./AgentQuestionCard";
 import { AgentSessionsListing } from "./AgentSessionsListing";
+import { AgentSurfaceCard } from "./AgentSurfaceCard";
 
 function useIsAgentSigned(message: TimelineMessage) {
   const knownAgents = useKnownAgentPubkeys();
@@ -22,8 +23,8 @@ function useIsAgentSigned(message: TimelineMessage) {
 }
 
 /**
- * Agent DM marker UI under a message body: the mirror badge, a question card
- * or action buttons. Renders nothing unless the formatter honoured the
+ * Agent DM marker UI under a message body: the mirror badge, a question card,
+ * action buttons or a surface card. Renders nothing unless the formatter honoured the
  * markers (DM channel, signer is a member).
  */
 export function AgentDmMessageExtras({
@@ -47,6 +48,9 @@ export function AgentDmMessageExtras({
       ) : null}
       {kinds.includes("actions") ? (
         <AgentActionButtons channelId={channelId} message={message} />
+      ) : null}
+      {kinds.includes("surface") ? (
+        <AgentSurfaceCard channelId={channelId} message={message} />
       ) : null}
     </>
   );
