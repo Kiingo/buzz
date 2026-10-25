@@ -221,3 +221,32 @@ Rendering: optional. A card shows the verdict, the judge and one row per
 member (name, harness, model, status, verdict), with Details fetching the full
 answers. Without it, clients show the content as a plain agent message, which is
 acceptable for v1.
+
+## 7. Surface card: `buzz-surface`
+
+An interactive card the agent made for the person (a form to fill, a list to
+review, a choice to make). The card lives on the agent host; the message only
+points at it.
+
+- On an agent-signed kind `9` message (a normal reply; it notifies and pushes
+  like one), exactly one:
+  `["buzz-surface", <surface_id>, <revision>]`
+  - `surface_id` is a UUID.
+  - `revision` is the card's revision when the message was sent, a positive
+    integer.
+- Content: a short readable fallback (what the card is for) and a link that
+  opens the card in the host's own app, so any client can still use it.
+
+Rendering: the client reads the card from the host,
+`GET <host>/api/buzz-ui/<desktop|ios>/surfaces/<surface_id>`, NIP-98 signed by
+the signed-in person with `X-Buzz-Community`. The host answers only for the
+person the card belongs to; any other answer leaves the message as its plain
+content. The card draws under the content in the client's own styles: nothing
+the agent wrote becomes a colour, a style or markup. Images load only through
+the host's signed media links. A later message with the same `surface_id` and a
+higher `revision` makes the client read the card again.
+
+Clients show cards view only for now. Links open, and a "send message" button
+sends the person's own ordinary message (kind `9`, no marker tags) with the
+button's text. Inputs and every other button are disabled with a line saying
+the card can be changed in the host's app.

@@ -1,0 +1,570 @@
+// Generated from the Kiingo surface renderer packages; do not edit here.
+import { useState } from "react";
+import {
+  asInt,
+  childrenOf,
+  isObject,
+  parsePointer,
+  resolvePointer,
+  type ChildRef,
+  type JsonValue,
+  type Pointer,
+} from "../core";
+import { cn } from "./cn";
+import { gapClass, useNodeContext, type NodeProps } from "./context";
+import { Glyphs } from "./icons";
+import { ProxyImage } from "./media";
+import { Children } from "./node";
+import { SurfaceButton, SurfaceDialog } from "./ui";
+
+// §4.1 Layout.
+
+export const StackView = ({ component, scope, depth }: NodeProps) => {
+  const context = useNodeContext();
+  const children = context.children(component, scope);
+  const horizontal = context.string(component, "direction") === "horizontal";
+  const align = context.string(component, "align");
+  const justify = context.string(component, "justify");
+  const gap = gapClass(context.string(component, "gap"));
+  if (horizontal) {
+    return (
+      <div
+        className={cn(
+          "flex min-w-0",
+          // A row that doesn't fit wraps (narrow widths), as Swift falls back to a column.
+          "flex-wrap",
+          gap,
+          align === "start"
+            ? "items-start"
+            : align === "end"
+              ? "items-end"
+              : align === "stretch"
+                ? "items-stretch"
+                : "items-center",
+          justify === "center"
+            ? "justify-center"
+            : justify === "end"
+              ? "justify-end"
+              : justify === "spaceBetween"
+                ? "justify-between"
+                : "justify-start",
+        )}
+      >
+        <Children refs={children} depth={depth} />
+      </div>
+    );
+  }
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 flex-col",
+        gap,
+        align === "center"
+          ? "items-center"
+          : align === "end"
+            ? "items-end"
+            : align === "start"
+              ? "items-start"
+              : "items-stretch",
+      )}
+    >
+      <Children refs={children} depth={depth} />
+    </div>
+  );
+};
+
+const GRID_COLUMNS: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-1 @md:grid-cols-2",
+  3: "grid-cols-1 @md:grid-cols-2 @2xl:grid-cols-3",
+  4: "grid-cols-1 @md:grid-cols-2 @2xl:grid-cols-4",
+};
+
+/** Columns that collapse to one when the surface is narrow (container queries). */
+export const GridView = ({ component, scope, depth }: NodeProps) => {
+  const context = useNodeContext();
+  const columns = Math.min(
+    4,
+    Math.max(1, Math.round(context.number(component, "columns", scope) ?? 2)),
+  );
+  return (
+    <div className="@container">
+      <div
+        className={cn(
+          "grid",
+          GRID_COLUMNS[columns],
+          gapClass(context.string(component, "gap")),
+        )}
+      >
+        <Children refs={context.children(component, scope)} depth={depth} />
+      </div>
+    </div>
+  );
+};
+
+const Heading = ({ title, subtitle }: { title?: string; subtitle?: string }) =>
+  title || subtitle ? (
+    <div className="space-y-0.5">
+      {title ? <h3 className="text-sm font-semibold">{title}</h3> : null}
+      {subtitle ? (
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
+      ) : null}
+    </div>
+  ) : null;
+
+export const SectionView = ({ component, scope, depth }: NodeProps) => {
+  const context = useNodeContext();
+  const title = context.text(component, "title", scope, 200);
+  const subtitle = context.text(component, "subtitle", scope, 300);
+  const [expanded, setExpanded] = useState<boolean | undefined>(undefined);
+  const children = context.children(component, scope);
+  if (context.flag(component, "collapsible", scope)) {
+    const open = expanded ?? !context.flag(component, "collapsed", scope);
+    const bodyId = context.domId(component, scope, "-body");
+    return (
+      <section className="space-y-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          onClick={() => setExpanded(!open)}
+          className="flex w-full items-start gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Glyphs.right
+            aria-hidden
+            className={cn(
+              "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-90",
+            )}
+          />
+          <Heading title={title ?? "Section"} subtitle={subtitle} />
+        </button>
+        {open ? (
+          <div id={bodyId} className="flex flex-col gap-2 pl-5">
+            <Children refs={children} depth={depth} />
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+  return (
+    <section className="flex flex-col gap-2">
+      <Heading title={title} subtitle={subtitle} />
+      <Children refs={children} depth={depth} />
+    </section>
+  );
+};
+
+export const CardView = ({ component, scope, depth }: NodeProps) => {
+  const context = useNodeContext();
+  const media = component.props.media;
+  const title = context.text(component, "title", scope, 200);
+  const subtitle = context.text(component, "subtitle", scope, 300);
+  const action = context.action(component.props.onTap);
+  const tappable =
+    action !== undefined && context.canTap(action) && !context.busy;
+  const body = (
+    <>
+      {isObject(media) ? (
+        <ProxyImage
+          url={context.textOf(media.url, scope, 2048)}
+          alt={context.textOf(media.alt, scope, 300) ?? ""}
+          fit="cover"
+          aspect={16 / 9}
+          className="max-h-44"
+        />
+      ) : null}
+      <Heading title={title} subtitle={subtitle} />
+      <Children
+        refs={context.children(component, scope, "child")}
+        depth={depth}
+      />
+    </>
+  );
+  const classes =
+    "flex w-full flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left text-card-foreground";
+  if (tappable && action) {
+    // A tappable card holds no other controls of its own (its child may).
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        title={action.label}
+        onClick={(event) => {
+          if (
+            (event.target as HTMLElement).closest(
+              'button, a, input, select, textarea, [role="button"]',
+            ) !== event.currentTarget
+          ) {
+            return;
+          }
+          context.perform(action.id, scope);
+        }}
+        onKeyDown={(event) => {
+          if (
+            event.target === event.currentTarget &&
+            (event.key === "Enter" || event.key === " ")
+          ) {
+            event.preventDefault();
+            context.perform(action.id, scope);
+          }
+        }}
+        className={cn(
+          classes,
+          "cursor-pointer hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        )}
+      >
+        {body}
+      </div>
+    );
+  }
+  return <div className={classes}>{body}</div>;
+};
+
+type Panel = { index: number; title: string; children: ChildRef[] };
+
+const panelsOf = (
+  items: JsonValue[],
+  data: unknown,
+  scope: Pointer,
+  textOf: (prop: unknown) => string | undefined,
+): Panel[] =>
+  items.slice(0, 20).map((item, index) => ({
+    index,
+    title:
+      (isObject(item) ? textOf(item.title) : undefined) ?? `Tab ${index + 1}`,
+    children: childrenOf(isObject(item) ? item.child : undefined, data, scope),
+  }));
+
+/** A selection bound to a path (an edit, so it syncs) or kept on screen only. */
+const useIndexBinding = (
+  prop: unknown,
+  scope: Pointer,
+  count: number,
+): [number, (next: number) => void] => {
+  const context = useNodeContext();
+  const [local, setLocal] = useState(0);
+  const pointer =
+    isObject(prop) && typeof prop.path === "string"
+      ? resolvePointer(prop.path, scope)
+      : undefined;
+  const clamp = (value: number) =>
+    Math.min(Math.max(0, value), Math.max(0, count - 1));
+  if (!pointer || !context.acceptsEdits) {
+    return [clamp(local), setLocal];
+  }
+  return [
+    clamp(asInt(context.read(pointer)) ?? 0),
+    (next) => context.edit(pointer, next),
+  ];
+};
+
+export const TabsView = ({ component, scope, depth }: NodeProps) => {
+  const context = useNodeContext();
+  const panels = panelsOf(
+    context.list(component, "items", scope),
+    context.data,
+    scope,
+    (prop) => context.textOf(prop, scope, 80),
+  );
+  const [selected, select] = useIndexBinding(
+    component.props.selected,
+    scope,
+    panels.length,
+  );
+  const baseId = context.domId(component, scope);
+  if (panels.length === 0) {
+    return null;
+  }
+  const current = panels[selected];
+  return (
+    <div className="flex flex-col gap-3">
+      <div
+        role="tablist"
+        className="flex flex-wrap gap-1 rounded-md bg-muted p-1"
+      >
+        {panels.map((panel) => (
+          <button
+            key={panel.index}
+            type="button"
+            role="tab"
+            id={`${baseId}-tab-${panel.index}`}
+            aria-selected={panel.index === selected}
+            aria-controls={`${baseId}-panel`}
+            tabIndex={panel.index === selected ? 0 : -1}
+            onClick={() => select(panel.index)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+                event.preventDefault();
+                const next =
+                  (selected +
+                    (event.key === "ArrowRight" ? 1 : -1) +
+                    panels.length) %
+                  panels.length;
+                select(next);
+              }
+            }}
+            className={cn(
+              "rounded px-3 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              panel.index === selected
+                ? "bg-background font-medium text-foreground shadow-sm"
+                : "text-muted-foreground",
+            )}
+          >
+            {panel.title}
+          </button>
+        ))}
+      </div>
+      {current ? (
+        <div
+          role="tabpanel"
+          id={`${baseId}-panel`}
+          aria-labelledby={`${baseId}-tab-${current.index}`}
+          className="flex flex-col gap-2"
+        >
+          <Children refs={current.children} depth={depth} />
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+export const AccordionView = ({ component, scope, depth }: NodeProps) => {
+  const context = useNodeContext();
+  const panels = panelsOf(
+    context.list(component, "items", scope),
+    context.data,
+    scope,
+    (prop) => context.textOf(prop, scope, 80),
+  );
+  const multiple = context.string(component, "mode") === "multiple";
+  const [local, setLocal] = useState<number[]>([]);
+  const prop = component.props.open;
+  const pointer =
+    context.acceptsEdits && isObject(prop) && typeof prop.path === "string"
+      ? resolvePointer(prop.path, scope)
+      : undefined;
+  const bound = pointer ? context.read(pointer) : undefined;
+  const open: number[] = pointer
+    ? Array.isArray(bound)
+      ? bound
+          .map((value) => asInt(value))
+          .filter((value): value is number => value !== undefined)
+      : asInt(bound) !== undefined
+        ? [asInt(bound)!]
+        : []
+    : local;
+  const setOpen = (next: number[]) => {
+    const sorted = [...new Set(next)].sort((a, b) => a - b);
+    if (pointer) {
+      context.edit(pointer, sorted);
+    } else {
+      setLocal(sorted);
+    }
+  };
+  const baseId = context.domId(component, scope);
+  return (
+    <div className="divide-y divide-border rounded-md border border-border">
+      {panels.map((panel) => {
+        const isOpen = open.includes(panel.index);
+        return (
+          <div key={panel.index}>
+            <button
+              type="button"
+              aria-expanded={isOpen}
+              aria-controls={`${baseId}-${panel.index}`}
+              onClick={() =>
+                setOpen(
+                  isOpen
+                    ? open.filter((index) => index !== panel.index)
+                    : multiple
+                      ? [...open, panel.index]
+                      : [panel.index],
+                )
+              }
+              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span>{panel.title}</span>
+              <Glyphs.down
+                aria-hidden
+                className={cn(
+                  "h-4 w-4 text-muted-foreground transition-transform",
+                  isOpen && "rotate-180",
+                )}
+              />
+            </button>
+            {isOpen ? (
+              <div
+                id={`${baseId}-${panel.index}`}
+                className="flex flex-col gap-2 px-3 pb-3"
+              >
+                <Children refs={panel.children} depth={depth} />
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+export const CarouselView = ({ component, scope, depth }: NodeProps) => {
+  const context = useNodeContext();
+  const width =
+    context.string(component, "itemWidth") === "compact" ? "w-52" : "w-72";
+  return (
+    <div
+      className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2"
+      role="list"
+    >
+      {context.children(component, scope).map((child) => (
+        <div
+          key={child.key}
+          role="listitem"
+          className={cn("shrink-0 snap-start", width)}
+        >
+          <Children refs={[child]} depth={depth} />
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export const StepsView = ({ component, scope, depth }: NodeProps) => {
+  const context = useNodeContext();
+  const steps = context.list(component, "steps", scope).slice(0, 20);
+  const [index, setIndex] = useIndexBinding(
+    component.props.current,
+    scope,
+    steps.length,
+  );
+  if (steps.length === 0) {
+    return null;
+  }
+  const step = steps[index];
+  const record = isObject(step) ? step : {};
+  const title = context.textOf(record.title, scope, 120);
+  const finish = context.action(component.props.finishAction);
+  const next = () => {
+    const raw = record.validate;
+    const paths = Array.isArray(raw)
+      ? raw
+          .map((path) =>
+            typeof path === "string"
+              ? (resolvePointer(path, scope) ?? parsePointer(path))
+              : undefined,
+          )
+          .filter((path): path is Pointer => Boolean(path))
+      : undefined;
+    if (paths === undefined || context.controller.validate(paths)) {
+      context.controller.clearNotice();
+      setIndex(index + 1);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-xs text-muted-foreground" aria-live="polite">
+        Step {index + 1} of {steps.length}
+      </p>
+      {title ? <h3 className="text-sm font-semibold">{title}</h3> : null}
+      <Children
+        refs={childrenOf(record.child, context.data, scope)}
+        depth={depth}
+      />
+      <div className="flex items-center justify-between gap-2">
+        {index > 0 ? (
+          <SurfaceButton
+            variant="secondary"
+            onClick={() => setIndex(index - 1)}
+          >
+            Back
+          </SurfaceButton>
+        ) : (
+          <span />
+        )}
+        {index < steps.length - 1 ? (
+          <SurfaceButton variant="primary" onClick={next}>
+            Next
+          </SurfaceButton>
+        ) : finish && context.canTap(finish) ? (
+          <SurfaceButton
+            variant="primary"
+            disabled={context.busy}
+            onClick={() => context.perform(finish.id, scope)}
+          >
+            {finish.label}
+          </SurfaceButton>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
+export const DividerView = ({ component, scope }: NodeProps) => {
+  const context = useNodeContext();
+  const label = context.text(component, "label", scope, 80);
+  if (!label) {
+    return <hr className="border-border" />;
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <span className="h-px flex-1 bg-border" />
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+};
+
+/**
+ * Open while tapped here or while `open` (literal or bound) is true;
+ * closing writes false back to a bound `open`.
+ */
+export const ModalView = ({ component, scope, depth }: NodeProps) => {
+  const context = useNodeContext();
+  const [local, setLocal] = useState(false);
+  const entry = context.children(component, scope, "entry");
+  const title = context.text(component, "title", scope, 120) ?? "";
+  const prop = component.props.open;
+  const pointer =
+    isObject(prop) && typeof prop.path === "string"
+      ? resolvePointer(prop.path, scope)
+      : undefined;
+  const shown = local || context.value(component, "open", scope) === true;
+  const setShown = (next: boolean) => {
+    setLocal(next);
+    if (
+      !next &&
+      pointer &&
+      context.acceptsEdits &&
+      context.read(pointer) === true
+    ) {
+      context.edit(pointer, false);
+    }
+  };
+  return (
+    <>
+      {entry.length === 0 ? (
+        <SurfaceButton variant="secondary" onClick={() => setShown(true)}>
+          {context.text(component, "title", scope, 60) ?? "Show"}
+        </SurfaceButton>
+      ) : (
+        // The entry (a Link or Button) keeps its own action; a tap on it also opens the sheet.
+        <div onClickCapture={() => setShown(true)}>
+          <Children refs={entry} depth={depth} />
+        </div>
+      )}
+      <SurfaceDialog
+        open={shown}
+        onOpenChange={setShown}
+        title={title || "Details"}
+      >
+        <div className="flex flex-col gap-2.5">
+          <Children
+            refs={context.children(component, scope, "content")}
+            depth={depth}
+          />
+        </div>
+      </SurfaceDialog>
+    </>
+  );
+};

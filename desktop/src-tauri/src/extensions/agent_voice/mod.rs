@@ -43,7 +43,7 @@ fn error(status: Option<u16>, code: &str) -> String {
     serde_json::json!({ "status": status, "error": code }).to_string()
 }
 
-fn is_uuid(value: &str) -> bool {
+pub(super) fn is_uuid(value: &str) -> bool {
     value.len() == 36
         && value.char_indices().all(|(index, c)| match index {
             8 | 13 | 18 | 23 => c == '-',
@@ -130,7 +130,10 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
 
 /// `https://host` of the call routes: the override, else the guest route's
 /// origin. HTTPS only (HTTP on loopback for development).
-fn voice_origin(override_url: Option<String>, guest_route: Option<String>) -> Option<String> {
+pub(super) fn voice_origin(
+    override_url: Option<String>,
+    guest_route: Option<String>,
+) -> Option<String> {
     let raw = override_url
         .map(|url| url.trim().to_string())
         .filter(|url| !url.is_empty())
@@ -158,7 +161,7 @@ fn request_url(origin: &str, path: &str) -> Option<url::Url> {
 
 /// `BUZZ_DESKTOP_AGENT_VOICE_URL` points development builds at another host;
 /// release builds always use the guest route's origin.
-fn voice_url_override() -> Option<String> {
+pub(super) fn voice_url_override() -> Option<String> {
     if cfg!(debug_assertions) {
         std::env::var("BUZZ_DESKTOP_AGENT_VOICE_URL").ok()
     } else {

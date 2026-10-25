@@ -18,6 +18,7 @@ import {
   parseQuestionState,
   parseSessionDivider,
   parseSessionsListing,
+  parseSurface,
   type AgentQuestionStateValue,
 } from "./markers";
 
@@ -29,7 +30,8 @@ export type AgentDmMessageKind =
   | "divider"
   | "listing"
   | "question"
-  | "actions";
+  | "actions"
+  | "surface";
 
 type ProjectorContext = {
   currentPubkey?: string;
@@ -43,7 +45,7 @@ type StateRecord = MarkerRecord & { state: AgentQuestionStateValue };
 /**
  * Which marker an honoured timeline row carries. Quiet kind 40002 rows carry
  * at most one (mirror, then divider, then listing); agent kind 9 rows can
- * carry a question and action buttons.
+ * carry a question, action buttons and a surface card.
  */
 export function agentDmMessageKinds(
   message: Pick<TimelineMessage, "agentDmMarkers" | "kind" | "tags">,
@@ -61,6 +63,7 @@ export function agentDmMessageKinds(
   const kinds: AgentDmMessageKind[] = [];
   if (parseQuestion(tags)) kinds.push("question");
   if (parseActions(tags).length > 0) kinds.push("actions");
+  if (parseSurface(tags)) kinds.push("surface");
   return kinds;
 }
 
