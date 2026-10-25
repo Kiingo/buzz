@@ -112,3 +112,84 @@ List<SurfaceChildRef> childrenOf(Object? prop, Object? data, Pointer scope) {
       _ref(template, appendPointer(pointer, index)),
   ];
 }
+
+/// Most component instances drawn for one surface (repeats count each
+/// item). A larger surface shows "too big" with its Kiingo link instead.
+const surfaceMaxNodes = 2000;
+
+/// The props a component's children can come from: refs, a repeat, or a
+/// list of panels/steps whose `child` is.
+const _childProps = ['children', 'child', 'entry', 'content'];
+const _panelProps = ['items', 'steps'];
+
+/// How many component instances [surface] would draw, counting every
+/// panel (shown or not) to depth [surfaceMaxDepth]; stops once past
+/// [limit] (so a huge repeat costs at most [limit] steps).
+int surfaceNodeCount(Surface surface, {int limit = surfaceMaxNodes}) {
+  if (!surface.components.containsKey(surface.root)) return 0;
+  var found = 1;
+  final pending = <(SurfaceChildRef, int)>[
+    ((componentId: surface.root, scope: rootPointer, key: ''), 0),
+  ];
+  while (pending.isNotEmpty) {
+    final (ref, depth) = pending.removeLast();
+    if (depth + 1 > surfaceMaxDepth) continue;
+    final component = surface.components[ref.componentId]!;
+    // False once past the limit.
+    bool push(List<SurfaceChildRef> refs) {
+      for (final child in refs) {
+        if (!surface.components.containsKey(child.componentId)) continue;
+        if (++found > limit) return false;
+        pending.add((child, depth + 1));
+      }
+      return true;
+    }
+
+    for (final key in _childProps) {
+      if (!push(childrenOf(component.props[key], surface.data, ref.scope))) {
+        return found;
+      }
+    }
+    for (final key in _panelProps) {
+      final panels = resolveProp(component.props[key], surface.data, ref.scope);
+      if (panels is! List) continue;
+      for (final panel in panels.take(surfaceMaxRepeats)) {
+        final refs = childrenOf(
+          fieldOf(panel, 'child'),
+          surface.data,
+          ref.scope,
+        );
+        if (!push(refs)) return found;
+      }
+    }
+  }
+  return found;
+}
+
+/// Whether any of [component]'s props, at any depth, is bound under a path
+/// holding outside content (§10, 79 S5). Such a component is drawn as a
+/// quote, with no links or actions.
+bool readsUntrusted(
+  Surface surface,
+  SurfaceComponent component,
+  Pointer scope,
+) {
+  if (surface.untrustedPaths.isEmpty) return false;
+  var budget = 2000;
+  bool visit(Object? value) {
+    if (--budget < 0) return true;
+    if (value is Map) {
+      final path = value['path'];
+      if (path is String) {
+        final pointer = resolvePointer(path, scope);
+        if (pointer != null && isUntrustedPath(surface, pointer)) return true;
+      }
+      return value.values.any(visit);
+    }
+    if (value is List) return value.any(visit);
+    return false;
+  }
+
+  return component.props.values.any(visit) ||
+      (scope.isNotEmpty && isUntrustedPath(surface, scope));
+}

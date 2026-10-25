@@ -1,30 +1,91 @@
-/// Agent text is plain text: control characters and bidi overrides are
-/// dropped and lengths capped, as every Kiingo surface renderer does. Links
-/// open only https and Kiingo deep links (R10).
+/// Agent text is plain text: control characters and characters that draw
+/// nothing (Unicode Cf: bidi overrides, zero-width spaces and joiners, word
+/// joiners, BOMs, interlinear annotations; tag characters; Hangul fillers)
+/// are dropped and lengths capped, as every Kiingo surface renderer does
+/// (79 S1). Links open only https and allowed Kiingo deep links (R10).
 library;
 
 import 'surface_data.dart';
 
-const _bidi = {
-  0x200e,
-  0x200f,
-  0x202a,
-  0x202b,
-  0x202c,
-  0x202d,
-  0x202e,
-  0x2066,
-  0x2067,
-  0x2068,
-  0x2069,
+/// Characters that draw nothing: Cf, tags U+E0000–E007F, Hangul fillers.
+final _invisible = RegExp(
+  r'[\p{Cf}\u{E0000}-\u{E007F}\u115F\u1160\u3164\uFFA0]',
+  unicode: true,
+);
+
+bool _isInvisible(int code) => _invisible.hasMatch(String.fromCharCode(code));
+
+/// Whether [text] holds a character that draws nothing (S1).
+bool hasInvisibleText(Object? text) =>
+    text is String && _invisible.hasMatch(text);
+
+/// [text] without the characters that draw nothing.
+String withoutInvisible(String text) => text.replaceAll(_invisible, '');
+
+/// The compatibility forms that stand in for ASCII, folded the way NFKC
+/// folds them (this app has no Unicode normaliser): fullwidth forms, the
+/// ideographic space, small form variants and mathematical letters and
+/// digits. `ｐａｓｓｗｏｒｄ`, `﹫dana` and `𝐩𝐚𝐬𝐬` read as ASCII.
+String foldCompatibilityForms(String text) {
+  final out = StringBuffer();
+  for (final code in text.runes) {
+    out.writeCharCode(_foldCode(code));
+  }
+  return out.toString();
+}
+
+const _smallForms = {
+  0xfe50: 0x2c,
+  0xfe51: 0x3001,
+  0xfe52: 0x2e,
+  0xfe54: 0x3b,
+  0xfe55: 0x3a,
+  0xfe56: 0x3f,
+  0xfe57: 0x21,
+  0xfe59: 0x28,
+  0xfe5a: 0x29,
+  0xfe5b: 0x7b,
+  0xfe5c: 0x7d,
+  0xfe5f: 0x23,
+  0xfe60: 0x26,
+  0xfe61: 0x2a,
+  0xfe62: 0x2b,
+  0xfe63: 0x2d,
+  0xfe64: 0x3c,
+  0xfe65: 0x3e,
+  0xfe66: 0x3d,
+  0xfe68: 0x5c,
+  0xfe69: 0x24,
+  0xfe6a: 0x25,
+  0xfe6b: 0x40,
 };
 
-/// Controls and bidi overrides removed (newlines kept when [lines]), at most
-/// [max] characters.
+int _foldCode(int code) {
+  if (code >= 0xff01 && code <= 0xff5e) return code - 0xff01 + 0x21;
+  if (code == 0x3000) return 0x20;
+  final small = _smallForms[code];
+  if (small != null) return small;
+  // Mathematical alphanumeric letters: 13 alphabets of A–Z then a–z.
+  if (code >= 0x1d400 && code <= 0x1d6a3) {
+    final at = (code - 0x1d400) % 52;
+    return at < 26 ? 0x41 + at : 0x61 + at - 26;
+  }
+  // Mathematical digits: 5 sets of 0–9.
+  if (code >= 0x1d7ce && code <= 0x1d7ff) return 0x30 + (code - 0x1d7ce) % 10;
+  return code;
+}
+
+/// The form two texts are compared in (secret words, a tap's words):
+/// compatibility forms folded, nothing invisible, lower case.
+/// `pass\u200Bword` and `ｐａｓｓｗｏｒｄ` both read "password".
+String comparableText(String text) =>
+    withoutInvisible(foldCompatibilityForms(text)).toLowerCase();
+
+/// Controls and invisible characters removed (newlines kept when [lines]),
+/// at most [max] characters.
 String cleanText(String text, int max, {bool lines = false}) {
   final out = StringBuffer();
   for (final code in text.runes) {
-    if (_bidi.contains(code)) continue;
     if (code == 0x0a) {
       out.write(lines ? '\n' : ' ');
       continue;
@@ -34,6 +95,7 @@ String cleanText(String text, int max, {bool lines = false}) {
       continue;
     }
     if (code < 0x20 || (code >= 0x7f && code < 0xa0)) continue;
+    if (_isInvisible(code)) continue;
     out.writeCharCode(code);
   }
   final chars = out.toString().runes.toList();
@@ -83,43 +145,68 @@ String? plainId(Object? value) {
 /// Kiingo's own deep-link schemes (R10).
 const kiingoSchemes = {'kiingo', 'kiingotasks', 'kiingolink'};
 
-/// Hosts Kiingo counts as its own: links there open without the
-/// outside-link confirmation.
-const kiingoOwnHosts = ['kiingo.com'];
+/// The deep-link routes a surface may open (79 W10): ones that only show
+/// something. Anything that starts a call, adds, pairs or enrolls (every
+/// `kiingolink:` route) is plain text, and every deep link is still
+/// confirmed before it opens.
+const kiingoDeepLinkRoutes = {
+  'kiingo': ['artifact', 'artifacts', 'open', 'task'],
+  'kiingotasks': ['task', 'agent', 'queue'],
+};
+
+final _deepLinkRoute = RegExp(
+  r'^[a-z]+://([a-z0-9_-]+)(?:[/?#]|$)',
+  caseSensitive: false,
+);
+
+bool _isAllowedDeepLink(String scheme, String text) {
+  final route = _deepLinkRoute.firstMatch(text)?.group(1)?.toLowerCase();
+  final routes = kiingoDeepLinkRoutes[scheme] ?? const <String>[];
+  return route != null && routes.contains(route);
+}
 
 final _whitespace = RegExp(r'\s');
 
 /// What `open`, Link and Markdown links may open (R10): https with a host
-/// and no credentials, or a Kiingo deep link. Anything else is plain text.
+/// and no credentials (as parsed, so the URL shown is the URL opened), or
+/// an allowed Kiingo deep link. Anything else is plain text.
 String? openableUrl(Object? raw) {
   if (raw is! String) return null;
   final text = raw.trim();
   // A backslash is a path separator to browsers but not to Uri: refused, so
-  // the host checked here is the host that opens.
+  // the host checked here is the host that opens. Invisible and bidi
+  // characters could make the shown URL differ from the one opened.
   if (text.isEmpty ||
       text.length > 2048 ||
       _whitespace.hasMatch(text) ||
-      text.contains(r'\')) {
+      text.contains(r'\') ||
+      hasInvisibleText(text)) {
     return null;
   }
   final uri = Uri.tryParse(text);
   if (uri == null || !uri.hasScheme) return null;
   final scheme = uri.scheme.toLowerCase();
   if (scheme == 'https') {
-    return uri.host.isNotEmpty && uri.userInfo.isEmpty ? text : null;
+    return uri.host.isNotEmpty && uri.userInfo.isEmpty ? uri.toString() : null;
   }
-  return kiingoSchemes.contains(scheme) ? text : null;
+  return kiingoSchemes.contains(scheme) && _isAllowedDeepLink(scheme, text)
+      ? text
+      : null;
 }
 
-/// Not a Kiingo deep link and not on a Kiingo host: confirmed before
-/// opening.
-bool isOutsideUrl(String raw, {List<String> ownHosts = kiingoOwnHosts}) {
+/// Whether a link is confirmed before it opens (§5, 79 W10): everything
+/// except the host app's own origins ([ownOrigins]). Buzz has none, so
+/// every link, Kiingo hosts and deep links included, is confirmed.
+bool isOutsideUrl(String raw, {List<String> ownOrigins = const []}) {
   final uri = Uri.tryParse(raw);
-  if (uri == null) return true;
-  final scheme = uri.scheme.toLowerCase();
-  if (scheme != 'https') return !kiingoSchemes.contains(scheme);
-  final host = uri.host.toLowerCase();
-  return !ownHosts.any((own) => host == own || host.endsWith('.$own'));
+  if (uri == null || uri.scheme.toLowerCase() != 'https') return true;
+  return !ownOrigins.any((own) {
+    final ownUri = Uri.tryParse(own);
+    return ownUri != null &&
+        ownUri.scheme.toLowerCase() == 'https' &&
+        ownUri.host.toLowerCase() == uri.host.toLowerCase() &&
+        ownUri.port == uri.port;
+  });
 }
 
 /// The host of a URL for the "Open this host?" question, else the URL.
@@ -162,7 +249,7 @@ bool _isLetterAt(String text, int index) =>
 /// is not in "pinned").
 bool asksForSecret(Iterable<String?> texts) => texts.any((raw) {
   if (raw == null || raw.isEmpty) return false;
-  final text = raw.toLowerCase();
+  final text = comparableText(raw);
   return _secretWords.any((word) {
     var from = 0;
     while (true) {

@@ -9,6 +9,7 @@ import '../../../shared/agent_dm/agent_dm_markers.dart';
 import '../../../shared/surfaces/agent_surface_view.dart';
 import '../../../shared/surfaces/surface_client.dart';
 import '../../../shared/surfaces/surface_host.dart';
+import '../../../shared/surfaces/surface_sends.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/modal_presentation.dart';
 import 'agent_dm_scope.dart';
@@ -76,12 +77,15 @@ class AgentDmSurfaceCard extends HookConsumerWidget {
       }
     }
 
-    Future<void> send(String text) async {
+    // The only place a surface tap's tag is added: the composer and other
+    // sends never carry it (docs/agent-dm-markers.md §7).
+    Future<void> send(String text, SurfaceTap tap) async {
       try {
         await sendAgentDmMessage(
           ref,
           channel: channel,
           content: text,
+          tags: [buzzSurfaceTapTag(tap)],
           personal: personal,
         );
       } catch (error) {
@@ -103,7 +107,7 @@ class AgentDmSurfaceCard extends HookConsumerWidget {
 
     SurfaceHost hostFor({required bool expanded}) => SurfaceHost(
       openUrl: (url) => unawaited(openUrl(url)),
-      sendMessage: (text) => unawaited(send(text)),
+      sendMessage: (text, tap) => unawaited(send(text, tap)),
       refresh: refreshMedia,
       openExpanded: expanded
           ? null

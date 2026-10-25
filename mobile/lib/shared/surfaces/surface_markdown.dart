@@ -5,6 +5,8 @@
 /// anything else shows as its text. Bare URLs are not auto-linked.
 library;
 
+import 'dart:math' as math;
+
 import 'surface_text.dart';
 
 /// An inline node.
@@ -83,8 +85,26 @@ class MdRule extends MdBlock {
   const MdRule();
 }
 
-const _maxInput = 100000;
+/// Most characters parsed from one Markdown text, and from one surface's
+/// Markdown in all (past it, text shows plain).
+const mdParseBudget = 20000;
 const _maxNesting = 6;
+
+/// How far a closing marker or bracket is looked for (79 S2): one pass per
+/// opener, never to the end of a long text.
+const _scanCap = 500;
+
+/// How far a link's `(target)` may run (an https URL is at most 2048).
+const _targetCap = 2100;
+
+/// The index of [char] in [text] after [from], within [cap], else -1.
+int _indexWithin(String text, String char, int from, int cap) {
+  final end = math.min(text.length, from + cap);
+  for (var i = from; i < end; i++) {
+    if (text[i] == char) return i;
+  }
+  return -1;
+}
 
 final _escapable = RegExp(r'[\\`*_{}\[\]()#+\-.!~>|]');
 final _word = RegExp(r'[\p{L}\p{N}]', unicode: true);
@@ -95,13 +115,14 @@ bool _isWordAt(String text, int index) =>
 
 int _findClosing(String text, int from, String marker) {
   var i = from;
-  while (i < text.length) {
+  final stop = math.min(text.length, from + _scanCap);
+  while (i < stop) {
     if (text[i] == r'\') {
       i += 2;
       continue;
     }
     if (text[i] == '`') {
-      final end = text.indexOf('`', i + 1);
+      final end = _indexWithin(text, '`', i + 1, stop - i - 1);
       i = end < 0 ? i + 1 : end + 1;
       continue;
     }
@@ -115,7 +136,8 @@ int _findClosing(String text, int from, String marker) {
 
 int _findBracket(String text, int open) {
   var level = 0;
-  for (var i = open; i < text.length; i++) {
+  final stop = math.min(text.length, open + _scanCap);
+  for (var i = open; i < stop; i++) {
     if (text[i] == r'\') {
       i++;
       continue;
@@ -188,7 +210,7 @@ List<MdInline> parseMdInline(String text, [int depth = 0]) {
       continue;
     }
     if (char == '`') {
-      final end = text.indexOf('`', i + 1);
+      final end = _indexWithin(text, '`', i + 1, _scanCap);
       if (end > i + 1) {
         flush();
         out.add(MdCode(text.substring(i + 1, end)));
@@ -208,7 +230,7 @@ List<MdInline> parseMdInline(String text, [int depth = 0]) {
     if (char == '[' && depth < _maxNesting) {
       final close = _findBracket(text, i);
       if (close > i && close + 1 < text.length && text[close + 1] == '(') {
-        final end = text.indexOf(')', close + 2);
+        final end = _indexWithin(text, ')', close + 2, _targetCap);
         if (end > close + 1) {
           final target = text
               .substring(close + 2, end)
@@ -237,7 +259,25 @@ List<MdInline> parseMdInline(String text, [int depth = 0]) {
 
 final _listItem = RegExp(r'^(\s{0,3})([-*+]|\d{1,9}[.)])\s+(.*)$');
 final _fence = RegExp(r'^\s{0,3}(```|~~~)\s*([\w+#.-]{0,30})\s*$');
-final _heading = RegExp(r'^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$');
+final _headingStart = RegExp(r'^ {0,3}(#{1,6})[ \t]');
+
+/// An ATX heading `## Title ##`: its level and text, without a regex that
+/// backtracks over the line (79 S2).
+({int level, String text})? _headingOf(String line) {
+  final start = _headingStart.firstMatch(line);
+  if (start == null) return null;
+  var text = line.substring(start.end).trimRight();
+  var end = text.length;
+  while (end > 0 && text[end - 1] == '#') {
+    end--;
+  }
+  // A closing run of # counts only after a space (or as the whole text).
+  if (end == 0 || text[end - 1] == ' ' || text[end - 1] == '\t') {
+    text = text.substring(0, end);
+  }
+  return (level: start[1]!.length, text: text.trim());
+}
+
 final _rule = RegExp(r'^\s{0,3}([-*_])(\s*\1){2,}\s*$');
 final _quoteLine = RegExp(r'^\s{0,3}>');
 final _quotePrefix = RegExp(r'^\s{0,3}>\s?');
@@ -247,8 +287,8 @@ final _indentPrefix = RegExp(r'^\s{2,4}');
 
 /// The blocks of [input].
 List<MdBlock> parseMarkdown(String input, [int depth = 0]) {
-  final clipped = input.length > _maxInput
-      ? input.substring(0, _maxInput)
+  final clipped = input.length > mdParseBudget
+      ? input.substring(0, mdParseBudget)
       : input;
   final lines = clipped.replaceAll(RegExp(r'\r\n?'), '\n').split('\n');
   final blocks = <MdBlock>[];
@@ -287,11 +327,11 @@ List<MdBlock> parseMarkdown(String input, [int depth = 0]) {
       i++;
       continue;
     }
-    final heading = _heading.firstMatch(line);
+    final heading = _headingOf(line);
     if (heading != null) {
       flushParagraph();
-      final level = heading[1]!.length.clamp(1, 3);
-      blocks.add(MdHeading(level, parseMdInline(heading[2]!)));
+      final level = heading.level.clamp(1, 3);
+      blocks.add(MdHeading(level, parseMdInline(heading.text)));
       i++;
       continue;
     }

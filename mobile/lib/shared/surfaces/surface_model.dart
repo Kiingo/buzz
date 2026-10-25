@@ -183,6 +183,10 @@ class SurfaceAction {
   final String? text;
   final SurfaceOpenTarget? target;
 
+  /// The agent's raw label or words held a character that draws nothing
+  /// (S1): this action never sends.
+  final bool hidden;
+
   const SurfaceAction({
     required this.id,
     required this.kind,
@@ -191,6 +195,7 @@ class SurfaceAction {
     this.icon,
     this.text,
     this.target,
+    this.hidden = false,
   });
 }
 
@@ -402,6 +407,8 @@ SurfaceAction? decodeAction(String id, Object? value) {
     icon: plainText(object['icon'], 64),
     text: plainText(object['text'], 2000, lines: true),
     target: target,
+    hidden:
+        hasInvisibleText(object['label']) || hasInvisibleText(object['text']),
   );
 }
 
