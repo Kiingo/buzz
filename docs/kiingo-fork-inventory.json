@@ -1845,12 +1845,13 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz mobile maintainers",
-      "purpose": "Media image cache identity by value: MediaGetAuthService compares equal by cacheScope (relay base URL + signing public key, never the secret), so MediaImageProvider keys (which already compare the auth service) keep ImageCache hits when the service is rebuilt for the same relay and account. Without it every relay-config rebuild re-downloaded each visible image (a 7.7 MB avatar per reconnect in production, 2026-10-17). Relay or account switches still never share cached bytes. Tests live in a fork-owned file.",
+      "purpose": "Media image cache identity by value: MediaGetAuthService compares equal by cacheScope (relay base URL + signing public key, never the secret), so MediaImageProvider keys (which already compare the auth service) keep ImageCache hits when the service is rebuilt for the same relay and account. Without it every relay-config rebuild re-downloaded each visible image (a 7.7 MB avatar per reconnect in production, 2026-10-17). Relay or account switches still never share cached bytes. Tests live in a fork-owned file; the upstream profile header test clears the image cache before each test, because value identity makes images decoded by one test cache hits in the next.",
       "upstreamStatus": "Generic fix written for upstream submission; not yet submitted to block/buzz.",
       "removalCondition": "Drop when block/buzz keys media image cache identity by relay and signing identity value (or carries this change).",
       "paths": [
         "mobile/lib/shared/relay/media_auth.dart",
-        "mobile/test/shared/relay/media_cache_scope_test.dart"
+        "mobile/test/shared/relay/media_cache_scope_test.dart",
+        "mobile/test/features/profile/settings_profile_header_test.dart"
       ]
     },
     {

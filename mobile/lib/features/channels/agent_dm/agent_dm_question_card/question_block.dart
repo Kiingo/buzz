@@ -1,5 +1,9 @@
 part of '../agent_dm_question_card.dart';
 
+/// Turns a question's current selection into its next one.
+typedef _SelectionUpdate =
+    AgentDmAnswerSelection Function(AgentDmAnswerSelection current);
+
 /// One question: its header, text, option buttons and optional "Other"
 /// field. Options and typed text are exclusive.
 class _QuestionBlock extends HookWidget {
@@ -8,7 +12,7 @@ class _QuestionBlock extends HookWidget {
   final AgentDmAnswerSelection selection;
   final bool enabled;
   final bool sendsOnTap;
-  final ValueChanged<AgentDmAnswerSelection> onChanged;
+  final ValueChanged<_SelectionUpdate> onChanged;
   final ValueChanged<AgentDmAnswerSelection> onSubmit;
 
   const _QuestionBlock({
@@ -37,21 +41,23 @@ class _QuestionBlock extends HookWidget {
         return;
       }
       other.clear();
-      final labels = {...selection.labels};
-      if (question.multi) {
-        if (!labels.remove(label)) labels.add(label);
-      } else {
-        labels
-          ..clear()
-          ..add(label);
-      }
-      onChanged(AgentDmAnswerSelection(labels: labels));
+      onChanged((current) {
+        final labels = {...current.labels};
+        if (question.multi) {
+          if (!labels.remove(label)) labels.add(label);
+        } else {
+          labels
+            ..clear()
+            ..add(label);
+        }
+        return AgentDmAnswerSelection(labels: labels);
+      });
     }
 
     void typeOther(String text) {
       if (sendsOnTap) return;
       onChanged(
-        text.trim().isEmpty
+        (_) => text.trim().isEmpty
             ? AgentDmAnswerSelection.empty
             : AgentDmAnswerSelection(other: text),
       );

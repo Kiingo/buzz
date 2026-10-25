@@ -23,6 +23,14 @@ import 'package:http/testing.dart' as http_testing;
 import '../../helpers/widget_helpers.dart';
 
 void main() {
+  // Media cache keys have value identity (relay + account), so images decoded
+  // by one test would be cache hits in the next. Each test starts cold.
+  setUp(() {
+    imageCache
+      ..clear()
+      ..clearLiveImages();
+  });
+
   testWidgets('reserves half of the 24dp settings section gap', (tester) async {
     await tester.pumpWidget(
       WidgetHelpers.testable(
