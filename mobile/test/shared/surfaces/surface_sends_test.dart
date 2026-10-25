@@ -151,6 +151,41 @@ void main() {
     });
   });
 
+  group('chips draw their words in full (79 M1)', () {
+    test('short words are the chip', () {
+      final chip = chipSend({'text': 'Sounds good'})!;
+      expect(chip.label, 'Sounds good');
+      expect(chip.send, isA<LabelSend>());
+    });
+
+    test('words too long for one line are drawn under a short label', () {
+      final words = 'Yes, approve the plan and send it to the whole team';
+      final chip = chipSend({'text': words})!;
+      expect(chip.label.runes.length, chipLabelFits);
+      expect(chip.label.endsWith('…'), isTrue);
+      expect(chip.send, isA<CaptionSend>());
+      expect(sentText(chip.send), words);
+    });
+
+    test('words on several lines are drawn in full under the first', () {
+      final chip = chipSend({'text': 'Yes\nand also this'})!;
+      expect(chip.label, 'Yes…');
+      expect(sentText(chip.send), 'Yes\nand also this');
+      expect(sendBlockedText(chip.send), isNull);
+      expect(chip.send, isA<CaptionSend>());
+    });
+
+    test('a long label is shortened; its words still show in full', () {
+      final chip = chipSend({'text': 'Go', 'label': 'L' * 60})!;
+      expect(chip.label.runes.length, chipLabelFits);
+      expect(chip.send, isA<CaptionSend>());
+    });
+
+    test('too long to show at all still blocks', () {
+      expect(chipSend({'text': 'x' * 301})!.send, isA<BlockedSend>());
+    });
+  });
+
   group('default-ignorable characters (79 S1)', () {
     test('variation selectors and other ignorables are invisible', () {
       for (final code in [

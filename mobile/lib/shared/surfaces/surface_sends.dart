@@ -169,8 +169,14 @@ List<String> buzzSurfaceTapTag(SurfaceTap tap) => [
 /// The most suggestion chips drawn.
 const surfaceMaxChips = 6;
 
+/// The longest words a chip draws as its own label (code points). A chip
+/// is one line, so longer words, or words on several lines, are drawn in
+/// full under it instead (79 M1).
+const chipLabelFits = 40;
+
 /// A suggestion chip (`{text, label?}`): its label and what it sends, or
-/// null when it has no words.
+/// null when it has no words. Words a one-line chip can't show in full
+/// send as a [CaptionSend] under a shortened label.
 ({String label, MessageSend send})? chipSend(
   Object? chip, {
   String? agentName,
@@ -180,15 +186,25 @@ const surfaceMaxChips = 6;
   final text = plainText(rawText, 2000, lines: true);
   if (text == null) return null;
   final label = plainText(rawLabel, 80) ?? text;
-  return (
-    label: label,
-    send: messageSend(
-      label,
-      text,
-      hidden: hasInvisibleText(rawText) || hasInvisibleText(rawLabel),
-      agentName: agentName,
-    ),
+  final send = messageSend(
+    label,
+    text,
+    hidden: hasInvisibleText(rawText) || hasInvisibleText(rawLabel),
+    agentName: agentName,
   );
+  if (send is LabelSend && !_fitsChip(send.text)) {
+    return (label: _chipLabel(send.text), send: CaptionSend(send.text));
+  }
+  return (label: _fitsChip(label) ? label : _chipLabel(label), send: send);
+}
+
+bool _fitsChip(String text) =>
+    text.runes.length <= chipLabelFits && !text.contains('\n');
+
+/// [text]'s first line, cut to [chipLabelFits] code points with "…".
+String _chipLabel(String text) {
+  final chars = text.split('\n').first.trimRight().runes.toList();
+  return '${String.fromCharCodes(chars.take(chipLabelFits - 1))}…';
 }
 
 /// The tap id of a suggestion chip ([index] counts from 0 among the chips
