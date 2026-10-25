@@ -91,9 +91,17 @@ class AgentDmQuestionCardView extends HookWidget {
                         AgentDmAnswerSelection.empty,
                     enabled: enabled,
                     sendsOnTap: sendsOnTap,
-                    onChanged: (selection) => selections.value = {
-                      ...selections.value,
-                      card.questions[index].qid: selection,
+                    // Applied to the latest value, not the one this build
+                    // saw: several taps can land before the next rebuild.
+                    onChanged: (update) {
+                      final qid = card.questions[index].qid;
+                      final current = selections.value;
+                      selections.value = {
+                        ...current,
+                        qid: update(
+                          current[qid] ?? AgentDmAnswerSelection.empty,
+                        ),
+                      };
                     },
                     onSubmit: (selection) =>
                         submitOne(card.questions[index], selection),
