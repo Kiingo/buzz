@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 /** The app's words for the surface codes the server may send without a sentence. */
 export const surfaceMessage = (code: string): string => {
   switch (code) {
@@ -52,6 +52,6 @@ export const RUN_UNAVAILABLE_TEXT = "Open in the Kiingo app";
 export const RUN_UNAVAILABLE_HINT =
   "Buttons that send or change things work in the Kiingo app on your iPhone or Mac.";
 
-/** A view-only host (`ControllerOptions.viewOnly`): changes happen in Kiingo. */
+/** A view-only host (`ControllerOptions.editsDisabled`): changes happen in Kiingo. */
 export const VIEW_ONLY_HINT =
   "View only here. Open it in Kiingo to make changes.";

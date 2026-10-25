@@ -1,13 +1,14 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { createContext, useContext, useSyncExternalStore } from "react";
 import {
   bindingOf,
   childKey,
   childrenOf,
-  isPointerPrefix,
   isUntrustedPath,
   markdownBudget,
   MAX_REPEATS,
+  MAX_SURFACE_CELLS,
+  MAX_SURFACE_DIFF_CELLS,
   propBool,
   propNumber,
   propText,
@@ -62,7 +63,54 @@ export class NodeContext {
     readonly nodes: { seen: Set<string>; tooLargeAt?: string } = {
       seen: new Set(),
     },
+    /**
+     * Table/List/Chart cells and Diff comparison cells claimed for this
+     * snapshot, by node key (79 W6: MAX_SURFACE_CELLS and
+     * MAX_SURFACE_DIFF_CELLS per surface). A redraw re-claims its own key,
+     * so it never counts twice.
+     */
+    readonly cells: {
+      grid: Map<string, number>;
+      diff: Map<string, number>;
+    } = { grid: new Map(), diff: new Map() },
   ) {}
+
+  /**
+   * How many of `rows` rows (each `perRow` cells) the node at `key` may
+   * draw within the surface's shared cell budget: `rows` when it fits, else
+   * fewer (the node draws a "too large" row for the rest).
+   */
+  claimCells(key: string, rows: number, perRow = 1): number {
+    const claims = this.cells.grid;
+    const width = Math.max(1, Math.floor(perRow));
+    let others = 0;
+    for (const [claimKey, cells] of claims) {
+      if (claimKey !== key) {
+        others += cells;
+      }
+    }
+    const room = Math.max(0, MAX_SURFACE_CELLS - others);
+    const granted = Math.max(0, Math.min(rows, Math.floor(room / width)));
+    claims.set(key, granted * width);
+    return granted;
+  }
+
+  /**
+   * Whether the Diff at `key` may spend `cost` comparison cells within the
+   * surface's shared Diff budget; when not, it shows a whole replace.
+   */
+  claimDiff(key: string, cost: number): boolean {
+    const claims = this.cells.diff;
+    let others = 0;
+    for (const [claimKey, cells] of claims) {
+      if (claimKey !== key) {
+        others += cells;
+      }
+    }
+    const granted = others + cost <= MAX_SURFACE_DIFF_CELLS;
+    claims.set(key, granted ? cost : 0);
+    return granted;
+  }
 
   get surface(): Surface {
     return this.snapshot.surface;
@@ -147,14 +195,7 @@ export class NodeContext {
    * a `dataTrust` path below it (one column, one item's field).
    */
   isUntrustedList(prop: unknown, scope: Pointer): boolean {
-    const pointer = bindingOf(prop, scope);
-    return pointer
-      ? this.surface.untrustedPaths.some(
-          (marked) =>
-            isPointerPrefix(marked, pointer) ||
-            isPointerPrefix(pointer, marked),
-        )
-      : false;
+    return this.isUntrustedValue(prop, scope);
   }
 
   children(

@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { useState } from "react";
 import {
   ownEntry,
@@ -7,6 +7,7 @@ import {
   isObject,
   parsePointer,
   resolvePointer,
+  surfaceProblems,
   type ChildRef,
   type JsonValue,
   type Pointer,
@@ -163,10 +164,21 @@ export const CardView = ({ component, scope, depth }: NodeProps) => {
   const title = context.text(component, "title", scope, 200);
   const subtitle = context.text(component, "subtitle", scope, 300);
   const action = context.action(component.props.onTap);
+  const titleOutside = context.isUntrusted(component, "title", scope);
+  // A card that reads outside content is never an action, like a List row
+  // (79 W6).
+  const outside =
+    titleOutside ||
+    context.isUntrusted(component, "subtitle", scope) ||
+    (isObject(media) &&
+      (context.isUntrustedValue(media.url, scope) ||
+        context.isUntrustedValue(media.alt, scope)));
   // A card shows no words to send, so its tap never sends (79 M1/W1).
   const tappable =
-    action !== undefined && context.canTapSilently(action) && !context.busy;
-  const titleOutside = context.isUntrusted(component, "title", scope);
+    action !== undefined &&
+    !outside &&
+    context.canTapSilently(action) &&
+    !context.busy;
   const body = (
     <>
       {isObject(media) ? (
@@ -465,6 +477,25 @@ export const StepsView = ({ component, scope, depth }: NodeProps) => {
   const record = isObject(step) ? step : {};
   const title = context.textOf(record.title, scope, 120);
   const finish = context.action(component.props.finishAction);
+  // Every step's required paths. A host that can't take edits lets the
+  // person read every step, but its finish acts only when they all hold
+  // (79): otherwise it is not drawn.
+  const allPaths = steps.flatMap((item) => {
+    const raw = isObject(item) ? item.validate : undefined;
+    return Array.isArray(raw)
+      ? raw
+          .map((path) =>
+            typeof path === "string"
+              ? (resolvePointer(path, scope) ?? parsePointer(path))
+              : undefined,
+          )
+          .filter((path): path is Pointer => Boolean(path))
+      : [];
+  });
+  const finishReady =
+    !context.controller.editsDisabled ||
+    allPaths.length === 0 ||
+    surfaceProblems(context.surface, context.data, allPaths).size === 0;
   const next = () => {
     const raw = record.validate;
     const paths = Array.isArray(raw)
@@ -480,7 +511,7 @@ export const StepsView = ({ component, scope, depth }: NodeProps) => {
     // person on them: they read every step.
     if (
       paths === undefined ||
-      context.controller.viewOnly ||
+      context.controller.editsDisabled ||
       context.controller.validate(paths)
     ) {
       context.controller.clearNotice();
@@ -512,7 +543,7 @@ export const StepsView = ({ component, scope, depth }: NodeProps) => {
           <SurfaceButton variant="primary" onClick={next}>
             Next
           </SurfaceButton>
-        ) : finish && context.canTap(finish) ? (
+        ) : finish && finishReady && context.canTap(finish) ? (
           // The action's own button: a send shows its words (79 W1).
           <ActionButton action={finish} scope={scope} style="primary" />
         ) : null}
@@ -527,11 +558,15 @@ export const DividerView = ({ component, scope }: NodeProps) => {
   if (!label) {
     return <hr className="border-border" />;
   }
+  // The lines are the separator (an <hr> is one), named by the label (79
+  // NIT); the visible label is read once, through that name.
   return (
     <div className="flex items-center gap-2">
-      <span className="h-px flex-1 bg-border" />
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="h-px flex-1 bg-border" />
+      <hr aria-label={label} className="flex-1 border-border" />
+      <span aria-hidden className="text-xs text-muted-foreground">
+        {label}
+      </span>
+      <hr aria-hidden className="flex-1 border-border" />
     </div>
   );
 };

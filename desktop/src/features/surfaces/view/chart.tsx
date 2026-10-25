@@ -1,8 +1,15 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { useId } from "react";
-import { chartGeometry, chartSeriesOf, type ChartKind } from "../core";
+import {
+  CHART_SLOTS,
+  chartGeometry,
+  chartSeriesOf,
+  childKey,
+  type ChartKind,
+} from "../core";
 import { cn } from "./cn";
 import { useNodeContext, type NodeProps } from "./context";
+import { TooLargeRow } from "./ui";
 
 // §4.2 Chart as SVG from the core's geometry. Colours are the app's chart
 // slots (theme tokens), never the agent's.
@@ -49,11 +56,21 @@ export const ChartView = ({ component, scope }: NodeProps) => {
     | "percent"
     | undefined;
   const goal = context.number(component, "goal", scope);
+  const series = chartSeriesOf(component.props.series);
+  const rows = context.list(component, "data", scope).slice(0, 500);
+  // Points drawn within the surface's shared cell budget (79 W6 SHOULD 5).
+  const drawn = context.claimCells(
+    `chart:${childKey(component.id, scope)}`,
+    rows.length,
+    kind === "pie" || kind === "donut"
+      ? 1
+      : Math.max(1, Math.min(series.length, CHART_SLOTS)),
+  );
   const geometry = chartGeometry({
     kind,
-    rows: context.list(component, "data", scope),
+    rows: rows.slice(0, drawn),
     x: context.string(component, "x") ?? "x",
-    series: chartSeriesOf(component.props.series),
+    series,
     ...(xType ? { xType } : {}),
     ...(valueFormat ? { valueFormat } : {}),
     ...(context.string(component, "currency")
@@ -66,7 +83,11 @@ export const ChartView = ({ component, scope }: NodeProps) => {
     context.text(component, "unit", scope, 20) ??
     context.text(component, "currency", scope, 20);
   if (geometry.empty) {
-    return <p className="text-xs text-muted-foreground">No data</p>;
+    return drawn < rows.length ? (
+      <TooLargeRow />
+    ) : (
+      <p className="text-xs text-muted-foreground">No data</p>
+    );
   }
   const round = geometry.slices.length > 0;
   const legend = round
@@ -210,6 +231,7 @@ export const ChartView = ({ component, scope }: NodeProps) => {
           ))}
         </ul>
       ) : null}
+      {drawn < rows.length ? <TooLargeRow /> : null}
       {caption ? (
         <figcaption className="text-2xs text-muted-foreground">
           {caption}

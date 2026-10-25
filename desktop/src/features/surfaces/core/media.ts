@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 // Surface images and media only through the Kiingo proxy (§3.1, §10):
 // `GET /api/ui/media?token=<token>` on the API host the client already
 // calls. The token is opaque: clients never parse, build or edit it. Any

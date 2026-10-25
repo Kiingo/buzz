@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { useId } from "react";
 import {
   acceptsTaps,
@@ -291,7 +291,7 @@ export const SuggestionChipsView = ({ component, scope }: NodeProps) => {
               title="Sends this as your message"
               onClick={() => context.sendMessage(parsed.send, actionId)}
               className={cn(
-                "self-start rounded-full border border-border bg-background px-3 py-1 text-xs text-foreground hover:bg-muted",
+                "self-start whitespace-pre-wrap break-words rounded-full border border-border bg-background px-3 py-1 text-left text-xs text-foreground hover:bg-muted",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
               )}
             >

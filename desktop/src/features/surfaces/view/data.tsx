@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { useMemo, useState } from "react";
 import {
   appendPointer,
@@ -6,6 +6,7 @@ import {
   asNumber,
   bindingOf,
   cellText,
+  childKey,
   decodeEntityKey,
   formatCurrency,
   formatDateText,
@@ -23,7 +24,7 @@ import { useNodeContext, type NodeProps } from "./context";
 import { BadgeLabel, EntityChip } from "./display";
 import { catalogIcon, Glyphs } from "./icons";
 import { ProxyImage } from "./media";
-import { fieldClass, QuotedText } from "./ui";
+import { fieldClass, QuotedText, TooLargeRow } from "./ui";
 
 // §4.2 Table and List: data-heavy display.
 
@@ -138,6 +139,13 @@ export const TableView = ({ component, scope }: NodeProps) => {
     return out;
   }, [all, columns, filter, sortKey, ascending]);
   const limit = pageSize * pages;
+  // Rows drawn within the surface's shared cell budget (79 W6 SHOULD 5).
+  const wanted = Math.min(shown.length, limit);
+  const drawn = context.claimCells(
+    `table:${childKey(component.id, scope)}`,
+    wanted,
+    columns.length + (selectable !== "none" ? 1 : 0),
+  );
   const empty = context.text(component, "emptyText", scope, 200);
   const canSelect = Boolean(selectionPointer) && context.acceptsEdits;
   const toggle = (index: number) => {
@@ -306,7 +314,7 @@ export const TableView = ({ component, scope }: NodeProps) => {
               </tr>
             </thead>
             <tbody>
-              {shown.slice(0, limit).map((row) => {
+              {shown.slice(0, drawn).map((row) => {
                 const isSelected = selected.has(row.index);
                 return (
                   <tr
@@ -346,7 +354,9 @@ export const TableView = ({ component, scope }: NodeProps) => {
           </table>
         </div>
       ) : null}
-      {shown.length > limit ? (
+      {drawn < wanted ? (
+        <TooLargeRow />
+      ) : shown.length > limit ? (
         <button
           type="button"
           className="self-start text-xs text-primary hover:underline"
@@ -409,7 +419,12 @@ export const ListView = ({ component, scope }: NodeProps) => {
   const context = useNodeContext();
   const pointer = bindingOf(component.props.items, scope);
   const items = pointer ? readAt(context.data, pointer) : undefined;
-  const count = Array.isArray(items) ? Math.min(items.length, 500) : 0;
+  // Rows drawn within the surface's shared cell budget (79 W6 SHOULD 5).
+  const wanted = Array.isArray(items) ? Math.min(items.length, 500) : 0;
+  const count = context.claimCells(
+    `list:${childKey(component.id, scope)}`,
+    wanted,
+  );
   const empty = context.text(component, "emptyText", scope, 200);
   const action = context.action(component.props.onTap);
   // A row shows no words to send, so its tap never sends (79 M1/W1).
@@ -427,7 +442,7 @@ export const ListView = ({ component, scope }: NodeProps) => {
   }
   return (
     <div>
-      {count === 0 && empty ? (
+      {wanted === 0 && empty ? (
         <p className="py-1.5 text-xs text-muted-foreground">{empty}</p>
       ) : null}
       <ul className="divide-y divide-border">
@@ -528,6 +543,7 @@ export const ListView = ({ component, scope }: NodeProps) => {
           );
         })}
       </ul>
+      {count < wanted ? <TooLargeRow /> : null}
     </div>
   );
 };

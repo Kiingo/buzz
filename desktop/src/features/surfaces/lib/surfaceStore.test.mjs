@@ -41,7 +41,8 @@ test("surfaces load view only through the signed read, and the host origin is le
     assert.ok(controller);
     assert.equal(surfaceApiOrigin(), "https://api.example.com");
     assert.equal(controller.client, "buzz");
-    assert.equal(controller.viewOnly, true);
+    assert.equal(controller.editsDisabled, true);
+    assert.equal(controller.runAvailable, false);
     assert.equal(controller.acceptsEdits, false);
     assert.equal(
       controller.canTap(controller.surface.actions.get("more")),

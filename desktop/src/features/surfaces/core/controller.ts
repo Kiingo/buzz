@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import {
   idempotencyKey,
   type Confirmation,
@@ -107,11 +107,12 @@ export type ControllerOptions = {
   runGate?: RunActionGate;
   /**
    * A host that may show a surface but not change it yet (Buzz until its
-   * signed edit routes are reviewed): inputs, `set_state`, `ask_agent` and
-   * `dismiss` draw disabled and send nothing. `open`, `send_message` (the
-   * user's own message) and `run` (per `runGate`) are unchanged.
+   * signed edit routes are reviewed): inputs, `set_state`, `ask_agent`,
+   * `dismiss` and `run` draw disabled and send nothing, whatever `runGate`
+   * says (79). `open` and `send_message` (the user's own message) are
+   * unchanged.
    */
-  viewOnly?: boolean;
+  editsDisabled?: boolean;
   debounceMs?: number;
   now?: () => number;
 };
@@ -121,8 +122,8 @@ const MAX_STALE_RETRIES = 2;
 export class SurfaceController {
   readonly id: string;
   readonly client: string;
-  /** See `ControllerOptions.viewOnly`. */
-  readonly viewOnly: boolean;
+  /** See `ControllerOptions.editsDisabled`. */
+  readonly editsDisabled: boolean;
   private snapshot: ControllerSnapshot;
   private readonly listeners = new Set<() => void>();
   private readonly api: SurfaceApi;
@@ -139,7 +140,7 @@ export class SurfaceController {
   constructor(surface: Surface, options: ControllerOptions) {
     this.id = surface.id;
     this.client = options.client;
-    this.viewOnly = options.viewOnly === true;
+    this.editsDisabled = options.editsDisabled === true;
     this.api = options.api;
     this.runGate = options.runGate ?? RUN_ACTIONS_OFF;
     this.debounceMs = options.debounceMs ?? 600;
@@ -183,12 +184,12 @@ export class SurfaceController {
 
   /** Edits are taken here: the surface accepts them and this host may send them. */
   get acceptsEdits(): boolean {
-    return !this.viewOnly && acceptsEdits(this.snapshot.surface);
+    return !this.editsDisabled && acceptsEdits(this.snapshot.surface);
   }
 
   /** Whether run buttons may be tapped on this client at all. */
   get runAvailable(): boolean {
-    return this.runGate.available;
+    return this.runGate.available && !this.editsDisabled;
   }
 
   /** "Edited on Mac", "Changed by Claude", or nothing. */
@@ -262,7 +263,7 @@ export class SurfaceController {
     const surface = this.snapshot.surface;
     if (!this.acceptsEdits) {
       this.set({
-        notice: this.viewOnly
+        notice: this.editsDisabled
           ? VIEW_ONLY_HINT
           : surface.viewer.canEdit
             ? "This is no longer open."
@@ -511,7 +512,7 @@ export class SurfaceController {
       case "set_state":
         return this.acceptsEdits;
       case "run":
-        return this.runGate.available && allowsRun(surface);
+        return this.runAvailable && allowsRun(surface);
       case "unknown":
         return false;
       case "send_message":
@@ -527,7 +528,7 @@ export class SurfaceController {
           ) !== undefined
         );
       default:
-        return !this.viewOnly && acceptsTaps(surface);
+        return !this.editsDisabled && acceptsTaps(surface);
     }
   }
 
@@ -606,11 +607,11 @@ export class SurfaceController {
       }
       case "run":
       case "ask_agent": {
-        if (action.kind === "run" && !this.runGate.available) {
+        if (action.kind === "run" && !this.runAvailable) {
           this.set({ notice: RUN_UNAVAILABLE_HINT });
           return undefined;
         }
-        if (action.kind === "ask_agent" && this.viewOnly) {
+        if (action.kind === "ask_agent" && this.editsDisabled) {
           this.set({ notice: VIEW_ONLY_HINT });
           return undefined;
         }
@@ -633,8 +634,9 @@ export class SurfaceController {
           return undefined;
         }
         let extra: RunAuthorization | null | undefined;
-        if (action.kind === "run" && this.runGate.available) {
-          extra = await this.runGate.authorize("tap", {
+        const gate = this.runGate;
+        if (action.kind === "run" && gate.available && !this.editsDisabled) {
+          extra = await gate.authorize("tap", {
             surfaceId: this.id,
             actionId,
             revision: this.snapshot.surface.revision,
@@ -655,7 +657,7 @@ export class SurfaceController {
         return undefined;
       }
       case "dismiss": {
-        if (this.viewOnly) {
+        if (this.editsDisabled) {
           this.set({ notice: VIEW_ONLY_HINT });
           return undefined;
         }
@@ -703,7 +705,8 @@ export class SurfaceController {
     if (this.snapshot.confirmation === confirmation) {
       this.set({ confirmation: undefined });
     }
-    if (!this.runGate.available) {
+    const gate = this.runGate;
+    if (!gate.available || this.editsDisabled) {
       this.set({ notice: RUN_UNAVAILABLE_HINT });
       return;
     }
@@ -712,7 +715,7 @@ export class SurfaceController {
       Date.parse(confirmation.expiresAt) <= this.now()
     ) {
       // A stale nonce is never sent: tap again for a fresh confirmation.
-      const again = await this.runGate.authorize("tap", {
+      const again = await gate.authorize("tap", {
         surfaceId: this.id,
         actionId: confirmation.actionId,
         revision: this.snapshot.surface.revision,
@@ -731,7 +734,7 @@ export class SurfaceController {
       );
       return;
     }
-    const authorization = await this.runGate.authorize("confirm", {
+    const authorization = await gate.authorize("confirm", {
       surfaceId: confirmation.surfaceId,
       actionId: confirmation.actionId,
       revision: confirmation.revision,

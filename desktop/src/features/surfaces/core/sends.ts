@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { isObject } from "./json";
 import { comparableText, hasInvisibleText, plainText } from "./text";
 
@@ -18,6 +18,12 @@ export const SENDS_MAX = 300;
 export const SENDS_MAX_LINE_BREAKS = 3;
 
 const LINE_BREAKS = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/gu;
+
+/**
+ * The longest label a control draws in full on one line (code points); a
+ * longer label that is also the words gets the words drawn under it.
+ */
+export const SENDS_LABEL_MAX = 80;
 
 /** Shown on a control that can't send here. */
 export const SENDS_BLOCKED_TEXT = "Open in Kiingo to send this";
@@ -103,14 +109,22 @@ export const messageSend = (
   if ((words.match(LINE_BREAKS)?.length ?? 0) > SENDS_MAX_LINE_BREAKS) {
     return { kind: "blocked", reason: "too_long" };
   }
-  if (words === label) {
-    return Array.from(words).length > SENDS_MAX
-      ? { kind: "blocked", reason: "too_long" }
-      : { kind: "label", text: words };
+  const length = Array.from(words).length;
+  if (length > SENDS_MAX) {
+    return { kind: "blocked", reason: "too_long" };
   }
-  return Array.from(words).length > SENDS_MAX
-    ? { kind: "blocked", reason: "too_long" }
-    : { kind: "sends", text: words };
+  // The label alone stands for the words only when it is the words and every
+  // renderer can draw it in full on one line (79 W6 parity #1): no line
+  // break of any kind and at most SENDS_LABEL_MAX. Otherwise the words are
+  // drawn in full under it.
+  if (
+    words === label &&
+    length <= SENDS_LABEL_MAX &&
+    (words.match(LINE_BREAKS)?.length ?? 0) === 0
+  ) {
+    return { kind: "label", text: words };
+  }
+  return { kind: "sends", text: words };
 };
 
 /** The caption a `sends` control draws, as plain text (newlines kept). */
