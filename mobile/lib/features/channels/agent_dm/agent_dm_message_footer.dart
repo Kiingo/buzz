@@ -9,6 +9,7 @@ import 'agent_dm_action_buttons.dart';
 import 'agent_dm_question_card.dart';
 import 'agent_dm_scope.dart';
 import 'agent_dm_sent_provider.dart';
+import 'agent_dm_surface_card.dart';
 import 'agent_dm_timeline.dart';
 
 /// The card state from the loaded events and this client's own sends.
@@ -26,8 +27,8 @@ AgentDmCardState agentDmCardState(
   return AgentDmCardState.open;
 }
 
-/// The question card and action buttons under one agent message, wired to
-/// the DM's send path.
+/// The agent card, question card and action buttons under one agent
+/// message, wired to the DM's send path.
 class AgentDmMessageFooter extends ConsumerWidget {
   /// The agent message.
   final String messageId;
@@ -42,6 +43,7 @@ class AgentDmMessageFooter extends ConsumerWidget {
     final channelId = scope.channel.id;
     final card = timeline.questionOf(messageId);
     final actions = timeline.actionsOf(messageId);
+    final surface = timeline.surfaceOf(messageId);
     final sent = ref.watch(agentDmSentProvider);
     final answerKey = card == null
         ? null
@@ -83,6 +85,7 @@ class AgentDmMessageFooter extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (surface != null) AgentDmSurfaceCard(surface: surface),
         if (card != null && answerKey != null)
           AgentDmQuestionCardView(
             card: card,

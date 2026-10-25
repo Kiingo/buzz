@@ -136,12 +136,14 @@ class AgentDmScope extends InheritedWidget {
     );
   }
 
-  /// The question card and action buttons under [message], or null.
+  /// The agent card, question card and action buttons under [message], or
+  /// null.
   static Widget? footerFor(BuildContext context, TimelineMessage message) {
     final timeline = maybeOf(context)?.timeline;
     if (timeline == null) return null;
     if (timeline.questionOf(message.id) == null &&
-        timeline.actionsOf(message.id).isEmpty) {
+        timeline.actionsOf(message.id).isEmpty &&
+        timeline.surfaceOf(message.id) == null) {
       return null;
     }
     return AgentDmMessageFooter(

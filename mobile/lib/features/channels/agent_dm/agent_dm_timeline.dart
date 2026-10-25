@@ -57,6 +57,8 @@ class AgentDmTimeline {
   final Set<String> _hidden;
   final Map<String, AgentDmQuestionCard> _questions;
   final Map<String, List<AgentDmAction>> _actions;
+  final Map<String, AgentDmSurface> _surfaces;
+  final Map<String, int> _surfaceRevisions;
   final Map<String, ({int at, AgentDmQuestionStateValue state})> _states;
   final Map<String, Set<String>> _answerSigners;
   final Set<String> _usedActionRefs;
@@ -71,6 +73,8 @@ class AgentDmTimeline {
     required Set<String> hidden,
     required Map<String, AgentDmQuestionCard> questions,
     required Map<String, List<AgentDmAction>> actions,
+    Map<String, AgentDmSurface> surfaces = const {},
+    Map<String, int> surfaceRevisions = const {},
     required Map<String, ({int at, AgentDmQuestionStateValue state})> states,
     required Map<String, Set<String>> answerSigners,
     required Set<String> usedActionRefs,
@@ -83,6 +87,8 @@ class AgentDmTimeline {
        _hidden = hidden,
        _questions = questions,
        _actions = actions,
+       _surfaces = surfaces,
+       _surfaceRevisions = surfaceRevisions,
        _states = states,
        _answerSigners = answerSigners,
        _usedActionRefs = usedActionRefs;
@@ -123,6 +129,8 @@ class AgentDmTimeline {
     final hidden = <String>{};
     final questions = <String, AgentDmQuestionCard>{};
     final actions = <String, List<AgentDmAction>>{};
+    final surfaces = <String, AgentDmSurface>{};
+    final surfaceRevisions = <String, int>{};
     final states = <String, ({int at, AgentDmQuestionStateValue state})>{};
     final answerSigners = <String, Set<String>>{};
     final usedRefs = <String>{};
@@ -175,6 +183,14 @@ class AgentDmTimeline {
       if (card != null) questions[event.id] = card;
       final buttons = readAgentDmActions(event.tags);
       if (buttons.isNotEmpty) actions[event.id] = buttons;
+      final surface = readAgentDmSurface(event.tags);
+      if (surface != null) {
+        surfaces[event.id] = surface;
+        final newest = surfaceRevisions[surface.surfaceId];
+        if (newest == null || surface.revision > newest) {
+          surfaceRevisions[surface.surfaceId] = surface.revision;
+        }
+      }
     }
 
     return AgentDmTimeline._(
@@ -187,6 +203,8 @@ class AgentDmTimeline {
       hidden: Set.unmodifiable(hidden),
       questions: Map.unmodifiable(questions),
       actions: Map.unmodifiable(actions),
+      surfaces: Map.unmodifiable(surfaces),
+      surfaceRevisions: Map.unmodifiable(surfaceRevisions),
       states: Map.unmodifiable(states),
       answerSigners: Map.unmodifiable(answerSigners),
       usedActionRefs: Set.unmodifiable(usedRefs),
@@ -210,6 +228,13 @@ class AgentDmTimeline {
 
   /// The action buttons under message [id]; empty when none.
   List<AgentDmAction> actionsOf(String id) => _actions[id] ?? const [];
+
+  /// The agent card message [id] points at, or null.
+  AgentDmSurface? surfaceOf(String id) => _surfaces[id];
+
+  /// The newest revision any loaded message names for [surfaceId], so every
+  /// message showing that card reads the same, latest copy.
+  int? newestSurfaceRevision(String surfaceId) => _surfaceRevisions[surfaceId];
 
   /// Whether one of message [id]'s actions was already sent by the reader.
   bool actionsUsed(String id) =>

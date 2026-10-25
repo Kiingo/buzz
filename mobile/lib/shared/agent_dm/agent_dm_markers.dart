@@ -603,3 +603,35 @@ String? readAgentDmActionRef(List<List<String>> tags) {
 List<List<String>> agentDmActionRefTags(AgentDmAction action) => [
   ['buzz-action-ref', action.ref],
 ];
+
+final _surfaceUuid = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+  caseSensitive: false,
+);
+final _surfaceRevision = RegExp(r'^[1-9][0-9]{0,8}$');
+
+/// `buzz-surface`: an agent card the message points at (§7).
+class AgentDmSurface {
+  /// The card's lowercase UUID on the agent host.
+  final String surfaceId;
+
+  /// The card's revision when the message was sent.
+  final int revision;
+
+  const AgentDmSurface({required this.surfaceId, required this.revision});
+}
+
+/// Reads exactly one `["buzz-surface", <uuid>, <revision>]`. More than one,
+/// or a malformed one, leaves the message plain.
+AgentDmSurface? readAgentDmSurface(List<List<String>> tags) {
+  final named = _named(tags, 'buzz-surface');
+  if (named.length != 1 || named.single.length < 3) return null;
+  final tag = named.single;
+  if (!_surfaceUuid.hasMatch(tag[1]) || !_surfaceRevision.hasMatch(tag[2])) {
+    return null;
+  }
+  return AgentDmSurface(
+    surfaceId: tag[1].toLowerCase(),
+    revision: int.parse(tag[2]),
+  );
+}
