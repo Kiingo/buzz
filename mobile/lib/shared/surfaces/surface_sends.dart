@@ -1,8 +1,9 @@
 /// A control that sends words as the person's own message (`send_message`,
 /// suggestion chips) sends ONLY words the person can see on it (79 M1). The
 /// control draws its label and, when the words differ, the words themselves
-/// in full; past [sendsMax], holding an invisible character, a slash command
-/// or addressed to another agent, it is disabled with a line saying why.
+/// in full; past [sendsMax] or [sendsMaxLineBreaks], holding an invisible
+/// character, a slash command or addressed to another agent, it is disabled
+/// with a line saying why.
 /// The same rules as the Kiingo renderers (surface-core sends.ts).
 library;
 
@@ -13,6 +14,15 @@ import 'surface_text.dart';
 
 /// The longest words a control may send, shown in full (code points).
 const sendsMax = 300;
+
+/// The most line breaks words may hold (79 S2): past it a caption could
+/// push the tail out of sight ("Sounds good" + 280 newlines), so it is
+/// blocked.
+const sendsMaxLineBreaks = 3;
+
+/// A line break: CRLF counts once; CR, LF, VT, FF, NEL, LS and PS each
+/// count.
+final _lineBreaks = RegExp('\r\n|[\n\r\v\f\u0085\u2028\u2029]');
 
 /// Shown on a control that can't send here.
 const sendsBlockedText = 'Open in Kiingo to send this';
@@ -108,6 +118,9 @@ MessageSend messageSend(
   if (words.trim().isEmpty) return const BlockedSend(SendBlockedReason.empty);
   final refused = _refusedLead(words, agentName);
   if (refused != null) return BlockedSend(refused);
+  if (_lineBreaks.allMatches(words).length > sendsMaxLineBreaks) {
+    return const BlockedSend(SendBlockedReason.tooLong);
+  }
   if (words.runes.length > sendsMax) {
     return const BlockedSend(SendBlockedReason.tooLong);
   }
