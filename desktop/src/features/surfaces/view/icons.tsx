@@ -79,7 +79,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import type { EntityType } from "../core";
+import { ownEntry, type EntityType } from "../core";
 
 // The catalog's icon names (§4.2 Icon) mapped to the app's icon set. An
 // agent names an icon; it never supplies one. Anything unknown is a dot.
@@ -155,7 +155,7 @@ const CATALOG_ICONS: Record<string, LucideIcon> = {
 };
 
 export const catalogIcon = (name: string | undefined): LucideIcon =>
-  (name ? CATALOG_ICONS[name.toLowerCase()] : undefined) ?? CircleDot;
+  (name ? ownEntry(CATALOG_ICONS, name.toLowerCase()) : undefined) ?? CircleDot;
 
 export const ENTITY_ICONS: Record<EntityType, LucideIcon> = {
   task: ListChecks,

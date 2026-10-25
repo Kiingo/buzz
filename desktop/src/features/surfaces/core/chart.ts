@@ -83,6 +83,36 @@ const niceStep = (span: number, count: number): number => {
 
 const fixed = (value: number) => Math.round(value * 100) / 100;
 
+const MAX_Y_TICKS = 10;
+
+/**
+ * At most {@link MAX_Y_TICKS} + 1 values from yMin to yMax by an integer
+ * count, never a float accumulator: at a large magnitude a step below the
+ * value's precision never advances (`{y:1e17}`), so it falls back to the
+ * two ends.
+ */
+export const yTickValues = (
+  yMin: number,
+  yMax: number,
+  step: number,
+): number[] => {
+  const ends = yMin === yMax ? [yMin] : [yMin, yMax];
+  if (
+    !Number.isFinite(yMin) ||
+    !Number.isFinite(yMax) ||
+    !Number.isFinite(step) ||
+    step <= 0 ||
+    yMin + step === yMin
+  ) {
+    return ends.filter(Number.isFinite);
+  }
+  const count = Math.round((yMax - yMin) / step);
+  if (!Number.isFinite(count) || count < 1 || count > MAX_Y_TICKS) {
+    return ends;
+  }
+  return Array.from({ length: count + 1 }, (_, index) => yMin + index * step);
+};
+
 const arc = (
   cx: number,
   cy: number,
@@ -230,14 +260,17 @@ export const chartGeometry = (input: ChartInput): ChartGeometry => {
       min = low - (max - low) * 0.1;
     }
   }
-  if (max === min) {
-    max = min + 1;
+  if (!(max > min)) {
+    // Pad by the value's own scale: `min + 1` is `min` at 1e17.
+    max = min + Math.max(1, Math.abs(min) * 0.01);
   }
   const step = niceStep(max - min, 4);
   const yMin = Math.floor(min / step) * step;
   const yMax = Math.ceil(max / step) * step;
+  const ySpan =
+    yMax - yMin > 0 && Number.isFinite(yMax - yMin) ? yMax - yMin : 1;
   const y = (value: number) =>
-    plot.bottom - ((value - yMin) / (yMax - yMin)) * (plot.bottom - plot.top);
+    plot.bottom - ((value - yMin) / ySpan) * (plot.bottom - plot.top);
 
   // X positions: numeric/time scales or evenly spaced categories.
   const numeric = input.xType === "number" || input.xType === "time";
@@ -341,7 +374,7 @@ export const chartGeometry = (input: ChartInput): ChartGeometry => {
   }
   const yTicks: ChartTick[] = [];
   if (!sparkline) {
-    for (let v = yMin; v <= yMax + step / 2; v += step) {
+    for (const v of yTickValues(yMin, yMax, step)) {
       yTicks.push({ at: fixed(y(v)), label: fmt(Number(v.toPrecision(10))) });
     }
   }

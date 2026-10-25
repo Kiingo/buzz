@@ -4,7 +4,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 
 import type { TimelineMessage } from "@/features/messages/types";
-import type { SurfaceController } from "@/features/surfaces/core";
+import {
+  buzzSurfaceTapTag,
+  type SurfaceController,
+} from "@/features/surfaces/core";
 import {
   surfaceApiOrigin,
   surfaceStore,
@@ -89,13 +92,17 @@ export function AgentSurfaceCard({
         void openUrl(url).catch(() => toast.error("Couldn’t open that link."));
       },
       openExpanded: () => setExpanded(true),
-      sendMessage: (text) => {
+      // The surface's single send path (controller.sendMessage) hands over
+      // exactly the words the control showed and the tap they came from:
+      // the tag makes the turn a surface tap (lower trust) on the server.
+      // The composer never adds it.
+      sendMessage: (text, tap) => {
         void sendAgentDmTaggedMessage({
           queryClient,
           channelId,
           senderPubkey,
           content: text,
-          markerTags: [],
+          markerTags: [buzzSurfaceTapTag(tap)],
         }).catch((error: unknown) =>
           toast.error(
             error instanceof Error ? error.message : "Failed to send that.",

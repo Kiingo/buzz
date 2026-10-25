@@ -474,7 +474,7 @@ const REVISION_RE = /^[1-9]\d{0,8}$/;
  */
 export function parseSurface(tags: Tags): AgentSurface | null {
   const found = (tags ?? []).filter((tag) => tag[0] === "buzz-surface");
-  if (found.length !== 1) return null;
+  if (found.length !== 1 || found[0]?.length !== 3) return null;
   const [, surfaceId, revision] = found[0] ?? [];
   if (!surfaceId || !UUID_RE.test(surfaceId)) return null;
   if (!revision || !REVISION_RE.test(revision)) return null;

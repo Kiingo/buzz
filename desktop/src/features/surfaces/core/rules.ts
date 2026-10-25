@@ -297,8 +297,19 @@ export const matchesFormat = (
 ): boolean => {
   const trimmed = text.trim();
   switch (format) {
-    case "email":
-      return /^[^@\s]+@[^@\s]+\.[^@\s]+$/u.test(trimmed);
+    case "email": {
+      // In code, not a backtracking pattern (79 W7).
+      if (trimmed.length > 320 || /\s/u.test(trimmed)) {
+        return false;
+      }
+      const at = trimmed.indexOf("@");
+      if (at <= 0 || trimmed.indexOf("@", at + 1) >= 0) {
+        return false;
+      }
+      const domain = trimmed.slice(at + 1);
+      const dot = domain.lastIndexOf(".");
+      return dot > 0 && dot < domain.length - 1;
+    }
     case "url":
       return openableUrl(trimmed)?.startsWith("https://") ?? false;
     default: {
@@ -364,15 +375,8 @@ export const validationProblem = (
         return "Enter a phone number.";
     }
   }
-  if (rules.pattern) {
-    try {
-      if (!new RegExp(`^(?:${rules.pattern})$`, "u").test(text)) {
-        return `${rules.label} isn’t in the expected form.`;
-      }
-    } catch {
-      // A pattern this engine can't read is checked by the server only.
-    }
-  }
+  // `pattern` is the agent's regular expression: the server checks it, the
+  // client never runs it (79 W7: a crafted pattern could hang the page).
   return undefined;
 };
 

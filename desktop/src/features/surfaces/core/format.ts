@@ -20,6 +20,10 @@ export const formatCurrency = (
   currency = "USD",
   locale?: string,
 ): string => {
+  // Only an ISO 4217 code; anything else is the number alone (79 nit).
+  if (!/^[A-Z]{3}$/u.test(currency)) {
+    return formatNumber(value, locale);
+  }
   try {
     return new Intl.NumberFormat(locale, {
       style: "currency",

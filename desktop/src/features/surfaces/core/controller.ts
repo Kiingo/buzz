@@ -40,6 +40,14 @@ import {
 } from "./pointer";
 import { surfaceProblems } from "./rules";
 import {
+  messageSend,
+  SENDS_BLOCKED_TEXT,
+  sendBlockedText,
+  sentText,
+  type MessageSend,
+  type SurfaceTapRef,
+} from "./sends";
+import {
   RUN_ACTIONS_OFF,
   type RunActionGate,
   type RunAuthorization,
@@ -65,7 +73,12 @@ export type SaveState =
 
 /** What a tap asks the host to do; the controller opens and sends nothing itself. */
 export type Intent =
-  | { kind: "sendMessage"; text: string }
+  /**
+   * Send `text` as the person's message, carrying `tap` (the Buzz
+   * `buzz-surface-tap` tag, the dashboard turn's `ui_surface_tap`): the only
+   * way a surface sends words ({@link SurfaceController.sendMessage}).
+   */
+  | { kind: "sendMessage"; text: string; tap: SurfaceTapRef }
   | { kind: "openUrl"; url: string }
   | { kind: "openEntity"; entity: EntityKey }
   | { kind: "openExpanded" };
@@ -403,6 +416,52 @@ export class SurfaceController {
     return this.lookup(() => this.api.resolveRefs(keys));
   }
 
+  private refTitles = new Map<string, Promise<string | undefined>>();
+  private refBatch: {
+    keys: EntityKey[];
+    resolve: (items: LookupItem[]) => void;
+  }[] = [];
+  private refTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * One entity's title, looked up once per surface and batched with every
+   * other chip drawn in the same moment (79 W8): one request, not one per
+   * chip.
+   */
+  resolveRefTitle(key: EntityKey): Promise<string | undefined> {
+    const id = `${key.type}:${key.id}`;
+    const known = this.refTitles.get(id);
+    if (known) {
+      return known;
+    }
+    const title = new Promise<LookupItem[]>((resolve) => {
+      this.refBatch.push({ keys: [key], resolve });
+      this.refTimer ??= setTimeout(() => this.flushRefs(), 16);
+    }).then((items) => items.find((item) => item.id === key.id)?.title);
+    this.refTitles.set(id, title);
+    return title;
+  }
+
+  private flushRefs(): void {
+    this.refTimer = undefined;
+    const batch = this.refBatch.splice(0, this.refBatch.length);
+    for (let at = 0; at < batch.length; at += 100) {
+      const part = batch.slice(at, at + 100);
+      void this.resolveRefs(part.flatMap((entry) => entry.keys)).then(
+        (items) => {
+          for (const entry of part) {
+            entry.resolve(items);
+          }
+        },
+        () => {
+          for (const entry of part) {
+            entry.resolve([]);
+          }
+        },
+      );
+    }
+  }
+
   lookupFiles(query: string): Promise<LookupItem[]> {
     return this.lookup(() => this.api.lookupFiles(query));
   }
@@ -448,10 +507,45 @@ export class SurfaceController {
       case "unknown":
         return false;
       case "send_message":
-        return acceptsTaps(surface);
+        return (
+          acceptsTaps(surface) &&
+          sentText(
+            messageSend(
+              action.label,
+              action.text,
+              action.hidden === true,
+              surface.agentName,
+            ),
+          ) !== undefined
+        );
       default:
         return !this.viewOnly && acceptsTaps(surface);
     }
+  }
+
+  /**
+   * The single path by which a surface sends words as the person's message
+   * (79 H1/W1/M1, tap-trust condition 2): a `send_message` action or a
+   * suggestion chip, with the {@link MessageSend} its control drew. A
+   * blocked send says why and sends nothing; otherwise the intent carries
+   * exactly the drawn words and the tap reference every host must attach.
+   */
+  sendMessage(send: MessageSend, actionId: string): Intent | undefined {
+    const surface = this.snapshot.surface;
+    if (!acceptsTaps(surface)) {
+      this.set({ notice: surfaceMessage("ui_surface_not_editor") });
+      return undefined;
+    }
+    const text = sentText(send);
+    if (text === undefined) {
+      this.set({ notice: sendBlockedText(send) ?? SENDS_BLOCKED_TEXT });
+      return undefined;
+    }
+    return {
+      kind: "sendMessage",
+      text,
+      tap: { surfaceId: this.id, actionId, revision: surface.revision },
+    };
   }
 
   /**
@@ -484,11 +578,15 @@ export class SurfaceController {
         return { kind: "openExpanded" };
       }
       case "send_message":
-        if (!acceptsTaps(surface)) {
-          this.set({ notice: surfaceMessage("ui_surface_not_editor") });
-          return undefined;
-        }
-        return { kind: "sendMessage", text: action.text ?? action.label };
+        return this.sendMessage(
+          messageSend(
+            action.label,
+            action.text,
+            action.hidden === true,
+            surface.agentName,
+          ),
+          actionId,
+        );
       case "set_state": {
         const pointer = action.statePath
           ? resolvePointer(action.statePath, scope)

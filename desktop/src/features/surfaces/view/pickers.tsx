@@ -26,7 +26,7 @@ import { useNodeContext } from "./context";
 import { EntityChip, FileRow } from "./display";
 import { ENTITY_NOUNS, Glyphs } from "./icons";
 import { MarkdownText } from "./markdown";
-import { fieldClass, SurfaceButton } from "./ui";
+import { fieldClass, QuoteBox, SurfaceButton } from "./ui";
 import { aria, validZone, type FieldProps } from "./field";
 
 // §4.3 inputs that look things up or hold several values: the body editor,
@@ -189,8 +189,15 @@ export const RichTextInput = (props: FieldProps) => {
       ) : null}
       {preview ? (
         <div className="min-h-[5rem] rounded-md border border-border px-3 py-2">
-          {text ? (
-            <MarkdownText text={text} onLink={context.openLink} />
+          {text && context.isUntrustedAt(props.pointer) ? (
+            // An outside value is quoted, never links (79 W6).
+            <QuoteBox text={text} />
+          ) : text ? (
+            <MarkdownText
+              text={text}
+              onLink={context.openLink}
+              budget={context.markdown}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">Nothing yet</p>
           )}

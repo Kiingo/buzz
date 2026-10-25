@@ -1,6 +1,11 @@
 // Generated from the Kiingo surface renderer packages; do not edit here.
 import { Fragment, type ReactNode } from "react";
-import { parseMarkdown, type MdBlock, type MdInline } from "../core";
+import {
+  parseMarkdown,
+  type MarkdownBudget,
+  type MdBlock,
+  type MdInline,
+} from "../core";
 
 /**
  * The safe Markdown subset (§3) drawn with the app's own elements from the
@@ -11,12 +16,15 @@ import { parseMarkdown, type MdBlock, type MdInline } from "../core";
 export const MarkdownText = ({
   text,
   onLink,
+  budget,
 }: {
   text: string;
   onLink: (url: string) => void;
+  /** The surface's Markdown allowance for this render (79 S2). */
+  budget?: MarkdownBudget;
 }) => (
   <div className="space-y-2 break-words text-sm leading-relaxed">
-    {renderBlocks(parseMarkdown(text), onLink)}
+    {renderBlocks(parseMarkdown(text, budget), onLink)}
   </div>
 );
 
@@ -104,19 +112,18 @@ const renderInline = (
           </code>
         );
       case "link":
+        // A button, not <a href>: middle-click and auxclick can't skip the
+        // outside-link confirmation (79 nit).
         return (
-          <a
+          <button
             key={index}
-            href={node.href}
-            rel="noopener noreferrer nofollow"
-            className="text-primary underline underline-offset-2"
-            onClick={(event) => {
-              event.preventDefault();
-              onLink(node.href);
-            }}
+            type="button"
+            title={node.href}
+            className="inline p-0 text-left text-primary underline underline-offset-2"
+            onClick={() => onLink(node.href)}
           >
             {renderInline(node.children, onLink)}
-          </a>
+          </button>
         );
       default:
         return null;

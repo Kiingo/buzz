@@ -89,3 +89,17 @@ export const isEmptyValue = (value: unknown): boolean => {
   }
   return false;
 };
+
+/**
+ * `table[key]` only for the table's own keys (79 W4): an agent string such
+ * as "constructor" or "__proto__" never reaches the prototype.
+ */
+export const ownEntry = <T>(
+  table: Readonly<Record<string, T>>,
+  key: string | number | undefined | null,
+): T | undefined =>
+  key !== undefined &&
+  key !== null &&
+  Object.prototype.hasOwnProperty.call(table, String(key))
+    ? table[String(key)]
+    : undefined;

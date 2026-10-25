@@ -2,6 +2,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { ownEntry } from "../core";
 import { cn } from "./cn";
 import { Glyphs } from "./icons";
 
@@ -108,7 +109,7 @@ export const SurfaceButton = forwardRef<HTMLButtonElement, SurfaceButtonProps>(
             : size === "sm"
               ? "h-8 px-3 text-xs"
               : "h-9 px-3.5 text-sm",
-          BUTTON_STYLES[variant],
+          ownEntry(BUTTON_STYLES, variant) ?? BUTTON_STYLES.secondary,
           fullWidth && "w-full",
           className,
         )}
@@ -266,4 +267,15 @@ export const QuoteBox = ({
       </blockquote>
     </div>
   </figure>
+);
+
+/** Outside material inline (a table cell, a list row): a bar and plain text, never a link. */
+export const QuotedText = ({ text }: { text: string }) => (
+  <q
+    className="inline-block border-l-[3px] border-muted-foreground/40 pl-1.5 text-xs text-muted-foreground before:content-none after:content-none"
+    title="Quoted"
+  >
+    <span className="sr-only">Quoted: </span>
+    <span className="whitespace-pre-wrap break-words">{text}</span>
+  </q>
 );

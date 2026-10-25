@@ -1,6 +1,7 @@
 // Generated from the Kiingo surface renderer packages; do not edit here.
 import { useState } from "react";
 import {
+  ownEntry,
   appendPointer,
   asInt,
   asNumber,
@@ -224,7 +225,7 @@ const TextInput = (props: FieldProps) => {
   return (
     <input
       id={props.id}
-      type={TEXT_TYPES[kind] ?? "text"}
+      type={ownEntry(TEXT_TYPES, kind) ?? "text"}
       value={
         typeof value === "string"
           ? value

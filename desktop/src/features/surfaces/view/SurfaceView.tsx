@@ -1,5 +1,12 @@
 // Generated from the Kiingo surface renderer packages; do not edit here.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   isKnownCatalog,
   isOver,
@@ -11,6 +18,8 @@ import {
   urlHost,
   VIEW_ONLY_HINT,
   type ControllerSnapshot,
+  type Intent,
+  type MessageSend,
   type Pointer,
   type SurfaceController,
 } from "../core";
@@ -31,6 +40,40 @@ import {
 import { Glyphs } from "./icons";
 import { Node } from "./node";
 import { SurfaceButton, SurfaceDialog, toneText, ToneGlyph } from "./ui";
+
+/**
+ * Which view of a controller shows its dialogs: the newest one mounted (the
+ * expanded sheet over the inline card), so a confirmation or an outside-link
+ * prompt never stacks twice (79 nit).
+ */
+const dialogViews = new WeakMap<SurfaceController, symbol[]>();
+const dialogListeners = new Set<() => void>();
+
+const useOwnsDialogs = (controller: SurfaceController): boolean => {
+  const [me] = useState(() => Symbol("surface-view"));
+  const [, redraw] = useState(0);
+  useEffect(() => {
+    const stack = dialogViews.get(controller) ?? [];
+    dialogViews.set(controller, [...stack, me]);
+    const listener = () => redraw((count) => count + 1);
+    dialogListeners.add(listener);
+    for (const notify of dialogListeners) {
+      notify();
+    }
+    return () => {
+      dialogListeners.delete(listener);
+      dialogViews.set(
+        controller,
+        (dialogViews.get(controller) ?? []).filter((view) => view !== me),
+      );
+      for (const notify of dialogListeners) {
+        notify();
+      }
+    };
+  }, [controller, me]);
+  const stack = dialogViews.get(controller) ?? [];
+  return stack.length === 0 || stack[stack.length - 1] === me;
+};
 
 /**
  * A generative UI surface (§7.3), the same semantics as the Swift
@@ -54,6 +97,7 @@ export const SurfaceView = ({
   const host = hostProp ?? contextHost;
   const snapshot = useSurfaceSnapshot(controller);
   const [outsideUrl, setOutsideUrl] = useState<string | undefined>(undefined);
+  const ownsDialogs = useOwnsDialogs(controller);
   const surface = snapshot.surface;
 
   const openLink = useCallback(
@@ -71,39 +115,61 @@ export const SurfaceView = ({
     [host],
   );
 
-  const perform = useCallback(
-    (actionId: string, scope: Pointer = ROOT) => {
-      void controller.tap(actionId, scope).then((intent) => {
-        if (!intent) {
-          return;
-        }
-        switch (intent.kind) {
-          case "sendMessage":
-            host.sendMessage?.(intent.text);
-            break;
-          case "openEntity":
-            if (
-              host.openEntity &&
-              host.canOpenEntity?.(intent.entity) !== false
-            ) {
-              host.openEntity(intent.entity);
-            }
-            break;
-          case "openExpanded":
-            host.openExpanded?.(controller.id);
-            break;
-          case "openUrl":
-            openLink(intent.url);
-            break;
-        }
-      });
+  const run = useCallback(
+    (intent: Intent | undefined) => {
+      if (!intent) {
+        return;
+      }
+      switch (intent.kind) {
+        case "sendMessage":
+          // Exactly the drawn words, with the tap they came from (r3/r3b).
+          host.sendMessage?.(intent.text, intent.tap);
+          break;
+        case "openEntity":
+          if (
+            host.openEntity &&
+            host.canOpenEntity?.(intent.entity) !== false
+          ) {
+            host.openEntity(intent.entity);
+          }
+          break;
+        case "openExpanded":
+          host.openExpanded?.(controller.id);
+          break;
+        case "openUrl":
+          openLink(intent.url);
+          break;
+      }
     },
     [controller, host, openLink],
   );
 
+  const perform = useCallback(
+    (actionId: string, scope: Pointer = ROOT) => {
+      void controller.tap(actionId, scope).then(run);
+    },
+    [controller, run],
+  );
+
+  const sendMessage = useCallback(
+    (send: MessageSend, actionId: string) => {
+      run(controller.sendMessage(send, actionId));
+    },
+    [controller, run],
+  );
+
   const context = useMemo(
-    () => new NodeContext(controller, snapshot, mode, host, perform, openLink),
-    [controller, snapshot, mode, host, perform, openLink],
+    () =>
+      new NodeContext(
+        controller,
+        snapshot,
+        mode,
+        host,
+        perform,
+        openLink,
+        sendMessage,
+      ),
+    [controller, snapshot, mode, host, perform, openLink, sendMessage],
   );
 
   // Edits still in the debounce save when the view goes away.
@@ -148,7 +214,9 @@ export const SurfaceView = ({
             </SurfaceButton>
           ) : (
             <>
-              <Node componentId={surface.root} scope={ROOT} depth={0} />
+              <SurfaceErrorBoundary webUrl={surface.webUrl} onOpen={openLink}>
+                <Node componentId={surface.root} scope={ROOT} depth={0} />
+              </SurfaceErrorBoundary>
               {unknownTypes(surface).length > 0 ? (
                 <NewerAppNotice webUrl={surface.webUrl} onOpen={openLink} />
               ) : null}
@@ -161,7 +229,7 @@ export const SurfaceView = ({
             onOpen={openLink}
           />
         </section>
-        {snapshot.confirmation ? (
+        {snapshot.confirmation && ownsDialogs ? (
           <ConfirmationDialog
             confirmation={snapshot.confirmation}
             onCancel={() => controller.cancelConfirmation()}
@@ -176,7 +244,11 @@ export const SurfaceView = ({
                 setOutsideUrl(undefined);
               }
             }}
-            title={`Open ${urlHost(outsideUrl) ?? "this link"}?`}
+            title={
+              outsideUrl.startsWith("https://")
+                ? `Open ${urlHost(outsideUrl) ?? "this link"}?`
+                : "Open in Kiingo?"
+            }
             description={outsideUrl}
             footer={
               <>
@@ -190,7 +262,9 @@ export const SurfaceView = ({
                     setOutsideUrl(undefined);
                   }}
                 >
-                  Open in Browser
+                  {outsideUrl.startsWith("https://")
+                    ? "Open in Browser"
+                    : "Open"}
                 </SurfaceButton>
               </>
             }
@@ -204,6 +278,42 @@ export const SurfaceView = ({
     </SurfaceHostContext.Provider>
   );
 };
+
+/**
+ * One surface that fails to draw never takes the page with it (79 W4): it
+ * says so, with Open on web, and the conversation around it keeps working.
+ */
+class SurfaceErrorBoundary extends Component<
+  { webUrl?: string; onOpen: (url: string) => void; children: ReactNode },
+  { failed: boolean }
+> {
+  override state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  override render(): ReactNode {
+    if (!this.state.failed) {
+      return this.props.children;
+    }
+    const { webUrl, onOpen } = this.props;
+    return (
+      <div className="flex items-center gap-2 rounded-md bg-muted/60 px-2.5 py-2 text-xs text-muted-foreground">
+        <span className="flex-1">This card couldn’t be shown here.</span>
+        {webUrl ? (
+          <SurfaceButton
+            variant="plain"
+            className="text-xs"
+            onClick={() => onOpen(webUrl)}
+          >
+            Open on web
+          </SurfaceButton>
+        ) : null}
+      </div>
+    );
+  }
+}
 
 /** "This needs a newer app" plus Open on web (§7): never a blank or a crash. */
 const NewerAppNotice = ({

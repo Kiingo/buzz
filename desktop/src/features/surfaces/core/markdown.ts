@@ -26,18 +26,35 @@ export type MdBlock =
 
 const MAX_INPUT = 100_000;
 const MAX_NESTING = 6;
+/**
+ * How far one marker, backtick or bracket looks for its partner (79 W5/S2):
+ * every scan is bounded, so parsing is linear in the text.
+ */
+const SCAN_MAX = 1000;
+
+/** The first `char` in `text[from, from + SCAN_MAX)`, else -1. */
+const findNear = (text: string, char: string, from: number): number => {
+  const limit = Math.min(text.length, from + SCAN_MAX);
+  for (let i = from; i < limit; i += 1) {
+    if (text[i] === char) {
+      return i;
+    }
+  }
+  return -1;
+};
 
 // --- Inline -------------------------------------------------------------------
 
 const findClosing = (text: string, from: number, marker: string): number => {
   let i = from;
-  while (i < text.length) {
+  const limit = Math.min(text.length, from + SCAN_MAX);
+  while (i < limit) {
     if (text[i] === "\\") {
       i += 2;
       continue;
     }
     if (text[i] === "`") {
-      const end = text.indexOf("`", i + 1);
+      const end = findNear(text, "`", i + 1);
       i = end < 0 ? i + 1 : end + 1;
       continue;
     }
@@ -77,7 +94,7 @@ export const parseInline = (text: string, depth = 0): MdInline[] => {
       continue;
     }
     if (char === "`") {
-      const end = text.indexOf("`", i + 1);
+      const end = findNear(text, "`", i + 1);
       if (end > i + 1) {
         flush();
         out.push({ kind: "code", text: text.slice(i + 1, end) });
@@ -97,7 +114,7 @@ export const parseInline = (text: string, depth = 0): MdInline[] => {
     if (char === "[" && depth < MAX_NESTING) {
       const close = findBracket(text, i);
       if (close > i && text[close + 1] === "(") {
-        const end = text.indexOf(")", close + 2);
+        const end = findNear(text, ")", close + 2);
         if (end > close + 1) {
           const target =
             text
@@ -172,7 +189,8 @@ const readEmphasis = (
 
 const findBracket = (text: string, open: number): number => {
   let level = 0;
-  for (let i = open; i < text.length; i += 1) {
+  const limit = Math.min(text.length, open + SCAN_MAX);
+  for (let i = open; i < limit; i += 1) {
     if (text[i] === "\\") {
       i += 1;
       continue;
@@ -194,7 +212,80 @@ const findBracket = (text: string, open: number): number => {
 
 const LIST_ITEM = /^(\s{0,3})([-*+]|\d{1,9}[.)])\s+(.*)$/u;
 
-export const parseMarkdown = (input: string, depth = 0): MdBlock[] => {
+/** Up to three leading spaces off, else undefined (an indented line). */
+const unindent = (line: string): string | undefined => {
+  let at = 0;
+  while (at < line.length && at < 4 && line[at] === " ") {
+    at += 1;
+  }
+  return at > 3 ? undefined : line.slice(at);
+};
+
+const FENCE_INFO = /^[\w+#.-]{0,30}$/u;
+
+/** "```lang" or "~~~lang" (no backtracking patterns; 79 W5). */
+const readFence = (
+  line: string,
+): { marker: string; language: string } | undefined => {
+  const rest = unindent(line);
+  const marker = rest?.startsWith("```")
+    ? "```"
+    : rest?.startsWith("~~~")
+      ? "~~~"
+      : undefined;
+  if (!rest || !marker) {
+    return undefined;
+  }
+  const info = rest.slice(3).trim();
+  return FENCE_INFO.test(info) ? { marker, language: info } : undefined;
+};
+
+/** "# Title #" as level and text, trimmed in code (79 W5). */
+const readHeading = (
+  line: string,
+): { level: number; text: string } | undefined => {
+  const rest = unindent(line);
+  if (!rest?.startsWith("#")) {
+    return undefined;
+  }
+  let level = 0;
+  while (level < rest.length && rest[level] === "#") {
+    level += 1;
+  }
+  if (level > 6 || (level < rest.length && !/\s/u.test(rest[level]!))) {
+    return undefined;
+  }
+  let text = rest.slice(level).trim();
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "#") {
+    end -= 1;
+  }
+  // A closing run of #s counts only after a space (or alone).
+  if (end < text.length && (end === 0 || /\s/u.test(text[end - 1]!))) {
+    text = text.slice(0, end).trim();
+  }
+  return { level, text };
+};
+
+/** "---", "* * *", "___": three or more of one of -*_ and spaces. */
+const isRule = (line: string): boolean => {
+  const rest = unindent(line);
+  const mark = rest?.trim()[0];
+  if (!rest || (mark !== "-" && mark !== "*" && mark !== "_")) {
+    return false;
+  }
+  let count = 0;
+  for (const char of rest) {
+    if (char === mark) {
+      count += 1;
+    } else if (char !== " " && char !== "\t") {
+      return false;
+    }
+  }
+  return count >= 3;
+};
+
+const parseBlocks = (input: string, depth = 0): MdBlock[] => {
   const text = (input ?? "").slice(0, MAX_INPUT).replace(/\r\n?/gu, "\n");
   const lines = text.split("\n");
   const blocks: MdBlock[] = [];
@@ -211,19 +302,19 @@ export const parseMarkdown = (input: string, depth = 0): MdBlock[] => {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i]!;
-    const fence = /^\s{0,3}(```|~~~)\s*([\w+#.-]{0,30})\s*$/u.exec(line);
+    const fence = readFence(line);
     if (fence) {
       flushParagraph();
       const body: string[] = [];
       i += 1;
-      while (i < lines.length && !lines[i]!.trim().startsWith(fence[1]!)) {
+      while (i < lines.length && !lines[i]!.trim().startsWith(fence.marker)) {
         body.push(lines[i]!);
         i += 1;
       }
       i += 1;
       blocks.push({
         kind: "code",
-        ...(fence[2] ? { language: fence[2] } : {}),
+        ...(fence.language ? { language: fence.language } : {}),
         text: body.join("\n"),
       });
       continue;
@@ -233,19 +324,19 @@ export const parseMarkdown = (input: string, depth = 0): MdBlock[] => {
       i += 1;
       continue;
     }
-    const heading = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/u.exec(line);
+    const heading = readHeading(line);
     if (heading) {
       flushParagraph();
-      const level = Math.min(3, heading[1]!.length) as 1 | 2 | 3;
+      const level = Math.min(3, heading.level) as 1 | 2 | 3;
       blocks.push({
         kind: "heading",
         level,
-        children: parseInline(heading[2]!),
+        children: parseInline(heading.text),
       });
       i += 1;
       continue;
     }
-    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/u.test(line)) {
+    if (isRule(line)) {
       flushParagraph();
       blocks.push({ kind: "rule" });
       i += 1;
@@ -260,7 +351,7 @@ export const parseMarkdown = (input: string, depth = 0): MdBlock[] => {
       }
       blocks.push({
         kind: "quote",
-        children: parseMarkdown(quoted.join("\n"), depth + 1),
+        children: parseBlocks(quoted.join("\n"), depth + 1),
       });
       continue;
     }
@@ -300,7 +391,7 @@ export const parseMarkdown = (input: string, depth = 0): MdBlock[] => {
         kind: "list",
         ordered,
         start,
-        items: items.map((body) => parseMarkdown(body.join("\n"), depth + 1)),
+        items: items.map((body) => parseBlocks(body.join("\n"), depth + 1)),
       });
       continue;
     }
@@ -308,6 +399,63 @@ export const parseMarkdown = (input: string, depth = 0): MdBlock[] => {
     i += 1;
   }
   flushParagraph();
+  return blocks;
+};
+
+/** Parsed trees by text (they are immutable): a redraw never parses again. */
+const PARSED = new Map<string, MdBlock[]>();
+const PARSED_MAX = 256;
+
+/**
+ * Markdown characters one surface may parse per render (79 S2): past it,
+ * text is drawn as plain paragraphs. Make one per surface render pass.
+ */
+export const MARKDOWN_SURFACE_BUDGET = 60_000;
+
+export type MarkdownBudget = { remaining: number };
+
+export const markdownBudget = (): MarkdownBudget => ({
+  remaining: MARKDOWN_SURFACE_BUDGET,
+});
+
+const plainBlocks = (text: string): MdBlock[] =>
+  text
+    .slice(0, MAX_INPUT)
+    .split(/\n{2,}/u)
+    .filter((part) => part.trim() !== "")
+    .map((part) => ({
+      kind: "paragraph" as const,
+      children: [{ kind: "text" as const, text: part }],
+    }));
+
+/**
+ * The safe Markdown tree of `input`, memoized by text. With a `budget`, a
+ * text past what is left of it is plain paragraphs instead.
+ */
+export const parseMarkdown = (
+  input: string,
+  budget?: MarkdownBudget,
+): MdBlock[] => {
+  const text = input ?? "";
+  const cached = PARSED.get(text);
+  if (cached) {
+    return cached;
+  }
+  if (budget) {
+    if (text.length > budget.remaining) {
+      budget.remaining = 0;
+      return plainBlocks(text);
+    }
+    budget.remaining -= text.length;
+  }
+  const blocks = parseBlocks(text, 0);
+  if (PARSED.size >= PARSED_MAX) {
+    const oldest = PARSED.keys().next().value;
+    if (oldest !== undefined) {
+      PARSED.delete(oldest);
+    }
+  }
+  PARSED.set(text, blocks);
   return blocks;
 };
 
