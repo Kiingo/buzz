@@ -1,23 +1,41 @@
 /// Agent text is plain text: control characters and characters that draw
 /// nothing (Unicode Cf: bidi overrides, zero-width spaces and joiners, word
-/// joiners, BOMs, interlinear annotations; tag characters; Hangul fillers)
-/// are dropped and lengths capped, as every Kiingo surface renderer does
-/// (79 S1). Links open only https and allowed Kiingo deep links (R10).
+/// joiners, BOMs, interlinear annotations; every default-ignorable code
+/// point: variation selectors, U+034F, U+17B4/5, Mongolian selectors,
+/// Hangul fillers; tag characters) are dropped and lengths capped, as every
+/// Kiingo surface renderer does (79 S1). Links open only https and allowed
+/// Kiingo deep links (R10).
 library;
 
 import 'surface_data.dart';
 
-/// Characters that draw nothing: Cf, tags U+E0000–E007F, Hangul fillers.
+/// Characters that draw nothing: Default_Ignorable_Code_Point (which holds
+/// the variation selectors U+FE00–FE0F and U+E0100–E01EF, U+034F,
+/// U+17B4/5, U+180B–180F and the Hangul fillers), Cf and the tags
+/// U+E0000–E007F.
 final _invisible = RegExp(
-  r'[\p{Cf}\u{E0000}-\u{E007F}\u115F\u1160\u3164\uFFA0]',
+  r'[\p{Default_Ignorable_Code_Point}\p{Cf}\u{E0000}-\u{E007F}'
+  r'\u115F\u1160\u3164\uFFA0]',
+  unicode: true,
+);
+
+/// The one invisible character an agent's words may hold: a single emoji
+/// presentation selector (U+FE0F) right after a pictograph ("❤️"). It only
+/// picks the emoji glyph; a run of selectors (hidden data) still counts.
+final _emojiPresentation = RegExp(
+  r'(\p{Extended_Pictographic})\uFE0F(?![\uFE00-\uFE0F\u{E0100}-\u{E01EF}])',
   unicode: true,
 );
 
 bool _isInvisible(int code) => _invisible.hasMatch(String.fromCharCode(code));
 
-/// Whether [text] holds a character that draws nothing (S1).
+/// Whether [text] holds a character that draws nothing (S1), other than one
+/// emoji presentation selector after a pictograph.
 bool hasInvisibleText(Object? text) =>
-    text is String && _invisible.hasMatch(text);
+    text is String &&
+    _invisible.hasMatch(
+      text.replaceAllMapped(_emojiPresentation, (match) => match[1]!),
+    );
 
 /// [text] without the characters that draw nothing.
 String withoutInvisible(String text) => text.replaceAll(_invisible, '');

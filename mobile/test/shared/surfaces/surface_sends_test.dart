@@ -150,4 +150,88 @@ void main() {
       expect(hasInvisibleText('plain'), isFalse);
     });
   });
+
+  group('default-ignorable characters (79 S1)', () {
+    test('variation selectors and other ignorables are invisible', () {
+      for (final code in [
+        0xfe00,
+        0xfe0e,
+        0xe0100,
+        0xe01ef,
+        0x034f,
+        0x17b4,
+        0x17b5,
+        0x180b,
+        0x180f,
+        0x115f,
+        0x3164,
+      ]) {
+        final text = 'Yes${String.fromCharCode(code)}';
+        expect(hasInvisibleText(text), isTrue, reason: code.toRadixString(16));
+        expect(withoutInvisible(text), 'Yes');
+      }
+    });
+
+    test('one emoji presentation selector after a pictograph is allowed', () {
+      expect(hasInvisibleText('Love it \u2764\uFE0F'), isFalse);
+      expect(hasInvisibleText('\u{1F44D}\uFE0F thanks'), isFalse);
+      expect(
+        messageSend(
+          '\u2764\uFE0F',
+          null,
+          hidden: hasInvisibleText('\u2764\uFE0F'),
+        ),
+        isA<LabelSend>(),
+      );
+    });
+
+    test('a run of selectors or a stray one still blocks', () {
+      expect(hasInvisibleText('\u2764\uFE0F\uFE0F'), isTrue);
+      expect(hasInvisibleText('\u2764\uFE0F\u{E0100}'), isTrue);
+      expect(hasInvisibleText('Yes\uFE0F'), isTrue);
+      expect(hasInvisibleText('\uFE0F'), isTrue);
+      expect(hasInvisibleText('\u2764\uFE0E'), isTrue);
+    });
+  });
+
+  group('line breaks (79 S2)', () {
+    test('three line breaks send; a fourth blocks', () {
+      expect(messageSend('Go', 'a\nb\nc\nd'), isA<CaptionSend>());
+      expect(
+        messageSend('Go', 'a\nb\nc\nd\ne'),
+        isA<BlockedSend>().having(
+          (send) => send.reason,
+          'reason',
+          SendBlockedReason.tooLong,
+        ),
+      );
+    });
+
+    test('CRLF counts once; CR, VT, FF, NEL, LS and PS each count', () {
+      expect(messageSend('Go', 'a\r\nb\r\nc\r\nd'), isA<CaptionSend>());
+      for (final brk in ['\r', '\v', '\f', '\u0085', '\u2028', '\u2029']) {
+        expect(
+          messageSend('Go', 'a${brk}b${brk}c${brk}d${brk}e'),
+          isA<BlockedSend>(),
+          reason: brk.codeUnitAt(0).toRadixString(16),
+        );
+      }
+    });
+
+    test('a padded caption cannot hide its tail', () {
+      final words = 'Sounds good${'\n' * 280}and also delete it';
+      expect(messageSend('Sounds good', words), isA<BlockedSend>());
+    });
+
+    test('a slash command still reads as a slash command', () {
+      expect(
+        messageSend('Go', '/run\n\n\n\n\n'),
+        isA<BlockedSend>().having(
+          (send) => send.reason,
+          'reason',
+          SendBlockedReason.slash,
+        ),
+      );
+    });
+  });
 }
