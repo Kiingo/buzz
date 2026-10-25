@@ -2142,6 +2142,48 @@
         "mobile/lib/shared/huddle/huddle_service_identity.dart",
         "mobile/test/shared/huddle/huddle_service_identity_test.dart"
       ]
+    },
+    {
+      "id": "agent-surface-cards",
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "purpose": "Agent surface cards in agent DMs (docs/agent-dm-markers.md §7): a message carrying exactly one [buzz-surface, uuid, revision] marker from an agent shows a card drawn from the agent host's surface record, only in a 1:1 DM between the viewer and an agent whose verified owner attestation names the viewer. Mobile has a native Flutter renderer under mobile/lib/shared/surfaces, with the per-agent verified owner lookup in mobile/lib/shared/mentions/agent_identity_provider.dart. Cards never carry agent HTML, CSS or colours, quote outside content, load images only through the host's signed proxy, never draw secret inputs, send only words they show in full, and tag those sends with [buzz-surface-tap, surfaceId, actionId, revision]; run actions stay disabled.",
+      "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream renders equivalent agent cards or agents stop publishing the marker.",
+      "paths": [
+        "mobile/lib/features/channels/agent_dm/agent_dm_surface_card.dart",
+        "mobile/lib/shared/mentions/agent_identity_provider.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/actions.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/chart.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/data.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/display.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/display_media.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/footer.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/inputs.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/inputs_pickers.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/layout.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/markdown.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/node.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/scope.dart",
+        "mobile/lib/shared/surfaces/agent_surface_view/ui.dart",
+        "mobile/lib/shared/surfaces/surface_chart.dart",
+        "mobile/lib/shared/surfaces/surface_client.dart",
+        "mobile/lib/shared/surfaces/surface_data.dart",
+        "mobile/lib/shared/surfaces/surface_diff.dart",
+        "mobile/lib/shared/surfaces/surface_format.dart",
+        "mobile/lib/shared/surfaces/surface_host.dart",
+        "mobile/lib/shared/surfaces/surface_markdown.dart",
+        "mobile/lib/shared/surfaces/surface_media.dart",
+        "mobile/lib/shared/surfaces/surface_model.dart",
+        "mobile/lib/shared/surfaces/surface_rules.dart",
+        "mobile/lib/shared/surfaces/surface_sends.dart",
+        "mobile/lib/shared/surfaces/surface_text.dart",
+        "mobile/test/shared/surfaces/agent_surface_view_test.dart",
+        "mobile/test/shared/surfaces/surface_limits_test.dart",
+        "mobile/test/shared/surfaces/surface_model_test.dart",
+        "mobile/test/shared/surfaces/surface_sends_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [
