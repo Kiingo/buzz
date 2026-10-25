@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { asNumber } from "./json";
 
 // Agent text is plain text: control characters, format characters
@@ -43,12 +43,31 @@ export const withoutInvisible = (text: string): string =>
 export const comparableText = (text: string): string =>
   withoutInvisible(text.normalize("NFKC")).toLowerCase();
 
-/** Controls and invisible characters removed (newlines kept when `lines`), at most `max` characters. */
+/**
+ * Every character that breaks a line somewhere (79 W6 parity #1): CR LF,
+ * CR, LF, VT, FF, NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR. Each counts as
+ * one line break everywhere a surface reads text.
+ */
+const LINE_BREAK_CHARS = new Set([
+  "\n",
+  "\r",
+  "\v",
+  "\f",
+  "\u0085",
+  "\u2028",
+  "\u2029",
+]);
+
+/**
+ * Controls and invisible characters removed, at most `max` characters. Every
+ * line break ({@link LINE_BREAK_CHARS}, CR LF as one) becomes `\n` when
+ * `lines`, else a space.
+ */
 export const cleanText = (text: string, max: number, lines = false): string => {
   let out = "";
-  for (const char of text) {
+  for (const char of text.replace(/\r\n/gu, "\n")) {
     const code = char.codePointAt(0) ?? 0;
-    if (char === "\n") {
+    if (LINE_BREAK_CHARS.has(char)) {
       out += lines ? "\n" : " ";
       continue;
     }
@@ -219,9 +238,73 @@ const isLetter = (char: string | undefined): boolean =>
   char !== undefined && /\p{L}/u.test(char);
 
 /**
+ * Letters that look Latin, folded to the Latin letter they imitate (79 W6
+ * NIT), so "раssword" (Cyrillic р, а) or "pαsscοde" (Greek) still reads as
+ * a secret word. Lower case only: the text is lower-cased first.
+ */
+const SKELETON: Readonly<Record<string, string>> = Object.freeze({
+  // Cyrillic
+  а: "a",
+  в: "b",
+  с: "c",
+  ԁ: "d",
+  е: "e",
+  ё: "e",
+  һ: "h",
+  і: "i",
+  ї: "i",
+  ј: "j",
+  к: "k",
+  м: "m",
+  н: "h",
+  о: "o",
+  р: "p",
+  ԛ: "q",
+  ѕ: "s",
+  т: "t",
+  у: "y",
+  ԝ: "w",
+  х: "x",
+  // Greek
+  α: "a",
+  β: "b",
+  ε: "e",
+  η: "n",
+  ι: "i",
+  κ: "k",
+  ν: "v",
+  ο: "o",
+  ρ: "p",
+  τ: "t",
+  υ: "u",
+  χ: "x",
+  // Armenian and others seen in look-alike spoofs
+  օ: "o",
+  ս: "u",
+  ց: "g",
+  ɑ: "a",
+  ı: "i",
+  ɩ: "i",
+  // Digits standing in for letters
+  "0": "o",
+});
+
+/** `text` with look-alike letters folded to Latin ({@link SKELETON}). */
+const skeleton = (text: string): string => {
+  let out = "";
+  for (const char of text) {
+    out += Object.prototype.hasOwnProperty.call(SKELETON, char)
+      ? SKELETON[char]
+      : char;
+  }
+  return out;
+};
+
+/**
  * Texts that ask for a secret (§10, R11). Such an input is never drawn; the
- * server refuses them too. Short words match whole words only ("pin" is not
- * in "pinned").
+ * server refuses them too. Read after NFKC, invisible characters and
+ * look-alike letters ({@link SKELETON}). Short words match whole words only
+ * ("pin" is not in "pinned").
  */
 export const asksForSecret = (
   texts: ReadonlyArray<string | undefined>,
@@ -230,7 +313,7 @@ export const asksForSecret = (
     if (!raw) {
       return false;
     }
-    const text = comparableText(raw);
+    const text = skeleton(comparableText(raw));
     return SECRET_WORDS.some((word) => {
       let from = 0;
       for (;;) {

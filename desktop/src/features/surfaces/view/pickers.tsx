@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   appendPointer,
@@ -448,7 +448,10 @@ export const FileInput = (props: FieldProps) => {
       {files.map((item, index) => (
         <div key={index} className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
-            <FileRow item={item} />
+            <FileRow
+              item={item}
+              outside={context.isUntrustedAt(props.pointer)}
+            />
           </div>
           <SurfaceButton
             size="sm"
@@ -544,7 +547,10 @@ export const EntityInput = (props: FieldProps) => {
             key={`${entity.type}:${entity.id}`}
             className="flex items-center gap-2"
           >
-            <EntityChip entity={entity} />
+            <EntityChip
+              entity={entity}
+              outside={context.isUntrustedAt(props.pointer)}
+            />
             <SurfaceButton
               size="sm"
               variant="plain"

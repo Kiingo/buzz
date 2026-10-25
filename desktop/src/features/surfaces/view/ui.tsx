@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
@@ -104,11 +104,14 @@ export const SurfaceButton = forwardRef<HTMLButtonElement, SurfaceButtonProps>(
           "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
           "disabled:cursor-not-allowed disabled:opacity-50",
+          // Labels wrap and grow the button: a label is always drawn in
+          // full (79 W6 parity #1), never clipped to one fixed-height line.
+          "max-w-full whitespace-pre-wrap break-words text-left",
           variant === "plain"
             ? "px-1 py-0.5 text-sm"
             : size === "sm"
-              ? "h-8 px-3 text-xs"
-              : "h-9 px-3.5 text-sm",
+              ? "min-h-8 px-3 py-1 text-xs"
+              : "min-h-9 px-3.5 py-1.5 text-sm",
           ownEntry(BUTTON_STYLES, variant) ?? BUTTON_STYLES.secondary,
           fullWidth && "w-full",
           className,
@@ -278,4 +281,19 @@ export const QuotedText = ({ text }: { text: string }) => (
     <span className="sr-only">Quoted: </span>
     <span className="whitespace-pre-wrap break-words">{text}</span>
   </q>
+);
+
+/**
+ * Where a Table, List or Chart stops at the surface's cell budget (79 W6):
+ * the rest is not drawn here.
+ */
+export const TooLargeRow = ({
+  text = "The rest is too large to show here. Open it in Kiingo.",
+}: {
+  text?: string;
+}) => (
+  <p className="flex items-center gap-1.5 py-1.5 text-xs text-muted-foreground">
+    <Glyphs.newer aria-hidden className="h-3.5 w-3.5 shrink-0" />
+    {text}
+  </p>
 );

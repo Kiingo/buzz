@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import {
   Component,
   useCallback,
@@ -375,8 +375,8 @@ const Footer = ({
   const surface = snapshot.surface;
   const webUrl = surface.webUrl;
   // A view-only host says so wherever the surface would take a change.
-  const viewOnly =
-    controller.viewOnly &&
+  const editsDisabled =
+    controller.editsDisabled &&
     !isOver(surface) &&
     (acceptsEdits(surface) || acceptsTaps(surface));
   const status = surface.status;
@@ -385,11 +385,11 @@ const Footer = ({
     status.actionId &&
     surface.actions.has(status.actionId) &&
     acceptsTaps(surface) &&
-    !controller.viewOnly
+    !controller.editsDisabled
       ? status.actionId
       : undefined;
   const line = saveLine(snapshot, controller.editedNote);
-  if (!status && !snapshot.notice && !line && !viewOnly) {
+  if (!status && !snapshot.notice && !line && !editsDisabled) {
     return null;
   }
   return (
@@ -427,7 +427,7 @@ const Footer = ({
         </p>
       ) : null}
       {line ? <p className="text-2xs text-muted-foreground">{line}</p> : null}
-      {viewOnly && snapshot.notice !== VIEW_ONLY_HINT ? (
+      {editsDisabled && snapshot.notice !== VIEW_ONLY_HINT ? (
         <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
           <span>{VIEW_ONLY_HINT}</span>
           {webUrl ? (

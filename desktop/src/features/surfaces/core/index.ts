@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 export * from "./json";
 export * from "./text";
 export * from "./sends";

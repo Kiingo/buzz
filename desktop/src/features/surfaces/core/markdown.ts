@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { openableUrl } from "./text";
 
 // The safe Markdown subset surfaces carry (§3: emphasis, lists, links, code,
@@ -286,7 +286,10 @@ const isRule = (line: string): boolean => {
 };
 
 const parseBlocks = (input: string, depth = 0): MdBlock[] => {
-  const text = (input ?? "").slice(0, MAX_INPUT).replace(/\r\n?/gu, "\n");
+  // Every line break counts as one (79 W6 parity #1), as in cleanText.
+  const text = (input ?? "")
+    .slice(0, MAX_INPUT)
+    .replace(/\r\n|[\r\v\f\u0085\u2028\u2029]/gu, "\n");
   const lines = text.split("\n");
   const blocks: MdBlock[] = [];
   let paragraph: string[] = [];

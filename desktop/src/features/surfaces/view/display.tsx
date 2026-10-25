@@ -1,10 +1,12 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ownEntry,
   asNumber,
   cellText,
+  childKey,
   countdownText,
+  diffCellCount,
   diffText,
   ENTITY_TYPES,
   formatBytes,
@@ -615,10 +617,19 @@ export const DiffView = ({ component, scope }: NodeProps) => {
   const after = context.text(component, "after", scope, 20_000) ?? "";
   const granularity =
     context.string(component, "granularity") === "line" ? "line" : "word";
-  // Memoized, and too-large inputs are not compared (79 W8: 4M cells).
-  const parts = useMemo(
-    () => diffText(before, after, granularity),
+  // Memoized, and too-large inputs are not compared (79 W8: 4M cells per
+  // Diff, and 4M per surface across every Diff, W6 SHOULD 5).
+  const cost = useMemo(
+    () => diffCellCount(before, after, granularity),
     [before, after, granularity],
+  );
+  const compared = context.claimDiff(
+    `diff:${childKey(component.id, scope)}`,
+    cost,
+  );
+  const parts = useMemo(
+    () => diffText(before, after, granularity, compared ? undefined : 0),
+    [before, after, granularity, compared],
   );
   if (context.string(component, "mode") === "sideBySide") {
     return (
@@ -705,8 +716,25 @@ export const QuoteView = ({ component, scope }: NodeProps) => {
   return <QuoteBox text={text} source={source} />;
 };
 
-/** A Kiingo object: its icon and title, resolved by the server when missing. */
-export const EntityChip = ({ entity }: { entity: EntityKey }) => {
+/**
+ * A Kiingo object: its icon and title, resolved by the server when missing.
+ * `outside` (an id or title read from outside content, 79 W6): a quote of
+ * the title, never a button and never a lookup.
+ */
+export const EntityChip = ({
+  entity,
+  outside = false,
+}: {
+  entity: EntityKey;
+  outside?: boolean;
+}) =>
+  outside ? (
+    <QuotedText text={entity.title ?? ENTITY_NOUNS[entity.type]} />
+  ) : (
+    <OwnEntityChip entity={entity} />
+  );
+
+const OwnEntityChip = ({ entity }: { entity: EntityKey }) => {
   const context = useNodeContext();
   const [resolved, setResolved] = useState<string | undefined>(undefined);
   const controller = context.controller;
@@ -767,10 +795,25 @@ export const EntityRefView = ({ component, scope }: NodeProps) => {
     return null;
   }
   const title = context.text(component, "label", scope, 200);
-  return <EntityChip entity={{ type, id, ...(title ? { title } : {}) }} />;
+  return (
+    <EntityChip
+      entity={{ type, id, ...(title ? { title } : {}) }}
+      outside={
+        context.isUntrusted(component, "id", scope) ||
+        context.isUntrusted(component, "label", scope)
+      }
+    />
+  );
 };
 
-export const FileRow = ({ item }: { item: JsonValue }) => {
+/** One file. `outside` (read from outside content, 79 W6): quoted, never a button. */
+export const FileRow = ({
+  item,
+  outside = false,
+}: {
+  item: JsonValue;
+  outside?: boolean;
+}) => {
   const record = isObject(item) ? item : {};
   const name = plainText(record.name, 200) ?? "File";
   const id = plainId(record.artifactId);
@@ -779,6 +822,9 @@ export const FileRow = ({ item }: { item: JsonValue }) => {
   const detail = [type, size !== undefined ? formatBytes(size) : undefined]
     .filter(Boolean)
     .join(" · ");
+  if (outside) {
+    return <QuotedText text={[name, detail].filter(Boolean).join(" · ")} />;
+  }
   const content = (
     <span className="flex min-w-0 items-center gap-2.5">
       <Glyphs.file
@@ -829,13 +875,14 @@ export const FileListView = ({ component, scope }: NodeProps) => {
   const context = useNodeContext();
   const files = context.list(component, "files", scope).slice(0, 100);
   const empty = context.text(component, "emptyText", scope, 200);
+  const outside = context.isUntrusted(component, "files", scope);
   return (
     <div className="flex flex-col gap-1.5">
       {files.length === 0 && empty ? (
         <p className="text-xs text-muted-foreground">{empty}</p>
       ) : null}
       {files.map((item, index) => (
-        <FileRow key={index} item={item} />
+        <FileRow key={index} item={item} outside={outside} />
       ))}
     </div>
   );
@@ -852,6 +899,9 @@ export const MediaView = ({ component, scope }: NodeProps) => {
       ? proxiedMediaUrl(raw, context.host.apiOrigin)
       : undefined;
   const fileId = plainId(context.value(component, "artifactId", scope));
+  const outside = ["title", "url", "artifactId"].some((key) =>
+    context.isUntrusted(component, key, scope),
+  );
   // No in-page playback until the media proxy serves audio and video with
   // a no-redirect, A/V-type allowlist (79 nit, S7): open it in Kiingo.
   const webUrl = context.surface.webUrl;
@@ -863,11 +913,14 @@ export const MediaView = ({ component, scope }: NodeProps) => {
           className="h-4 w-4 shrink-0 text-muted-foreground"
         />
         <span className="min-w-0 flex-1 truncate text-sm">
-          {title}
+          {outside ? <QuotedText text={title} /> : title}
           <span className="sr-only">{isVideo ? " (video)" : " (audio)"}</span>
         </span>
         {fileId ? (
-          <EntityChip entity={{ type: "file", id: fileId, title }} />
+          <EntityChip
+            entity={{ type: "file", id: fileId, title }}
+            outside={outside}
+          />
         ) : url && webUrl ? (
           <SurfaceButton size="sm" onClick={() => context.openLink(webUrl)}>
             Open in Kiingo
@@ -974,6 +1027,8 @@ export const MapView = ({ component, scope }: NodeProps) => {
   const y = (lat: number) =>
     20 + ((maxLat - lat) / spanLat) * 120 * (1 - pad) + 120 * (pad / 2);
   const route = context.flag(component, "route", scope) && pins.length > 1;
+  // Outside pins (79 W6): their labels are quoted and nothing links out.
+  const outside = context.isUntrusted(component, "pins", scope);
   const first = pins[0]!;
   const mapsLink = `https://maps.apple.com/?ll=${first.lat},${first.lng}&q=${encodeURIComponent(first.label || "Pin")}`;
   return (
@@ -1008,21 +1063,34 @@ export const MapView = ({ component, scope }: NodeProps) => {
         ))}
       </svg>
       <figcaption className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>
-          {pins
-            .map(
-              (pin) =>
-                pin.label || `${pin.lat.toFixed(3)}, ${pin.lng.toFixed(3)}`,
-            )
-            .join(" · ")}
-        </span>
-        <button
-          type="button"
-          className="text-primary hover:underline"
-          onClick={() => context.openLink(mapsLink)}
-        >
-          Open in Maps
-        </button>
+        {outside ? (
+          <QuotedText
+            text={pins
+              .map(
+                (pin) =>
+                  pin.label || `${pin.lat.toFixed(3)}, ${pin.lng.toFixed(3)}`,
+              )
+              .join(" · ")}
+          />
+        ) : (
+          <span>
+            {pins
+              .map(
+                (pin) =>
+                  pin.label || `${pin.lat.toFixed(3)}, ${pin.lng.toFixed(3)}`,
+              )
+              .join(" · ")}
+          </span>
+        )}
+        {outside ? null : (
+          <button
+            type="button"
+            className="text-primary hover:underline"
+            onClick={() => context.openLink(mapsLink)}
+          >
+            Open in Maps
+          </button>
+        )}
       </figcaption>
     </figure>
   );

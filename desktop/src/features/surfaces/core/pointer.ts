@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import { isObject, type JsonValue } from "./json";
 
 /**
@@ -59,6 +59,15 @@ export const appendPointer = (
 
 export const isPointerPrefix = (prefix: Pointer, of: Pointer): boolean =>
   of.length >= prefix.length && prefix.every((token, i) => of[i] === token);
+
+/**
+ * Whether one pointer contains the other, either way (79 W6 MUST 4): a read
+ * of `/mail` covers a mark on `/mail/0/subject`, and a read of
+ * `/mail/0/subject` is covered by a mark on `/mail`. The one trust test every
+ * renderer uses.
+ */
+export const pointersOverlap = (a: Pointer, b: Pointer): boolean =>
+  isPointerPrefix(a, b) || isPointerPrefix(b, a);
 
 export const pointerKey = (pointer: Pointer): string => formatPointer(pointer);
 

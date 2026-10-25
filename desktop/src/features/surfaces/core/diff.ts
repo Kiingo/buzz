@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 // Word- or line-level diff for the Diff component (§4.2): an LCS over
 // tokens, capped so huge inputs degrade to a whole replace instead of
 // hanging the page.
@@ -15,11 +15,12 @@ export const tokenize = (
     ? text.split(/(?<=\n)/u)
     : (text.match(/\s+|[\p{L}\p{N}_'’-]+|[^\s\p{L}\p{N}_]/gu) ?? []);
 
-export const diffText = (
+/** The two token lists with their common head and tail trimmed. */
+const diffMiddle = (
   before: string,
   after: string,
-  granularity: "word" | "line" = "word",
-): DiffPart[] => {
+  granularity: "word" | "line",
+) => {
   const a = tokenize(before, granularity);
   const b = tokenize(after, granularity);
   // Trim the common head and tail first: most edits are local.
@@ -33,10 +34,35 @@ export const diffText = (
     endA -= 1;
     endB -= 1;
   }
-  const head = a.slice(0, start).join("");
-  const tail = a.slice(endA).join("");
-  const midA = a.slice(start, endA);
-  const midB = b.slice(start, endB);
+  return {
+    head: a.slice(0, start).join(""),
+    tail: a.slice(endA).join(""),
+    midA: a.slice(start, endA),
+    midB: b.slice(start, endB),
+  };
+};
+
+/**
+ * The comparison cells {@link diffText} would spend on these inputs: what a
+ * renderer charges against its per-surface Diff budget (79 W6).
+ */
+export const diffCellCount = (
+  before: string,
+  after: string,
+  granularity: "word" | "line" = "word",
+): number => {
+  const { midA, midB } = diffMiddle(before, after, granularity);
+  return midA.length * midB.length;
+};
+
+export const diffText = (
+  before: string,
+  after: string,
+  granularity: "word" | "line" = "word",
+  /** At most this many comparison cells; past it, a whole replace. */
+  maxCells = MAX_CELLS,
+): DiffPart[] => {
+  const { head, tail, midA, midB } = diffMiddle(before, after, granularity);
   const parts: DiffPart[] = [];
   const push = (kind: DiffPart["kind"], text: string) => {
     if (!text) {
@@ -50,7 +76,7 @@ export const diffText = (
     }
   };
   push("same", head);
-  if (midA.length * midB.length > MAX_CELLS) {
+  if (midA.length * midB.length > Math.min(maxCells, MAX_CELLS)) {
     push("removed", midA.join(""));
     push("added", midB.join(""));
   } else {

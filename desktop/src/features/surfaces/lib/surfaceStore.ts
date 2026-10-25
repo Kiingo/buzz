@@ -17,7 +17,7 @@ import {
  * a surface only to the person it belongs to.
  *
  * View only for now: the store's controllers send no edits or taps
- * (`viewOnly`), run buttons stay off (no run gate), and the API answers only
+ * (`editsDisabled`), run buttons stay off (no run gate), and the API answers only
  * reads. Links open, and "send message" buttons send the person's own DM
  * message.
  */
@@ -60,7 +60,7 @@ export function surfaceStore(): SurfaceStore {
   store ??= new SurfaceStore({
     api: { ...offSurfaceApi, surface: readSurface },
     client: "buzz",
-    viewOnly: true,
+    editsDisabled: true,
   });
   return store;
 }

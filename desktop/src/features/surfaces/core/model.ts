@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import {
   asBool,
   asInt,
@@ -9,7 +9,7 @@ import {
   type JsonObject,
   type JsonValue,
 } from "./json";
-import { isPointerPrefix, parsePointer, type Pointer } from "./pointer";
+import { parsePointer, pointersOverlap, type Pointer } from "./pointer";
 import { hasInvisibleText, openableUrl, plainId, plainText } from "./text";
 
 // The wire model of a generative UI surface (kiingo.ui/v1,
@@ -27,6 +27,16 @@ export const MAX_ACTIONS = 20;
 export const MAX_REPEATS = 500;
 /** Nodes one surface draws; past it a "too large" row (79 W8). */
 export const MAX_SURFACE_NODES = 2000;
+/**
+ * Table cells, List rows and Chart points one surface draws, together (79
+ * W6 SHOULD 5); past it the component draws a "too large" row.
+ */
+export const MAX_SURFACE_CELLS = 50_000;
+/**
+ * Diff comparison cells (tokens before x tokens after) one surface spends,
+ * together (79 W6 SHOULD 5); past it a Diff shows a whole replace.
+ */
+export const MAX_SURFACE_DIFF_CELLS = 4_000_000;
 
 export type SurfaceDisplay = "inline" | "expanded" | "carousel";
 export type SurfaceState =
@@ -475,10 +485,78 @@ const httpsUrl = (raw: unknown): string | undefined => {
   return url?.startsWith("https://") ? url : undefined;
 };
 
+/** The component ids a container names as children (the catalog's own refs). */
+const childIdsOf = (component: SurfaceComponent): string[] => {
+  const props = component.props;
+  const list = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+      return value.filter((id): id is string => typeof id === "string");
+    }
+    if (isObject(value) && typeof value.template === "string") {
+      return [value.template];
+    }
+    return [];
+  };
+  const one = (value: unknown): string[] =>
+    typeof value === "string" ? [value] : [];
+  const each = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.flatMap((item) => (isObject(item) ? one(item.child) : []))
+      : [];
+  switch (component.type) {
+    case "Stack":
+    case "Grid":
+    case "Section":
+    case "Carousel":
+      return list(props.children);
+    case "Card":
+      return one(props.child);
+    case "Tabs":
+    case "Accordion":
+      return each(props.items);
+    case "Steps":
+      return each(props.steps);
+    case "Modal":
+      return [...one(props.entry), ...one(props.content)];
+    default:
+      return [];
+  }
+};
+
+/**
+ * Whether the tree is one the server would have stored (ui-catalog validate):
+ * unique component ids, the root never a child, and every child named by
+ * exactly one reference (79 W6 SHOULD 6). A Buzz community's agent host may
+ * not be Kiingo's, so the client checks too and refuses the surface.
+ */
+const wellFormedTree = (
+  components: readonly SurfaceComponent[],
+  root: string,
+): boolean => {
+  const ids = new Set<string>();
+  for (const component of components) {
+    if (ids.has(component.id)) {
+      return false;
+    }
+    ids.add(component.id);
+  }
+  const named = new Set<string>();
+  for (const component of components) {
+    for (const childId of childIdsOf(component)) {
+      if (childId === root || named.has(childId)) {
+        return false;
+      }
+      named.add(childId);
+    }
+  }
+  return true;
+};
+
 /**
  * `{surface: {...}}`, `{data: {surface}}` or the surface itself (the inline
  * chat card's `payload`, `GET /api/ui/surfaces/:id`). Undefined when it isn't
- * a surface (no id or no root).
+ * a surface (no id or no root) or its tree is malformed (a duplicate id, a
+ * child with two parents, the root as a child).
  */
 export const decodeSurface = (value: unknown): Surface | undefined => {
   if (!isObject(value)) {
@@ -502,14 +580,12 @@ export const decodeSurface = (value: unknown): Surface | undefined => {
     .map(decodeComponent)
     .filter((item): item is SurfaceComponent => Boolean(item));
   const root = plainId(get("root")) ?? components[0]?.id;
-  if (!root) {
+  if (!root || !wellFormedTree(components, root)) {
     return undefined;
   }
   const byId = new Map<string, SurfaceComponent>();
   for (const component of components) {
-    if (!byId.has(component.id)) {
-      byId.set(component.id, component);
-    }
+    byId.set(component.id, component);
   }
   const actions = new Map<string, SurfaceAction>();
   const rawActions = get("actions");
@@ -649,9 +725,13 @@ export const unknownTypes = (surface: Surface): string[] => {
   return seen;
 };
 
-/** Whether `pointer` holds outside content (it or a parent is marked). */
+/**
+ * Whether data read at `pointer` holds outside content (79 W6), the one rule
+ * every renderer uses: a mark at the pointer, above it (a parent is outside)
+ * or BELOW it (it reads an object or list that holds outside content).
+ */
 export const isUntrustedPath = (surface: Surface, pointer: Pointer): boolean =>
-  surface.untrustedPaths.some((marked) => isPointerPrefix(marked, pointer));
+  surface.untrustedPaths.some((marked) => pointersOverlap(marked, pointer));
 
 const CLIENT_LABELS: Record<string, string> = {
   companion_mac: "Mac",

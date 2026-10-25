@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages; do not edit here.
+// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
 import {
   asNumber,
   isEmptyValue,
@@ -17,7 +17,7 @@ import {
 import {
   appendPointer,
   formatPointer,
-  isPointerPrefix,
+  pointersOverlap,
   readAt,
   resolvePointer,
   ROOT,
@@ -401,13 +401,7 @@ export const surfaceProblems = (
     if (!pointer) {
       continue;
     }
-    if (
-      paths &&
-      !paths.some(
-        (path) =>
-          isPointerPrefix(path, pointer) || isPointerPrefix(pointer, path),
-      )
-    ) {
+    if (paths && !paths.some((path) => pointersOverlap(path, pointer))) {
       continue;
     }
     const problem = validationProblem(
