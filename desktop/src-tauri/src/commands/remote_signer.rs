@@ -634,6 +634,8 @@ async fn finish_request(
         }
     };
     let declined = body.get("declined").is_some();
+    // Invariant: the signer only returns the signed request to the broker; it
+    // never publishes to the relay itself. Integrations rely on this.
     let posted = post_response(client, app, connection, &request.request_id, &body).await;
     let outcome = match (&posted, declined) {
         (Ok(()), true) => "declined",
