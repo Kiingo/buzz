@@ -299,7 +299,8 @@ class _ListView extends StatelessWidget {
     final count = items is List ? math.min(items.length, surfaceMaxRepeats) : 0;
     final empty = scope.text(p.component, 'emptyText', p.scope, max: 200);
     final action = scope.action(p.component.props['onTap']);
-    final tappable = action != null && scope.canTap(action);
+    // A row tap never sends a message (79 M1): its words aren't shown.
+    final tappable = action != null && scope.canTap(action, sends: false);
     final selectionPointer = bindingOf(p.component.props['selection'], p.scope);
     final selected = selectionPointer == null
         ? null
@@ -388,7 +389,8 @@ class _ListView extends StatelessWidget {
                   button: tappable,
                   child: tappable
                       ? InkWell(
-                          onTap: () => scope.perform(context, action),
+                          onTap: () =>
+                              scope.perform(context, action, sends: false),
                           child: row,
                         )
                       : row,

@@ -108,6 +108,43 @@ double _niceStep(double span, int count) {
 }
 
 /// The series of a component's `series` prop.
+/// Most value-axis ticks drawn.
+const surfaceChartMaxTicks = 10;
+
+/// The value axis for values from [low] to [high]: rounded ends and at most
+/// [surfaceChartMaxTicks] + 1 ticks. When a step can't move a number this
+/// large (or isn't a real step), the axis is just its two ends, so tick
+/// loops always stop.
+({double min, double max, List<double> ticks}) surfaceChartScale(
+  double low,
+  double high,
+) {
+  var min = low.isFinite ? low : 0.0;
+  var max = high.isFinite ? high : min;
+  if (max <= min) max = min + (min.abs() > 0 ? min.abs() : 1);
+  // Still equal: the gap is below double precision at this size.
+  if (max <= min) return (min: min, max: min + 1, ticks: [min, min + 1]);
+  final step = _niceStep(max - min, 4);
+  if (!step.isFinite || step <= 0 || min + step == min || max + step == max) {
+    return (min: min, max: max, ticks: [min, max]);
+  }
+  final yMin = (min / step).floorToDouble() * step;
+  final yMax = (max / step).ceilToDouble() * step;
+  final count = ((yMax - yMin) / step).round();
+  if (!yMin.isFinite ||
+      !yMax.isFinite ||
+      yMax <= yMin ||
+      count < 1 ||
+      count > surfaceChartMaxTicks) {
+    return (min: min, max: max, ticks: [min, max]);
+  }
+  return (
+    min: yMin,
+    max: yMax,
+    ticks: [for (var i = 0; i <= count; i++) yMin + i * step],
+  );
+}
+
 List<SurfaceChartSeriesInput> surfaceChartSeriesOf(Object? raw) => [
   if (raw is List)
     for (final item in raw)
@@ -237,9 +274,9 @@ SurfaceChartGeometry surfaceChartGeometry({
     }
   }
   if (high == low) high = low + 1;
-  final step = _niceStep((high - low).toDouble(), 4);
-  final yMin = (low / step).floor() * step;
-  final yMax = (high / step).ceil() * step;
+  final scale = surfaceChartScale(low.toDouble(), high.toDouble());
+  final yMin = scale.min;
+  final yMax = scale.max;
   double y(num value) =>
       plot.bottom - ((value - yMin) / (yMax - yMin)) * plot.height;
 
@@ -323,7 +360,7 @@ SurfaceChartGeometry surfaceChartGeometry({
   final yTicks = <SurfaceChartTick>[];
   final xTicks = <SurfaceChartTick>[];
   if (!sparkline) {
-    for (var v = yMin; v <= yMax + step / 2; v += step) {
+    for (final v in scale.ticks) {
       yTicks.add((
         at: y(v),
         label: fmt(double.parse(v.toStringAsPrecision(10))),

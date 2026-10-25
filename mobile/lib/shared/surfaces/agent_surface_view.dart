@@ -6,8 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:just_audio/just_audio.dart';
-import 'package:video_player/video_player.dart';
 
 import '../theme/buzz_icons.dart';
 import '../theme/theme.dart';
@@ -22,6 +20,7 @@ import 'surface_markdown.dart';
 import 'surface_media.dart';
 import 'surface_model.dart';
 import 'surface_rules.dart';
+import 'surface_sends.dart';
 import 'surface_text.dart';
 
 part 'agent_surface_view/actions.dart';
@@ -83,6 +82,8 @@ class AgentSurfaceView extends StatelessWidget {
       );
     } else if (!known) {
       body = _NewerAppNotice(webUrl: surface.webUrl);
+    } else if (surfaceNodeCount(surface) > surfaceMaxNodes) {
+      body = _NewerAppNotice(webUrl: surface.webUrl, tooBig: true);
     } else if (collapsed) {
       body = Align(
         alignment: AlignmentDirectional.centerStart,

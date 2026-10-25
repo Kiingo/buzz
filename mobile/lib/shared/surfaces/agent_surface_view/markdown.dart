@@ -9,8 +9,15 @@ class _MarkdownText extends HookWidget {
 
   @override
   Widget build(BuildContext context) {
-    final blocks = useMemoized(() => parseMarkdown(text), [text]);
     final scope = _SurfaceScope.of(context);
+    // Past the surface's parse budget the text shows as written (79 S2).
+    final plain = useMemoized(
+      () => <MdBlock>[
+        MdParagraph([MdText(text)]),
+      ],
+      [text],
+    );
+    final blocks = scope.markdownOf(text) ?? plain;
     final open = useRef<void Function(String url)>((_) {});
     open.value = (url) => scope.openLink(context, url);
     // One recognizer per link, made once per text and released with it.

@@ -11,8 +11,13 @@ enum SurfaceDiffKind { same, added, removed }
 /// One run of text in a diff.
 typedef SurfaceDiffPart = ({SurfaceDiffKind kind, String text});
 
-/// Fewer cells than the web renderers allow: a phone's memory is tighter.
-const _maxCells = 1000000;
+/// Most LCS cells for one diff: fewer than the web renderers allow, as a
+/// phone's memory is tighter.
+const surfaceDiffMaxCells = 1000000;
+
+/// Most LCS cells for all of one surface's diffs (79 S4); past it a diff
+/// is a whole replace.
+const surfaceDiffSurfaceCells = 4000000;
 
 final _wordTokens = RegExp(
   r"\s+|[\p{L}\p{N}_'’-]+|[^\s\p{L}\p{N}_]",
@@ -30,6 +35,8 @@ List<SurfaceDiffPart> surfaceDiff(
   String before,
   String after, {
   bool lines = false,
+  int maxCells = surfaceDiffMaxCells,
+  void Function(int cells)? spent,
 }) {
   final a = surfaceDiffTokens(before, lines: lines);
   final b = surfaceDiffTokens(after, lines: lines);
@@ -59,10 +66,11 @@ List<SurfaceDiffPart> surfaceDiff(
   final midB = b.sublist(start, endB);
   final n = midA.length;
   final m = midB.length;
-  if (n * m > _maxCells) {
+  if (n * m > maxCells) {
     push(SurfaceDiffKind.removed, midA.join());
     push(SurfaceDiffKind.added, midB.join());
   } else {
+    spent?.call(n * m);
     final table = List.generate(n + 1, (_) => Uint32List(m + 1));
     for (var i = n - 1; i >= 0; i--) {
       for (var j = m - 1; j >= 0; j--) {
@@ -95,4 +103,24 @@ List<SurfaceDiffPart> surfaceDiff(
   }
   push(SurfaceDiffKind.same, a.sublist(endA).join());
   return parts;
+}
+
+/// One surface's diffs, each worked out once, sharing
+/// [surfaceDiffSurfaceCells].
+class SurfaceDiffMemo {
+  var _left = surfaceDiffSurfaceCells;
+  final _parts = <(String, String, bool), List<SurfaceDiffPart>>{};
+
+  /// [surfaceDiff] of [before] and [after], from the memo when seen.
+  List<SurfaceDiffPart> diff(
+    String before,
+    String after, {
+    bool lines = false,
+  }) => _parts[(before, after, lines)] ??= surfaceDiff(
+    before,
+    after,
+    lines: lines,
+    maxCells: math.min(surfaceDiffMaxCells, _left),
+    spent: (cells) => _left -= cells,
+  );
 }

@@ -44,12 +44,6 @@ class _SurfaceContext {
   String? string(SurfaceComponent component, String key) =>
       asString(component.props[key]);
 
-  /// Whether the prop reads outside content (§10: drawn as a Quote).
-  bool isUntrusted(SurfaceComponent component, String key, Pointer scope) {
-    final pointer = bindingOf(component.props[key], scope);
-    return pointer != null && isUntrustedPath(surface, pointer);
-  }
-
   List<SurfaceChildRef> children(
     SurfaceComponent component,
     Pointer scope, [
@@ -73,22 +67,65 @@ class _SurfaceContext {
     return pointer == null ? null : readAt(data, pointer);
   }
 
+  /// What a send_message [action] shows and sends (79 M1). A Link passes
+  /// the words it [shown]s instead of the action's label, and whether its
+  /// raw text was [shownHidden].
+  MessageSend sendOf(
+    SurfaceAction action, {
+    String? shown,
+    bool shownHidden = false,
+  }) => messageSend(
+    shown ?? action.label,
+    shown == null ? action.text : action.text ?? action.label,
+    hidden: action.hidden || shownHidden,
+    agentName: surface.agentName,
+  );
+
+  /// The tap a message from control [actionId] carries.
+  SurfaceTap tapOf(String actionId) => SurfaceTap(
+    surfaceId: surface.id,
+    actionId: actionId,
+    revision: surface.revision,
+  );
+
   /// Whether a tap does something here. View only: `open` (a link or the
-  /// large sheet) and `send_message` (an ordinary message from the person)
-  /// work; everything else waits for the Kiingo app.
-  bool canTap(SurfaceAction action) => switch (action.kind) {
+  /// large sheet) and `send_message` (an ordinary message from the person,
+  /// only the words drawn on the control) work; everything else waits for
+  /// the Kiingo app. A Card or List row ([sends] false) never sends, and a
+  /// Link sends only when its [shown] words are the words sent.
+  bool canTap(
+    SurfaceAction action, {
+    bool sends = true,
+    String? shown,
+    bool shownHidden = false,
+  }) => switch (action.kind) {
     SurfaceActionKind.open => switch (action.target) {
       SurfaceOpenUrl() => true,
       SurfaceOpenExpanded() => host.openExpanded != null,
       SurfaceOpenEntity() || null => false,
     },
     SurfaceActionKind.sendMessage =>
-      acceptsTaps(surface) && host.sendMessage != null,
+      sends &&
+          acceptsTaps(surface) &&
+          host.sendMessage != null &&
+          switch (sendOf(action, shown: shown, shownHidden: shownHidden)) {
+            LabelSend() => true,
+            CaptionSend() => shown == null,
+            BlockedSend() => false,
+          },
     _ => false,
   };
 
-  void perform(BuildContext context, SurfaceAction action) {
-    if (!canTap(action)) return;
+  void perform(
+    BuildContext context,
+    SurfaceAction action, {
+    bool sends = true,
+    String? shown,
+    bool shownHidden = false,
+  }) {
+    if (!canTap(action, sends: sends, shown: shown, shownHidden: shownHidden)) {
+      return;
+    }
     switch (action.kind) {
       case SurfaceActionKind.open:
         switch (action.target) {
@@ -100,13 +137,41 @@ class _SurfaceContext {
             break;
         }
       case SurfaceActionKind.sendMessage:
-        host.sendMessage?.call(action.text ?? action.label);
+        final text = sentText(
+          sendOf(action, shown: shown, shownHidden: shownHidden),
+        );
+        if (text != null) host.sendMessage?.call(text, tapOf(action.id));
       default:
         break;
     }
   }
 
-  /// Opens an https or Kiingo link; an outside host is confirmed first.
+  /// Sends a suggestion chip's words, tagged with its tap id.
+  void sendChip(SurfaceComponent component, int index, MessageSend send) {
+    final text = sentText(send);
+    if (text == null || !acceptsTaps(surface)) return;
+    host.sendMessage?.call(text, tapOf(chipActionId(component.id, index)));
+  }
+
+  /// This surface read's diffs, worked out once each (79 S4).
+  SurfaceDiffMemo get diffs => _diffMemos[surface] ??= SurfaceDiffMemo();
+
+  /// [text] parsed once per surface read, or null once this surface's
+  /// [mdParseBudget] is spent (then it shows as written, 79 S2).
+  List<MdBlock>? markdownOf(String text) {
+    final cache = _markdownCaches[surface] ??= _MarkdownCache();
+    if (cache.parsed.containsKey(text)) return cache.parsed[text];
+    List<MdBlock>? blocks;
+    if (text.length <= cache.left) {
+      cache.left -= text.length;
+      blocks = parseMarkdown(text);
+    }
+    cache.parsed[text] = blocks;
+    return blocks;
+  }
+
+  /// Opens an https or allowed Kiingo link, confirmed first with the URL
+  /// as parsed (the one that opens).
   void openLink(BuildContext context, String raw) {
     final url = openableUrl(raw);
     if (url == null) return;
@@ -114,11 +179,12 @@ class _SurfaceContext {
       host.openUrl(url);
       return;
     }
+    final https = url.startsWith('https://');
     unawaited(
       showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text('Open ${urlHost(url)}?'),
+          title: Text(https ? 'Open ${urlHost(url)}?' : 'Open in Kiingo?'),
           content: Text(
             url,
             style: dialogContext.textTheme.bodyMedium?.copyWith(
@@ -132,7 +198,7 @@ class _SurfaceContext {
             ),
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Open in Browser'),
+              child: Text(https ? 'Open in Browser' : 'Open'),
             ),
           ],
         ),
@@ -142,6 +208,16 @@ class _SurfaceContext {
     );
   }
 }
+
+/// One surface's parsed Markdown and what is left of its parse budget.
+class _MarkdownCache {
+  var left = mdParseBudget;
+  final parsed = <String, List<MdBlock>?>{};
+}
+
+final _markdownCaches = Expando<_MarkdownCache>('surface markdown');
+
+final _diffMemos = Expando<SurfaceDiffMemo>('surface diffs');
 
 class _SurfaceScope extends InheritedWidget {
   final _SurfaceContext data;

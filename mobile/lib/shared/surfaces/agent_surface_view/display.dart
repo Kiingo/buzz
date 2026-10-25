@@ -1,7 +1,7 @@
 part of '../agent_surface_view.dart';
 
 // §4.2 Display. Agent text is plain text (Text widgets, never markup);
-// outside content is a Quote with no links.
+// outside content is a Quote with no links (_quoteUntrusted, node.dart).
 
 class _TextView extends StatelessWidget {
   final _NodeProps p;
@@ -12,9 +12,6 @@ class _TextView extends StatelessWidget {
     final scope = _SurfaceScope.of(context);
     final text = scope.text(p.component, 'text', p.scope);
     if (text == null) return const SizedBox.shrink();
-    if (scope.isUntrusted(p.component, 'text', p.scope)) {
-      return _QuoteBox(text: text);
-    }
     final variant = scope.string(p.component, 'variant') ?? 'body';
     final tone =
         scope.string(p.component, 'tone') ??
@@ -51,9 +48,6 @@ class _MarkdownView extends StatelessWidget {
     final scope = _SurfaceScope.of(context);
     final text = scope.text(p.component, 'text', p.scope, max: 20000);
     if (text == null) return const SizedBox.shrink();
-    if (scope.isUntrusted(p.component, 'text', p.scope)) {
-      return _QuoteBox(text: text);
-    }
     return _MarkdownText(text: text);
   }
 }
@@ -551,7 +545,7 @@ class _DiffView extends StatelessWidget {
         ],
       );
     }
-    final parts = surfaceDiff(
+    final parts = scope.diffs.diff(
       before,
       after,
       lines: scope.string(p.component, 'granularity') == 'line',

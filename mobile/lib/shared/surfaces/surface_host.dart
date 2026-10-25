@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'surface_sends.dart';
+
 /// What the app does for a surface: the only ways a surface reaches outside
 /// its card. Surfaces are view only in this app, so there is no write path.
 @immutable
@@ -8,9 +10,9 @@ class SurfaceHost {
   /// confirmed).
   final void Function(String url) openUrl;
 
-  /// Sends [text] as the person's own ordinary message, or null when this
-  /// place can't send.
-  final void Function(String text)? sendMessage;
+  /// Sends [text] as the person's own ordinary message, tagged with the
+  /// control it came from ([tap]), or null when this place can't send.
+  final void Function(String text, SurfaceTap tap)? sendMessage;
 
   /// Opens the surface in a large sheet, or null in that sheet.
   final VoidCallback? openExpanded;

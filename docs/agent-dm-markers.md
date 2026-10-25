@@ -229,7 +229,7 @@ review, a choice to make). The card lives on the agent host; the message only
 points at it.
 
 - On an agent-signed kind `9` message (a normal reply; it notifies and pushes
-  like one), exactly one:
+  like one), exactly one tag of exactly three elements:
   `["buzz-surface", <surface_id>, <revision>]`
   - `surface_id` is a UUID.
   - `revision` is the card's revision when the message was sent, a positive
@@ -246,7 +246,28 @@ the agent wrote becomes a colour, a style or markup. Images load only through
 the host's signed media links. A later message with the same `surface_id` and a
 higher `revision` makes the client read the card again.
 
-Clients show cards view only for now. Links open, and a "send message" button
-sends the person's own ordinary message (kind `9`, no marker tags) with the
-button's text. Inputs and every other button are disabled with a line saying
-the card can be changed in the host's app.
+Clients draw cards only in a 1:1 DM between the reader and the agent, and only
+from an agent whose owner attestation (NIP-OA) verifies. A self-published agent
+profile (kind `10100`) alone never draws a card.
+
+Clients show cards view only for now. Links open after the client confirms the
+URL with the person. A "send message" button or suggestion chip sends the
+person's own ordinary kind `9` message, and it sends only words drawn on the
+control: the label, or the words in full under it (`Sends: “…”`, at most 300
+code points). A control is disabled, with a line saying why, if its words are
+longer than that, hold a character that draws nothing, start with `/` (a slash
+command), or start with an `@` mention of anyone but the card's own agent. Card
+and list-row taps never send. Inputs and every other button are disabled with a
+line saying the card can be changed in the host's app.
+
+A message a card sends carries exactly one tap tag, and only that marker:
+
+- `["buzz-surface-tap", <surface_id>, <action_id>, <revision>]`
+  - `surface_id` is the card's UUID, lowercase.
+  - `action_id` is the action's id, or `chip:<component_id>:<index>` for a
+    suggestion chip (`index` counts from 0 among the chips drawn).
+  - `revision` is the card's revision when it was tapped, in decimal.
+
+The host treats a turn carrying this tag as a card tap: the agent wrote those
+words, so they are never the person's own typed instruction. Messages typed in
+the composer never carry it.

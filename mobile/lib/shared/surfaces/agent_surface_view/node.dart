@@ -47,7 +47,10 @@ Widget? _viewFor(_NodeProps p) => switch (p.component.type) {
 
 /// A part this app can't draw (a newer catalog type). Never its raw props.
 class _NewerAppRow extends StatelessWidget {
-  const _NewerAppRow();
+  /// Another notice in the same style, else "needs a newer version".
+  final String? text;
+
+  const _NewerAppRow({this.text});
 
   @override
   Widget build(BuildContext context) {
@@ -58,7 +61,7 @@ class _NewerAppRow extends StatelessWidget {
         const SizedBox(width: Grid.half + Grid.quarter),
         Expanded(
           child: Text(
-            'Part of this needs a newer version of the app.',
+            text ?? 'Part of this needs a newer version of the app.',
             style: bodyExtraSmallTextStyle.copyWith(color: muted),
           ),
         ),
@@ -91,9 +94,23 @@ class _Node extends StatelessWidget {
       return const SizedBox.shrink();
     }
     if (!component.known) return const _NewerAppRow();
-    return _viewFor((component: component, scope: scope, depth: depth)) ??
-        const _NewerAppRow();
+    final props = (component: component, scope: scope, depth: depth);
+    final view = _viewFor(props) ?? const _NewerAppRow();
+    return readsUntrusted(surface, component, scope)
+        ? _quoteUntrusted(_SurfaceScope.of(context), props, view)
+        : view;
   }
+}
+
+/// The one way outside content is drawn (§10, 79 S5): text as a plain
+/// quote, anything else inside a quote frame with no links or actions
+/// (taps and screen-reader actions are blocked).
+Widget _quoteUntrusted(_SurfaceContext scope, _NodeProps p, Widget view) {
+  if (const {'Text', 'Markdown', 'Quote'}.contains(p.component.type)) {
+    final text = scope.text(p.component, 'text', p.scope, max: 20000);
+    return text == null ? const SizedBox.shrink() : _QuoteBox(text: text);
+  }
+  return _QuoteBox(child: IgnorePointer(child: view));
 }
 
 /// A container's children, one level deeper, as widgets.

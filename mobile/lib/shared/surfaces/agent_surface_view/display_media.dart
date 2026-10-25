@@ -35,15 +35,25 @@ class _ProxyImage extends HookConsumerWidget {
       return null;
     }, [expired, proxied]);
     final Widget child;
-    if (result case SurfaceImageBytes(:final bytes)) {
-      child = Image.memory(
-        bytes,
-        fit: cover ? BoxFit.cover : BoxFit.contain,
-        width: double.infinity,
-        semanticLabel: alt.isEmpty ? null : alt,
-        excludeFromSemantics: alt.isEmpty,
-        gaplessPlayback: true,
-        errorBuilder: (context, _, _) => _ImageAlt(alt: alt),
+    if (result case SurfaceImageBytes(:final bytes, :final width)) {
+      // Decoded at the size drawn, never the full bitmap (79 S3).
+      child = LayoutBuilder(
+        builder: (context, constraints) {
+          final ratio = MediaQuery.devicePixelRatioOf(context);
+          final drawn = constraints.hasBoundedWidth
+              ? (constraints.maxWidth * ratio).ceil()
+              : (560 * ratio).ceil();
+          return Image.memory(
+            bytes,
+            cacheWidth: math.max(1, math.min(width, drawn)),
+            fit: cover ? BoxFit.cover : BoxFit.contain,
+            width: double.infinity,
+            semanticLabel: alt.isEmpty ? null : alt,
+            excludeFromSemantics: alt.isEmpty,
+            gaplessPlayback: true,
+            errorBuilder: (context, _, _) => _ImageAlt(alt: alt),
+          );
+        },
       );
     } else {
       child = _ImageAlt(alt: alt);
@@ -265,7 +275,9 @@ class _FileListView extends StatelessWidget {
   }
 }
 
-/// Audio or video: played only on the person's tap, from the proxy.
+/// Audio or video: its title, and "Open in Kiingo" (79 S7). This app
+/// doesn't play surface media: the native players follow redirects and
+/// skip the type and size checks images get.
 class _MediaView extends StatelessWidget {
   final _NodeProps p;
   const _MediaView(this.p);
@@ -276,11 +288,7 @@ class _MediaView extends StatelessWidget {
     final title =
         scope.text(p.component, 'title', p.scope, max: 200) ?? 'Media';
     final video = scope.string(p.component, 'kind') == 'video';
-    final url = proxiedMediaUrl(
-      scope.value(p.component, 'url', p.scope),
-      scope.origin,
-    );
-    final fileId = plainId(scope.value(p.component, 'artifactId', p.scope));
+    final webUrl = scope.surface.webUrl;
     return _Panel(
       child: Row(
         children: [
@@ -290,129 +298,13 @@ class _MediaView extends StatelessWidget {
             color: context.colors.onSurfaceVariant,
           ),
           const SizedBox(width: Grid.xxs + Grid.quarter),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: _body(context),
-            ),
-          ),
-          if (url != null)
+          Expanded(child: Text(title, style: _body(context))),
+          if (webUrl != null)
             _SurfaceButton(
-              label: 'Play',
-              semanticLabel: 'Play $title',
-              onPressed: () => unawaited(
-                showBuzzModalBottomSheet<void>(
-                  context: context,
-                  title: title,
-                  isScrollControlled: true,
-                  builder: (sheetContext) =>
-                      _MediaPlayer(url: url, video: video, title: title),
-                ),
-              ),
-            )
-          else if (fileId != null)
-            Flexible(
-              child: _EntityChip(
-                entity: SurfaceEntity(type: 'file', id: fileId, title: title),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Plays one proxied file; stops when the sheet closes.
-class _MediaPlayer extends HookWidget {
-  final String url;
-  final bool video;
-  final String title;
-
-  const _MediaPlayer({
-    required this.url,
-    required this.video,
-    required this.title,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final failed = useState(false);
-    final playing = useState(false);
-    final videoController = useMemoized(
-      () => video ? VideoPlayerController.networkUrl(Uri.parse(url)) : null,
-      [url, video],
-    );
-    final audio = useMemoized(() => video ? null : AudioPlayer(), [video]);
-    final ready = useState(false);
-    useEffect(() {
-      var live = true;
-      Future<void> start() async {
-        try {
-          if (videoController != null) {
-            await videoController.initialize();
-            await videoController.play();
-          } else if (audio != null) {
-            await audio.setUrl(url);
-            unawaited(audio.play());
-          }
-          if (live) {
-            ready.value = true;
-            playing.value = true;
-          }
-        } catch (error) {
-          debugPrint('[Surface] media failed: ${error.runtimeType}');
-          if (live) failed.value = true;
-        }
-      }
-
-      unawaited(start());
-      return () {
-        live = false;
-        unawaited(videoController?.dispose());
-        unawaited(audio?.dispose());
-      };
-    }, [videoController, audio]);
-    void toggle() {
-      final next = !playing.value;
-      playing.value = next;
-      if (videoController != null) {
-        unawaited(next ? videoController.play() : videoController.pause());
-      } else if (audio != null) {
-        unawaited(next ? audio.play() : audio.pause());
-      }
-    }
-
-    final colors = context.colors;
-    return Padding(
-      padding: const EdgeInsets.all(Grid.xs),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (failed.value)
-            Text("Couldn't play this.", style: _body(context))
-          else if (!ready.value)
-            const Padding(
-              padding: EdgeInsets.all(Grid.sm),
-              child: CircularProgressIndicator(),
-            )
-          else if (videoController != null)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(Radii.md),
-              child: AspectRatio(
-                aspectRatio: videoController.value.aspectRatio,
-                child: VideoPlayer(videoController),
-              ),
-            ),
-          if (ready.value && !failed.value)
-            IconButton.filledTonal(
-              onPressed: toggle,
-              tooltip: playing.value ? 'Pause $title' : 'Play $title',
-              icon: Icon(
-                playing.value ? BuzzIcons.pause : BuzzIcons.play,
-                color: colors.onSecondaryContainer,
-              ),
+              label: 'Open in Kiingo',
+              semanticLabel: 'Open $title in Kiingo',
+              style: SurfaceActionStyle.plain,
+              onPressed: () => scope.openLink(context, webUrl),
             ),
         ],
       ),

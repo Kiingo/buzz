@@ -19,8 +19,13 @@ String formatSurfaceNumber(num value) {
   }
 }
 
-/// Money in [currency] (ISO 4217), else the number and the code.
+final _currencyCode = RegExp(r'^[A-Z]{3}$');
+
+/// Money in [currency] (ISO 4217), else the number and the code; a code
+/// that isn't three capital letters shows just the number.
 String formatSurfaceCurrency(num value, [String currency = 'USD']) {
+  // Only an ISO 4217 code reaches the formatter (or the text).
+  if (!_currencyCode.hasMatch(currency)) return formatSurfaceNumber(value);
   try {
     return NumberFormat.simpleCurrency(name: currency).format(value);
   } catch (_) {

@@ -197,7 +197,15 @@ void main() {
   group('text rules', () {
     test('openableUrl allows https and Kiingo links only', () {
       expect(openableUrl('https://kiingo.com/a'), 'https://kiingo.com/a');
-      expect(openableUrl('kiingo://tasks/1'), 'kiingo://tasks/1');
+      expect(openableUrl('kiingo://task/1'), 'kiingo://task/1');
+      expect(openableUrl('kiingotasks://agent/a'), 'kiingotasks://agent/a');
+      // Only routes that show something: never pair, enroll or call.
+      expect(openableUrl('kiingo://tasks/1'), isNull);
+      expect(openableUrl('kiingolink://pair?code=1'), isNull);
+      expect(openableUrl('kiingo://call/1'), isNull);
+      // Invisible and bidi characters never reach a link.
+      expect(openableUrl('https://kiingo.com/\u202egpj.exe'), isNull);
+      expect(openableUrl('https://kiingo.com/a\u200b'), isNull);
       expect(openableUrl('http://kiingo.com'), isNull);
       expect(openableUrl('javascript:alert(1)'), isNull);
       expect(openableUrl('https://user:pw@kiingo.com'), isNull);
@@ -205,11 +213,24 @@ void main() {
       expect(openableUrl('https://a.com/x y'), isNull);
     });
 
-    test('isOutsideUrl trusts Kiingo hosts and deep links', () {
-      expect(isOutsideUrl('https://app.kiingo.com/x'), isFalse);
-      expect(isOutsideUrl('kiingo://tasks/1'), isFalse);
+    test('isOutsideUrl confirms everything but the app\'s own origins', () {
+      expect(isOutsideUrl('https://app.kiingo.com/x'), isTrue);
+      expect(isOutsideUrl('kiingo://task/1'), isTrue);
       expect(isOutsideUrl('https://kiingo.com.evil.io/'), isTrue);
-      expect(isOutsideUrl('https://evilkiingo.com/'), isTrue);
+      expect(
+        isOutsideUrl(
+          'https://app.kiingo.com/x',
+          ownOrigins: const ['https://app.kiingo.com'],
+        ),
+        isFalse,
+      );
+      expect(
+        isOutsideUrl(
+          'https://app.kiingo.com:8443/x',
+          ownOrigins: const ['https://app.kiingo.com'],
+        ),
+        isTrue,
+      );
     });
 
     test('asksForSecret matches whole short words', () {
@@ -217,10 +238,17 @@ void main() {
       expect(asksForSecret(['Enter the PIN']), isTrue);
       expect(asksForSecret(['Pinned items']), isFalse);
       expect(asksForSecret([null, 'Name']), isFalse);
+      // Compared folded and without invisible characters (79 S1).
+      expect(asksForSecret(['Your ｐａｓｓｗｏｒｄ']), isTrue);
+      expect(asksForSecret(['Your pass\u200bword']), isTrue);
     });
 
     test('cleanText drops controls and caps length', () {
       expect(cleanText('a\u0007b\u202ec', 10), 'abc');
+      expect(
+        cleanText('a\u200bb\u061cc\u{E0041}d\ufeffe\u3164f', 10),
+        'abcdef',
+      );
       expect(cleanText('abcdef', 4), 'abc…');
       expect(cleanText('a\nb', 10), 'a b');
       expect(cleanText('a\nb', 10, lines: true), 'a\nb');
@@ -264,7 +292,7 @@ void main() {
 
     test('expired statuses re-read the surface', () {
       expect(isExpiredMediaStatus(401), isTrue);
-      expect(isExpiredMediaStatus(410), isTrue);
+      expect(isExpiredMediaStatus(410), isFalse);
       expect(isExpiredMediaStatus(404), isFalse);
     });
   });

@@ -41,23 +41,39 @@ class _ActionButton extends StatelessWidget {
           ? () => surface.perform(context, action)
           : null,
     );
-    if (!runOff) return button;
-    return Tooltip(
-      message: runUnavailableHint,
-      child: Column(
-        crossAxisAlignment: fullWidth
-            ? CrossAxisAlignment.stretch
-            : CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          button,
-          const SizedBox(height: Grid.quarter),
-          Text(runUnavailableText, style: _small(context)),
-        ],
-      ),
+    final String? note;
+    if (runOff) {
+      note = runUnavailableText;
+    } else if (action.kind == SurfaceActionKind.sendMessage) {
+      note = _sendNote(surface.sendOf(action));
+    } else {
+      note = null;
+    }
+    if (note == null) return button;
+    final column = Column(
+      crossAxisAlignment: fullWidth
+          ? CrossAxisAlignment.stretch
+          : CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        button,
+        const SizedBox(height: Grid.quarter),
+        Text(note, style: _small(context)),
+      ],
     );
+    return runOff
+        ? Tooltip(message: runUnavailableHint, child: column)
+        : column;
   }
 }
+
+/// The line under a sending control: the words it sends when they differ
+/// from its label (in full), or why it can't send.
+String? _sendNote(MessageSend send) => switch (send) {
+  CaptionSend(:final text) => sendsCaption(text),
+  BlockedSend() => sendBlockedText(send),
+  LabelSend() => null,
+};
 
 /// `{action, style?, icon?, fullWidth?}`: the action's label is the text.
 class _ButtonView extends StatelessWidget {
@@ -111,14 +127,7 @@ class _ActionMenu extends StatelessWidget {
           PopupMenuItem(
             value: action,
             enabled: scope.canTap(action),
-            child: Text(
-              action.kind == SurfaceActionKind.run
-                  ? '${action.label} ($runUnavailableText)'
-                  : action.label,
-              style: action.style == SurfaceActionStyle.destructive
-                  ? TextStyle(color: context.colors.error)
-                  : null,
-            ),
+            child: _MenuItemLabel(action: action),
           ),
       ],
       // The menu button owns the one tap target and its label.
@@ -140,6 +149,38 @@ class _ActionMenu extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// A menu item's label, with the words it sends or why it can't.
+class _MenuItemLabel extends StatelessWidget {
+  final SurfaceAction action;
+
+  const _MenuItemLabel({required this.action});
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = _SurfaceScope.of(context);
+    final note = action.kind == SurfaceActionKind.sendMessage
+        ? _sendNote(scope.sendOf(action))
+        : null;
+    final label = Text(
+      action.kind == SurfaceActionKind.run
+          ? '${action.label} ($runUnavailableText)'
+          : action.label,
+      style: action.style == SurfaceActionStyle.destructive
+          ? TextStyle(color: context.colors.error)
+          : null,
+    );
+    if (note == null) return label;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        label,
+        Text(note, style: _small(context)),
+      ],
     );
   }
 }
@@ -206,7 +247,8 @@ class _MenuView extends StatelessWidget {
   }
 }
 
-/// `chips: [{text, label?}]`: a tap sends `text` as the person's message.
+/// `chips: [{text, label?}]`: a tap sends `text` as the person's message,
+/// drawn in full under the chip when it differs from the label.
 class _SuggestionChipsView extends StatelessWidget {
   final _NodeProps p;
   const _SuggestionChipsView(this.p);
@@ -214,25 +256,53 @@ class _SuggestionChipsView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scope = _SurfaceScope.of(context);
-    final send = scope.host.sendMessage;
-    final enabled = send != null && acceptsTaps(scope.surface);
+    final enabled =
+        scope.host.sendMessage != null && acceptsTaps(scope.surface);
+    // The index counts the chips drawn, as every client's tap id does.
     final chips = [
-      for (final chip in scope.list(p.component, 'chips', p.scope).take(6))
-        if (plainText(fieldOf(chip, 'text'), 300, lines: true) case final text?)
-          (text: text, label: plainText(fieldOf(chip, 'label'), 80) ?? text),
+      for (final raw
+          in scope.list(p.component, 'chips', p.scope).take(surfaceMaxChips))
+        ?chipSend(raw, agentName: scope.surface.agentName),
     ];
     return Wrap(
       spacing: Grid.half + Grid.quarter,
       runSpacing: Grid.half + Grid.quarter,
       children: [
-        for (final chip in chips)
-          Tooltip(
-            message: 'Sends this as your message',
-            child: ActionChip(
-              label: Text(chip.label),
-              onPressed: enabled ? () => send(chip.text) : null,
-            ),
+        for (final (index, chip) in chips.indexed)
+          _Chip(
+            label: chip.label,
+            note: _sendNote(chip.send),
+            onPressed: enabled && chip.send is! BlockedSend
+                ? () => scope.sendChip(p.component, index, chip.send)
+                : null,
           ),
+      ],
+    );
+  }
+}
+
+/// One suggestion chip and the line under it, if any.
+class _Chip extends StatelessWidget {
+  final String label;
+  final String? note;
+  final VoidCallback? onPressed;
+
+  const _Chip({required this.label, this.note, this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    final chip = Tooltip(
+      message: 'Sends this as your message',
+      child: ActionChip(label: Text(label), onPressed: onPressed),
+    );
+    final line = note;
+    if (line == null) return chip;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        chip,
+        Text(line, style: _small(context)),
       ],
     );
   }
@@ -253,7 +323,16 @@ class _LinkView extends StatelessWidget {
           ? const SizedBox.shrink()
           : Text(label, style: _body(context));
     }
-    final enabled = scope.canTap(action);
+    // A Link sends only the words it shows (79 M1).
+    final shown = label ?? action.label;
+    final shownHidden = hasInvisibleText(
+      resolveProp(p.component.props['text'], scope.data, p.scope),
+    );
+    final enabled = scope.canTap(
+      action,
+      shown: shown,
+      shownHidden: shownHidden,
+    );
     return Align(
       alignment: AlignmentDirectional.centerStart,
       widthFactor: 1,
@@ -262,9 +341,16 @@ class _LinkView extends StatelessWidget {
         button: action.kind != SurfaceActionKind.open,
         enabled: enabled,
         child: InkWell(
-          onTap: enabled ? () => scope.perform(context, action) : null,
+          onTap: enabled
+              ? () => scope.perform(
+                  context,
+                  action,
+                  shown: shown,
+                  shownHidden: shownHidden,
+                )
+              : null,
           child: Text(
-            label ?? action.label,
+            shown,
             style: _body(
               context,
               color: enabled

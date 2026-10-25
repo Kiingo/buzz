@@ -181,7 +181,8 @@ class _CardView extends StatelessWidget {
     final scope = _SurfaceScope.of(context);
     final media = asObject(p.component.props['media']);
     final action = scope.action(p.component.props['onTap']);
-    final tappable = action != null && scope.canTap(action);
+    // A Card tap never sends a message (79 M1): its words aren't shown.
+    final tappable = action != null && scope.canTap(action, sends: false);
     final body = _Gapped(
       children: [
         if (media != null)
@@ -209,7 +210,7 @@ class _CardView extends StatelessWidget {
         type: MaterialType.transparency,
         child: InkWell(
           borderRadius: BorderRadius.circular(Radii.lg),
-          onTap: () => scope.perform(context, action),
+          onTap: () => scope.perform(context, action, sends: false),
           child: _Panel(child: body),
         ),
       ),
