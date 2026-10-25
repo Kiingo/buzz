@@ -456,7 +456,13 @@ export const StepsView = ({ component, scope, depth }: NodeProps) => {
           )
           .filter((path): path is Pointer => Boolean(path))
       : undefined;
-    if (paths === undefined || context.controller.validate(paths)) {
+    // A view-only host can't fill the step's inputs, so it doesn't hold the
+    // person on them: they read every step.
+    if (
+      paths === undefined ||
+      context.controller.viewOnly ||
+      context.controller.validate(paths)
+    ) {
       context.controller.clearNotice();
       setIndex(index + 1);
     }
