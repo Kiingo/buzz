@@ -78,8 +78,12 @@ class _SurfaceContext {
     shown ?? action.label,
     shown == null ? action.text : action.text ?? action.label,
     hidden: action.hidden || shownHidden,
-    agentName: surface.agentName,
+    agentName: agentName,
   );
+
+  /// The card's agent, from the message signer's profile (79), never the
+  /// surface's own name for itself.
+  String? get agentName => host.agentName;
 
   /// The tap a message from control [actionId] carries.
   SurfaceTap tapOf(String actionId) => SurfaceTap(
@@ -116,12 +120,14 @@ class _SurfaceContext {
     _ => false,
   };
 
+  /// [drawn] is what the control showed it sends, at the frame tapped.
   void perform(
     BuildContext context,
     SurfaceAction action, {
     bool sends = true,
     String? shown,
     bool shownHidden = false,
+    MessageSend? drawn,
   }) {
     if (!canTap(action, sends: sends, shown: shown, shownHidden: shownHidden)) {
       return;
@@ -137,20 +143,52 @@ class _SurfaceContext {
             break;
         }
       case SurfaceActionKind.sendMessage:
-        final text = sentText(
-          sendOf(action, shown: shown, shownHidden: shownHidden),
-        );
-        if (text != null) host.sendMessage?.call(text, tapOf(action.id));
+        final send = sendOf(action, shown: shown, shownHidden: shownHidden);
+        final text = sentText(send);
+        if (text == null ||
+            (drawn != null && sentText(drawn) != text) ||
+            !_sendCounts(context, action.id)) {
+          return;
+        }
+        host.sendMessage?.call(text, tapOf(action.id));
       default:
         break;
     }
   }
 
   /// Sends a suggestion chip's words, tagged with its tap id.
-  void sendChip(SurfaceComponent component, int index, MessageSend send) {
+  void sendChip(
+    BuildContext context,
+    SurfaceComponent component,
+    int index,
+    MessageSend send,
+  ) {
     final text = sentText(send);
-    if (text == null || !acceptsTaps(surface)) return;
-    host.sendMessage?.call(text, tapOf(chipActionId(component.id, index)));
+    final actionId = chipActionId(component.id, index);
+    if (text == null ||
+        !acceptsTaps(surface) ||
+        !_sendCounts(context, actionId)) {
+      return;
+    }
+    host.sendMessage?.call(text, tapOf(actionId));
+  }
+
+  /// Whether a send tap on control [actionId] counts (79): the card on
+  /// screen is still this read (the words tapped are the words drawn), the
+  /// revision has settled for [SurfaceHost.tapSettle], and the control has
+  /// not sent from it before.
+  bool _sendCounts(BuildContext context, String actionId) {
+    final current = context
+        .getInheritedWidgetOfExactType<_SurfaceScope>()
+        ?.data
+        .surface;
+    if (!identical(current, surface)) return false;
+    return claimSurfaceSend(
+      surface.id,
+      surface.revision,
+      actionId,
+      settle: host.tapSettle,
+    );
   }
 
   /// This surface read's diffs, worked out once each (79 S4).

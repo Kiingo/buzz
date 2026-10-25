@@ -4,7 +4,6 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../../../shared/agent_dm/agent_dm_markers.dart';
 import '../../../shared/mentions/agent_identity_provider.dart';
-import '../../../shared/profile/user_cache_provider.dart';
 import '../../../shared/relay/relay.dart';
 import '../channel.dart';
 import '../channel_management_provider.dart';
@@ -36,17 +35,24 @@ AgentDmTimeline useAgentDmTimeline(
                 .toList() ??
             channel.participantPubkeys
       : const <String>[];
-  // Agents whose owner attestation (NIP-OA) verifies: from the relay's
-  // agent profiles, or the member's own cached profile.
-  final verifiedAgentPubkeys = <String>{
-    ...?ref.watch(agentOwnersProvider).asData?.value.keys,
-    for (final member in members)
-      if (ref.watch(
-        userCacheProvider.select(
-          (cache) => cache[member.trim().toLowerCase()]?.ownerPubkey != null,
-        ),
-      ))
-        member.trim().toLowerCase(),
+  // The DM's other member, and the owner its profile attests with every
+  // NIP-OA condition checked (79 S6): agent cards draw only when that
+  // owner is the reader. Only a 1:1 DM has one.
+  final self = currentPubkey?.trim().toLowerCase();
+  final normalized = normalizeAgentDmMembers(members);
+  final peers = normalized.where((member) => member != self).toList();
+  final peer =
+      self != null &&
+          normalized.length == 2 &&
+          normalized.contains(self) &&
+          peers.length == 1
+      ? peers.single
+      : null;
+  final peerOwner = peer == null
+      ? null
+      : ref.watch(agentProfileOwnerProvider(peer)).asData?.value;
+  final verifiedAgentOwners = <String, String>{
+    if (peer != null && peerOwner != null) peer: peerOwner,
   };
   return useMemoized(
     () => AgentDmTimeline.build(
@@ -55,7 +61,7 @@ AgentDmTimeline useAgentDmTimeline(
       memberPubkeys: members,
       currentPubkey: currentPubkey,
       agentPubkeys: agentPubkeys,
-      verifiedAgentPubkeys: verifiedAgentPubkeys,
+      verifiedAgentOwners: verifiedAgentOwners,
     ),
     [
       events,
@@ -63,7 +69,8 @@ AgentDmTimeline useAgentDmTimeline(
       Object.hashAll(members),
       currentPubkey,
       Object.hashAllUnordered(agentPubkeys),
-      Object.hashAllUnordered(verifiedAgentPubkeys),
+      peer,
+      peerOwner,
     ],
   );
 }

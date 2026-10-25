@@ -51,13 +51,15 @@ List<SurfaceDiffPart> surfaceDiff(
     endA--;
     endB--;
   }
-  final parts = <SurfaceDiffPart>[];
+  // Runs of one kind collect in a buffer, so joining tokens stays linear
+  // (79): a string grown by + each token would copy it every time.
+  final runs = <({SurfaceDiffKind kind, StringBuffer text})>[];
   void push(SurfaceDiffKind kind, String text) {
     if (text.isEmpty) return;
-    if (parts.isNotEmpty && parts.last.kind == kind) {
-      parts[parts.length - 1] = (kind: kind, text: parts.last.text + text);
+    if (runs.isNotEmpty && runs.last.kind == kind) {
+      runs.last.text.write(text);
     } else {
-      parts.add((kind: kind, text: text));
+      runs.add((kind: kind, text: StringBuffer(text)));
     }
   }
 
@@ -102,7 +104,7 @@ List<SurfaceDiffPart> surfaceDiff(
     }
   }
   push(SurfaceDiffKind.same, a.sublist(endA).join());
-  return parts;
+  return [for (final run in runs) (kind: run.kind, text: run.text.toString())];
 }
 
 /// One surface's diffs, each worked out once, sharing

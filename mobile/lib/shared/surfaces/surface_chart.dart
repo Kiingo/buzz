@@ -91,8 +91,12 @@ class SurfaceChartGeometry {
   });
 }
 
+/// A round step near [span] / [count]; NaN when [span] isn't a finite,
+/// positive number (a span past the largest double is infinite: the log
+/// of that can't be floored, 79).
 double _niceStep(double span, int count) {
   final raw = span / math.max(1, count);
+  if (!raw.isFinite || raw <= 0) return raw == 0 ? 1 : double.nan;
   final power = math
       .pow(10, (math.log(raw == 0 ? 1 : raw) / math.ln10).floor())
       .toDouble();
@@ -121,7 +125,15 @@ const surfaceChartMaxTicks = 10;
 ) {
   var min = low.isFinite ? low : 0.0;
   var max = high.isFinite ? high : min;
-  if (max <= min) max = min + (min.abs() > 0 ? min.abs() : 1);
+  if (max <= min) {
+    final pad = min.abs() > 0 ? min.abs() : 1.0;
+    max = min + pad;
+    // Past the largest double: pad below instead.
+    if (!max.isFinite) {
+      max = min;
+      min = min - pad;
+    }
+  }
   // Still equal: the gap is below double precision at this size.
   if (max <= min) return (min: min, max: min + 1, ticks: [min, min + 1]);
   final step = _niceStep(max - min, 4);
@@ -130,12 +142,13 @@ const surfaceChartMaxTicks = 10;
   }
   final yMin = (min / step).floorToDouble() * step;
   final yMax = (max / step).ceilToDouble() * step;
-  final count = ((yMax - yMin) / step).round();
-  if (!yMin.isFinite ||
-      !yMax.isFinite ||
-      yMax <= yMin ||
-      count < 1 ||
-      count > surfaceChartMaxTicks) {
+  // Rounding out can pass the largest double; round() of that throws.
+  final ticks = (yMax - yMin) / step;
+  if (!yMin.isFinite || !yMax.isFinite || !ticks.isFinite || yMax <= yMin) {
+    return (min: min, max: max, ticks: [min, max]);
+  }
+  final count = ticks.round();
+  if (count < 1 || count > surfaceChartMaxTicks) {
     return (min: min, max: max, ticks: [min, max]);
   }
   return (
@@ -150,7 +163,10 @@ List<SurfaceChartSeriesInput> surfaceChartSeriesOf(Object? raw) => [
     for (final item in raw)
       if (asObject(item) case final object?)
         if (asString(object['key']) case final key? when key.isNotEmpty)
-          (key: key, label: plainText(object['label'], 40) ?? key),
+          (
+            key: key,
+            label: plainText(object['label'], 40) ?? plainText(key, 40) ?? '',
+          ),
 ];
 
 /// The geometry of a chart [width] × [height] (defaults per kind).
@@ -195,14 +211,22 @@ SurfaceChartGeometry surfaceChartGeometry({
   if (round) {
     final key = plotted.first.key;
     final values = [
-      for (final row in records) math.max<num>(0, asNumber(row[key]) ?? 0),
+      for (final row in records)
+        if (asNumber(row[key]) case final value? when value.isFinite)
+          math.max<num>(0, value)
+        else
+          0,
     ];
-    final total = values.fold<num>(0, (sum, value) => sum + value);
-    if (total <= 0) return empty;
+    // Shares from values scaled by the largest, so a sum past the largest
+    // double never makes them NaN (79).
+    final peak = values.fold<num>(0, math.max);
+    if (peak <= 0) return empty;
+    final scaled = [for (final value in values) value / peak];
+    final total = scaled.fold<double>(0, (sum, value) => sum + value);
     var angle = 0.0;
     final slices = <SurfaceChartSlice>[];
     for (var index = 0; index < records.length; index++) {
-      final share = values[index] / total;
+      final share = scaled[index] / total;
       slices.add((
         start: angle,
         sweep: share * math.pi * 2,

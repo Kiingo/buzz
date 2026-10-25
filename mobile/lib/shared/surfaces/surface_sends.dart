@@ -81,13 +81,18 @@ String sendsCaption(String text) => 'Sends: “$text”';
 
 final _nameChar = RegExp(r'[\p{L}\p{N}_.-]', unicode: true);
 
+/// Characters that read as a leading slash: "/", fullwidth "／", the
+/// division slash U+2215, the fraction slash U+2044 and the big solidus
+/// U+29F8.
+const _slashes = {0x2f, 0xff0f, 0x2215, 0x2044, 0x29f8};
+
 /// A send a card may not make, read after compatibility folding and
 /// invisible-character cleaning so nothing hides in front (79, r3d): a
 /// leading "/" (a slash command), or a leading "@name" that is not the
 /// surface's own agent.
 SendBlockedReason? _refusedLead(String words, String? agentName) {
   final lead = comparableText(words).trimLeft();
-  if (lead.startsWith('/') || lead.startsWith('／')) {
+  if (lead.isNotEmpty && _slashes.contains(lead.runes.first)) {
     return SendBlockedReason.slash;
   }
   if (!lead.startsWith('@')) return null;
@@ -169,10 +174,11 @@ List<String> buzzSurfaceTapTag(SurfaceTap tap) => [
 /// The most suggestion chips drawn.
 const surfaceMaxChips = 6;
 
-/// The longest words a chip draws as its own label (code points). A chip
-/// is one line, so longer words, or words on several lines, are drawn in
-/// full under it instead (79 M1).
-const chipLabelFits = 40;
+/// The longest words a chip draws as its own label (code points), all of
+/// them narrow ([_isNarrow]). A chip is one line that fades at its edge,
+/// even in a compact carousel, so anything longer, wider or on several
+/// lines is drawn in full inside the chip under a short label (79 M1).
+const chipLabelFits = 20;
 
 /// A suggestion chip (`{text, label?}`): its label and what it sends, or
 /// null when it has no words. Words a one-line chip can't show in full
@@ -192,18 +198,34 @@ const chipLabelFits = 40;
     hidden: hasInvisibleText(rawText) || hasInvisibleText(rawLabel),
     agentName: agentName,
   );
-  if (send is LabelSend && !_fitsChip(send.text)) {
+  if (send is LabelSend && !chipLabelFitsText(send.text)) {
     return (label: _chipLabel(send.text), send: CaptionSend(send.text));
   }
-  return (label: _fitsChip(label) ? label : _chipLabel(label), send: send);
+  return (
+    label: chipLabelFitsText(label) ? label : _chipLabel(label),
+    send: send,
+  );
 }
 
-bool _fitsChip(String text) =>
-    text.runes.length <= chipLabelFits && !text.contains('\n');
+/// Whether a one-line chip shows [text] in full: at most [chipLabelFits]
+/// narrow characters and no line break.
+bool chipLabelFitsText(String text) =>
+    text.runes.length <= chipLabelFits &&
+    !_lineBreaks.hasMatch(text) &&
+    text.runes.every(_isNarrow);
 
-/// [text]'s first line, cut to [chipLabelFits] code points with "…".
+/// Latin, Greek, Cyrillic and Armenian letters, digits and the common
+/// punctuation: no wide (CJK, Hangul), emoji or ligature-sized characters
+/// (U+FDFD).
+bool _isNarrow(int code) =>
+    (code >= 0x20 && code < 0x0590) || (code >= 0x2010 && code <= 0x2027);
+
+/// [text]'s first line, cut to under [chipLabelFits] code points; "…" when
+/// anything was left out.
 String _chipLabel(String text) {
-  final chars = text.split('\n').first.trimRight().runes.toList();
+  final first = text.split(_lineBreaks).first.trimRight();
+  final chars = first.runes.toList();
+  if (chars.length < chipLabelFits && first == text) return first;
   return '${String.fromCharCodes(chars.take(chipLabelFits - 1))}…';
 }
 

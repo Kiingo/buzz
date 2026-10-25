@@ -69,7 +69,10 @@ class AgentSurfaceView extends StatelessWidget {
       host: host,
       expanded: expanded,
     );
-    final agentName = surface.agentName ?? 'your agent';
+    // Named from the message signer's profile (79), never the surface.
+    final agentName = host.agentName ?? 'your agent';
+    // Starts this revision's tap settle the first time it is drawn (79).
+    surfaceRevisionTaps(surface.id, surface.revision);
     final over = isOver(surface) && !expanded;
     final known = isKnownCatalog(surface);
     final collapsed = surface.display == SurfaceDisplay.expanded && !expanded;

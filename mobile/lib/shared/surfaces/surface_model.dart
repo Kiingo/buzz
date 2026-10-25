@@ -242,6 +242,10 @@ class Surface {
 
   /// The agent named in the header ("from Dana").
   final String? agentName;
+
+  /// The agent's Buzz key (lowercase hex) when the host names it; a card
+  /// drawn under another signer's message is not drawn (79).
+  final String? agentPubkey;
   final bool editorsAudience;
   final bool repeatable;
 
@@ -268,6 +272,7 @@ class Surface {
     required this.revision,
     required this.state,
     this.agentName,
+    this.agentPubkey,
     required this.editorsAudience,
     required this.repeatable,
     required this.viewerCanEdit,
@@ -506,6 +511,7 @@ Surface? decodeSurface(Object? value) {
           fieldOf(agent, 'displayName'),
       80,
     ),
+    agentPubkey: _agentPubkeyOf(agent),
     editorsAudience: asString(get('editors')) == 'audience',
     repeatable:
         repeatableFlag ??
@@ -570,9 +576,28 @@ List<String> unknownTypes(Surface surface) {
   return seen;
 }
 
+final _hexKey = RegExp(r'^[0-9a-f]{64}$');
+
+/// `agent.pubkey` (or `agent.buzzPubkey`) as lowercase hex, else null.
+String? _agentPubkeyOf(Object? agent) {
+  final raw = fieldOf(agent, 'pubkey') ?? fieldOf(agent, 'buzzPubkey');
+  if (raw is! String) return null;
+  final key = raw.trim().toLowerCase();
+  return _hexKey.hasMatch(key) ? key : null;
+}
+
 /// Whether [pointer] holds outside content (it or a parent is marked).
 bool isUntrustedPath(Surface surface, Pointer pointer) =>
     surface.untrustedPaths.any((marked) => isPointerPrefix(marked, pointer));
+
+/// Whether a binding to [pointer] can read outside content (79 S5): a
+/// marked pointer is at, under or above it. Binding `/replies` reads the
+/// marked `/replies/0` too.
+bool touchesUntrustedPath(Surface surface, Pointer pointer) =>
+    surface.untrustedPaths.any(
+      (marked) =>
+          isPointerPrefix(marked, pointer) || isPointerPrefix(pointer, marked),
+    );
 
 const _clientLabels = {
   'companion_mac': 'Mac',
@@ -584,8 +609,13 @@ const _clientLabels = {
 };
 
 /// "Edited on Mac" when the last change came from another of the person's
-/// clients; "Changed by" the agent when the agent changed it.
-String? editedNote(Surface surface, {String ownClient = 'buzz'}) {
+/// clients; "Changed by" the agent ([agentName], from the signer's
+/// profile) when the agent changed it.
+String? editedNote(
+  Surface surface, {
+  String ownClient = 'buzz',
+  String? agentName,
+}) {
   final edit = surface.lastEdit;
   if (edit == null) return null;
   switch (edit.actorKind) {
@@ -595,7 +625,7 @@ String? editedNote(Surface surface, {String ownClient = 'buzz'}) {
           ? 'Edited on $label'
           : null;
     case SurfaceActorKind.agent:
-      return 'Changed by ${surface.agentName ?? 'the agent'}';
+      return 'Changed by ${agentName ?? 'the agent'}';
     case SurfaceActorKind.hostApp:
       return 'Changed in another app';
     case SurfaceActorKind.member:

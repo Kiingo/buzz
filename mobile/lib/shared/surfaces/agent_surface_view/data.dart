@@ -20,7 +20,8 @@ List<_Column> _columnsOf(List<Object?> raw) => [
         (
           index: index,
           key: key,
-          title: plainText(column['title'], 60) ?? key,
+          // The key too is the agent's text (79).
+          title: plainText(column['title'], 60) ?? plainText(key, 60) ?? '',
           type: asString(column['type']) ?? 'text',
           trailing: switch (asString(column['align'])) {
             'end' || 'right' => true,

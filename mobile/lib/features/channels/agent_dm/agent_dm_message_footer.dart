@@ -44,6 +44,7 @@ class AgentDmMessageFooter extends ConsumerWidget {
     final card = timeline.questionOf(messageId);
     final actions = timeline.actionsOf(messageId);
     final surface = timeline.surfaceOf(messageId);
+    final signer = timeline.signerOf(messageId);
     final sent = ref.watch(agentDmSentProvider);
     final answerKey = card == null
         ? null
@@ -85,7 +86,8 @@ class AgentDmMessageFooter extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (surface != null) AgentDmSurfaceCard(surface: surface),
+        if (surface != null && signer != null)
+          AgentDmSurfaceCard(surface: surface, signer: signer),
         if (card != null && answerKey != null)
           AgentDmQuestionCardView(
             card: card,

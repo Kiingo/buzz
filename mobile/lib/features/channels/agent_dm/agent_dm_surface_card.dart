@@ -12,6 +12,7 @@ import '../../../shared/surfaces/surface_host.dart';
 import '../../../shared/surfaces/surface_sends.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/modal_presentation.dart';
+import '../channel_identity_names_provider.dart';
 import 'agent_dm_scope.dart';
 import 'agent_dm_sent_provider.dart';
 
@@ -30,7 +31,15 @@ class AgentDmSurfaceCard extends HookConsumerWidget {
   /// The marker on the agent message.
   final AgentDmSurface surface;
 
-  const AgentDmSurfaceCard({super.key, required this.surface});
+  /// Who signed that message (lowercase): the card is from this agent, by
+  /// its own profile's name.
+  final String signer;
+
+  const AgentDmSurfaceCard({
+    super.key,
+    required this.surface,
+    required this.signer,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -57,6 +66,11 @@ class AgentDmSurfaceCard extends HookConsumerWidget {
 
     if (scope == null || loaded == null) return const SizedBox.shrink();
     final channel = scope.channel;
+    // A card that names its agent's key must name this message's signer
+    // (79): one agent's message never frames another agent's card.
+    final named = loaded.surface.agentPubkey;
+    if (named != null && named != signer) return const SizedBox.shrink();
+    final agentName = watchChannelIdentityLabel(ref, channel.id, signer);
     final personal = scope.personal;
     final messenger = ScaffoldMessenger.maybeOf(context);
 
@@ -109,13 +123,14 @@ class AgentDmSurfaceCard extends HookConsumerWidget {
       openUrl: (url) => unawaited(openUrl(url)),
       sendMessage: (text, tap) => unawaited(send(text, tap)),
       refresh: refreshMedia,
+      agentName: agentName,
       openExpanded: expanded
           ? null
           : () => unawaited(
               showBuzzModalBottomSheet<void>(
                 context: context,
                 title: loaded.surface.title.isEmpty
-                    ? 'From ${loaded.surface.agentName ?? 'your agent'}'
+                    ? 'From $agentName'
                     : loaded.surface.title,
                 isScrollControlled: true,
                 builder: (sheetContext) => _ExpandedSurface(

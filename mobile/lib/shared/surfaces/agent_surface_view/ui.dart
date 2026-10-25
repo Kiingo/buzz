@@ -239,6 +239,11 @@ class _SurfaceButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final bool fullWidth;
 
+  /// The words a tap sends when they differ from [label] ("Sends: …"),
+  /// drawn in full inside the button, so they are on screen whenever the
+  /// button is and read with it (79 M1).
+  final String? caption;
+
   const _SurfaceButton({
     required this.label,
     this.semanticLabel,
@@ -246,12 +251,13 @@ class _SurfaceButton extends StatelessWidget {
     this.icon,
     this.onPressed,
     this.fullWidth = false,
+    this.caption,
   });
 
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
-    final child = Row(
+    final row = Row(
       mainAxisSize: fullWidth ? MainAxisSize.max : MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -263,6 +269,24 @@ class _SurfaceButton extends StatelessWidget {
         Flexible(child: Text(label, softWrap: true)),
       ],
     );
+    final words = caption;
+    final Widget child = words == null
+        ? row
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              row,
+              const SizedBox(height: Grid.quarter),
+              Text(
+                words,
+                softWrap: true,
+                style: context.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ],
+          );
     const padding = EdgeInsets.symmetric(
       horizontal: Grid.twelve,
       vertical: Grid.xxs,
