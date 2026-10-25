@@ -23,7 +23,7 @@ import { useNodeContext, type NodeProps } from "./context";
 import { BadgeLabel, EntityChip } from "./display";
 import { catalogIcon, Glyphs } from "./icons";
 import { ProxyImage } from "./media";
-import { fieldClass } from "./ui";
+import { fieldClass, QuotedText } from "./ui";
 
 // §4.2 Table and List: data-heavy display.
 
@@ -156,6 +156,16 @@ export const TableView = ({ component, scope }: NodeProps) => {
   };
   const cell = (column: Column, row: JsonValue, index: number) => {
     const value = fieldOf(row, column.key);
+    // Outside content in a cell is a quote: never a link, chip or control
+    // (79 W6).
+    if (
+      rowsPointer &&
+      context.isUntrustedAt(
+        appendPointer(appendPointer(rowsPointer, index), column.key),
+      )
+    ) {
+      return <QuotedText text={cellText(value)} />;
+    }
     if (column.editable && rowsPointer && context.acceptsEdits) {
       const pointer = appendPointer(
         appendPointer(rowsPointer, index),
@@ -402,7 +412,8 @@ export const ListView = ({ component, scope }: NodeProps) => {
   const count = Array.isArray(items) ? Math.min(items.length, 500) : 0;
   const empty = context.text(component, "emptyText", scope, 200);
   const action = context.action(component.props.onTap);
-  const tappable = action !== undefined && context.canTap(action);
+  // A row shows no words to send, so its tap never sends (79 M1/W1).
+  const tappable = action !== undefined && context.canTapSilently(action);
   const selectionPointer = bindingOf(component.props.selection, scope);
   const selected = selectionPointer
     ? asInt(context.read(selectionPointer))
@@ -437,6 +448,27 @@ export const ListView = ({ component, scope }: NodeProps) => {
           const badgeText = isObject(badge)
             ? context.textOf(badge.text, itemScope, 40)
             : undefined;
+          // An item that reads outside content is a quote and never an
+          // action (79 W6).
+          const outside =
+            context.isUntrustedAt(itemScope) ||
+            [
+              component.props.title,
+              component.props.subtitle,
+              component.props.trailing,
+              isObject(badge) ? badge.text : undefined,
+            ].some((prop) => context.isUntrustedValue(prop, itemScope));
+          if (outside) {
+            return (
+              <li key={index} className="py-2">
+                <QuotedText
+                  text={[title, subtitle, trailing, badgeText]
+                    .filter(Boolean)
+                    .join(" · ")}
+                />
+              </li>
+            );
+          }
           const content = (
             <span className="flex w-full items-center gap-2.5 py-2">
               {isObject(leading) ? (

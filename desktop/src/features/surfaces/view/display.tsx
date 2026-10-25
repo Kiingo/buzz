@@ -1,6 +1,7 @@
 // Generated from the Kiingo surface renderer packages; do not edit here.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  ownEntry,
   asNumber,
   cellText,
   countdownText,
@@ -33,6 +34,7 @@ import {
   ToneGlyph,
   toneSurface,
   toneText,
+  QuotedText,
 } from "./ui";
 import { Sparkline } from "./chart";
 
@@ -69,7 +71,7 @@ export const TextView = ({ component, scope }: NodeProps) => {
     : undefined;
   const className = cn(
     "whitespace-pre-wrap break-words",
-    TEXT_VARIANTS[variant] ?? TEXT_VARIANTS.body,
+    ownEntry(TEXT_VARIANTS, variant) ?? TEXT_VARIANTS.body,
     toneText(
       context.string(component, "tone") ??
         (variant === "caption" ? "muted" : undefined),
@@ -99,7 +101,13 @@ export const MarkdownView = ({ component, scope }: NodeProps) => {
   if (context.isUntrusted(component, "text", scope)) {
     return <QuoteBox text={text} />;
   }
-  return <MarkdownText text={text} onLink={context.openLink} />;
+  return (
+    <MarkdownText
+      text={text}
+      onLink={context.openLink}
+      budget={context.markdown}
+    />
+  );
 };
 
 const ASPECTS: Record<string, number> = {
@@ -116,7 +124,7 @@ export const ImageView = ({ component, scope }: NodeProps) => {
       url={context.value(component, "url", scope)}
       alt={context.text(component, "alt", scope, 300) ?? ""}
       fit={context.string(component, "fit") === "cover" ? "cover" : "contain"}
-      aspect={ASPECTS[context.string(component, "aspect") ?? ""]}
+      aspect={ownEntry(ASPECTS, context.string(component, "aspect"))}
     />
   );
 };
@@ -150,7 +158,7 @@ export const ImageGalleryView = ({ component, scope }: NodeProps) => {
       : undefined;
   return (
     <>
-      <div className={cn("grid gap-1.5", GALLERY_COLUMNS[columns])}>
+      <div className={cn("grid gap-1.5", ownEntry(GALLERY_COLUMNS, columns))}>
         {images.map((item, index) => {
           const caption = context.textOf(field(item, "caption"), scope, 200);
           return (
@@ -210,7 +218,8 @@ export const IconView = ({ component, scope }: NodeProps) => {
       aria-label={label}
       role={label ? "img" : undefined}
       className={cn(
-        ICON_SIZES[context.string(component, "size") ?? "md"],
+        ownEntry(ICON_SIZES, context.string(component, "size") ?? "md") ??
+          ICON_SIZES.md,
         toneText(context.string(component, "tone")),
       )}
     />
@@ -266,7 +275,8 @@ export const AvatarView = ({ component, scope }: NodeProps) => {
     (name ? initialsOf(name) : "?");
   const image = context.value(component, "imageUrl", scope);
   const size =
-    AVATAR_SIZES[context.string(component, "size") ?? "md"] ?? AVATAR_SIZES.md;
+    ownEntry(AVATAR_SIZES, context.string(component, "size") ?? "md") ??
+    AVATAR_SIZES.md;
   return (
     <span
       className="inline-flex items-center gap-2"
@@ -306,11 +316,28 @@ export const AvatarView = ({ component, scope }: NodeProps) => {
 export const KeyValueView = ({ component, scope }: NodeProps) => {
   const context = useNodeContext();
   const items = context.list(component, "items", scope).slice(0, 100);
+  if (context.isUntrusted(component, "items", scope)) {
+    const lines = items.map((item) =>
+      isObject(item)
+        ? `${cellText(resolveProp(item.name, context.data, scope))}: ${cellText(resolveProp(item.value, context.data, scope))}`
+        : cellText(item),
+    );
+    return <QuoteBox text={lines.join("\n")} />;
+  }
   const nameOf = (item: JsonValue) =>
     (isObject(item) ? context.textOf(item.name, scope, 80) : undefined) ?? "";
-  const valueText = (item: JsonValue) =>
+  const rawValue = (item: JsonValue) =>
     cellText(
       isObject(item) ? resolveProp(item.value, context.data, scope) : undefined,
+    );
+  // An outside value (or name) is quoted (79 S5/W6).
+  const valueText = (item: JsonValue) =>
+    isObject(item) &&
+    (context.isUntrustedValue(item.value, scope) ||
+      context.isUntrustedValue(item.name, scope)) ? (
+      <QuotedText text={rawValue(item)} />
+    ) : (
+      rawValue(item)
     );
   if (context.string(component, "layout") === "stacked") {
     return (
@@ -464,7 +491,7 @@ export const ProgressView = ({ component, scope }: NodeProps) => {
             stroke="currentColor"
             strokeLinecap="round"
             strokeDasharray={`${circumference * share} ${circumference}`}
-            className={RING_STROKE[tone] ?? "text-primary"}
+            className={ownEntry(RING_STROKE, tone) ?? "text-primary"}
           />
         </svg>
         {label ? <span className="text-xs">{label}</span> : null}
@@ -478,7 +505,7 @@ export const ProgressView = ({ component, scope }: NodeProps) => {
         <div
           className={cn(
             "h-full rounded-full",
-            PROGRESS_FILL[tone] ?? "bg-primary",
+            ownEntry(PROGRESS_FILL, tone) ?? "bg-primary",
           )}
           style={{ width: `${share * 100}%` }}
         />
@@ -514,7 +541,7 @@ export const TimelineView = ({ component, scope }: NodeProps) => {
               <span
                 className={cn(
                   "mt-1.5 h-2 w-2 rounded-full",
-                  TIMELINE_DOT[status ?? ""] ?? "bg-muted-foreground/50",
+                  ownEntry(TIMELINE_DOT, status) ?? "bg-muted-foreground/50",
                 )}
               />
               {index < items.length - 1 ? (
@@ -549,6 +576,9 @@ export const CodeView = ({ component, scope }: NodeProps) => {
   const code = context.text(component, "code", scope, 50_000) ?? "";
   const language = context.text(component, "language", scope, 20);
   const [copied, setCopied] = useState(false);
+  if (context.isUntrusted(component, "code", scope)) {
+    return <QuoteBox text={code} />;
+  }
   return (
     <div className="overflow-hidden rounded-md border border-border bg-muted">
       <div className="flex items-center justify-between border-b border-border px-3 py-1 text-2xs text-muted-foreground">
@@ -583,6 +613,13 @@ export const DiffView = ({ component, scope }: NodeProps) => {
   const context = useNodeContext();
   const before = context.text(component, "before", scope, 20_000) ?? "";
   const after = context.text(component, "after", scope, 20_000) ?? "";
+  const granularity =
+    context.string(component, "granularity") === "line" ? "line" : "word";
+  // Memoized, and too-large inputs are not compared (79 W8: 4M cells).
+  const parts = useMemo(
+    () => diffText(before, after, granularity),
+    [before, after, granularity],
+  );
   if (context.string(component, "mode") === "sideBySide") {
     return (
       <div className="@container">
@@ -600,11 +637,6 @@ export const DiffView = ({ component, scope }: NodeProps) => {
       </div>
     );
   }
-  const parts = diffText(
-    before,
-    after,
-    context.string(component, "granularity") === "line" ? "line" : "word",
-  );
   return (
     <p className="whitespace-pre-wrap break-words text-sm">
       {parts.map((part, index) =>
@@ -679,15 +711,15 @@ export const EntityChip = ({ entity }: { entity: EntityKey }) => {
   const [resolved, setResolved] = useState<string | undefined>(undefined);
   const controller = context.controller;
   const { type, id, title } = entity;
-  // One lookup per entity.
+  // Batched with every other chip on the surface (79 W8).
   useEffect(() => {
     if (title) {
       return undefined;
     }
     let cancelled = false;
-    void controller.resolveRefs([{ type, id }]).then((items) => {
+    void controller.resolveRefTitle({ type, id }).then((found) => {
       if (!cancelled) {
-        setResolved(items.find((item) => item.id === id)?.title);
+        setResolved(found);
       }
     });
     return () => {
@@ -820,7 +852,9 @@ export const MediaView = ({ component, scope }: NodeProps) => {
       ? proxiedMediaUrl(raw, context.host.apiOrigin)
       : undefined;
   const fileId = plainId(context.value(component, "artifactId", scope));
-  const [playing, setPlaying] = useState(false);
+  // No in-page playback until the media proxy serves audio and video with
+  // a no-redirect, A/V-type allowlist (79 nit, S7): open it in Kiingo.
+  const webUrl = context.surface.webUrl;
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
       <div className="flex items-center gap-2.5">
@@ -828,42 +862,18 @@ export const MediaView = ({ component, scope }: NodeProps) => {
           aria-hidden
           className="h-4 w-4 shrink-0 text-muted-foreground"
         />
-        <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
-        {url && !playing ? (
-          <SurfaceButton
-            size="sm"
-            onClick={() => setPlaying(true)}
-            aria-label={`Play ${title}`}
-          >
-            Play
-          </SurfaceButton>
-        ) : !url && fileId ? (
+        <span className="min-w-0 flex-1 truncate text-sm">
+          {title}
+          <span className="sr-only">{isVideo ? " (video)" : " (audio)"}</span>
+        </span>
+        {fileId ? (
           <EntityChip entity={{ type: "file", id: fileId, title }} />
+        ) : url && webUrl ? (
+          <SurfaceButton size="sm" onClick={() => context.openLink(webUrl)}>
+            Open in Kiingo
+          </SurfaceButton>
         ) : null}
       </div>
-      {url && playing ? (
-        isVideo ? (
-          // biome-ignore lint/a11y/useMediaCaption: agent media carries no caption track.
-          <video
-            src={url}
-            controls
-            autoPlay
-            preload="none"
-            className="w-full rounded-md"
-            aria-label={title}
-          />
-        ) : (
-          // biome-ignore lint/a11y/useMediaCaption: agent media carries no caption track.
-          <audio
-            src={url}
-            controls
-            autoPlay
-            preload="none"
-            className="w-full"
-            aria-label={title}
-          />
-        )
-      ) : null}
     </div>
   );
 };
@@ -874,6 +884,17 @@ export const LinkPreviewView = ({ component, scope }: NodeProps) => {
   const title = context.text(component, "title", scope, 200);
   const description = context.text(component, "description", scope, 300);
   const image = context.value(component, "imageUrl", scope);
+  // Outside content never becomes a link (79 W6).
+  if (
+    ["url", "title", "description", "imageUrl"].some((key) =>
+      context.isUntrusted(component, key, scope),
+    )
+  ) {
+    const host = link ? urlHost(link) : undefined;
+    return (
+      <QuoteBox text={[title, description, host].filter(Boolean).join("\n")} />
+    );
+  }
   const body = (
     <>
       {image ? (

@@ -5,11 +5,12 @@ import {
   asString,
   field,
   isObject,
+  ownEntry,
   type JsonObject,
   type JsonValue,
 } from "./json";
 import { isPointerPrefix, parsePointer, type Pointer } from "./pointer";
-import { openableUrl, plainId, plainText } from "./text";
+import { hasInvisibleText, openableUrl, plainId, plainText } from "./text";
 
 // The wire model of a generative UI surface (kiingo.ui/v1,
 // docs/design/generative-ui-and-mcp-core.md §3, §3.1, §4, §5, §10),
@@ -24,6 +25,8 @@ export const MAX_DEPTH = 12;
 export const MAX_ACTIONS = 20;
 /** At most this many repeats are drawn (a 5,000-row list stays usable). */
 export const MAX_REPEATS = 500;
+/** Nodes one surface draws; past it a "too large" row (79 W8). */
+export const MAX_SURFACE_NODES = 2000;
 
 export type SurfaceDisplay = "inline" | "expanded" | "carousel";
 export type SurfaceState =
@@ -205,6 +208,11 @@ export type SurfaceAction = {
   repeatable: boolean;
   /** ask_agent: the short instruction sent with the surface state. */
   prompt?: string;
+  /**
+   * The agent's raw label, words or prompt held an invisible character
+   * (79 S1): the action never sends words (see `messageSend`).
+   */
+  hidden?: true;
 };
 
 export type SurfaceStatus = {
@@ -397,6 +405,13 @@ export const decodeAction = (
   const icon = plainText(value.icon, 64);
   if (icon) {
     action.icon = icon;
+  }
+  if (
+    hasInvisibleText(value.label) ||
+    hasInvisibleText(value.text) ||
+    hasInvisibleText(value.prompt)
+  ) {
+    action.hidden = true;
   }
   const text = plainText(value.text, 2000, true);
   if (text) {
@@ -648,7 +663,7 @@ const CLIENT_LABELS: Record<string, string> = {
 };
 
 export const clientLabel = (client: string | undefined): string | undefined =>
-  client ? CLIENT_LABELS[client] : undefined;
+  ownEntry(CLIENT_LABELS, client);
 
 /**
  * "Edited on Mac" when the last change came from another of the user's

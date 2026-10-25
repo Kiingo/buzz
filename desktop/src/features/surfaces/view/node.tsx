@@ -3,6 +3,7 @@ import type { ComponentType as ReactComponentType } from "react";
 import {
   isVisible,
   MAX_DEPTH,
+  MAX_SURFACE_NODES,
   type ChildRef,
   type ComponentType,
   type Pointer,
@@ -158,6 +159,17 @@ export const Node = ({
   }
   if (!isVisible(component.visibleWhen, context.data, scope)) {
     return null;
+  }
+  // At most MAX_SURFACE_NODES per surface (79 W8): past it one "too large"
+  // row, and nothing more is drawn.
+  context.nodes.count += 1;
+  if (context.nodes.count > MAX_SURFACE_NODES) {
+    if (context.nodes.count > MAX_SURFACE_NODES + 1) {
+      return null;
+    }
+    return (
+      <NewerAppRow text="This card is too large to show here. Open it in Kiingo." />
+    );
   }
   const View = component.known
     ? viewFor(component.type as ComponentType)

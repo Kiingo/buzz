@@ -1,6 +1,11 @@
 // Generated from the Kiingo surface renderer packages; do not edit here.
 import { createContext, useContext } from "react";
-import { IMAGE_MIME_TYPES, isOutsideUrl, type EntityKey } from "../core";
+import {
+  IMAGE_MIME_TYPES,
+  isOutsideUrl,
+  type EntityKey,
+  type SurfaceTapRef,
+} from "../core";
 
 /**
  * What the app around a surface does for it (the Swift `UiSurfaceHost`).
@@ -9,8 +14,13 @@ import { IMAGE_MIME_TYPES, isOutsideUrl, type EntityKey } from "../core";
  * capability draws its control disabled.
  */
 export type SurfaceHost = {
-  /** `send_message` and suggestion chips: the words go as the user's own message. */
-  sendMessage?: (text: string) => void;
+  /**
+   * `send_message` and suggestion chips: `text` (exactly what the control
+   * showed) goes as the user's message, carrying `tap` so the turn gets
+   * tap-turn trust (r3/r3b): the dashboard sends it as the turn's
+   * `ui_surface_tap` metadata, Buzz as the `buzz-surface-tap` tag.
+   */
+  sendMessage?: (text: string, tap: SurfaceTapRef) => void;
   /** Whether a Kiingo object can be opened here (else its chip is plain). */
   canOpenEntity?: (entity: EntityKey) => boolean;
   openEntity?: (entity: EntityKey) => void;
@@ -18,7 +28,10 @@ export type SurfaceHost = {
   openExpanded?: (surfaceId: string) => void;
   /** Opens an https or Kiingo link. Outside hosts were confirmed first. */
   openUrl: (url: string) => void;
-  /** Hosts that are not the organization's own (asked before opening). */
+  /**
+   * Links confirmed before opening: by default everything but the page's
+   * own origin (79 W10), which the host routes in-app.
+   */
   isOutside?: (url: string) => boolean;
   /** The API's origin, e.g. https://api.kiingo.com: media load only from its proxy. */
   apiOrigin: string;
@@ -37,7 +50,7 @@ export type UploadedFile = {
 
 export type MediaAnswer =
   | { kind: "image"; blob: Blob }
-  /** 401/410: the signature expired; the surface is read again. */
+  /** 401: the signature expired; the surface is read again. */
   | { kind: "expired" }
   | { kind: "failed" };
 
@@ -51,7 +64,8 @@ export const fetchMedia = async (url: string): Promise<MediaAnswer> => {
       referrerPolicy: "no-referrer",
       redirect: "error",
     });
-    if (response.status === 401 || response.status === 410) {
+    // Only 401 is an expired signature; 410 is a refusal (79 nit).
+    if (response.status === 401) {
       return { kind: "expired" };
     }
     if (!response.ok) {
@@ -79,7 +93,14 @@ export const fetchMedia = async (url: string): Promise<MediaAnswer> => {
   }
 };
 
-export const defaultIsOutside = (url: string): boolean => isOutsideUrl(url);
+/** Everything but this page's own origin is confirmed first (79 W10). */
+export const defaultIsOutside = (url: string): boolean =>
+  isOutsideUrl(
+    url,
+    typeof window !== "undefined" && window.location?.origin
+      ? [window.location.origin]
+      : [],
+  );
 
 const noHost: SurfaceHost = {
   openUrl: () => undefined,

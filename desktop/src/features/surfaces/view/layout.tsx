@@ -1,6 +1,7 @@
 // Generated from the Kiingo surface renderer packages; do not edit here.
 import { useState } from "react";
 import {
+  ownEntry,
   asInt,
   childrenOf,
   isObject,
@@ -15,7 +16,8 @@ import { gapClass, useNodeContext, type NodeProps } from "./context";
 import { Glyphs } from "./icons";
 import { ProxyImage } from "./media";
 import { Children } from "./node";
-import { SurfaceButton, SurfaceDialog } from "./ui";
+import { ActionButton } from "./actions";
+import { QuoteBox, SurfaceButton, SurfaceDialog } from "./ui";
 
 // §4.1 Layout.
 
@@ -92,7 +94,7 @@ export const GridView = ({ component, scope, depth }: NodeProps) => {
       <div
         className={cn(
           "grid",
-          GRID_COLUMNS[columns],
+          ownEntry(GRID_COLUMNS, columns),
           gapClass(context.string(component, "gap")),
         )}
       >
@@ -161,8 +163,10 @@ export const CardView = ({ component, scope, depth }: NodeProps) => {
   const title = context.text(component, "title", scope, 200);
   const subtitle = context.text(component, "subtitle", scope, 300);
   const action = context.action(component.props.onTap);
+  // A card shows no words to send, so its tap never sends (79 M1/W1).
   const tappable =
-    action !== undefined && context.canTap(action) && !context.busy;
+    action !== undefined && context.canTapSilently(action) && !context.busy;
+  const titleOutside = context.isUntrusted(component, "title", scope);
   const body = (
     <>
       {isObject(media) ? (
@@ -174,7 +178,23 @@ export const CardView = ({ component, scope, depth }: NodeProps) => {
           className="max-h-44"
         />
       ) : null}
-      <Heading title={title} subtitle={subtitle} />
+      {titleOutside ? (
+        <QuoteBox text={[title, subtitle].filter(Boolean).join("\n")} />
+      ) : (
+        <Heading
+          title={title}
+          subtitle={
+            context.isUntrusted(component, "subtitle", scope)
+              ? undefined
+              : subtitle
+          }
+        />
+      )}
+      {!titleOutside &&
+      subtitle &&
+      context.isUntrusted(component, "subtitle", scope) ? (
+        <QuoteBox text={subtitle} />
+      ) : null}
       <Children
         refs={context.children(component, scope, "child")}
         depth={depth}
@@ -493,13 +513,8 @@ export const StepsView = ({ component, scope, depth }: NodeProps) => {
             Next
           </SurfaceButton>
         ) : finish && context.canTap(finish) ? (
-          <SurfaceButton
-            variant="primary"
-            disabled={context.busy}
-            onClick={() => context.perform(finish.id, scope)}
-          >
-            {finish.label}
-          </SurfaceButton>
+          // The action's own button: a send shows its words (79 W1).
+          <ActionButton action={finish} scope={scope} style="primary" />
         ) : null}
       </div>
     </div>
@@ -522,12 +537,13 @@ export const DividerView = ({ component, scope }: NodeProps) => {
 };
 
 /**
- * Open while tapped here or while `open` (literal or bound) is true;
- * closing writes false back to a bound `open`.
+ * Opens only on a tap in this session (79 W3): `open` (literal or bound)
+ * never opens it by itself, a refresh never reopens it, and closing always
+ * wins locally. Closing writes false back to a bound, editable `open`.
  */
 export const ModalView = ({ component, scope, depth }: NodeProps) => {
   const context = useNodeContext();
-  const [local, setLocal] = useState(false);
+  const [shown, setLocal] = useState(false);
   const entry = context.children(component, scope, "entry");
   const title = context.text(component, "title", scope, 120) ?? "";
   const prop = component.props.open;
@@ -535,7 +551,6 @@ export const ModalView = ({ component, scope, depth }: NodeProps) => {
     isObject(prop) && typeof prop.path === "string"
       ? resolvePointer(prop.path, scope)
       : undefined;
-  const shown = local || context.value(component, "open", scope) === true;
   const setShown = (next: boolean) => {
     setLocal(next);
     if (

@@ -1,6 +1,7 @@
 // Generated from the Kiingo surface renderer packages; do not edit here.
 export * from "./json";
 export * from "./text";
+export * from "./sends";
 export * from "./pointer";
 export * from "./patch";
 export * from "./model";

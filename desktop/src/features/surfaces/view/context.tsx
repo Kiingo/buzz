@@ -4,7 +4,9 @@ import {
   bindingOf,
   childKey,
   childrenOf,
+  isPointerPrefix,
   isUntrustedPath,
+  markdownBudget,
   MAX_REPEATS,
   propBool,
   propNumber,
@@ -14,6 +16,8 @@ import {
   type ControllerSnapshot,
   type JsonObject,
   type JsonValue,
+  type MarkdownBudget,
+  type MessageSend,
   type Pointer,
   type Surface,
   type SurfaceAction,
@@ -47,6 +51,12 @@ export class NodeContext {
     readonly perform: (actionId: string, scope: Pointer) => void,
     /** https or Kiingo links; outside ones are confirmed first. */
     readonly openLink: (url: string) => void,
+    /** The words a chip or send shows, through the controller (79 W1). */
+    readonly sendMessage: (send: MessageSend, actionId: string) => void,
+    /** This render's Markdown allowance (79 S2), shared by every node. */
+    readonly markdown: MarkdownBudget = markdownBudget(),
+    /** Nodes drawn in this render (79 W8: at most MAX_SURFACE_NODES). */
+    readonly nodes: { count: number } = { count: 0 },
   ) {}
 
   get surface(): Surface {
@@ -98,14 +108,48 @@ export class NodeContext {
     return typeof value === "string" ? value : undefined;
   }
 
-  /** Whether the prop reads outside content (§10: drawn as a Quote). */
+  /**
+   * Whether the prop reads outside content (§10, 79 W6): drawn as a Quote,
+   * never as a link or an action. A prop bound under a `dataTrust` path, a
+   * literal inside a repeat over one, or one inside an outside list.
+   */
   isUntrusted(
     component: SurfaceComponent,
     key: string,
     scope: Pointer,
   ): boolean {
-    const pointer = bindingOf(component.props[key], scope);
-    return pointer ? isUntrustedPath(this.surface, pointer) : false;
+    return this.isUntrustedValue(component.props[key], scope);
+  }
+
+  /** {@link isUntrusted} for any prop value (an item field, a column). */
+  isUntrustedValue(prop: unknown, scope: Pointer): boolean {
+    const pointer = bindingOf(prop, scope);
+    if (pointer) {
+      return this.isUntrustedAt(pointer);
+    }
+    // A literal inside a repeat over outside items is the agent's own text,
+    // but anything read from the item (`./x`) was handled above.
+    return false;
+  }
+
+  /** Whether data at `pointer` (a table cell, a list item) is outside content. */
+  isUntrustedAt(pointer: Pointer): boolean {
+    return isUntrustedPath(this.surface, pointer);
+  }
+
+  /**
+   * Whether `prop`, a list, holds outside content anywhere: its own path, or
+   * a `dataTrust` path below it (one column, one item's field).
+   */
+  isUntrustedList(prop: unknown, scope: Pointer): boolean {
+    const pointer = bindingOf(prop, scope);
+    return pointer
+      ? this.surface.untrustedPaths.some(
+          (marked) =>
+            isPointerPrefix(marked, pointer) ||
+            isPointerPrefix(pointer, marked),
+        )
+      : false;
   }
 
   children(
@@ -128,6 +172,14 @@ export class NodeContext {
 
   canTap(action: SurfaceAction): boolean {
     return this.controller.canTap(action);
+  }
+
+  /**
+   * A tap on a whole row, card or item: it shows no words, so it never
+   * sends a message (79 M1/W1). Other actions as {@link canTap}.
+   */
+  canTapSilently(action: SurfaceAction): boolean {
+    return action.kind !== "send_message" && this.controller.canTap(action);
   }
 
   get busy(): boolean {

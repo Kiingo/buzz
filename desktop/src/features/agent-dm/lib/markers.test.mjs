@@ -310,6 +310,7 @@ test("parseSurface reads exactly one well-formed surface card marker", () => {
     [["buzz-surface", id, "0"]],
     [["buzz-surface", id, "-1"]],
     [["buzz-surface", id, "1.5"]],
+    [["buzz-surface", id, "3", "extra"]],
     [["buzz-surface", id]],
     [
       ["buzz-surface", id, "3"],

@@ -1,6 +1,11 @@
 // Generated from the Kiingo surface renderer packages; do not edit here.
 import { useState, type ReactNode } from "react";
-import { changedFlags, outsideLine, type Confirmation } from "../core";
+import {
+  ownEntry,
+  changedFlags,
+  outsideLine,
+  type Confirmation,
+} from "../core";
 import { Glyphs } from "./icons";
 import { SurfaceButton, SurfaceDialog } from "./ui";
 
@@ -24,7 +29,8 @@ export const ConfirmationDialog = ({
   const flags = changedFlags(confirmation);
   const roles = new Map<string, Confirmation["recipients"]>();
   for (const recipient of confirmation.recipients) {
-    const role = ROLE_LABELS[recipient.role.toLowerCase()] ?? "Recipients";
+    const role =
+      ownEntry(ROLE_LABELS, recipient.role.toLowerCase()) ?? "Recipients";
     roles.set(role, [...(roles.get(role) ?? []), recipient]);
   }
   const hasDetails =
