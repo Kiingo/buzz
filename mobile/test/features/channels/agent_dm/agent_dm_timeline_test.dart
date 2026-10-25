@@ -40,14 +40,14 @@ AgentDmTimeline _build(
   List<NostrEvent> events, {
   bool isDm = true,
   List<String> members = const [_agent, _me],
-  Set<String> verified = const {_agent},
+  Map<String, String> owners = const {_agent: _me},
 }) => AgentDmTimeline.build(
   events: events,
   isDm: isDm,
   memberPubkeys: members,
   currentPubkey: _me,
   agentPubkeys: const {_agent},
-  verifiedAgentPubkeys: verified,
+  verifiedAgentOwners: owners,
 );
 
 const _question = [
@@ -248,13 +248,19 @@ void main() {
       ['buzz-surface', id, '1'],
     ]);
     // A self-published agent profile (kind 10100) alone draws nothing.
-    expect(_build([card], verified: const {}).surfaceOf('s1'), isNull);
+    expect(_build([card], owners: const {}).surfaceOf('s1'), isNull);
+    // Someone else's verified agent draws nothing (79 S6).
+    expect(
+      _build([card], owners: const {_agent: _outsider}).surfaceOf('s1'),
+      isNull,
+    );
     // A group DM draws nothing, even from a verified agent.
     expect(
       _build([card], members: const [_agent, _me, _outsider]).surfaceOf('s1'),
       isNull,
     );
     expect(_build([card]).surfaceOf('s1')?.revision, 1);
+    expect(_build([card]).signerOf('s1'), _agent);
   });
 
   test('ignores a surface marker with extra elements', () {

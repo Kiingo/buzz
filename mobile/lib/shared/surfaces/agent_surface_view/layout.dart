@@ -415,24 +415,28 @@ class _StepsView extends HookWidget {
           childrenOf(fieldOf(step, 'child'), scope.data, p.scope),
           p.depth,
         ),
-        Row(
-          children: [
-            if (at > 0)
-              _SurfaceButton(
-                label: 'Back',
-                onPressed: () => index.value = at - 1,
-              ),
-            const Spacer(),
-            if (at < steps.length - 1)
-              _SurfaceButton(
-                label: 'Next',
-                style: SurfaceActionStyle.primary,
-                onPressed: () => index.value = at + 1,
-              )
-            else if (finish != null)
-              _ActionButton(action: finish, scope: p.scope),
-          ],
-        ),
+        if (at > 0 || at < steps.length - 1)
+          Row(
+            children: [
+              if (at > 0)
+                _SurfaceButton(
+                  label: 'Back',
+                  onPressed: () => index.value = at - 1,
+                ),
+              const Spacer(),
+              if (at < steps.length - 1)
+                _SurfaceButton(
+                  label: 'Next',
+                  style: SurfaceActionStyle.primary,
+                  onPressed: () => index.value = at + 1,
+                ),
+            ],
+          ),
+        // The finish action on its own full-width row: its label and the
+        // words it sends wrap there instead of overflowing beside Back
+        // (79).
+        if (at == steps.length - 1 && finish != null)
+          _ActionButton(action: finish, scope: p.scope, fullWidth: true),
       ],
     );
   }

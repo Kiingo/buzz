@@ -128,7 +128,12 @@ String countdownText(DateTime target, {required bool since, DateTime? now}) {
 }
 
 /// Text for a table cell or list value of any shape.
-String cellText(Object? value) {
+String cellText(Object? value) => _cellText(value, 0);
+
+/// Lists inside lists are read this deep, no deeper (79).
+const _cellDepth = 4;
+
+String _cellText(Object? value, int depth) {
   if (value is String || value is num) {
     return plainText(value, 500, lines: true) ?? '';
   }
@@ -145,11 +150,18 @@ String cellText(Object? value) {
         ) ??
         '';
   }
-  if (value is List) {
-    return value.map(cellText).where((text) => text.isNotEmpty).join(', ');
+  if (value is List && depth < _cellDepth) {
+    return value
+        .take(surfaceMaxCellItems)
+        .map((item) => _cellText(item, depth + 1))
+        .where((text) => text.isNotEmpty)
+        .join(', ');
   }
   return '';
 }
+
+/// Most list items a cell reads.
+const surfaceMaxCellItems = 50;
 
 /// A rich text value (`{format, text}` or a plain string) as its Markdown.
 String richTextOf(Object? value) {

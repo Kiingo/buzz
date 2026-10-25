@@ -115,7 +115,7 @@ class AgentDmTimeline {
     required Iterable<String> memberPubkeys,
     required String? currentPubkey,
     required Set<String> agentPubkeys,
-    Set<String> verifiedAgentPubkeys = const {},
+    Map<String, String> verifiedAgentOwners = const {},
   }) {
     if (!isDm) return empty;
     final members = normalizeAgentDmMembers(memberPubkeys);
@@ -123,10 +123,14 @@ class AgentDmTimeline {
     final self = currentPubkey?.trim().toLowerCase();
     final agents = {for (final pubkey in agentPubkeys) pubkey.toLowerCase()};
     // Agent cards only in a 1:1 DM between the reader and an agent whose
-    // owner attestation verifies (79 S6): kind 10100 is self-published, so
-    // it alone never draws a card.
-    final verified = {
-      for (final pubkey in verifiedAgentPubkeys) pubkey.toLowerCase(),
+    // owner attestation verifies with the reader as its owner (79 S6):
+    // kind 10100 is self-published, so it alone never draws a card, and
+    // someone else's verified agent never gets send buttons that post as
+    // the reader.
+    final ownedBySelf = {
+      for (final entry in verifiedAgentOwners.entries)
+        if (self != null && entry.value.trim().toLowerCase() == self)
+          entry.key.trim().toLowerCase(),
     };
     final oneToOne =
         self != null && members.length == 2 && members.contains(self);
@@ -192,7 +196,7 @@ class AgentDmTimeline {
       if (card != null) questions[event.id] = card;
       final buttons = readAgentDmActions(event.tags);
       if (buttons.isNotEmpty) actions[event.id] = buttons;
-      final surface = oneToOne && verified.contains(signer)
+      final surface = oneToOne && ownedBySelf.contains(signer)
           ? readAgentDmSurface(event.tags)
           : null;
       if (surface != null) {
@@ -242,6 +246,9 @@ class AgentDmTimeline {
 
   /// The agent card message [id] points at, or null.
   AgentDmSurface? surfaceOf(String id) => _surfaces[id];
+
+  /// Who signed message [id] (lowercase), when it is indexed.
+  String? signerOf(String id) => _signers[id];
 
   /// The newest revision any loaded message names for [surfaceId], so every
   /// message showing that card reads the same, latest copy.

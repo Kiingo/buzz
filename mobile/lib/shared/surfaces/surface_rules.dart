@@ -166,9 +166,11 @@ int surfaceNodeCount(Surface surface, {int limit = surfaceMaxNodes}) {
   return found;
 }
 
-/// Whether any of [component]'s props, at any depth, is bound under a path
-/// holding outside content (§10, 79 S5). Such a component is drawn as a
-/// quote, with no links or actions.
+/// Whether any of [component]'s props, at any depth, is bound at, under or
+/// above a path holding outside content, or its repeat scope is (§10,
+/// 79 S5): chips, List and Table items and repeats bound to a list that
+/// holds a marked item all count. Such a component is drawn as a quote,
+/// with no links or actions.
 bool readsUntrusted(
   Surface surface,
   SurfaceComponent component,
@@ -182,7 +184,9 @@ bool readsUntrusted(
       final path = value['path'];
       if (path is String) {
         final pointer = resolvePointer(path, scope);
-        if (pointer != null && isUntrustedPath(surface, pointer)) return true;
+        if (pointer != null && touchesUntrustedPath(surface, pointer)) {
+          return true;
+        }
       }
       return value.values.any(visit);
     }
@@ -191,5 +195,5 @@ bool readsUntrusted(
   }
 
   return component.props.values.any(visit) ||
-      (scope.isNotEmpty && isUntrustedPath(surface, scope));
+      (scope.isNotEmpty && touchesUntrustedPath(surface, scope));
 }

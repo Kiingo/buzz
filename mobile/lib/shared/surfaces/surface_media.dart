@@ -5,6 +5,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -34,6 +35,26 @@ const surfaceMaxImagePixels = 4096 * 4096;
 /// Whether an image of [width] x [height] (from its header) is drawn.
 bool isDrawableImageSize(int width, int height) =>
     width > 0 && height > 0 && width * height <= surfaceMaxImagePixels;
+
+/// The width to decode a [width] x [height] image at for a box of
+/// [boxWidth] x [boxHeight] device pixels (79): never wider than the box,
+/// and never more pixels in all than twice the box holds, so a very tall
+/// or very wide image decodes small too (a width cap alone left a
+/// 100 x 160000 image at full size).
+int surfaceImageDecodeWidth({
+  required int width,
+  required int height,
+  required int boxWidth,
+  required int boxHeight,
+}) {
+  if (width <= 0 || height <= 0) return 1;
+  final limit = math.max(1, boxWidth) * math.max(1, boxHeight) * 2;
+  var target = math.min(width, math.max(1, boxWidth));
+  if (target * (height * target / width) > limit) {
+    target = math.sqrt(limit * width / height).floor();
+  }
+  return math.max(1, target);
+}
 
 const _timeout = Duration(seconds: 20);
 final _token = RegExp(r'^token=[A-Za-z0-9._~-]{1,2048}$');

@@ -99,12 +99,22 @@ int _foldCode(int code) {
 String comparableText(String text) =>
     withoutInvisible(foldCompatibilityForms(text)).toLowerCase();
 
+/// LF, CR, NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR.
+const _lineBreakCodes = {0x0a, 0x0d, 0x85, 0x2028, 0x2029};
+
 /// Controls and invisible characters removed (newlines kept when [lines]),
 /// at most [max] characters.
 String cleanText(String text, int max, {bool lines = false}) {
   final out = StringBuffer();
+  var afterCr = false;
   for (final code in text.runes) {
-    if (code == 0x0a) {
+    // Every line break is a "\n" (79 M1): CRLF once; CR, LF, NEL, LS and
+    // PS each. Nothing else breaks a line, so every rule that looks for
+    // "\n" sees every break.
+    final crlf = afterCr && code == 0x0a;
+    afterCr = code == 0x0d;
+    if (crlf) continue;
+    if (_lineBreakCodes.contains(code)) {
       out.write(lines ? '\n' : ' ');
       continue;
     }

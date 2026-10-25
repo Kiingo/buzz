@@ -32,20 +32,25 @@ class _ActionButton extends StatelessWidget {
     final surface = _SurfaceScope.of(context);
     final runOff = action.kind == SurfaceActionKind.run;
     final iconName = icon ?? action.icon;
+    final send = action.kind == SurfaceActionKind.sendMessage
+        ? surface.sendOf(action)
+        : null;
     final button = _SurfaceButton(
       label: action.label,
       style: style ?? action.style,
       icon: iconName == null ? null : _catalogIcon(iconName),
       fullWidth: fullWidth,
+      // The words sent, inside the button (79 M1).
+      caption: send is CaptionSend ? sendsCaption(send.text) : null,
       onPressed: surface.canTap(action)
-          ? () => surface.perform(context, action)
+          ? () => surface.perform(context, action, drawn: send)
           : null,
     );
     final String? note;
     if (runOff) {
       note = runUnavailableText;
-    } else if (action.kind == SurfaceActionKind.sendMessage) {
-      note = _sendNote(surface.sendOf(action));
+    } else if (send is BlockedSend) {
+      note = sendBlockedText(send);
     } else {
       note = null;
     }
@@ -121,7 +126,13 @@ class _ActionMenu extends StatelessWidget {
     final scope = _SurfaceScope.of(context);
     return PopupMenuButton<SurfaceAction>(
       tooltip: title,
-      onSelected: (action) => scope.perform(context, action),
+      onSelected: (action) => scope.perform(
+        context,
+        action,
+        drawn: action.kind == SurfaceActionKind.sendMessage
+            ? scope.sendOf(action)
+            : null,
+      ),
       itemBuilder: (context) => [
         for (final action in actions)
           PopupMenuItem(
@@ -262,7 +273,7 @@ class _SuggestionChipsView extends StatelessWidget {
     final chips = [
       for (final raw
           in scope.list(p.component, 'chips', p.scope).take(surfaceMaxChips))
-        ?chipSend(raw, agentName: scope.surface.agentName),
+        ?chipSend(raw, agentName: scope.agentName),
     ];
     return Wrap(
       spacing: Grid.half + Grid.quarter,
@@ -271,9 +282,9 @@ class _SuggestionChipsView extends StatelessWidget {
         for (final (index, chip) in chips.indexed)
           _Chip(
             label: chip.label,
-            note: _sendNote(chip.send),
+            send: chip.send,
             onPressed: enabled && chip.send is! BlockedSend
-                ? () => scope.sendChip(p.component, index, chip.send)
+                ? () => scope.sendChip(context, p.component, index, chip.send)
                 : null,
           ),
       ],
@@ -281,21 +292,31 @@ class _SuggestionChipsView extends StatelessWidget {
   }
 }
 
-/// One suggestion chip and the line under it, if any.
+/// One suggestion chip. Words that differ from the label (or don't fit a
+/// one-line chip) are drawn in full inside it (79 M1); a chip that can't
+/// send says why under it.
 class _Chip extends StatelessWidget {
   final String label;
-  final String? note;
+  final MessageSend send;
   final VoidCallback? onPressed;
 
-  const _Chip({required this.label, this.note, this.onPressed});
+  const _Chip({required this.label, required this.send, this.onPressed});
 
   @override
   Widget build(BuildContext context) {
+    final words = send;
+    if (words is CaptionSend) {
+      return _SurfaceButton(
+        label: label,
+        caption: sendsCaption(words.text),
+        onPressed: onPressed,
+      );
+    }
     final chip = Tooltip(
       message: 'Sends this as your message',
       child: ActionChip(label: Text(label), onPressed: onPressed),
     );
-    final line = note;
+    final line = sendBlockedText(words);
     if (line == null) return chip;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

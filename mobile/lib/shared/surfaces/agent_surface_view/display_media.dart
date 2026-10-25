@@ -35,8 +35,13 @@ class _ProxyImage extends HookConsumerWidget {
       return null;
     }, [expired, proxied]);
     final Widget child;
-    if (result case SurfaceImageBytes(:final bytes, :final width)) {
-      // Decoded at the size drawn, never the full bitmap (79 S3).
+    if (result case SurfaceImageBytes(
+      :final bytes,
+      :final width,
+      :final height,
+    )) {
+      // Decoded at the size drawn, never the full bitmap, and never more
+      // pixels in all than the box holds (79 S3).
       child = LayoutBuilder(
         builder: (context, constraints) {
           final ratio = MediaQuery.devicePixelRatioOf(context);
@@ -45,7 +50,12 @@ class _ProxyImage extends HookConsumerWidget {
               : (560 * ratio).ceil();
           return Image.memory(
             bytes,
-            cacheWidth: math.max(1, math.min(width, drawn)),
+            cacheWidth: surfaceImageDecodeWidth(
+              width: width,
+              height: height,
+              boxWidth: drawn,
+              boxHeight: (_imageMaxHeight * ratio).ceil(),
+            ),
             fit: cover ? BoxFit.cover : BoxFit.contain,
             width: double.infinity,
             semanticLabel: alt.isEmpty ? null : alt,
@@ -64,13 +74,16 @@ class _ProxyImage extends HookConsumerWidget {
     );
     final ratio = aspect;
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 320),
+      constraints: const BoxConstraints(maxHeight: _imageMaxHeight),
       child: ratio == null
           ? rounded
           : AspectRatio(aspectRatio: ratio, child: rounded),
     );
   }
 }
+
+/// The tallest an image is drawn (logical pixels).
+const _imageMaxHeight = 320.0;
 
 class _ImageAlt extends StatelessWidget {
   final String alt;

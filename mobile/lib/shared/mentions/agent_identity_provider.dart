@@ -87,6 +87,29 @@ final agentOwnersProvider = FutureProvider<Map<String, String>>((ref) async {
   return owners;
 });
 
+/// The owner one agent's newest profile attests (NIP-OA), with every
+/// attestation condition checked (`kind`, `created_at`), or null: an
+/// expired or conditioned-out attestation counts as none. Agent cards are
+/// drawn only when this is the reader (79 S6).
+final agentProfileOwnerProvider = FutureProvider.autoDispose
+    .family<String?, String>((ref, pubkey) async {
+      final agent = pubkey.trim().toLowerCase();
+      final session = ref.read(relaySessionProvider.notifier);
+      final events = await session.fetchHistory(
+        NostrFilters.profilesBatch([agent]),
+      );
+      NostrEvent? newest;
+      for (final event in events) {
+        if (event.kind != 0 || event.pubkey.toLowerCase() != agent) continue;
+        if (newest == null || event.createdAt > newest.createdAt) {
+          newest = event;
+        }
+      }
+      return newest == null
+          ? null
+          : verifiedProfileOaOwnerPubkey(newest)?.toLowerCase();
+    });
+
 /// Pubkeys currently known to represent agents across the active relay.
 ///
 /// Message surfaces that do not own channel membership can use this shared

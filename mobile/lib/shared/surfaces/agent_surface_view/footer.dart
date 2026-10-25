@@ -10,7 +10,7 @@ class _Footer extends StatelessWidget {
     final scope = _SurfaceScope.of(context);
     final surface = scope.surface;
     final status = surface.status;
-    final note = editedNote(surface);
+    final note = editedNote(surface, agentName: scope.agentName);
     final viewOnly =
         !isOver(surface) && (acceptsEdits(surface) || acceptsTaps(surface));
     final webUrl = surface.webUrl;
