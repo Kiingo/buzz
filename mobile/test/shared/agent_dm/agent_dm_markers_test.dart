@@ -516,4 +516,42 @@ void main() {
       isNull,
     );
   });
+
+  group('readAgentDmSurface', () {
+    const id = '0B5C1F7E-8A7D-4D1E-9A51-3C2F1E0D9B88';
+
+    test('reads one tag, lowercasing the id', () {
+      final surface = readAgentDmSurface(const [
+        ['buzz-surface', id, '4'],
+      ]);
+      expect(surface?.surfaceId, id.toLowerCase());
+      expect(surface?.revision, 4);
+    });
+
+    test('refuses malformed or repeated tags', () {
+      for (final tags in const [
+        [
+          ['buzz-surface', id],
+        ],
+        [
+          ['buzz-surface', 'not-a-uuid', '1'],
+        ],
+        [
+          ['buzz-surface', id, '0'],
+        ],
+        [
+          ['buzz-surface', id, '01'],
+        ],
+        [
+          ['buzz-surface', id, '1234567890'],
+        ],
+        [
+          ['buzz-surface', id, '1'],
+          ['buzz-surface', id, '2'],
+        ],
+      ]) {
+        expect(readAgentDmSurface(tags), isNull, reason: '$tags');
+      }
+    });
+  });
 }

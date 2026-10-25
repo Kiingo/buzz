@@ -211,4 +211,29 @@ void main() {
     expect(presented.map((m) => m.id), ['mirror', 'divider', 'listing']);
     expect(presented.map((m) => m.isSystem), [false, true, true]);
   });
+
+  test('indexes agent surface cards and their newest revision', () {
+    const id = '0b5c1f7e-8a7d-4d1e-9a51-3c2f1e0d9b88';
+    final first = _event('s1', const [
+      ['buzz-surface', id, '1'],
+    ]);
+    final second = _event('s2', const [
+      ['buzz-surface', id, '3'],
+    ], createdAt: 20);
+    final mine = _event('s3', const [
+      ['buzz-surface', id, '9'],
+    ], signer: _me);
+    final outsider = _event('s4', const [
+      ['buzz-surface', id, '9'],
+    ], signer: _outsider);
+    final timeline = _build([first, second, mine, outsider]);
+    expect(timeline.surfaceOf('s1')?.revision, 1);
+    expect(timeline.surfaceOf('s2')?.revision, 3);
+    expect(timeline.surfaceOf('s3'), isNull);
+    expect(timeline.surfaceOf('s4'), isNull);
+    expect(timeline.newestSurfaceRevision(id), 3);
+
+    final notDm = _build([first], isDm: false);
+    expect(notDm.surfaceOf('s1'), isNull);
+  });
 }
