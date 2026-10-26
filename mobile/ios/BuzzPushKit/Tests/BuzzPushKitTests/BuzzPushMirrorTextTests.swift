@@ -105,6 +105,7 @@ final class BuzzPushMirrorTextTests: XCTestCase {
   func testSignerProfileNamedYouReadsAsAgent() throws {
     let names = [
       "You", " you ", "YOU", "\u{04AE}ou", "Yo\u{200B}u", "You.", "\u{FF39}\u{FF4F}\u{FF55}",
+      "Y\u{0332}o\u{0332}u\u{0332}", "\u{24CE}\u{24C4}\u{24CA}", "\u{02B8}\u{1D52}\u{1D58}",
     ]
     for name in names {
       let resolution = try XCTUnwrap(resolve(mirror([

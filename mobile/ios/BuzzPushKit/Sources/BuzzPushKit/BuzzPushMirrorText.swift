@@ -51,11 +51,15 @@ enum BuzzPushMirrorText {
 
   /// Whether a self-asserted name would read as "You", as the apps decide:
   /// NFKC, characters that draw nothing removed (Cf and default-ignorables),
-  /// surrounding punctuation, symbols and spaces trimmed, look-alike letters
-  /// folded, then compared case-insensitively.
+  /// combining marks (Mn, Me) removed, surrounding punctuation, symbols and
+  /// spaces trimmed, look-alike letters folded, then compared
+  /// case-insensitively.
   static func readsAsYou(_ name: String) -> Bool {
     let visible = name.precomposedStringWithCompatibilityMapping.unicodeScalars.filter {
-      $0.properties.generalCategory != .format && !$0.properties.isDefaultIgnorableCodePoint
+      switch $0.properties.generalCategory {
+      case .format, .nonspacingMark, .enclosingMark: return false
+      default: return !$0.properties.isDefaultIgnorableCodePoint
+      }
     }
     let scalars = Array(visible)
     func isEdge(_ scalar: Unicode.Scalar) -> Bool {

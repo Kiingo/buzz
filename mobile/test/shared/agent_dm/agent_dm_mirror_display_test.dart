@@ -158,6 +158,10 @@ void main() {
       '(You)',
       '\uff39\uff4f\uff55',
       'Y0u',
+      'Y\u0332o\u0332u\u0332',
+      '\u24ce\u24c4\u24ca',
+      '\u24e8\u24de\u24e4',
+      '\u02b8\u1d52\u1d58',
     ]) {
       expect(agentDmNameReadsAsYou(name), isTrue, reason: name);
     }

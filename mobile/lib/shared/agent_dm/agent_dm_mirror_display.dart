@@ -165,20 +165,40 @@ const _youLookalikes = {
   0x028b: 0x75, // ʋ
 };
 
+final _combiningMarks = RegExp(r'[\p{Mn}\p{Me}]', unicode: true);
+
+/// Circled letters (U+24B6–24E9) and the modifier letters ʸ ᵒ ᵘ, folded as
+/// NFKC folds them (this app has no Unicode normaliser).
+int _foldNameCode(int code) {
+  if (code >= 0x24b6 && code <= 0x24cf) return 0x41 + code - 0x24b6;
+  if (code >= 0x24d0 && code <= 0x24e9) return 0x61 + code - 0x24d0;
+  return switch (code) {
+    0x02b8 => 0x79,
+    0x1d52 => 0x6f,
+    0x1d58 => 0x75,
+    _ => code,
+  };
+}
+
 final _edgePunctuation = RegExp(
   r'^[\p{P}\p{S}\p{Z}\s]+|[\p{P}\p{S}\p{Z}\s]+$',
   unicode: true,
 );
 
-/// Whether a self-asserted name would read as "You": compatibility forms
-/// folded (this app's NFKC stand-in), characters that draw nothing removed
-/// (Cf and default-ignorables), surrounding punctuation, symbols and spaces
-/// trimmed, look-alike letters folded, then compared case-insensitively.
-/// "Ｙｏｕ", "Yo\u200Bu", "You." and Cyrillic "Үou" all read as "You".
+/// Whether a self-asserted name would read as "You": compatibility forms,
+/// circled and modifier letters folded (this app's NFKC stand-in),
+/// characters that draw nothing removed (Cf and default-ignorables),
+/// combining marks (Mn, Me) removed, surrounding punctuation, symbols and
+/// spaces trimmed, look-alike letters folded, then compared
+/// case-insensitively. "Ｙｏｕ", "Yo\u200Bu", "You.",
+/// "Y\u0332o\u0332u\u0332", "ⓎⓄⓊ", "ʸᵒᵘ" and Cyrillic "Үou" all read as "You".
 bool agentDmNameReadsAsYou(String name) {
+  final compatible = String.fromCharCodes(
+    foldCompatibilityForms(name).runes.map(_foldNameCode),
+  );
   final clean = withoutInvisible(
-    foldCompatibilityForms(name),
-  ).replaceAll(_edgePunctuation, '');
+    compatible,
+  ).replaceAll(_combiningMarks, '').replaceAll(_edgePunctuation, '');
   final folded = String.fromCharCodes(
     clean.runes.map((code) => _youLookalikes[code] ?? code),
   );

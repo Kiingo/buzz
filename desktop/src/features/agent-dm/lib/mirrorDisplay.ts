@@ -160,19 +160,20 @@ const YOU_LOOKALIKES: Readonly<Record<string, string>> = Object.freeze({
 });
 
 const EDGE_PUNCTUATION = /^[\p{P}\p{S}\p{Z}\s]+|[\p{P}\p{S}\p{Z}\s]+$/gu;
+const COMBINING_MARKS = /[\p{Mn}\p{Me}]/gu;
 
 /**
- * Whether a self-asserted name would read as "You": NFKC, characters that
- * draw nothing removed (Cf and default-ignorables), surrounding
+ * Whether a self-asserted name would read as "You": NFKC (which also folds
+ * circled and modifier letters), characters that draw nothing removed (Cf
+ * and default-ignorables), combining marks (Mn, Me) removed, surrounding
  * punctuation, symbols and spaces trimmed, look-alike letters folded, then
- * compared case-insensitively. "Ｙｏｕ", "Yo\u200Bu", "You." and Cyrillic
- * "Үou" all read as "You".
+ * compared case-insensitively. "Ｙｏｕ", "Yo\u200Bu", "You.",
+ * "Y\u0332o\u0332u\u0332", "ⓎⓄⓊ", "ʸᵒᵘ" and Cyrillic "Үou" all read as "You".
  */
 export function readsAsYou(name: string): boolean {
-  const clean = withoutInvisible(name.normalize("NFKC")).replace(
-    EDGE_PUNCTUATION,
-    "",
-  );
+  const clean = withoutInvisible(name.normalize("NFKC"))
+    .replace(COMBINING_MARKS, "")
+    .replace(EDGE_PUNCTUATION, "");
   let folded = "";
   for (const char of clean) folded += YOU_LOOKALIKES[char] ?? char;
   return folded.toLowerCase() === "you";

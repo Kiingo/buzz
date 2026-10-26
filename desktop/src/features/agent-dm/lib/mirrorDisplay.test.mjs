@@ -189,6 +189,10 @@ test("only a name that reads as You is refused", () => {
     "(You)",
     "\uFF39\uFF4F\uFF55",
     "Y0u",
+    "Y\u0332o\u0332u\u0332",
+    "\u24CE\u24C4\u24CA",
+    "\u24E8\u24DE\u24E4",
+    "\u02B8\u1D52\u1D58",
   ]) {
     assert.equal(readsAsYou(name), true, name);
   }
