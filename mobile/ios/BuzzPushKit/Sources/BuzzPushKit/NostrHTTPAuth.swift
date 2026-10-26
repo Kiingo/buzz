@@ -6,6 +6,9 @@ public enum NostrHTTPAuthError: Error, Equatable {
     case signingFailed
 }
 
+/// A Nostr event as decoded or built. Despite the name, neither `init` nor
+/// `Decodable` checks it: it is unverified until `hasValidIDAndSignature()`
+/// returns true.
 public struct VerifiedNostrEvent: Codable, Equatable, Sendable {
     public let id: String
     public let pubkey: String
@@ -33,6 +36,8 @@ public struct VerifiedNostrEvent: Codable, Equatable, Sendable {
         self.sig = sig
     }
 
+    /// Whether `id` is the NIP-01 hash of the event's fields and `sig` is
+    /// the author's BIP-340 signature of it.
     public func hasValidIDAndSignature() -> Bool {
         guard let idBytes = Self.hexBytes(id), idBytes.count == 32,
               let pubkeyBytes = Self.hexBytes(pubkey), pubkeyBytes.count == 32,

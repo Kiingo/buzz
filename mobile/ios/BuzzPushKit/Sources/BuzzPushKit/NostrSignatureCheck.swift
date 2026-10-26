@@ -21,13 +21,9 @@ public enum NostrSignatureCheck {
   }
 
   /// The address of `check`, for the Flutter side to bind with FFI. The
-  /// library's self-test runs once first, as libsecp256k1 asks before
-  /// `secp256k1_context_static` is used; a failing build aborts there
-  /// rather than verify with broken arithmetic.
+  /// library's self-test runs first (see `NostrSchnorr.staticContextTested`).
   public static var address: Int {
-    _ = selfTested
+    _ = NostrSchnorr.staticContextTested
     return Int(bitPattern: unsafeBitCast(check, to: UnsafeRawPointer.self))
   }
-
-  private static let selfTested: Void = secp256k1_selftest()
 }

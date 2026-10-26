@@ -55,8 +55,14 @@ class NativeSignatureBackend implements RelaySignatureBackend {
     if (_retryAt case final retryAt? when _now().isBefore(retryAt)) {
       throw const SignatureCheckUnavailable();
     }
-    return (_loading ??= _load()).then((verify) {
-      if (verify == null) throw const SignatureCheckUnavailable();
+    final loading = _loading ??= _load();
+    return loading.then((verify) {
+      if (verify == null) {
+        // Also cleared in [_load]; clearing here too means a load that ever
+        // completed before `??=` stored it could not stay cached.
+        if (identical(_loading, loading)) _loading = null;
+        throw const SignatureCheckUnavailable();
+      }
       return _check(verify, id, pubkey, sig);
     });
   }

@@ -51,11 +51,18 @@ enum NostrSchnorr {
 
   static func verify(signature: [UInt8], message: [UInt8], publicKey: [UInt8]) -> Bool {
     guard signature.count == 64, message.count == 32, publicKey.count == 32 else { return false }
+    _ = staticContextTested
     var key = secp256k1_xonly_pubkey()
     return secp256k1_xonly_pubkey_parse(secp256k1_context_static, &key, publicKey) == 1
       && secp256k1_schnorrsig_verify(
         secp256k1_context_static, signature, message, message.count, &key) == 1
   }
+
+  /// libsecp256k1's self-test, run once before `secp256k1_context_static`
+  /// is first used, as the library asks. A failing build aborts here rather
+  /// than verify with broken arithmetic. Contexts from
+  /// `secp256k1_context_create` test themselves.
+  static let staticContextTested: Void = secp256k1_selftest()
 
   private static func randomBytes() throws -> [UInt8] {
     var bytes = [UInt8](repeating: 0, count: 32)
