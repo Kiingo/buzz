@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at ddface566195a525e6e24fe69b2a49f5d239ede2; do not edit here.
+// Generated from the Kiingo surface renderer packages at d5090421e1194836177b7c492a84f74342e017c6; do not edit here.
 import { isObject } from "./json";
 import { comparableText, hasInvisibleText, plainText } from "./text";
 

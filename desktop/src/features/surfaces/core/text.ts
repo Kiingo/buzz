@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at ddface566195a525e6e24fe69b2a49f5d239ede2; do not edit here.
+// Generated from the Kiingo surface renderer packages at d5090421e1194836177b7c492a84f74342e017c6; do not edit here.
 import { asNumber } from "./json";
 
 // Agent text is plain text: control characters, format characters
@@ -252,7 +252,8 @@ const BETWEEN_LETTERS = /(?<=\p{L})[^\p{L}\p{N}]+(?=\p{L})/gu;
 /**
  * Letters that look Latin, folded to the Latin letter they imitate (79 W6
  * NIT), so "раssword" (Cyrillic р, а) or "pαsscοde" (Greek) still reads as
- * a secret word. Lower case only: the text is lower-cased first.
+ * a secret word. Capitals are folded before lower-casing (Greek Η reads H,
+ * its lower case η reads n), lower case after.
  */
 const SKELETON: Readonly<Record<string, string>> = Object.freeze({
   // Cyrillic
@@ -297,6 +298,53 @@ const SKELETON: Readonly<Record<string, string>> = Object.freeze({
   ɑ: "a",
   ı: "i",
   ɩ: "i",
+  // Greek capitals (folded before lower-casing: Η is H, η is n)
+  Α: "a",
+  Β: "b",
+  Ε: "e",
+  Ζ: "z",
+  Η: "h",
+  Ι: "i",
+  Κ: "k",
+  Μ: "m",
+  Ν: "n",
+  Ο: "o",
+  Ρ: "p",
+  Τ: "t",
+  Υ: "y",
+  Χ: "x",
+  // Cyrillic capitals
+  А: "a",
+  В: "b",
+  Е: "e",
+  Ё: "e",
+  К: "k",
+  М: "m",
+  Н: "h",
+  О: "o",
+  Р: "p",
+  С: "c",
+  Т: "t",
+  У: "y",
+  Х: "x",
+  Ѕ: "s",
+  І: "i",
+  Ї: "i",
+  Ј: "j",
+  Һ: "h",
+  Ԁ: "d",
+  Ԛ: "q",
+  Ԝ: "w",
+  Ү: "y",
+  Ӏ: "l",
+  // Armenian and Latin capitals
+  Օ: "o",
+  Ս: "u",
+  İ: "i",
+  // More lower-case look-alikes
+  μ: "u",
+  ү: "y",
+  ӏ: "l",
   // Digits standing in for letters ("1" is both i and l: see skeletons)
   "0": "o",
 });
@@ -333,13 +381,23 @@ const foldWith = (
  */
 const secretForms = (raw: string): string[] => {
   const plain = comparableText(raw);
-  const folded = foldWith(foldWith(plain, SKELETON), DIGIT_SKELETON);
+  // Capitals fold before lower-casing (Greek Η reads H, its η reads n),
+  // then what lower-casing produced folds too: as the server.
+  const clean = withoutInvisible(raw.normalize("NFKC"));
+  const folded = foldWith(
+    foldWith(foldWith(clean, SKELETON).toLowerCase(), SKELETON),
+    DIGIT_SKELETON,
+  );
+  // The earlier lower-case-first fold stays a form too, as the server.
+  const lowerFirst = foldWith(foldWith(plain, SKELETON), DIGIT_SKELETON);
   return [
     ...new Set([
       raw,
       plain,
       folded.replace(/1/gu, "i"),
       folded.replace(/1/gu, "l"),
+      lowerFirst.replace(/1/gu, "i"),
+      lowerFirst.replace(/1/gu, "l"),
     ]),
   ];
 };
