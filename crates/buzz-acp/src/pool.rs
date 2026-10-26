@@ -6986,7 +6986,7 @@ pub(crate) mod tests {
                 "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "pubkey": agent_hex,
                 "kind": 40002,
-                "content": "mirrored from Kiingo Tasks",
+                "content": "mirrored from another surface",
                 "created_at": 4000,
                 "tags": [
                     ["h", "c"], ["e", root_id, "", "root"],
