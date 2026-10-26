@@ -127,9 +127,15 @@ pub(crate) fn published_filter(
         .limit(50)
 }
 
-/// Whether a published message is harness output for someone else (a hosted
-/// guest-turn answer or a harness notice) rather than this turn's reply.
+/// Whether a published message is not this turn's reply: harness output for
+/// someone else (a hosted guest-turn answer or a harness notice), or a quiet
+/// agent DM marker (a mirror, session divider or listing, question state),
+/// which is presentation, never an answer.
 fn is_harness_output(event: &serde_json::Value) -> bool {
+    crate::agent_dm_markers::is_quiet_agent_dm_marker(event) || is_guest_or_notice(event)
+}
+
+fn is_guest_or_notice(event: &serde_json::Value) -> bool {
     event
         .get("tags")
         .and_then(|tags| tags.as_array())
@@ -508,6 +514,42 @@ mod tests {
         let (rest, seen) = mock_relay(others).await;
         assert_eq!(deliver(&rest, reply(), 100, 200).await, Delivery::Posted);
         assert!(seen.lock().unwrap()[1].starts_with("POST /events"));
+    }
+
+    #[tokio::test]
+    async fn quiet_markers_published_during_the_turn_do_not_count_as_the_reply() {
+        let markers = serde_json::json!([
+            {"id": "a", "kind": 40002, "tags": [
+                ["h", "c"], ["buzz-mirror", "tasks", "t1", "1"],
+                ["buzz-mirror-author", "requester", "e".repeat(64), ""]
+            ]},
+            {"id": "b", "kind": 40002, "tags": [
+                ["h", "c"], ["buzz-mirror", "teams", "m1", "1"],
+                ["buzz-mirror-author", "agent", "", ""]
+            ]},
+            {"id": "c", "kind": 9, "tags": [
+                ["h", "c"], ["buzz-mirror-author", "requester", "", ""]
+            ]},
+            {"id": "d", "kind": 40002, "tags": [["h", "c"], ["buzz-session", "new", ""]]},
+            {"id": "e", "kind": 40002, "tags": [["h", "c"], ["buzz-sessions", ""]]},
+            {"id": "f", "kind": 40002, "tags": [
+                ["h", "c"], ["buzz-question-state", "ask-1", "closed"]
+            ]}
+        ]);
+        let (rest, seen) = mock_relay(markers).await;
+        assert_eq!(deliver(&rest, reply(), 100, 200).await, Delivery::Posted);
+        assert!(seen.lock().unwrap()[1].starts_with("POST /events"));
+
+        // A real reply next to the markers still counts.
+        let mixed = serde_json::json!([
+            {"id": "a", "kind": 40002, "tags": [["h", "c"], ["buzz-mirror", "tasks", "t1", "1"]]},
+            {"id": "x", "kind": 9, "tags": [["h", "c"]]}
+        ]);
+        let (rest, _) = mock_relay(mixed).await;
+        assert_eq!(
+            deliver(&rest, reply(), 100, 200).await,
+            Delivery::AlreadyPublished
+        );
     }
 
     #[tokio::test]
