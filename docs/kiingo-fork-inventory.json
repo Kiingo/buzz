@@ -2232,6 +2232,42 @@
         "mobile/test/shared/surfaces/surface_model_test.dart",
         "mobile/test/shared/surfaces/surface_sends_test.dart"
       ]
+    },
+    {
+      "id": "agent-dm-relayed-mirror-display",
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "purpose": "One relayed display rule for requester mirrors in agent DMs (docs/agent-dm-markers.md): an agent-signed buzz-mirror line copied from another surface never reads as a message the requester signed. A shared fail-closed parser (crates/buzz-core agent_dm_marker.rs, desktop agent-dm/lib/mirrorDisplay.ts, mobile shared/agent_dm/agent_dm_mirror_display.dart, iOS BuzzPushKit BuzzPushMirrorText.swift) and shared vectors (test-fixtures/mirror-display.json) give every surface the same answer: the requester (\"You\" on the viewer's own device) with an always-visible \"via <surface> · relayed by <agent>\" line, an outlined relayed frame, no own-message accent and no grouping, or an unattributed \"Relayed by <agent>\" line when the author tag is missing or malformed. Applied in DM timelines, threads, Home inbox rows, search results (desktop src-tauri carries event tags to search hits) and push notifications; markers are honoured only for a loaded DM roster.",
+      "upstreamStatus": "Generic, provider-neutral extension of the agent DM markers contract; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream renders relayed agent DM mirrors equivalently, or agents stop publishing buzz-mirror lines.",
+      "paths": [
+        "crates/buzz-core/src/agent_dm_marker.rs",
+        "desktop/src-tauri/src/models.rs",
+        "desktop/src-tauri/src/nostr_convert.rs",
+        "desktop/src-tauri/src/nostr_convert/tests.rs",
+        "desktop/src/features/agent-dm/lib/mirrorDisplay.test.mjs",
+        "desktop/src/features/agent-dm/lib/mirrorDisplay.ts",
+        "desktop/src/features/home/lib/inbox.test.mjs",
+        "desktop/src/features/messages/ui/MessageThreadPanel.tsx",
+        "desktop/src/features/search/lib/searchHitMirror.test.mjs",
+        "desktop/src/features/search/lib/searchHitMirror.ts",
+        "desktop/src/features/search/ui/SearchResultItem.tsx",
+        "desktop/src/features/search/ui/TopbarSearch.tsx",
+        "desktop/src/shared/api/searchTypes.ts",
+        "mobile/ios/BuzzPushKit/Sources/BuzzPushKit/BuzzPushMirrorText.swift",
+        "mobile/ios/BuzzPushKit/Tests/BuzzPushKitTests/BuzzPushMirrorTextTests.swift",
+        "mobile/lib/features/channels/agent_dm/agent_dm_relayed_frame.dart",
+        "mobile/lib/features/channels/agent_dm/agent_dm_thread_scope.dart",
+        "mobile/lib/features/channels/thread_detail_page/thread_message.dart",
+        "mobile/lib/features/search/search_page.dart",
+        "mobile/lib/features/search/search_page/message_tile.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_mirror_display.dart",
+        "mobile/test/features/channels/agent_dm/agent_dm_mirror_badge_test.dart",
+        "mobile/test/features/channels/agent_dm/agent_dm_thread_scope_test.dart",
+        "mobile/test/features/search/search_page_test.dart",
+        "mobile/test/shared/agent_dm/agent_dm_mirror_display_test.dart",
+        "test-fixtures/mirror-display.json"
+      ]
     }
   ],
   "budgetAmendments": [
