@@ -817,7 +817,7 @@ void main() {
 
   testWidgets('a mirrored DM line shows its relayed form', (tester) async {
     final agent = 'a1' * 32;
-    final ross = 'b2' * 32;
+    final alex = 'b2' * 32;
     final dm = Channel(
       id: 'dm-1',
       name: 'dm',
@@ -828,7 +828,7 @@ void main() {
       createdAt: DateTime(2025),
       memberCount: 2,
       isMember: true,
-      participantPubkeys: [agent, ross],
+      participantPubkeys: [agent, alex],
     );
     final state = SearchState(
       query: '3pm',
@@ -844,7 +844,7 @@ void main() {
           tags: [
             ['h', dm.id],
             ['buzz-mirror', 'tasks', 't-1', '1700000000'],
-            ['buzz-mirror-author', 'requester', ross, 'Ross'],
+            ['buzz-mirror-author', 'requester', alex, 'Alex'],
           ],
         ),
       ],
@@ -865,8 +865,8 @@ void main() {
           agentMentionPubkeysProvider(dm.id).overrideWith((ref) => {agent}),
           channelIdentityNamesProvider(dm.id).overrideWithValue(
             const IdentityNameSources().scope(
-              [agent, ross],
-              fallbackNames: {agent: 'Juniper', ross: 'Ross'},
+              [agent, alex],
+              fallbackNames: {agent: 'Agent', alex: 'Alex'},
             ),
           ),
         ],
@@ -878,13 +878,13 @@ void main() {
     final author = tester.widget<Text>(
       find.byKey(const ValueKey('search-message-author-message-1')),
     );
-    expect(author.data, 'Juniper');
+    expect(author.data, 'Agent');
     final body = tester.widget<MessageContent>(
       find.byKey(const ValueKey('search-message-body-message-1')),
     );
     expect(
       body.content,
-      'Ross (via Kiingo Tasks, relayed by Juniper): Move my 3pm',
+      'Alex (via Kiingo Tasks, relayed by Agent): Move my 3pm',
     );
   });
 
