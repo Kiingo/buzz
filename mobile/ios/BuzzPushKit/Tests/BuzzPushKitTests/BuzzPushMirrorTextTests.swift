@@ -86,6 +86,32 @@ final class BuzzPushMirrorTextTests: XCTestCase {
     XCTAssertEqual(resolution.body, "Relayed by Agent (via SMS): Move my 3pm")
   }
 
+  func testMalformedSurfaceIsLeftOut() throws {
+    for surface in ["Teams", "x y", "", "a\u{202E}b", String(repeating: "a", count: 33)] {
+      let resolution = try XCTUnwrap(resolve(mirror([
+        ["buzz-mirror", surface, "m1", "1"],
+        ["buzz-mirror-author", "requester", Self.requester, ""],
+      ])))
+      XCTAssertEqual(resolution.body, "Relayed by Agent One: Move my 3pm", surface)
+    }
+    // Only the first mirror tag decides, as in the apps.
+    let second = try XCTUnwrap(resolve(mirror([
+      ["buzz-mirror", "Bad Surface", "m1", "1"],
+      ["buzz-mirror", "email", "m2", "1"],
+    ])))
+    XCTAssertEqual(second.body, "Relayed by Agent One: Move my 3pm")
+  }
+
+  func testSignerProfileNamedYouReadsAsAgent() throws {
+    for name in ["You", " you ", "YOU"] {
+      let resolution = try XCTUnwrap(resolve(mirror([
+        ["buzz-mirror", "email", "m1", "1"],
+        ["buzz-mirror-author", "requester", Self.requester, ""],
+      ]), name: name))
+      XCTAssertEqual(resolution.body, "Relayed by Agent (via email): Move my 3pm", name)
+    }
+  }
+
   func testOrdinaryMessagesKeepTheirPreview() throws {
     let plain = VerifiedNostrEvent(
       id: "event-id", pubkey: Self.agent, createdAt: 1, kind: 9,
