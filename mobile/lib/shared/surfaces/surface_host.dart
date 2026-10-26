@@ -101,6 +101,11 @@ bool claimSurfaceSend(
 
 final _newestRevisions = <String, int>{};
 
+/// Whether a surface's newest revision has been forgotten: from then on a
+/// surface the map doesn't hold may be one of those, so it never counts as
+/// newest until it is drawn again (79).
+var _newestRevisionsEvicted = false;
+
 /// Records that revision [revision] of surface [surfaceId] is drawn, and
 /// returns the newest revision drawn of it so far (newest 256 surfaces).
 int drawSurfaceRevision(String surfaceId, int revision) {
@@ -108,6 +113,7 @@ int drawSurfaceRevision(String surfaceId, int revision) {
   final newest = _newestRevisions.remove(id);
   if (_newestRevisions.length >= 256) {
     _newestRevisions.remove(_newestRevisions.keys.first);
+    _newestRevisionsEvicted = true;
   }
   return _newestRevisions[id] = newest == null || revision > newest
       ? revision
@@ -119,7 +125,8 @@ int drawSurfaceRevision(String surfaceId, int revision) {
 /// never acts.
 bool isNewestSurfaceRevision(String surfaceId, int revision) {
   final newest = _newestRevisions[surfaceId.toLowerCase()];
-  return newest == null || revision >= newest;
+  if (newest == null) return !_newestRevisionsEvicted;
+  return revision >= newest;
 }
 
 /// Forgets every revision's taps and the newest revisions (tests).
@@ -127,4 +134,5 @@ bool isNewestSurfaceRevision(String surfaceId, int revision) {
 void resetSurfaceRevisionTaps() {
   _revisionTaps.clear();
   _newestRevisions.clear();
+  _newestRevisionsEvicted = false;
 }

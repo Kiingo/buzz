@@ -332,6 +332,21 @@ void main() {
       expect(claimSurfaceSend('s', 1, 'go', settle: Duration.zero), isFalse);
     });
 
+    test('a surface whose newest revision was forgotten is not newest', () {
+      drawSurfaceRevision('old', 3);
+      expect(isNewestSurfaceRevision('old', 2), isFalse);
+      expect(isNewestSurfaceRevision('never', 1), isTrue);
+      for (var index = 0; index < 256; index++) {
+        drawSurfaceRevision('s$index', 1);
+      }
+      // 'old' was evicted: neither its old revision nor an unseen surface
+      // counts until it is drawn again.
+      expect(isNewestSurfaceRevision('old', 2), isFalse);
+      expect(isNewestSurfaceRevision('never', 1), isFalse);
+      drawSurfaceRevision('never', 1);
+      expect(isNewestSurfaceRevision('never', 1), isTrue);
+    });
+
     test('revisions that sent nothing are bounded', () {
       for (var revision = 1; revision < 600; revision++) {
         surfaceRevisionTaps('s', revision);
