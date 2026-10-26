@@ -99,8 +99,18 @@ class RelayEventVerifier {
     }
     try {
       return NostrEvent.fromJson(json);
-    } on TypeError {
-      _drop(RelayEventRejection.shape, json['id'], path);
+    } catch (_) {
+      // Whatever the payload throws, it is one bad event, not a failed
+      // answer: count it and keep the rest.
+      _drop(RelayEventRejection.shape, _idOf(json), path);
+      return null;
+    }
+  }
+
+  static Object? _idOf(Map<String, dynamic> json) {
+    try {
+      return json['id'];
+    } catch (_) {
       return null;
     }
   }

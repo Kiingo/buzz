@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:buzz/shared/auth/auth_provider.dart';
@@ -29,6 +30,15 @@ List<(Object? json, RelayEventRejection? rejection)> _served() {
     ({...json, 'sig': 'sig'}, RelayEventRejection.shape),
     ({...json, 'kind': -1}, RelayEventRejection.shape),
     ({...json}..remove('sig'), RelayEventRejection.shape),
+    (
+      {
+        ...json,
+        'tags': [
+          ['h', 1],
+        ],
+      },
+      RelayEventRejection.shape,
+    ),
     ({...json, 'tags': 'h'}, RelayEventRejection.shape),
     ('not an event', RelayEventRejection.shape),
   ];
@@ -105,6 +115,42 @@ void main() {
     expect((await history).map((event) => event.content), ['genuine']);
     expect(session.droppedEventCounts, _expectedCounts());
   });
+
+  test('an event that throws while it is read is one shape drop', () async {
+    final session = RelaySessionNotifier();
+    final delivered = <NostrEvent>[];
+    final subscribe = session.subscribe(_filter, delivered.add);
+    session.debugHandleMessage(['EOSE', 'l-1']);
+    final unsubscribe = await subscribe;
+
+    final genuine = _message('genuine', 20).toJson();
+    session.debugHandleMessage(['EVENT', 'l-1', _ThrowingEvent()]);
+    session.debugHandleMessage(['EVENT', 'l-1', genuine]);
+    session.debugFlushEventBuffer();
+
+    expect(delivered.map((event) => event.content), ['genuine']);
+    expect(session.droppedEventCounts, {RelayEventRejection.shape: 1});
+    unsubscribe();
+  });
+}
+
+/// A payload whose fields throw something other than a [TypeError] when
+/// read, as no decoded JSON value can.
+class _ThrowingEvent extends MapBase<String, dynamic> {
+  @override
+  dynamic operator [](Object? key) => throw StateError('hostile field');
+
+  @override
+  void operator []=(String key, dynamic value) {}
+
+  @override
+  void clear() {}
+
+  @override
+  Iterable<String> get keys => const ['id'];
+
+  @override
+  dynamic remove(Object? key) => null;
 }
 
 const _channelId = '11111111-1111-4111-8111-111111111111';
