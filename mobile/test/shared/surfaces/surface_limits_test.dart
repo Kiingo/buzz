@@ -359,7 +359,7 @@ void main() {
       final key = 'AB' * 32;
       final surface = decodeSurface({
         'id': _id,
-        'agent': {'id': 'x', 'name': 'Dana', 'pubkey': key},
+        'agent': {'id': 'x', 'name': 'Dana', 'buzzPubkey': key},
         'spec': {
           'root': 'root',
           'components': const [
@@ -374,7 +374,7 @@ void main() {
       expect(surface?.agentPubkey, key.toLowerCase());
       final none = decodeSurface({
         'id': _id,
-        'agent': {'id': 'x', 'pubkey': 'nope'},
+        'agent': {'id': 'x', 'buzzPubkey': 'nope'},
         'spec': {
           'root': 'root',
           'components': const [
@@ -387,6 +387,32 @@ void main() {
         },
       });
       expect(none?.agentPubkey, isNull);
+    });
+
+    test('a card is drawn only under its named agent (S-b)', () {
+      final key = 'ab' * 32;
+      Surface? withAgent(Map<String, Object?> agent) => decodeSurface({
+        'id': _id,
+        'agent': agent,
+        'spec': {
+          'root': 'root',
+          'components': const [
+            {
+              'id': 'root',
+              'type': 'Text',
+              'props': {'text': 'x'},
+            },
+          ],
+        },
+      });
+      final named = withAgent({'id': 'x', 'name': 'Dana', 'buzzPubkey': key})!;
+      expect(surfaceFromSigner(named, key), isTrue);
+      expect(surfaceFromSigner(named, 'cd' * 32), isFalse);
+      // No key, or a key under a field the host never sends: refused.
+      final unnamed = withAgent({'id': 'x', 'name': 'Dana'})!;
+      expect(surfaceFromSigner(unnamed, key), isFalse);
+      final other = withAgent({'id': 'x', 'name': 'Dana', 'pubkey': key})!;
+      expect(surfaceFromSigner(other, key), isFalse);
     });
   });
 

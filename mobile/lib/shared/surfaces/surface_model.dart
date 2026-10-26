@@ -244,7 +244,7 @@ class Surface {
   final String? agentName;
 
   /// The agent's Buzz key (lowercase hex) when the host names it; a card
-  /// drawn under another signer's message is not drawn (79).
+  /// is drawn only under that signer's message ([surfaceFromSigner]).
   final String? agentPubkey;
   final bool editorsAudience;
   final bool repeatable;
@@ -578,12 +578,22 @@ List<String> unknownTypes(Surface surface) {
 
 final _hexKey = RegExp(r'^[0-9a-f]{64}$');
 
-/// `agent.pubkey` (or `agent.buzzPubkey`) as lowercase hex, else null.
+/// `agent.buzzPubkey`, the agent's Buzz key the host itself bound (never a
+/// field the agent wrote), as lowercase hex, else null.
 String? _agentPubkeyOf(Object? agent) {
-  final raw = fieldOf(agent, 'pubkey') ?? fieldOf(agent, 'buzzPubkey');
+  final raw = fieldOf(agent, 'buzzPubkey');
   if (raw is! String) return null;
   final key = raw.trim().toLowerCase();
   return _hexKey.hasMatch(key) ? key : null;
+}
+
+/// Whether [surface] may be drawn under a message signed by [signer]
+/// (79 S-b): the host names the agent's Buzz key and it is the signer's.
+/// A surface that names no key is never drawn, so one agent's message
+/// never frames another agent's card.
+bool surfaceFromSigner(Surface surface, String signer) {
+  final named = surface.agentPubkey;
+  return named != null && named == signer.trim().toLowerCase();
 }
 
 /// Whether [pointer] holds outside content (it or a parent is marked).

@@ -9,6 +9,7 @@ import '../../../shared/agent_dm/agent_dm_markers.dart';
 import '../../../shared/surfaces/agent_surface_view.dart';
 import '../../../shared/surfaces/surface_client.dart';
 import '../../../shared/surfaces/surface_host.dart';
+import '../../../shared/surfaces/surface_model.dart';
 import '../../../shared/surfaces/surface_sends.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/modal_presentation.dart';
@@ -66,10 +67,12 @@ class AgentDmSurfaceCard extends HookConsumerWidget {
 
     if (scope == null || loaded == null) return const SizedBox.shrink();
     final channel = scope.channel;
-    // A card that names its agent's key must name this message's signer
-    // (79): one agent's message never frames another agent's card.
-    final named = loaded.surface.agentPubkey;
-    if (named != null && named != signer) return const SizedBox.shrink();
+    // The host must name the agent's key, and it must be this message's
+    // signer (79 S-b): one agent's message never frames another agent's
+    // card, and a card that names no key is not drawn.
+    if (!surfaceFromSigner(loaded.surface, signer)) {
+      return const SizedBox.shrink();
+    }
     final agentName = watchChannelIdentityLabel(ref, channel.id, signer);
     final personal = scope.personal;
     final messenger = ScaffoldMessenger.maybeOf(context);
