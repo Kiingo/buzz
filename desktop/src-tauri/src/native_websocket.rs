@@ -298,17 +298,22 @@ async fn run_connection<S>(
                 if failed { break; }
             }
             incoming = socket.next() => {
-                let message = match incoming {
+                let mut message = match incoming {
                     Some(Ok(message)) => outbound_message(message),
                     Some(Err(error)) => OutboundMessage::Error(error.to_string()),
                     None => OutboundMessage::Close(None),
                 };
                 // Relay events are verified here, before the webview sees
-                // them; a forged or unreadable one is dropped.
-                if let OutboundMessage::Text(payload) = &message {
-                    if let InboundFrame::Drop(reason) = classify_inbound_frame(payload) {
-                        tracing::warn!(reason, "relay: dropped inbound frame");
-                        continue;
+                // them: a forged or unreadable one is dropped, and a verified
+                // one is handed on exactly as it was verified.
+                if let OutboundMessage::Text(payload) = &mut message {
+                    match classify_inbound_frame(payload) {
+                        InboundFrame::Pass => {}
+                        InboundFrame::VerifiedEvent(frame) => *payload = frame,
+                        InboundFrame::Drop(reason) => {
+                            tracing::warn!(reason, "relay: dropped inbound frame");
+                            continue;
+                        }
                     }
                 }
                 let terminal = matches!(message, OutboundMessage::Close(_) | OutboundMessage::Error(_));
@@ -358,6 +363,10 @@ fn outbound_message(message: Message) -> OutboundMessage {
     }
 }
 
+/// The `websocket` plugin. It is for relay connections only: inbound text
+/// frames that are not readable relay messages are dropped, and `EVENT`
+/// frames are verified and re-serialized (see `native_websocket_events`).
+/// `relayWebSocketPluginUsers.test.mjs` pins its renderer users.
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     install_crypto_provider();
     tauri::plugin::Builder::new("websocket")
@@ -383,6 +392,16 @@ mod tests {
 
     use tokio::io::duplex;
     use tokio_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
+
+    /// A relay `EVENT` frame for `sub` carrying a genuinely signed event,
+    /// since the loop drops events that do not verify.
+    fn signed_event_frame(content: &str) -> (nostr::Event, String) {
+        let event = nostr::EventBuilder::text_note(content)
+            .sign_with_keys(&nostr::Keys::generate())
+            .unwrap();
+        let frame = serde_json::json!(["EVENT", "sub", event]).to_string();
+        (event, frame)
+    }
 
     fn silent_channel() -> Channel<InvokeResponseBody> {
         Channel::new(|_: InvokeResponseBody| Ok(()))
@@ -512,7 +531,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn cancellation_delivers_frames_the_relay_already_sent() {
         let mut harness = LoopHarness::start().await;
-        harness.relay_says(r#"["EVENT","sub",{}]"#).await;
+        harness.relay_says(&signed_event_frame("buffered").1).await;
         harness.settle().await;
         assert!(harness.deliveries().is_empty(), "frame is buffered");
 
@@ -533,10 +552,7 @@ mod tests {
         harness.relay_says(r#"["EOSE","sub"]"#).await;
         harness.settle().await;
 
-        let big = format!(
-            r#"["EVENT","sub","{}"]"#,
-            "x".repeat(BATCH_MAX_SERIALIZED_BYTES)
-        );
+        let (_, big) = signed_event_frame(&"x".repeat(BATCH_MAX_SERIALIZED_BYTES));
         harness.relay_says(&big).await;
         harness.settle().await;
         // The small frame is forced out by the straddle; the oversize frame
@@ -566,6 +582,37 @@ mod tests {
         assert_eq!(first[0]["data"], r#"["EOSE","sub"]"#);
     }
 
+    /// The renderer gets the event exactly as it was verified: a field the
+    /// relay added is gone, and a forged event never arrives at all.
+    #[tokio::test(start_paused = true)]
+    async fn the_renderer_gets_only_verified_events_as_verified() {
+        let mut harness = LoopHarness::start().await;
+        let (event, _) = signed_event_frame("genuine");
+        let mut padded = serde_json::to_value(&event).unwrap();
+        padded["relay_note"] = "unsigned".into();
+        let mut forged = serde_json::to_value(&event).unwrap();
+        forged["content"] = "edited after signing".into();
+        for payload in [
+            serde_json::json!(["EVENT", "sub", forged]).to_string(),
+            serde_json::json!(["EVENT", "sub", padded]).to_string(),
+            "not a relay message".to_string(),
+        ] {
+            harness.relay_says(&payload).await;
+        }
+        tokio::time::advance(BATCH_WINDOW * 2).await;
+        harness.settle().await;
+
+        let frames: Vec<serde_json::Value> = harness
+            .deliveries()
+            .iter()
+            .flat_map(|delivery| serde_json::from_str::<Vec<serde_json::Value>>(delivery).unwrap())
+            .collect();
+        assert_eq!(frames.len(), 1, "only the verified event: {frames:?}");
+        let delivered: serde_json::Value =
+            serde_json::from_str(frames[0]["data"].as_str().unwrap()).unwrap();
+        assert_eq!(delivered, serde_json::json!(["EVENT", "sub", event]));
+    }
+
     #[tokio::test]
     async fn eof_delivers_buffered_frames_before_the_close() {
         let manager = WebSocketManager::default();
@@ -592,7 +639,10 @@ mod tests {
         ));
         *handle.task.lock().await = Some(task);
 
-        server.send(Message::Text("buffered".into())).await.unwrap();
+        server
+            .send(Message::Text(r#"["NOTICE","buffered"]"#.into()))
+            .await
+            .unwrap();
         drop(server);
 
         tokio::time::timeout(Duration::from_secs(2), async {
