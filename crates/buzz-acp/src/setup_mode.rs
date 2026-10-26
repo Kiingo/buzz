@@ -481,6 +481,10 @@ fn setup_listener_admits(event: &nostr::Event, pubkey_hex: &str) -> bool {
     ) {
         return false;
     }
+    // A quiet agent DM marker is presentation, never something to answer.
+    if crate::agent_dm_markers::is_quiet_agent_dm_marker_event(event) {
+        return false;
+    }
     event.pubkey.to_hex() != pubkey_hex && event_mentions_agent(event, pubkey_hex)
 }
 
@@ -1038,6 +1042,32 @@ mod tests {
         assert!(setup_listener_admits(&build(&other, true), &agent));
         assert!(!setup_listener_admits(&build(&other, false), &agent));
         assert!(!setup_listener_admits(&build(&agent_keys, true), &agent));
+    }
+
+    #[test]
+    fn setup_listener_gate_rejects_quiet_markers_that_mention_the_agent() {
+        let agent = nostr::Keys::generate().public_key().to_hex();
+        let requester = nostr::Keys::generate();
+        let requester_hex = requester.public_key().to_hex();
+        let build = |marker: &[&str]| {
+            nostr::EventBuilder::new(nostr::Kind::Custom(KIND_STREAM_MESSAGE as u16), "hi")
+                .tags([
+                    nostr::Tag::parse(["p", agent.as_str()]).unwrap(),
+                    nostr::Tag::parse(marker.iter().copied()).unwrap(),
+                ])
+                .sign_with_keys(&requester)
+                .unwrap()
+        };
+        assert!(!setup_listener_admits(
+            &build(&["buzz-mirror", "tasks", "t1", "1"]),
+            &agent
+        ));
+        assert!(!setup_listener_admits(
+            &build(&["buzz-mirror-author", "requester", &requester_hex, ""]),
+            &agent
+        ));
+        // The same message without a marker still gets its nudge.
+        assert!(setup_listener_admits(&build(&["t", "buzz-mirror"]), &agent));
     }
 
     fn default_setup_rules() -> Vec<filter::SubscriptionRule> {

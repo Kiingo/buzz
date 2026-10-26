@@ -5027,6 +5027,11 @@ fn parse_nostr_thread_response_with_meta(
     let mut seen_reply_ids = HashSet::new();
 
     for ev in events {
+        // Quiet agent DM markers are presentation, never prompt context, in a
+        // thread as in a DM (and never the pinned agent reply).
+        if crate::agent_dm_markers::is_quiet_agent_dm_marker(ev) {
+            continue;
+        }
         let ev_id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("");
         if let Some(msg) = json_to_context_message(ev) {
             if ev_id == root_event_id {
@@ -6936,6 +6941,69 @@ pub(crate) mod tests {
             }
             _ => panic!("expected Thread context"),
         }
+    }
+
+    #[test]
+    fn test_parse_nostr_thread_response_leaves_quiet_markers_out() {
+        let agent = Keys::generate();
+        let agent_hex = agent.public_key().to_hex();
+        let requester_hex = "e".repeat(64);
+        let root_id = "1111111111111111111111111111111111111111111111111111111111111111";
+        let json = json!([
+            {
+                "id": root_id,
+                "pubkey": "rootpub",
+                "content": "root",
+                "created_at": 1000,
+                "tags": [["h", "c"]]
+            },
+            {
+                // Agent-signed requester mirror: newest agent event, must
+                // neither enter context nor be pinned as the agent's reply.
+                "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "pubkey": agent_hex,
+                "kind": 40002,
+                "content": "mirrored from Kiingo Tasks",
+                "created_at": 4000,
+                "tags": [
+                    ["h", "c"], ["e", root_id, "", "root"],
+                    ["buzz-mirror", "tasks", "t1", "3"],
+                    ["buzz-mirror-author", "requester", requester_hex, ""]
+                ]
+            },
+            {
+                // Requester-signed line carrying only the author tag.
+                "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "pubkey": requester_hex,
+                "kind": 9,
+                "content": "author tag only",
+                "created_at": 3000,
+                "tags": [
+                    ["h", "c"], ["e", root_id, "", "root"],
+                    ["buzz-mirror-author", "requester", requester_hex, ""]
+                ]
+            },
+            {
+                "id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "pubkey": "humanpub",
+                "kind": 9,
+                "content": "real reply",
+                "created_at": 2000,
+                "tags": [["h", "c"], ["e", root_id, "", "root"]]
+            }
+        ]);
+
+        let ctx = parse_nostr_thread_response(json, root_id, 12, &agent.public_key())
+            .expect("should parse");
+        let ConversationContext::Thread {
+            messages, total, ..
+        } = ctx
+        else {
+            panic!("expected Thread context");
+        };
+        let contents: Vec<&str> = messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(contents, vec!["root", "real reply"]);
+        assert_eq!(total, 2);
     }
 
     #[test]

@@ -142,6 +142,10 @@ pub(crate) fn verify_chain(trigger: &Event, fetched: &HashMap<String, Event>) ->
         if event.pubkey.to_hex() != author {
             return Err(format!("{id} is not signed by the claimed author"));
         }
+        // A quiet marker (a mirrored line) is never a request to relay.
+        if crate::agent_dm_markers::is_quiet_agent_dm_marker_event(event) {
+            return Err(format!("{id} is a quiet agent DM marker"));
+        }
         if channel_of(event) != trigger_channel {
             return Err(format!("{id} is in a different channel"));
         }
@@ -257,7 +261,18 @@ pub(crate) async fn thread_context(
             }
         }
     }
-    events.retain(|event| event.id != trigger.id && buzz_core::verify_event(event).is_ok());
+    select_context_events(events, trigger, limit)
+}
+
+/// The context window from fetched thread events: verified, not the trigger,
+/// not a quiet agent DM marker (mirrored history is presentation, never
+/// context, whoever signed it), oldest first, at most `limit`.
+fn select_context_events(mut events: Vec<Event>, trigger: &Event, limit: usize) -> Vec<Event> {
+    events.retain(|event| {
+        event.id != trigger.id
+            && !crate::agent_dm_markers::is_quiet_agent_dm_marker_event(event)
+            && buzz_core::verify_event(event).is_ok()
+    });
     events.sort_by_key(|event| event.created_at);
     events.dedup_by_key(|event| event.id);
     let skip = events.len().saturating_sub(limit);
@@ -430,5 +445,93 @@ mod tests {
             verify_chain(&deep, &HashMap::new()).status,
             ChainStatus::TooDeep { hop: 3 }
         );
+    }
+
+    #[test]
+    fn a_quiet_marker_origin_never_verifies() {
+        let human = Keys::generate();
+        for marker in [
+            vec![
+                "buzz-mirror".to_string(),
+                "tasks".into(),
+                "t1".into(),
+                "1".into(),
+            ],
+            vec![
+                "buzz-mirror-author".to_string(),
+                "requester".into(),
+                human.public_key().to_hex(),
+                String::new(),
+            ],
+        ] {
+            let origin = message(&human, "c", None, vec![marker]);
+            let relayed = message(
+                &Keys::generate(),
+                "c",
+                Some(&origin.id),
+                outgoing_relay_tags(&origin, None).unwrap(),
+            );
+            let checked = verify_chain(&relayed, &map(&[&origin]));
+            assert!(
+                matches!(checked.status, ChainStatus::Unverifiable(ref reason) if reason.contains("quiet")),
+                "{:?}",
+                checked.status
+            );
+            assert!(checked.events.is_empty());
+        }
+    }
+
+    #[test]
+    fn thread_context_leaves_quiet_markers_out() {
+        let human = Keys::generate();
+        let agent = Keys::generate();
+        let root = message(&human, "c", None, vec![]);
+        let reply = message(&human, "c", Some(&root.id), vec![]);
+        let mirror = message(
+            &agent,
+            "c",
+            Some(&root.id),
+            vec![
+                vec![
+                    "buzz-mirror".into(),
+                    "companion".into(),
+                    "m1".into(),
+                    "1".into(),
+                ],
+                vec![
+                    "buzz-mirror-author".into(),
+                    "requester".into(),
+                    human.public_key().to_hex(),
+                    String::new(),
+                ],
+            ],
+        );
+        let author_only = message(
+            &human,
+            "c",
+            Some(&root.id),
+            vec![vec![
+                "buzz-mirror-author".into(),
+                "requester".into(),
+                human.public_key().to_hex(),
+                String::new(),
+            ]],
+        );
+        let trigger = message(&human, "c", Some(&root.id), vec![]);
+        let selected = select_context_events(
+            vec![
+                root.clone(),
+                reply.clone(),
+                mirror,
+                author_only,
+                trigger.clone(),
+            ],
+            &trigger,
+            10,
+        );
+        let ids: Vec<_> = selected.iter().map(|e| e.id).collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&root.id));
+        assert!(ids.contains(&reply.id));
     }
 }

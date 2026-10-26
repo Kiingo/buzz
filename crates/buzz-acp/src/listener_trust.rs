@@ -89,6 +89,22 @@ pub(crate) fn is_call_line_event(event: &nostr::Event) -> bool {
         .any(|tag| tag.as_slice().first().map(String::as_str) == Some(CALL_LINE_TAG))
 }
 
+/// Why the listener drops `event` before any trust, control-command, queue,
+/// steering or subscription handling, whoever signed it and whatever it tags:
+/// a call transcript line, or a quiet agent DM marker (mirrored history,
+/// session divider, question state; `docs/agent-dm-markers.md`). Neither is
+/// ever a prompt, so neither may start or steer a turn. `None` for anything
+/// else.
+pub(crate) fn non_prompt_event(event: &nostr::Event) -> Option<&'static str> {
+    if is_call_line_event(event) {
+        return Some("call transcript line");
+    }
+    if crate::agent_dm_markers::is_quiet_agent_dm_marker_event(event) {
+        return Some("quiet agent DM marker");
+    }
+    None
+}
+
 /// A non-owner channel stream message that `p`-tags (mentions) someone but
 /// not this agent is addressed to them, so this agent must not take a turn on
 /// it. Messages that mention nobody, owner messages, and DMs are unaffected.
@@ -582,5 +598,61 @@ mod tests {
             .sign_with_keys(&keys)
             .unwrap();
         assert!(!is_call_line_event(&message));
+    }
+
+    #[test]
+    fn listener_drops_quiet_markers_before_any_turn_handling() {
+        let agent = Keys::generate();
+        let requester = Keys::generate();
+        let agent_hex = agent.public_key().to_hex();
+        let requester_hex = requester.public_key().to_hex();
+        let build = |keys: &Keys, kind: u16, content: &str, marker: Option<Vec<&str>>| {
+            let mut tags = vec![
+                Tag::parse(["h", "c"]).unwrap(),
+                // Mentions the agent, so it would otherwise be a prompt.
+                Tag::parse(["p", agent_hex.as_str()]).unwrap(),
+            ];
+            if let Some(marker) = marker {
+                tags.push(Tag::parse(marker).unwrap());
+            }
+            EventBuilder::new(Kind::Custom(kind), content)
+                .tags(tags)
+                .sign_with_keys(keys)
+                .unwrap()
+        };
+        let mirror = || Some(vec!["buzz-mirror", "tasks", "t1", "1"]);
+        let author = || {
+            Some(vec![
+                "buzz-mirror-author",
+                "requester",
+                requester_hex.as_str(),
+                "",
+            ])
+        };
+        for keys in [&agent, &requester] {
+            for kind in [9u16, 40002] {
+                // Including a control command's text: a marker never cancels,
+                // rotates or steers.
+                for content in ["please do it", "!cancel"] {
+                    for marker in [mirror(), author()] {
+                        assert_eq!(
+                            non_prompt_event(&build(keys, kind, content, marker)),
+                            Some("quiet agent DM marker")
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            non_prompt_event(&build(&requester, 9, "please do it", None)),
+            None
+        );
+        let line = build(
+            &requester,
+            9,
+            "spoken",
+            Some(vec![CALL_LINE_TAG, "call-1", "human"]),
+        );
+        assert_eq!(non_prompt_event(&line), Some("call transcript line"));
     }
 }

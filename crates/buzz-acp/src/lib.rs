@@ -3710,8 +3710,8 @@ async fn run_harness(
                                 tracing::debug!(channel_id = %buzz_event.channel_id, "dropping self-authored event");
                                 continue;
                             }
-                            if listener_trust::is_call_line_event(&buzz_event.event) {
-                                tracing::debug!(channel_id = %buzz_event.channel_id, "dropping call transcript line");
+                            if let Some(reason) = listener_trust::non_prompt_event(&buzz_event.event) {
+                                tracing::debug!(channel_id = %buzz_event.channel_id, "dropping {reason}");
                                 continue;
                             }
 
