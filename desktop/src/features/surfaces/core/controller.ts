@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
+// Generated from the Kiingo surface renderer packages at 280b8811c46f5aaa8c44a036f0bf0be29fabdbeb; do not edit here.
 import {
   idempotencyKey,
   type Confirmation,

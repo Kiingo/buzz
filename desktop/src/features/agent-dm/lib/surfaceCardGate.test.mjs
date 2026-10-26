@@ -4,7 +4,7 @@ import { dirname, join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { surfaceCardAllowed } from "./surfaceCardGate.ts";
+import { surfaceCardAllowed, surfaceFromSigner } from "./surfaceCardGate.ts";
 
 const ME = "a".repeat(64);
 const AGENT = "b".repeat(64);
@@ -78,4 +78,15 @@ test("only the surface card attaches the surface tap tag", () => {
       );
     }
   }
+});
+
+test("a surface card shows only when the surface names the signing agent", () => {
+  assert.equal(surfaceFromSigner(AGENT, AGENT), true);
+  assert.equal(surfaceFromSigner(AGENT, ` ${AGENT.toUpperCase()} `), true);
+  // Another agent's surface, or a surface record with no bound key.
+  assert.equal(surfaceFromSigner(OTHER, AGENT), false);
+  assert.equal(surfaceFromSigner(undefined, AGENT), false);
+  assert.equal(surfaceFromSigner("", ""), false);
+  assert.equal(surfaceFromSigner(AGENT, undefined), false);
+  assert.equal(surfaceFromSigner(AGENT.slice(2), AGENT.slice(2)), false);
 });

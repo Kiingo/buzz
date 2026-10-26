@@ -25,3 +25,20 @@ export function surfaceCardAllowed(input: {
   );
   return members.size === 2 && members.has(viewer) && members.has(signer);
 }
+
+const HEX_KEY = /^[0-9a-f]{64}$/;
+
+/**
+ * Whether the surface belongs to the agent that signed the message (§7.4
+ * S-b): the host's surface record names the agent's bound Buzz key
+ * (`agent.buzzPubkey`), and it must be the message's signer. A missing or
+ * malformed key never matches, so another agent's surface id pasted into a
+ * marker shows no card.
+ */
+export function surfaceFromSigner(
+  named: string | undefined,
+  signer: string | undefined,
+): boolean {
+  const key = normalizePubkey(named ?? "");
+  return HEX_KEY.test(key) && key === normalizePubkey(signer ?? "");
+}

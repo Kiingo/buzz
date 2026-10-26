@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at f2336986d6b16ac653fff367054129d5cb9ec35c; do not edit here.
+// Generated from the Kiingo surface renderer packages at 280b8811c46f5aaa8c44a036f0bf0be29fabdbeb; do not edit here.
 import {
   asBool,
   asInt,
@@ -260,6 +260,12 @@ export type Surface = {
   agentId?: string;
   /** "from <agent>" in the header (§10). */
   agentName?: string;
+  /**
+   * The agent's Buzz key as the server bound it (`agent.buzzPubkey`, §7.4
+   * S-b): lowercase 64 hex, or absent. Buzz draws a card only when it
+   * matches the message signer.
+   */
+  agentBuzzPubkey?: string;
   conversationId?: string;
   editorsAudience: boolean;
   repeatable: boolean;
@@ -656,6 +662,13 @@ export const decodeSurface = (value: unknown): Surface | undefined => {
   );
   if (agentName) {
     surface.agentName = agentName;
+  }
+  // Only the server-built agent object carries it; never a top-level field.
+  const agentBuzzPubkey = asString(field(agent, "buzzPubkey"))
+    ?.trim()
+    .toLowerCase();
+  if (agentBuzzPubkey && /^[0-9a-f]{64}$/u.test(agentBuzzPubkey)) {
+    surface.agentBuzzPubkey = agentBuzzPubkey;
   }
   const conversationId = plainId(value.conversationId);
   if (conversationId) {

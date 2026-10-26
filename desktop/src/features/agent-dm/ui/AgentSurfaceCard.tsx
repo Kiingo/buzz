@@ -21,9 +21,13 @@ import { useIdentityQuery } from "@/shared/api/hooks";
 
 import { parseSurface } from "../lib/markers";
 import { sendAgentDmTaggedMessage } from "../lib/send";
+import { surfaceFromSigner } from "../lib/surfaceCardGate";
 
 /** A focus re-read waits at least this long after the last read. */
 const FOCUS_REFRESH_MS = 15_000;
+
+const noSubscription = () => () => {};
+const noSnapshot = () => null;
 
 type Load =
   | { kind: "loading" }
@@ -72,6 +76,12 @@ export function AgentSurfaceCard({
   }, [surfaceId, revision]);
 
   const controller = load.kind === "ready" ? load.controller : null;
+  // Read through the controller's subscription, so a refresh that changes
+  // the surface's agent key draws or hides the card at once.
+  const snapshot = React.useSyncExternalStore(
+    controller?.subscribe ?? noSubscription,
+    controller?.getSnapshot ?? noSnapshot,
+  );
 
   React.useEffect(() => {
     if (!controller) return;
@@ -113,7 +123,14 @@ export function AgentSurfaceCard({
     [queryClient, channelId, senderPubkey],
   );
 
-  if (!controller) return null;
+  // S-b: only the agent the host bound to this surface may show it here.
+  if (
+    !controller ||
+    !snapshot ||
+    !surfaceFromSigner(snapshot.surface.agentBuzzPubkey, message.signerPubkey)
+  ) {
+    return null;
+  }
   return (
     <div
       className="mt-2 max-w-xl rounded-lg border border-border bg-card p-3"
