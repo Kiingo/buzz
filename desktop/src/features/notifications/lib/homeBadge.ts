@@ -1,4 +1,6 @@
 import type { FeedItem, HomeFeedResponse } from "@/shared/api/types";
+import type { DmChannelLike } from "@/features/agent-dm/lib/markers";
+import { isAgentDmQuietEvent } from "@/features/agent-dm/lib/quiet";
 import { maxReadAt } from "@/features/channels/readState/readStateFormat";
 import {
   getThreadReference,
@@ -23,6 +25,7 @@ export function buildHomeBadgeFeedItems(
   feed: HomeFeedResponse | undefined,
   extraInboxItems: readonly FeedItem[],
   localUnreadFeedIds: ReadonlySet<string>,
+  channels: ReadonlyArray<{ id: string } & DmChannelLike> = [],
 ): FeedItem[] {
   // Thread activity is surfaced directly on its channel's hover preview. It
   // should not also inflate the Inbox numeral, which is reserved for the
@@ -47,7 +50,18 @@ export function buildHomeBadgeFeedItems(
     );
   }
 
-  return dedupeFeedItemsById(items);
+  // The Inbox never shows quiet agent DM markers (buildInboxItems), even a
+  // p-tagged mirror in `mentions`, so the badge must not count them either.
+  const channelById = new Map(channels.map((channel) => [channel.id, channel]));
+  return dedupeFeedItemsById(
+    items.filter(
+      (item) =>
+        !isAgentDmQuietEvent(
+          item,
+          item.channelId ? channelById.get(item.channelId) : null,
+        ),
+    ),
+  );
 }
 
 export function shouldCountTowardHomeBadgeSubtotal(

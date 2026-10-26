@@ -71,6 +71,42 @@ test("home badge excludes thread activity already shown in a channel preview", (
   );
 });
 
+test("home badge skips quiet agent DM markers the Inbox hides", () => {
+  const AGENT = "a".repeat(64);
+  const OWNER = "b".repeat(64);
+  const mirror = {
+    ...feedItem("p-tagged-mirror", "mention"),
+    kind: 40002,
+    pubkey: AGENT,
+    channelId: "agent-dm",
+    tags: [
+      ["h", "agent-dm"],
+      ["p", OWNER],
+      ["buzz-mirror", "voice", "call-1", "1760000000"],
+      ["buzz-mirror-author", "agent", "", ""],
+    ],
+  };
+  const reply = {
+    ...feedItem("agent-reply", "mention"),
+    pubkey: AGENT,
+    channelId: "agent-dm",
+  };
+  const channels = [
+    { id: "agent-dm", channelType: "dm", participantPubkeys: [AGENT, OWNER] },
+  ];
+  const ids = (list) =>
+    buildHomeBadgeFeedItems(
+      homeFeed({ mentions: [mirror, reply] }),
+      [],
+      new Set(),
+      list,
+    ).map((item) => item.id);
+
+  assert.deepEqual(ids(channels), ["agent-reply"]);
+  // Before the DM roster loads no marker is honoured, as in the Inbox.
+  assert.deepEqual(ids([]), ["p-tagged-mirror", "agent-reply"]);
+});
+
 test("home badge subtotal excludes channel-counted high-priority items", () => {
   const highPriorityChannelIds = new Set(["dm-channel", "stream-channel"]);
 
