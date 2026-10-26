@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c72e3863b9419a77a51b527a9ff4255646c6384c; do not edit here.
+// Generated from the Kiingo surface renderer packages at ddface566195a525e6e24fe69b2a49f5d239ede2; do not edit here.
 import { asNumber } from "./json";
 
 // Agent text is plain text: control characters, format characters
@@ -210,29 +210,13 @@ export const isOutsideUrl = (
 /** The host of a URL for "Open <host>?", else the URL. */
 export const urlHost = (raw: string): string => parseUrl(raw)?.hostname ?? raw;
 
-const SECRET_WORDS = [
-  "password",
-  "passcode",
-  "passphrase",
-  "api key",
-  "apikey",
-  "token",
-  "2fa",
-  "two-factor",
-  "one-time",
-  "otp",
-  "verification code",
-  "mfa",
-  "pin",
-  "ssn",
-  "social security",
-  "card number",
-  "cvv",
-  "cvc",
-  "routing number",
-  "account number",
-  "secret",
-];
+/**
+ * The server's secret-word pattern (`@kiingo/ui-catalog` validate.ts
+ * SECRET_PATTERN), copied so the client refuses exactly what the server
+ * refuses (79 S2): whole words, an optional plural, nothing more.
+ */
+const SECRET_PATTERN =
+  /\b(?:pass ?words?|pass ?codes?|pass ?phrases?|api[ -]?keys?|secret(?: key)?s?|access ?tokens?|auth(?:entication)? ?tokens?|tokens?|2fa|two[- ]factor|mfa|otp|one[- ]time (?:code|password|passcode|pin)|verification codes?|security codes?|pins?|ssn|social security|card numbers?|credit card|debit card|cvv|cvc|security number|routing numbers?|account numbers?|iban|private keys?|seed phrase|recovery (?:code|phrase)s?)\b/iu;
 
 /**
  * Multi-letter secret words without spaces, read after the separators
@@ -264,9 +248,6 @@ const SECRET_COMPACT_WORDS = [
 ];
 
 const BETWEEN_LETTERS = /(?<=\p{L})[^\p{L}\p{N}]+(?=\p{L})/gu;
-
-const isLetter = (char: string | undefined): boolean =>
-  char !== undefined && /\p{L}/u.test(char);
 
 /**
  * Letters that look Latin, folded to the Latin letter they imitate (79 W6
@@ -345,28 +326,31 @@ const foldWith = (
 };
 
 /**
- * `text` with look-alike letters folded to Latin ({@link SKELETON}), then
- * also with {@link DIGIT_SKELETON} and "1" read as i, and as l. The plain
- * letter fold stays a form of its own, so a digit next to a short word
- * ("pin5") still reads as before.
+ * The forms a label is read in, as the server's uiSecretCheckForms: as
+ * written; NFKC, nothing invisible, lower case; and that with look-alikes
+ * ({@link SKELETON}, {@link DIGIT_SKELETON}) folded, once with "1" as i
+ * and once as l.
  */
-const skeletons = (text: string): string[] => {
-  const letters = foldWith(text, SKELETON);
-  const digits = foldWith(letters, DIGIT_SKELETON);
+const secretForms = (raw: string): string[] => {
+  const plain = comparableText(raw);
+  const folded = foldWith(foldWith(plain, SKELETON), DIGIT_SKELETON);
   return [
     ...new Set([
-      letters,
-      digits.replace(/1/gu, "i"),
-      digits.replace(/1/gu, "l"),
+      raw,
+      plain,
+      folded.replace(/1/gu, "i"),
+      folded.replace(/1/gu, "l"),
     ]),
   ];
 };
 
 /**
- * Texts that ask for a secret (§10, R11). Such an input is never drawn; the
- * server refuses them too. Read after NFKC, invisible characters and
- * look-alike letters ({@link SKELETON}). Short words match whole words only
- * ("pin" is not in "pinned").
+ * Texts that ask for a secret (§10, R11). Such an input is never drawn.
+ * Read exactly as the server's matchesSecretInputPattern reads them (79
+ * S2): {@link SECRET_PATTERN} on every {@link secretForms} form, plus the
+ * multi-letter words with separators removed. Whole words only ("pin" is
+ * not in "pinned", "secret" not in "secretary"), so the client never hides
+ * an input the server accepted.
  */
 export const asksForSecret = (
   texts: ReadonlyArray<string | undefined>,
@@ -375,32 +359,13 @@ export const asksForSecret = (
     if (!raw) {
       return false;
     }
-    const forms = skeletons(comparableText(raw));
-    if (
+    const forms = secretForms(raw);
+    return (
+      forms.some((text) => SECRET_PATTERN.test(text)) ||
       forms.some((text) => {
         const compact = text.replace(BETWEEN_LETTERS, "");
         return SECRET_COMPACT_WORDS.some((word) => compact.includes(word));
       })
-    ) {
-      return true;
-    }
-    return forms.some((text) =>
-      SECRET_WORDS.some((word) => {
-        let from = 0;
-        for (;;) {
-          const at = text.indexOf(word, from);
-          if (at < 0) {
-            return false;
-          }
-          if (word.length > 3) {
-            return true;
-          }
-          if (!isLetter(text[at - 1]) && !isLetter(text[at + word.length])) {
-            return true;
-          }
-          from = at + 1;
-        }
-      }),
     );
   });
 
