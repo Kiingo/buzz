@@ -246,8 +246,12 @@ class _ThreadMessageList extends HookWidget {
                             previousReply?.hasAttachments == true ||
                             previousReply == null ||
                             showDayDivider ||
-                            previousReply.pubkey.toLowerCase() !=
-                                reply.pubkey.toLowerCase() ||
+                            AgentDmScope.authorOf(context, previousReply) !=
+                                AgentDmScope.authorOf(context, reply) ||
+                            // A relayed mirror line never groups with its
+                            // displayed author's own messages.
+                            AgentDmScope.isRelayed(context, previousReply) ||
+                            AgentDmScope.isRelayed(context, reply) ||
                             (reply.createdAt - previousReply.createdAt) > 300;
 
                         final nextReply =
@@ -259,8 +263,10 @@ class _ThreadMessageList extends HookWidget {
                             nextReply?.hasAttachments == true ||
                             nextReply == null ||
                             !isSameDay(reply.createdAt, nextReply.createdAt) ||
-                            nextReply.pubkey.toLowerCase() !=
-                                reply.pubkey.toLowerCase() ||
+                            AgentDmScope.authorOf(context, nextReply) !=
+                                AgentDmScope.authorOf(context, reply) ||
+                            AgentDmScope.isRelayed(context, nextReply) ||
+                            AgentDmScope.isRelayed(context, reply) ||
                             nextReply.createdAt - reply.createdAt > 300;
 
                         // Check if this reply itself has children (nested thread).

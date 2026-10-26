@@ -26,6 +26,9 @@ import '../../shared/widgets/keyboard_dismiss_on_drag.dart';
 import '../../shared/widgets/message_author_meta.dart';
 import '../../shared/profile/user_cache_provider.dart';
 import '../../shared/profile/user_profile.dart';
+import 'agent_dm/agent_dm_relayed_frame.dart';
+import 'agent_dm/agent_dm_scope.dart';
+import 'agent_dm/agent_dm_thread_scope.dart';
 import 'android_ime_lift.dart';
 import 'channel.dart';
 import 'channel_management_provider.dart' show currentPubkeyProvider;
@@ -160,6 +163,13 @@ class ThreadDetailPage extends HookConsumerWidget {
             agentPubkeys: knownAgentPubkeys,
           );
     final hasFetchedReplies = fetchedReplies != null;
+    // The thread route has no channel page above it, so it indexes the DM's
+    // markers itself (replies plus the live channel events, which carry the
+    // head).
+    final agentDmEvents = useMemoized(
+      () => mergeThreadEvents(replyEvents ?? const [], liveChannelEvents),
+      [replyEvents, liveChannelEvents],
+    );
     // A terminal query error cannot produce a more authoritative list. Keep
     // loading states provisional, but let the hydrated route snapshot drive
     // the one-shot target jump when the relay query has definitively failed.
@@ -941,69 +951,75 @@ class ThreadDetailPage extends HookConsumerWidget {
           Column(
             children: [
               Expanded(
-                child: _ThreadMessageList(
-                  headHeight: headHeight.value ?? 0,
-                  onHeadHeightChanged: (height) {
-                    if (context.mounted) headHeight.value = height;
-                  },
-                  viewport: listViewport,
-                  onUserScrollStart: () {
-                    hidesLatestForInitialTailSettle.value = false;
-                    hidesLatestForComposerTailCorrection.value = false;
-                    initialTailSettle.abandon();
-                    initialViewportReady.value = true;
-                    tailCorrectionInProgress.value = false;
-                    isNavigatingToThreadTail.value = false;
-                    tailIntent.beginDrag();
-                    userOptedOutOfTailFollow.value = true;
-                    userDragDetachedTailFollow.value = true;
-                    followsThreadTail.value = false;
-                  },
-                  onUserScrollEnd: () {
-                    tailIntent.endDrag();
-                    tailIntent.schedule(
-                      allowed: userOptedOutOfTailFollow.value,
-                      revalidate: () =>
-                          context.mounted &&
-                          itemScrollController.isAttached &&
-                          !tailIntent.isDragging &&
-                          userOptedOutOfTailFollow.value,
-                      action: () {
-                        _resumeThreadTailFollow(
-                          isVisible: threadTailIsVisible,
-                          userOptedOut: userOptedOutOfTailFollow,
-                          followsTail: followsThreadTail,
-                        );
-                        if (!userOptedOutOfTailFollow.value) {
-                          userDragDetachedTailFollow.value = false;
-                        }
-                      },
-                    );
-                  },
-                  visible: threadViewportVisible,
-                  itemScrollController: itemScrollController,
-                  itemPositionsListener: itemPositionsListener,
-                  bottomInset: timelineBottomInset,
-                  replies: replies,
-                  relayReplyState: relayReplyState,
-                  onRetryReplies: () =>
-                      ref.invalidate(threadRepliesProvider(repliesArgs)),
-                  localSendAnimations: localSendAnimations,
-                  trackActiveScrollPosition: trackActiveScrollPosition,
-                  headIsDeleted: liveDeletionHidesHead,
-                  head: liveHead,
-                  stickyDayTimestamp: stickyDayTimestamp,
-                  channelNames: channelNamesMap,
-                  channelId: channelId,
+                child: AgentDmThreadScope(
+                  channel: channel,
+                  events: agentDmEvents,
                   currentPubkey: currentPubkey,
-                  highlightedMessageId: highlightedMessageId.value,
-                  allMessages: allMsgs,
-                  isMember: isMember,
-                  isArchived: isArchived,
-                  composerFocusNode: composerFocusNode,
-                  restoreComposerFocus: () =>
-                      restoreComposerFocus.value?.call(),
-                  childrenByParent: childrenByParent,
+                  agentPubkeys: knownAgentPubkeys,
+                  child: _ThreadMessageList(
+                    headHeight: headHeight.value ?? 0,
+                    onHeadHeightChanged: (height) {
+                      if (context.mounted) headHeight.value = height;
+                    },
+                    viewport: listViewport,
+                    onUserScrollStart: () {
+                      hidesLatestForInitialTailSettle.value = false;
+                      hidesLatestForComposerTailCorrection.value = false;
+                      initialTailSettle.abandon();
+                      initialViewportReady.value = true;
+                      tailCorrectionInProgress.value = false;
+                      isNavigatingToThreadTail.value = false;
+                      tailIntent.beginDrag();
+                      userOptedOutOfTailFollow.value = true;
+                      userDragDetachedTailFollow.value = true;
+                      followsThreadTail.value = false;
+                    },
+                    onUserScrollEnd: () {
+                      tailIntent.endDrag();
+                      tailIntent.schedule(
+                        allowed: userOptedOutOfTailFollow.value,
+                        revalidate: () =>
+                            context.mounted &&
+                            itemScrollController.isAttached &&
+                            !tailIntent.isDragging &&
+                            userOptedOutOfTailFollow.value,
+                        action: () {
+                          _resumeThreadTailFollow(
+                            isVisible: threadTailIsVisible,
+                            userOptedOut: userOptedOutOfTailFollow,
+                            followsTail: followsThreadTail,
+                          );
+                          if (!userOptedOutOfTailFollow.value) {
+                            userDragDetachedTailFollow.value = false;
+                          }
+                        },
+                      );
+                    },
+                    visible: threadViewportVisible,
+                    itemScrollController: itemScrollController,
+                    itemPositionsListener: itemPositionsListener,
+                    bottomInset: timelineBottomInset,
+                    replies: replies,
+                    relayReplyState: relayReplyState,
+                    onRetryReplies: () =>
+                        ref.invalidate(threadRepliesProvider(repliesArgs)),
+                    localSendAnimations: localSendAnimations,
+                    trackActiveScrollPosition: trackActiveScrollPosition,
+                    headIsDeleted: liveDeletionHidesHead,
+                    head: liveHead,
+                    stickyDayTimestamp: stickyDayTimestamp,
+                    channelNames: channelNamesMap,
+                    channelId: channelId,
+                    currentPubkey: currentPubkey,
+                    highlightedMessageId: highlightedMessageId.value,
+                    allMessages: allMsgs,
+                    isMember: isMember,
+                    isArchived: isArchived,
+                    composerFocusNode: composerFocusNode,
+                    restoreComposerFocus: () =>
+                        restoreComposerFocus.value?.call(),
+                    childrenByParent: childrenByParent,
+                  ),
                 ),
               ),
               if (!isMember || isArchived)
