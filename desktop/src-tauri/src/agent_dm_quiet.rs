@@ -9,7 +9,6 @@
 
 const KIND_QUIET: u16 = 40002;
 const MIRROR_SOURCE_ID_MAX: usize = 256;
-const MIRROR_SUBJECT_MAX: usize = 200;
 
 fn first_tag<'a>(tags: &'a [Vec<String>], name: &str) -> Option<&'a [String]> {
     tags.iter()
@@ -42,28 +41,19 @@ fn is_surface(value: &str) -> bool {
         })
 }
 
+/// The renderer's fail-closed `parseMirror`: only the first `buzz-mirror`
+/// tag decides. A missing, duplicate or malformed `buzz-mirror-author` tag
+/// still renders (as an unattributed relayed line) and an oversized subject
+/// is dropped, so neither makes the mirror count as unread.
 fn is_mirror(tags: &[Vec<String>]) -> bool {
-    let (Some(mirror), Some(author)) = (
-        first_tag(tags, "buzz-mirror"),
-        first_tag(tags, "buzz-mirror-author"),
-    ) else {
+    let Some(mirror) = first_tag(tags, "buzz-mirror") else {
         return false;
     };
     let source_id = part(mirror, 2);
-    let role = part(author, 1);
-    let pubkey = part(author, 2);
-    let subject_ok = first_tag(tags, "subject").is_none_or(|subject| {
-        subject
-            .get(1)
-            .is_some_and(|text| text.chars().count() <= MIRROR_SUBJECT_MAX)
-    });
     is_surface(part(mirror, 1))
         && !source_id.trim().is_empty()
         && source_id.chars().count() <= MIRROR_SOURCE_ID_MAX
         && is_unix_seconds(part(mirror, 3))
-        && (role == "requester" || role == "agent")
-        && (pubkey.is_empty() || is_hex64(pubkey))
-        && subject_ok
 }
 
 fn is_session_divider(tags: &[Vec<String>]) -> bool {
@@ -110,7 +100,7 @@ mod tests {
         let mirror = tags(&[
             &["h", "c"],
             &["buzz-mirror", "email", "msg-1", "1760000000"],
-            &["buzz-mirror-author", "requester", &"a".repeat(64), "Ross"],
+            &["buzz-mirror-author", "requester", &"a".repeat(64), "Alex"],
         ]);
         assert!(is_quiet_agent_dm_event(40002, &mirror));
         assert!(!is_quiet_agent_dm_event(9, &mirror));
@@ -129,6 +119,34 @@ mod tests {
     }
 
     #[test]
+    fn mirrors_with_a_bad_author_or_subject_stay_quiet() {
+        // The renderer shows these as unattributed relayed lines or drops the
+        // subject, so they must not count as unread either.
+        let mirror_tag: &[&str] = &["buzz-mirror", "email", "msg-1", "1760000000"];
+        let key = "a".repeat(64);
+        let long_subject = "s".repeat(201);
+        for extra in [
+            vec![],
+            vec![vec!["buzz-mirror-author", "owner", key.as_str(), ""]],
+            vec![vec!["buzz-mirror-author", "requester", "not-hex", ""]],
+            vec![vec!["buzz-mirror-author", "requester"]],
+            vec![
+                vec!["buzz-mirror-author", "requester", key.as_str(), ""],
+                vec!["buzz-mirror-author", "agent", "", ""],
+            ],
+            vec![
+                vec!["buzz-mirror-author", "requester", key.as_str(), ""],
+                vec!["subject", long_subject.as_str()],
+            ],
+            vec![vec!["subject"]],
+        ] {
+            let mut raw: Vec<&[&str]> = vec![mirror_tag];
+            raw.extend(extra.iter().map(Vec::as_slice));
+            assert!(is_quiet_agent_dm_event(40002, &tags(&raw)), "{raw:?}");
+        }
+    }
+
+    #[test]
     fn malformed_markers_stay_ordinary_messages() {
         assert!(!is_quiet_agent_dm_event(40002, &tags(&[&["h", "c"]])));
         assert!(!is_quiet_agent_dm_event(
@@ -140,7 +158,15 @@ mod tests {
         ));
         assert!(!is_quiet_agent_dm_event(
             40002,
-            &tags(&[&["buzz-mirror", "email", "msg-1", "1760000000"]])
+            &tags(&[&["buzz-mirror", "email", "", "1760000000"]])
+        ));
+        assert!(!is_quiet_agent_dm_event(
+            40002,
+            &tags(&[&["buzz-mirror", "email", "msg-1", "1760000000000"]])
+        ));
+        assert!(!is_quiet_agent_dm_event(
+            40002,
+            &tags(&[&["buzz-mirror-author", "requester", "", ""]])
         ));
         assert!(!is_quiet_agent_dm_event(
             40002,
