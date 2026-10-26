@@ -82,9 +82,10 @@ String sendsCaption(String text) => 'Sends: “$text”';
 final _nameChar = RegExp(r'[\p{L}\p{N}_.-]', unicode: true);
 
 /// Characters that read as a leading slash: "/", fullwidth "／", the
-/// division slash U+2215, the fraction slash U+2044 and the big solidus
-/// U+29F8.
-const _slashes = {0x2f, 0xff0f, 0x2215, 0x2044, 0x29f8};
+/// division slash U+2215, the fraction slash U+2044, the big solidus
+/// U+29F8, the box-drawing diagonal U+2571 and the mathematical rising
+/// diagonal U+27CB.
+const _slashes = {0x2f, 0xff0f, 0x2215, 0x2044, 0x29f8, 0x2571, 0x27cb};
 
 /// A send a card may not make, read after compatibility folding and
 /// invisible-character cleaning so nothing hides in front (79, r3d): a
@@ -216,9 +217,12 @@ bool chipLabelFitsText(String text) =>
 
 /// Latin, Greek, Cyrillic and Armenian letters, digits and the common
 /// punctuation: no wide (CJK, Hangul), emoji or ligature-sized characters
-/// (U+FDFD).
+/// (U+FDFD), and no combining marks (U+0300–U+036F), which stack out of
+/// the chip's line.
 bool _isNarrow(int code) =>
-    (code >= 0x20 && code < 0x0590) || (code >= 0x2010 && code <= 0x2027);
+    (code >= 0x20 && code < 0x0300) ||
+    (code > 0x036f && code < 0x0590) ||
+    (code >= 0x2010 && code <= 0x2027);
 
 /// [text]'s first line, cut to under [chipLabelFits] code points; "…" when
 /// anything was left out.

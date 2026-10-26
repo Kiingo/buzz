@@ -33,6 +33,9 @@ void main() {
     ('created_at>100', false),
     ('created_at<100', false),
     ('kind=0&created_at>100', false),
+    // A clause this app doesn't know never applies (as desktop).
+    ('kind=0&expires=200', false),
+    ('kind=0&', false),
   ]) {
     test('profile evaluates signed conditions $conditions', () {
       final tag = authTag(owner, agent.public, conditions: conditions);

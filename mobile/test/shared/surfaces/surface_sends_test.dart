@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:buzz/shared/surfaces/surface_host.dart';
 import 'package:buzz/shared/surfaces/surface_model.dart';
 import 'package:buzz/shared/surfaces/surface_sends.dart';
 import 'package:buzz/shared/surfaces/surface_text.dart';
@@ -213,8 +214,17 @@ void main() {
       }
     });
 
-    test('division and fraction slashes read as a slash command', () {
-      for (final slash in ['\u2215', '\u2044', '\u29F8']) {
+    test('combining marks never fit a chip line', () {
+      final stacked = 'Ok${'\u0301' * 8}';
+      final chip = chipSend({'text': stacked})!;
+      expect(chip.send, isA<CaptionSend>());
+      expect(sentText(chip.send), stacked);
+      expect(chipLabelFitsText('Ok\u0300'), isFalse);
+      expect(chipLabelFitsText('Ok'), isTrue);
+    });
+
+    test('slash look-alikes read as a slash command', () {
+      for (final slash in ['\u2215', '\u2044', '\u29F8', '\u2571', '\u27CB']) {
         expect(
           messageSend('Go', '${slash}approve'),
           isA<BlockedSend>().having(
@@ -308,6 +318,26 @@ void main() {
           SendBlockedReason.slash,
         ),
       );
+    });
+  });
+
+  group('revision taps (79)', () {
+    setUp(resetSurfaceRevisionTaps);
+
+    test('a sent revision never sends again, however many follow', () {
+      expect(claimSurfaceSend('s', 1, 'go', settle: Duration.zero), isTrue);
+      for (var revision = 2; revision < 600; revision++) {
+        surfaceRevisionTaps('s', revision);
+      }
+      expect(claimSurfaceSend('s', 1, 'go', settle: Duration.zero), isFalse);
+    });
+
+    test('revisions that sent nothing are bounded', () {
+      for (var revision = 1; revision < 600; revision++) {
+        surfaceRevisionTaps('s', revision);
+      }
+      expect(surfaceRevisionShown('s', 1), isFalse);
+      expect(surfaceRevisionShown('s', 599), isTrue);
     });
   });
 }

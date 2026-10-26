@@ -399,3 +399,65 @@ class _NewerAppNotice extends StatelessWidget {
     );
   }
 }
+
+/// Starts a surface revision's tap settle (79) the first time any of the
+/// card is on screen: a card built ahead of a scroll, or under another
+/// route, has not been seen. It looks after each build and scroll until
+/// then; a tap before that starts the settle itself, so it never counts.
+class _SettleOnShow extends HookWidget {
+  final Surface surface;
+  final Widget child;
+
+  const _SettleOnShow({required this.surface, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final id = surface.id;
+    final revision = surface.revision;
+    final active = TickerMode.valuesOf(context).enabled;
+    final position = Scrollable.maybeOf(context)?.position;
+    useEffect(() {
+      var done = false;
+      var pending = false;
+      late final VoidCallback afterLayout;
+      void check() {
+        pending = false;
+        if (done || !active || !context.mounted || !_isOnScreen(context)) {
+          return;
+        }
+        done = true;
+        position?.removeListener(afterLayout);
+        surfaceRevisionTaps(id, revision);
+      }
+
+      // A scroll is laid out in the frame after it, so look then.
+      afterLayout = () {
+        if (done || pending) return;
+        pending = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) => check());
+      };
+      position?.addListener(afterLayout);
+      afterLayout();
+      return () {
+        done = true;
+        position?.removeListener(afterLayout);
+      };
+    }, [id, revision, active, position]);
+    return child;
+  }
+}
+
+/// Whether any of [context]'s box is inside both the screen and its
+/// scroll viewport.
+bool _isOnScreen(BuildContext context) {
+  final box = context.findRenderObject();
+  if (box is! RenderBox || !box.attached || !box.hasSize) return false;
+  Rect global(RenderBox of) =>
+      MatrixUtils.transformRect(of.getTransformTo(null), Offset.zero & of.size);
+  var visible = global(box).intersect(Offset.zero & MediaQuery.sizeOf(context));
+  if (RenderAbstractViewport.maybeOf(box) case final RenderBox viewport
+      when viewport.hasSize) {
+    visible = visible.intersect(global(viewport));
+  }
+  return visible.width > 0 && visible.height > 0;
+}

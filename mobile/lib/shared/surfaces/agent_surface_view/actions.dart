@@ -138,7 +138,12 @@ class _ActionMenu extends StatelessWidget {
           PopupMenuItem(
             value: action,
             enabled: scope.canTap(action),
-            child: _MenuItemLabel(action: action),
+            child: _MenuItemLabel(
+              action: action,
+              note: action.kind == SurfaceActionKind.sendMessage
+                  ? _sendNote(scope.sendOf(action))
+                  : null,
+            ),
           ),
       ],
       // The menu button owns the one tap target and its label.
@@ -164,18 +169,18 @@ class _ActionMenu extends StatelessWidget {
   }
 }
 
-/// A menu item's label, with the words it sends or why it can't.
+/// A menu item's label, with the words it sends or why it can't ([note]).
+/// It is built in the menu's own route, outside the card, so it reads
+/// nothing from the card's scope.
 class _MenuItemLabel extends StatelessWidget {
   final SurfaceAction action;
+  final String? note;
 
-  const _MenuItemLabel({required this.action});
+  const _MenuItemLabel({required this.action, this.note});
 
   @override
   Widget build(BuildContext context) {
-    final scope = _SurfaceScope.of(context);
-    final note = action.kind == SurfaceActionKind.sendMessage
-        ? _sendNote(scope.sendOf(action))
-        : null;
+    final note = this.note;
     final label = Text(
       action.kind == SurfaceActionKind.run
           ? '${action.label} ($runUnavailableText)'

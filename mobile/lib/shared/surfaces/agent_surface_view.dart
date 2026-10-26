@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -71,8 +72,6 @@ class AgentSurfaceView extends StatelessWidget {
     );
     // Named from the message signer's profile (79), never the surface.
     final agentName = host.agentName ?? 'your agent';
-    // Starts this revision's tap settle the first time it is drawn (79).
-    surfaceRevisionTaps(surface.id, surface.revision);
     final over = isOver(surface) && !expanded;
     final known = isKnownCatalog(surface);
     final collapsed = surface.display == SurfaceDisplay.expanded && !expanded;
@@ -110,35 +109,40 @@ class AgentSurfaceView extends StatelessWidget {
         ],
       );
     }
-    return _SurfaceScope(
-      data: scope,
-      child: Semantics(
-        container: true,
-        label: surface.title.isEmpty ? 'Card from $agentName' : surface.title,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'from $agentName',
-              style: bodyExtraSmallTextStyle.copyWith(color: muted),
-            ),
-            if (surface.title.isNotEmpty) ...[
-              const SizedBox(height: Grid.quarter),
-              Semantics(
-                header: true,
-                child: Text(
-                  surface.title,
-                  style: context.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
+    drawSurfaceRevision(surface.id, surface.revision);
+    // This revision's tap settle starts when it is first on screen (79).
+    return _SettleOnShow(
+      surface: surface,
+      child: _SurfaceScope(
+        data: scope,
+        child: Semantics(
+          container: true,
+          label: surface.title.isEmpty ? 'Card from $agentName' : surface.title,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'from $agentName',
+                style: bodyExtraSmallTextStyle.copyWith(color: muted),
+              ),
+              if (surface.title.isNotEmpty) ...[
+                const SizedBox(height: Grid.quarter),
+                Semantics(
+                  header: true,
+                  child: Text(
+                    surface.title,
+                    style: context.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
+              ],
+              const SizedBox(height: Grid.xxs),
+              body,
+              const _Footer(),
             ],
-            const SizedBox(height: Grid.xxs),
-            body,
-            const _Footer(),
-          ],
+          ),
         ),
       ),
     );

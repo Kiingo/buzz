@@ -121,6 +121,8 @@ class _SurfaceContext {
   };
 
   /// [drawn] is what the control showed it sends, at the frame tapped.
+  /// Only an action of the surface on screen now runs (79): a menu or
+  /// control left open across a new read never runs what it held.
   void perform(
     BuildContext context,
     SurfaceAction action, {
@@ -129,7 +131,9 @@ class _SurfaceContext {
     bool shownHidden = false,
     MessageSend? drawn,
   }) {
-    if (!canTap(action, sends: sends, shown: shown, shownHidden: shownHidden)) {
+    if (!_isCurrent(context) ||
+        !identical(surface.actions[action.id], action) ||
+        !canTap(action, sends: sends, shown: shown, shownHidden: shownHidden)) {
       return;
     }
     switch (action.kind) {
@@ -178,11 +182,7 @@ class _SurfaceContext {
   /// revision has settled for [SurfaceHost.tapSettle], and the control has
   /// not sent from it before.
   bool _sendCounts(BuildContext context, String actionId) {
-    final current = context
-        .getInheritedWidgetOfExactType<_SurfaceScope>()
-        ?.data
-        .surface;
-    if (!identical(current, surface)) return false;
+    if (!_isCurrent(context)) return false;
     return claimSurfaceSend(
       surface.id,
       surface.revision,
@@ -190,6 +190,16 @@ class _SurfaceContext {
       settle: host.tapSettle,
     );
   }
+
+  /// Whether the card on screen at [context] still shows this read, and no
+  /// newer revision of the surface has been drawn anywhere.
+  bool _isCurrent(BuildContext context) =>
+      context.mounted &&
+      isNewestSurfaceRevision(surface.id, surface.revision) &&
+      identical(
+        context.getInheritedWidgetOfExactType<_SurfaceScope>()?.data.surface,
+        surface,
+      );
 
   /// This surface read's diffs, worked out once each (79 S4).
   SurfaceDiffMemo get diffs => _diffMemos[surface] ??= SurfaceDiffMemo();

@@ -87,13 +87,110 @@ final agentOwnersProvider = FutureProvider<Map<String, String>>((ref) async {
   return owners;
 });
 
+/// Live kind:0 updates for one agent's profile: [version] goes up on each
+/// one, and [isReady] is true only while the subscription is live. The
+/// owner lookup below fails closed when it isn't, so a revoked attestation
+/// never keeps a card on screen (79).
+class AgentProfileUpdateState {
+  final int version;
+  final bool isReady;
+
+  const AgentProfileUpdateState({this.version = 0, this.isReady = false});
+}
+
+class _AgentProfileSubscription extends Notifier<AgentProfileUpdateState> {
+  final String agent;
+  void Function()? _unsubscribe;
+  int _subscriptionVersion = 0;
+
+  _AgentProfileSubscription(this.agent);
+
+  @override
+  AgentProfileUpdateState build() {
+    final sessionState = ref.watch(relaySessionProvider);
+    final subscriptionVersion = ++_subscriptionVersion;
+    _clearSubscription();
+    ref.onDispose(() {
+      _subscriptionVersion++;
+      _clearSubscription();
+    });
+    if (sessionState.status != SessionStatus.connected) {
+      return const AgentProfileUpdateState();
+    }
+    Future.microtask(() => _subscribe(subscriptionVersion));
+    return const AgentProfileUpdateState();
+  }
+
+  Future<void> _subscribe(int subscriptionVersion) async {
+    final session = ref.read(relaySessionProvider.notifier);
+    var status = RelaySubscriptionStatus.retrying;
+    void update({bool bump = false}) {
+      if (!_isCurrent(subscriptionVersion)) return;
+      final isReady = status == RelaySubscriptionStatus.ready;
+      if (!bump && state.isReady == isReady) return;
+      state = AgentProfileUpdateState(
+        version: state.version + (bump ? 1 : 0),
+        isReady: isReady,
+      );
+    }
+
+    try {
+      final unsubscribe = await session.subscribeWithStatus(
+        NostrFilter(
+          kinds: const [0],
+          authors: [agent],
+        ).copyWithSince(DateTime.now().millisecondsSinceEpoch ~/ 1000),
+        (event) {
+          if (event.kind == 0 && event.pubkey.toLowerCase() == agent) {
+            update(bump: true);
+          }
+        },
+        onClosed: (_) {
+          status = RelaySubscriptionStatus.retrying;
+          update();
+        },
+        onStatusChanged: (next) {
+          status = next;
+          update();
+        },
+      );
+      if (!_isCurrent(subscriptionVersion)) {
+        unsubscribe();
+        return;
+      }
+      _unsubscribe = unsubscribe;
+      update();
+    } catch (error) {
+      debugPrint('[AgentProfileSubscription] failed: ${error.runtimeType}');
+    }
+  }
+
+  bool _isCurrent(int subscriptionVersion) =>
+      subscriptionVersion == _subscriptionVersion;
+
+  void _clearSubscription() {
+    _unsubscribe?.call();
+    _unsubscribe = null;
+  }
+}
+
+/// Live profile updates for one agent pubkey (lowercase).
+final agentProfileUpdateProvider = NotifierProvider.autoDispose
+    .family<_AgentProfileSubscription, AgentProfileUpdateState, String>(
+      _AgentProfileSubscription.new,
+    );
+
 /// The owner one agent's newest profile attests (NIP-OA), with every
 /// attestation condition checked (`kind`, `created_at`), or null: an
 /// expired or conditioned-out attestation counts as none. Agent cards are
-/// drawn only when this is the reader (79 S6).
+/// drawn only when this is the reader (79 S6). A new profile from the agent
+/// reads it again, and while its live updates are down it is null, so a
+/// revocation takes effect at once (79).
 final agentProfileOwnerProvider = FutureProvider.autoDispose
     .family<String?, String>((ref, pubkey) async {
       final agent = pubkey.trim().toLowerCase();
+      final updates = ref.watch(agentProfileUpdateProvider(agent));
+      if (!updates.isReady) return null;
       final session = ref.read(relaySessionProvider.notifier);
       final events = await session.fetchHistory(
         NostrFilters.profilesBatch([agent]),

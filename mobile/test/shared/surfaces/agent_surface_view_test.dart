@@ -611,4 +611,92 @@ void main() {
       expect(host.sent, hasLength(1));
     });
   });
+
+  group('79 §7.4 follow-ups, second pass', () {
+    LoadedSurface withMenu(String words) => _loaded(
+      children: const ['menu'],
+      extra: const [
+        {
+          'id': 'menu',
+          'type': 'Menu',
+          'props': {
+            'label': 'Options',
+            'actions': ['thanks'],
+          },
+        },
+      ],
+      actions: {
+        'thanks': {
+          'kind': 'send_message',
+          'label': 'Say thanks',
+          'text': words,
+        },
+      },
+    );
+
+    Future<void> show(WidgetTester tester, _Host host, LoadedSurface loaded) =>
+        tester.pumpWidget(
+          WidgetHelpers.testable(
+            child: SingleChildScrollView(
+              child: AgentSurfaceView(loaded: loaded, host: host.host),
+            ),
+          ),
+        );
+
+    testWidgets('a menu sends the words it shows', (tester) async {
+      final host = _Host();
+      await show(tester, host, withMenu('Thanks!'));
+      await tester.tap(find.text('Options'));
+      await tester.pumpAndSettle();
+      expect(find.text('Sends: “Thanks!”'), findsOneWidget);
+      await tester.tap(find.text('Say thanks'));
+      await tester.pumpAndSettle();
+      expect(host.sent, ['Thanks!']);
+    });
+
+    testWidgets('a menu left open across a new read runs nothing (S-a)', (
+      tester,
+    ) async {
+      final host = _Host();
+      await show(tester, host, withMenu('Thanks!'));
+      await tester.tap(find.text('Options'));
+      await tester.pumpAndSettle();
+      // The same revision read again, with other words under the menu.
+      await show(tester, host, withMenu('Approve everything'));
+      await tester.tap(find.text('Say thanks'));
+      await tester.pumpAndSettle();
+      expect(host.sent, isEmpty);
+    });
+
+    testWidgets('a control of an older revision never sends', (tester) async {
+      final host = _Host();
+      await show(tester, host, _loaded());
+      drawSurfaceRevision(_id, 3);
+      await tester.tap(find.text('Say thanks'));
+      await tester.pump();
+      expect(host.sent, isEmpty);
+    });
+
+    testWidgets('the tap settle starts when the card is first on screen', (
+      tester,
+    ) async {
+      final host = _Host();
+      await tester.pumpWidget(
+        WidgetHelpers.testable(
+          child: ListView(
+            children: [
+              const SizedBox(height: 700),
+              AgentSurfaceView(loaded: _loaded(), host: host.host),
+            ],
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Weekly plan', skipOffstage: false), findsOneWidget);
+      expect(surfaceRevisionShown(_id, 2), isFalse);
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(surfaceRevisionShown(_id, 2), isTrue);
+    });
+  });
 }

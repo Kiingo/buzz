@@ -20,15 +20,23 @@ String? verifiedProfileOaOwnerPubkey(NostrEvent event) {
   final owner = verifiedOaOwnerPubkey(event.tags, event.pubkey);
   if (owner == null) return null;
   final conditions = tags.single[2];
+  // Every signed clause must apply; one this app doesn't know never does
+  // (as desktop's profile_valid_oa_owner_pubkey).
   for (final clause
       in conditions.isEmpty ? <String>[] : conditions.split('&')) {
+    final bool applies;
     if (clause.startsWith('kind=')) {
-      if (int.parse(clause.substring(5)) != event.kind) return null;
+      applies = int.tryParse(clause.substring(5)) == event.kind;
     } else if (clause.startsWith('created_at<')) {
-      if (event.createdAt >= int.parse(clause.substring(11))) return null;
+      final bound = int.tryParse(clause.substring(11));
+      applies = bound != null && event.createdAt < bound;
     } else if (clause.startsWith('created_at>')) {
-      if (event.createdAt <= int.parse(clause.substring(11))) return null;
+      final bound = int.tryParse(clause.substring(11));
+      applies = bound != null && event.createdAt > bound;
+    } else {
+      applies = false;
     }
+    if (!applies) return null;
   }
   return owner;
 }

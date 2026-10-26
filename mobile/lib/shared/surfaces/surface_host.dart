@@ -54,18 +54,35 @@ class SurfaceRevisionTaps {
 
 final _revisionTaps = <String, SurfaceRevisionTaps>{};
 
+/// The most revisions remembered that have sent nothing.
+const _unsentRevisionsKept = 256;
+
 /// The taps record of revision [revision] of surface [surfaceId], made the
-/// first time it is asked for (when the revision is first drawn). Keeps
-/// the newest 256.
+/// first time it is asked for (when the revision is first on screen).
+/// Keeps the newest [_unsentRevisionsKept] that have sent nothing, and
+/// every one that has sent (79): forgetting a sent revision would let its
+/// controls send again, while forgetting an unsent one only restarts its
+/// settle. Each kept sent revision took a person's tap.
 SurfaceRevisionTaps surfaceRevisionTaps(String surfaceId, int revision) {
-  final key = '${surfaceId.toLowerCase()}:$revision';
+  final key = _revisionKey(surfaceId, revision);
   final found = _revisionTaps[key];
   if (found != null) return found;
-  if (_revisionTaps.length >= 256) {
-    _revisionTaps.remove(_revisionTaps.keys.first);
-  }
+  final unsent = [
+    for (final entry in _revisionTaps.entries)
+      if (entry.value.sent.isEmpty) entry.key,
+  ];
+  if (unsent.length >= _unsentRevisionsKept) _revisionTaps.remove(unsent.first);
   return _revisionTaps[key] = SurfaceRevisionTaps(DateTime.now());
 }
+
+String _revisionKey(String surfaceId, int revision) =>
+    '${surfaceId.toLowerCase()}:$revision';
+
+/// Whether revision [revision] of surface [surfaceId] has been on screen
+/// (tests).
+@visibleForTesting
+bool surfaceRevisionShown(String surfaceId, int revision) =>
+    _revisionTaps.containsKey(_revisionKey(surfaceId, revision));
 
 /// Whether a send from control [actionId] on revision [revision] counts
 /// now, and if so marks it sent: not before [settle] has passed since the
@@ -82,6 +99,32 @@ bool claimSurfaceSend(
   return taps.sent.add(actionId);
 }
 
-/// Forgets every revision's taps (tests).
+final _newestRevisions = <String, int>{};
+
+/// Records that revision [revision] of surface [surfaceId] is drawn, and
+/// returns the newest revision drawn of it so far (newest 256 surfaces).
+int drawSurfaceRevision(String surfaceId, int revision) {
+  final id = surfaceId.toLowerCase();
+  final newest = _newestRevisions.remove(id);
+  if (_newestRevisions.length >= 256) {
+    _newestRevisions.remove(_newestRevisions.keys.first);
+  }
+  return _newestRevisions[id] = newest == null || revision > newest
+      ? revision
+      : newest;
+}
+
+/// Whether revision [revision] of surface [surfaceId] is the newest drawn
+/// (79): a control still open on an older one, in a sheet or a menu,
+/// never acts.
+bool isNewestSurfaceRevision(String surfaceId, int revision) {
+  final newest = _newestRevisions[surfaceId.toLowerCase()];
+  return newest == null || revision >= newest;
+}
+
+/// Forgets every revision's taps and the newest revisions (tests).
 @visibleForTesting
-void resetSurfaceRevisionTaps() => _revisionTaps.clear();
+void resetSurfaceRevisionTaps() {
+  _revisionTaps.clear();
+  _newestRevisions.clear();
+}
