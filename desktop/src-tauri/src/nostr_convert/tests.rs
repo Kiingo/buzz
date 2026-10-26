@@ -318,6 +318,28 @@ fn search_response_assigns_descending_scores() {
 }
 
 #[test]
+fn search_response_carries_tags_for_the_mirror_display_rule() {
+    let e = ev(
+        40002,
+        "Move my 3pm",
+        vec![
+            vec!["h", "chan"],
+            vec!["buzz-mirror", "tasks", "t1", "1"],
+            vec!["buzz-mirror-author", "requester", "", ""],
+        ],
+    );
+    let r = search_response_from_events(&[e]);
+    assert_eq!(r.hits[0].tags.len(), 3);
+    assert_eq!(
+        r.hits[0].tags[1],
+        vec!["buzz-mirror", "tasks", "t1", "1"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn search_response_single_hit_full_score() {
     let e = ev(1, "only", vec![]);
     let r = search_response_from_events(&[e]);

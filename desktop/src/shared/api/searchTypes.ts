@@ -20,6 +20,8 @@ export type SearchHit = {
   createdAt: number;
   score: number;
   threadRootId?: string | null;
+  /** The event's tags, for the shared mirror display rule. */
+  tags?: string[][];
 };
 
 export type SearchMessagesResponse = {

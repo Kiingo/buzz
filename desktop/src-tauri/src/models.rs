@@ -240,6 +240,9 @@ pub struct SearchHitInfo {
     pub channel_name: Option<String>,
     pub created_at: u64,
     pub score: f64,
+    /// The event's tags, so clients can apply the shared mirror display rule.
+    #[serde(default)]
+    pub tags: Vec<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]

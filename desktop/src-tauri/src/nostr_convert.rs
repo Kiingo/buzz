@@ -443,6 +443,7 @@ pub fn search_response_from_events(events: &[Event]) -> SearchResponse {
                 channel_name: None,
                 created_at: ev.created_at.as_secs(),
                 score,
+                tags: ev.tags.iter().map(|t| t.as_slice().to_vec()).collect(),
             }
         })
         .collect();

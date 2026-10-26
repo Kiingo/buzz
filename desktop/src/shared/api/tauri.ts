@@ -90,6 +90,7 @@ type RawSearchHit = {
   channel_name: string | null;
   created_at: number;
   score: number;
+  tags?: string[][];
 };
 
 type RawSearchResponse = {
@@ -310,6 +311,7 @@ function fromRawSearchHit(hit: RawSearchHit) {
     channelName: hit.channel_name,
     createdAt: hit.created_at,
     score: hit.score,
+    tags: hit.tags ?? [],
   };
 }
 

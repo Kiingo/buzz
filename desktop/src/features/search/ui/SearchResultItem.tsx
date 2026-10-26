@@ -16,6 +16,8 @@ import {
   resolveUserSecondaryLabel,
   type UserProfileLookup,
 } from "@/features/profile/lib/identity";
+import type { MirrorDisplay } from "@/features/agent-dm/lib/mirrorDisplay";
+import { searchHitPreviewText } from "@/features/search/lib/searchHitMirror";
 import type { Channel, SearchHit, UserSearchResult } from "@/shared/api/types";
 import { Badge } from "@/shared/ui/badge";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
@@ -215,10 +217,13 @@ function formatRelativeTime(unixSeconds: number) {
 export function MessageResultBody({
   currentPubkey,
   hit,
+  mirror = null,
   resultProfiles,
 }: {
   currentPubkey?: string;
   hit: SearchHit;
+  /** The shared mirror display rule's result (`searchHitMirror`). */
+  mirror?: MirrorDisplay | null;
   resultProfiles?: UserProfileLookup;
 }) {
   const authorLabel = resolveUserLabel({
@@ -262,7 +267,7 @@ export function MessageResultBody({
         </p>
       ) : null}
       <p className="mt-2 text-sm leading-6 text-foreground">
-        {truncateContent(hit.content)}
+        {truncateContent(searchHitPreviewText(hit, mirror))}
       </p>
     </div>
   );

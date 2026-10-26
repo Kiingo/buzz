@@ -3,6 +3,10 @@ import * as React from "react";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
 import { getMinimumSearchQueryLength } from "@/features/search/hooks";
 import { parseSearchOperators } from "@/features/search/lib/parseSearchOperators";
+import {
+  searchHitMirror,
+  searchHitPreviewText,
+} from "@/features/search/lib/searchHitMirror";
 import { buildSearchResultPreview } from "@/features/search/lib/searchMatch";
 import { useSearchResults } from "@/features/search/useSearchResults";
 import {
@@ -673,6 +677,27 @@ export function TopbarSearch({
       result.kind === "message"
         ? getSearchHitContextLabel(result.hit, channelLookup, channelLabels)
         : null;
+    // A mirrored DM line stays under the agent that signed it and previews
+    // in its relayed form, never as its displayed author's own words.
+    const messageMirror =
+      result.kind === "message"
+        ? searchHitMirror({
+            hit: result.hit,
+            channel: result.hit.channelId
+              ? channelLookup.get(result.hit.channelId)
+              : null,
+            names: (pubkey) =>
+              resolveUserLabel({
+                currentPubkey,
+                profiles: resultProfiles,
+                pubkey,
+                preferResolvedSelfLabel: true,
+              }),
+            signerIsAgent:
+              resultProfiles?.[result.hit.pubkey.toLowerCase()]?.isAgent ===
+              true,
+          })
+        : null;
     const title =
       result.kind === "channel"
         ? channelDisplayName
@@ -688,7 +713,10 @@ export function TopbarSearch({
           ? result.action.description
           : result.kind === "user"
             ? getUserSecondaryLabel(result.user)
-            : buildSearchResultPreview(result.hit.content, resultQuery);
+            : buildSearchResultPreview(
+                searchHitPreviewText(result.hit, messageMirror),
+                resultQuery,
+              );
     const trailingLabel =
       result.kind === "channel"
         ? getChannelSuggestionMeta(result.channel)
