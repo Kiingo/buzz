@@ -41,12 +41,13 @@ AgentDmTimeline _build(
   bool isDm = true,
   List<String> members = const [_agent, _me],
   Map<String, String> owners = const {_agent: _me},
+  Set<String> agents = const {_agent},
 }) => AgentDmTimeline.build(
   events: events,
   isDm: isDm,
   memberPubkeys: members,
   currentPubkey: _me,
-  agentPubkeys: const {_agent},
+  agentPubkeys: agents,
   verifiedAgentOwners: owners,
 );
 
@@ -116,9 +117,48 @@ void main() {
   test('requester mirrors show a member author or say who relayed them', () {
     final timeline = _build([mirror, relayed]);
     expect(timeline.authorOf(_message(mirror)), _me);
-    expect(timeline.isRelayed(_message(mirror)), isFalse);
+    // Every requester mirror takes the relayed style, even when it is
+    // attributed to the member it names.
+    expect(timeline.isRelayed(_message(mirror)), isTrue);
     expect(timeline.authorOf(_message(relayed)), _agent);
     expect(timeline.isRelayed(_message(relayed)), isTrue);
+  });
+
+  test('the shared rule names the requester and who relayed the line', () {
+    final timeline = _build([mirror, relayed]);
+    String names(String pubkey) => pubkey == _me ? 'Ross' : 'Juniper';
+    final display = timeline.mirrorDisplayOf(_message(mirror), names)!;
+    expect(display.authorPubkey, _me);
+    expect(display.authorName, 'Ross');
+    expect(display.relayedByName, 'Juniper');
+    expect(display.relayLine, 'via email · relayed by Juniper');
+    expect(
+      display.plainText('Move my 3pm'),
+      'Ross (via email, relayed by Juniper): Move my 3pm',
+    );
+    final fallback = timeline.mirrorDisplayOf(_message(relayed), names)!;
+    expect(fallback.authorPubkey, _agent);
+    expect(fallback.plainText('Hi'), 'Relayed by Juniper (via Teams): Hi');
+    expect(timeline.mirrorDisplayOf(_message(divider), names), isNull);
+  });
+
+  test('a mirror from a signer not known as an agent keeps its signer', () {
+    final timeline = _build([mirror], agents: const {});
+    expect(timeline.authorOf(_message(mirror)), _agent);
+    expect(timeline.isRelayed(_message(mirror)), isTrue);
+  });
+
+  test('agent-role mirrors are not relayed', () {
+    final own = _event('own', const [
+      ['buzz-mirror', 'teams', 'm-3', '1700000000'],
+      ['buzz-mirror-author', 'agent', '', ''],
+    ]);
+    final timeline = _build([own]);
+    expect(timeline.isRelayed(_message(own)), isFalse);
+    expect(
+      timeline.mirrorDisplayOf(_message(own), (_) => 'Juniper')?.relayLine,
+      'via Teams',
+    );
   });
 
   group('question status', () {

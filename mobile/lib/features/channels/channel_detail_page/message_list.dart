@@ -922,6 +922,10 @@ class _MessageList extends HookConsumerWidget {
                         showDayDivider ||
                         AgentDmScope.authorOf(context, prevMessage) !=
                             AgentDmScope.authorOf(context, message) ||
+                        // A relayed mirror line never groups with its
+                        // displayed author's own messages.
+                        AgentDmScope.isRelayed(context, prevMessage) ||
+                        AgentDmScope.isRelayed(context, message) ||
                         (message.createdAt - prevMessage.createdAt) > 300);
 
                 final nextMessage = chronIdx + 1 < displayEntries.length
@@ -935,6 +939,8 @@ class _MessageList extends HookConsumerWidget {
                     !isSameDay(message.createdAt, nextMessage.createdAt) ||
                     AgentDmScope.authorOf(context, nextMessage) !=
                         AgentDmScope.authorOf(context, message) ||
+                    AgentDmScope.isRelayed(context, nextMessage) ||
+                    AgentDmScope.isRelayed(context, message) ||
                     nextMessage.createdAt - message.createdAt > 300;
 
                 return LocalMessageSendTransition(

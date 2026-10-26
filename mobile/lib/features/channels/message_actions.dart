@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../shared/agent_dm/agent_dm_mirror_display.dart';
 import '../../shared/clipboard_utils.dart';
 import '../../shared/deeplink/deep_link.dart';
 import '../../shared/relay/relay.dart';
@@ -24,6 +25,8 @@ import '../../shared/widgets/sheet_action_section.dart';
 import '../../shared/widgets/modal_presentation.dart';
 import '../../shared/reminders/remind_me_later_sheet.dart';
 import '../../shared/reminders/reminder_service.dart';
+import 'agent_dm/agent_dm_scope.dart';
+import 'channel_identity_names_provider.dart';
 import 'channel_management_provider.dart';
 import 'channels_provider.dart';
 import 'emoji_picker.dart';
@@ -85,6 +88,16 @@ Future<void> showMessageActions({
 }) async {
   if (!context.mounted) return;
   unawaited(HapticFeedback.mediumImpact());
+  // Resolved before the sheet opens, while [context] is under the DM's
+  // marker scope: a mirrored line copies in its relayed form.
+  final copyText = agentDmMirrorCopyText(
+    AgentDmScope.mirrorDisplayOf(
+      context,
+      message,
+      ref.read(channelIdentityNamesProvider(channelId)).labelFor,
+    ),
+    message.content,
+  );
   final restoreFocusOnCancel = composerFocusNode?.hasFocus ?? false;
   composerFocusNode?.unfocus();
 
@@ -158,7 +171,7 @@ Future<void> showMessageActions({
                           onTap: () {
                             if (!_selectMessageAction(sheetContext)) return;
                             // Copy to clipboard
-                            final data = ClipboardData(text: message.content);
+                            final data = ClipboardData(text: copyText);
                             Clipboard.setData(data);
                           },
                         ),

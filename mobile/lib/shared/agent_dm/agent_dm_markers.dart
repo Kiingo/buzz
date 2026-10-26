@@ -114,15 +114,8 @@ class AgentDmMirror {
     this.subject,
   });
 
-  /// The badge text: "via email", "via Teams", or `via <surface>`.
-  String get badgeLabel => switch (surface) {
-    'email' => 'via email',
-    'teams' => 'via Teams',
-    'sms' => 'via SMS',
-    'web' => 'via web',
-    'voice' => 'via voice call',
-    _ => 'via $surface',
-  };
+  /// The badge text: "via email", "via Kiingo Tasks", or `via <surface>`.
+  String get badgeLabel => 'via ${agentDmMirrorSurfaceLabel(surface)}';
 
   /// The member shown as the author, or null to show the signer.
   ///
@@ -141,6 +134,20 @@ class AgentDmMirror {
         : null;
   }
 }
+
+/// The surface a mirror came from, as a noun: "Kiingo Tasks", "email", or
+/// the surface itself. Same labels as desktop's `mirrorSurfaceLabel`.
+String agentDmMirrorSurfaceLabel(String surface) => switch (surface) {
+  'email' => 'email',
+  'teams' => 'Teams',
+  'sms' => 'SMS',
+  'web' => 'web',
+  'voice' => 'voice call',
+  'tasks' => 'Kiingo Tasks',
+  'companion' => 'Kiingo Companion',
+  'ask' => 'Kiingo Ask',
+  _ => surface,
+};
 
 /// Reads `buzz-mirror`, `buzz-mirror-author` and the optional `subject`.
 AgentDmMirror? readAgentDmMirror(List<List<String>> tags) {

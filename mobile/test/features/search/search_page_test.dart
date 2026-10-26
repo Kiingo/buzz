@@ -1,5 +1,8 @@
 import 'package:buzz/shared/widgets/buzz_agent_icon.dart';
 import 'package:buzz/features/channels/channel.dart';
+import 'package:buzz/features/channels/channel_identity_names_provider.dart';
+import 'package:buzz/shared/identity_names/identity_names.dart';
+import 'package:buzz/shared/relay/relay.dart';
 import 'package:buzz/features/channels/channel_management_provider.dart';
 import 'package:buzz/features/channels/channels_provider.dart';
 import 'package:buzz/features/channels/message_content.dart';
@@ -810,6 +813,79 @@ void main() {
     expect(content.mentionNames, {agentPubkey: 'Helper Bot'});
     expect(content.agentMentionPubkeys, contains(agentPubkey));
     expect(find.byType(BuzzAgentIcon), findsOneWidget);
+  });
+
+  testWidgets('a mirrored DM line shows its relayed form', (tester) async {
+    final agent = 'a1' * 32;
+    final ross = 'b2' * 32;
+    final dm = Channel(
+      id: 'dm-1',
+      name: 'dm',
+      channelType: 'dm',
+      visibility: 'private',
+      description: '',
+      createdBy: 'test',
+      createdAt: DateTime(2025),
+      memberCount: 2,
+      isMember: true,
+      participantPubkeys: [agent, ross],
+    );
+    final state = SearchState(
+      query: '3pm',
+      messageResults: [
+        SearchHit(
+          eventId: 'message-1',
+          content: 'Move my 3pm',
+          kind: EventKind.streamMessageV2,
+          pubkey: agent,
+          channelId: dm.id,
+          createdAt: 1,
+          score: 1,
+          tags: [
+            ['h', dm.id],
+            ['buzz-mirror', 'tasks', 't-1', '1700000000'],
+            ['buzz-mirror-author', 'requester', ross, 'Ross'],
+          ],
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      WidgetHelpers.testable(
+        overrides: [
+          searchProvider.overrideWith(() => _FakeSearchNotifier(state)),
+          recentSearchesProvider.overrideWith(
+            () => _FakeRecentSearchesNotifier(const []),
+          ),
+          profileProvider.overrideWith(() => _FakeProfileNotifier()),
+          channelsProvider.overrideWith(() => _FakeChannelsNotifier([dm])),
+          userCacheProvider.overrideWith(
+            () => _FakeUserCacheNotifier(UserProfile(pubkey: agent)),
+          ),
+          agentMentionPubkeysProvider(dm.id).overrideWith((ref) => {agent}),
+          channelIdentityNamesProvider(dm.id).overrideWithValue(
+            const IdentityNameSources().scope(
+              [agent, ross],
+              fallbackNames: {agent: 'Juniper', ross: 'Ross'},
+            ),
+          ),
+        ],
+        child: const SearchPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final author = tester.widget<Text>(
+      find.byKey(const ValueKey('search-message-author-message-1')),
+    );
+    expect(author.data, 'Juniper');
+    final body = tester.widget<MessageContent>(
+      find.byKey(const ValueKey('search-message-body-message-1')),
+    );
+    expect(
+      body.content,
+      'Ross (via Kiingo Tasks, relayed by Juniper): Move my 3pm',
+    );
   });
 
   testWidgets('does not label an unjoined channel as having zero members', (

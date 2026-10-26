@@ -62,6 +62,21 @@ class _MessageTile extends ConsumerWidget {
       directoryDisplayNames: ref.watch(agentDirectoryDisplayNamesProvider),
       agentMentionPubkeys: agentMentionPubkeys,
     );
+    // A mirrored line shows under the agent that signed it, in its relayed
+    // form, never as its displayed author's own message.
+    final hitChannel = channel;
+    final mirror = hitChannel == null
+        ? null
+        : agentDmMirrorDisplay(
+            kind: hit.kind,
+            signerPubkey: hit.pubkey,
+            tags: hit.tags,
+            isDm: hitChannel.isDm,
+            memberPubkeys: hitChannel.participantPubkeys,
+            names: (pubkey) =>
+                watchChannelIdentityLabel(ref, hitChannel.id, pubkey),
+            signerIsAgent: knownAgentPubkeys.contains(hit.pubkey.toLowerCase()),
+          );
 
     return ListTile(
       key: ValueKey('search-message-row-${hit.eventId}'),
@@ -75,7 +90,7 @@ class _MessageTile extends ConsumerWidget {
         size: compactMessageAvatarSize,
       ),
       title: MessageAuthorMeta(
-        displayName: authorName,
+        displayName: mirror?.relayedByName ?? authorName,
         username: messageUsernameLabel(authorProfile),
         timestamp: timeAgo,
         nameColor: context.colors.onSurface,
@@ -132,7 +147,7 @@ class _MessageTile extends ConsumerWidget {
           const SizedBox(height: Grid.half),
           MessageContent(
             key: ValueKey('search-message-body-${hit.eventId}'),
-            content: hit.content,
+            content: mirror?.plainText(hit.content) ?? hit.content,
             mentionNames: mentionNames,
             mentionLabels: labels,
             agentMentionPubkeys: agentMentionPubkeys,

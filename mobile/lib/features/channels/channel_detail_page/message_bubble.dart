@@ -55,6 +55,9 @@ class _MessageBubble extends HookConsumerWidget {
     // managing the message stays keyed to the signer.
     final signerPk = message.pubkey.toLowerCase();
     final pk = AgentDmScope.authorOf(context, message);
+    // A requester mirror is relayed by the agent: it never takes the
+    // reader's own-message bubble, whoever it is attributed to.
+    final relayed = AgentDmScope.isRelayed(context, message);
     final profile =
         ref.watch(userCacheProvider.select((cache) => cache[pk])) ??
         ref.read(userCacheProvider.notifier).get(pk);
@@ -317,80 +320,90 @@ class _MessageBubble extends HookConsumerWidget {
                                       'reply-handoff-${message.id}',
                                     ),
                                     animate: typingHandoff,
-                                    child: MessageContent(
-                                      content: message.content,
-                                      bubble: true,
-                                      hasReactions:
-                                          message.reactions.isNotEmpty ||
-                                          replyFooter != null,
-                                      bubbleEnd: showAvatar,
-                                      bubbleStart: showAuthor,
-                                      ownMessage:
-                                          currentPubkey?.toLowerCase() == pk,
-                                      mentionNames: resolvedMentionNames,
-                                      mentionLabels: mentionLabels,
-                                      agentMentionPubkeys: agentMentionPubkeys,
-                                      channelNames: channelNames,
-                                      tags: message.tags,
-                                      baseStyle: messageBodyTextStyle.copyWith(
-                                        color: context.colors.onSurface,
-                                      ),
-                                      scaleEmojiOnly: true,
-                                      mediaCarouselTrailingOverflow:
-                                          Grid.gutter,
-                                      onMediaReply: allMessages == null
-                                          ? null
-                                          : () {
-                                              if (!context.mounted) return;
-                                              Navigator.of(context).push(
-                                                MaterialPageRoute<void>(
-                                                  builder: (_) =>
-                                                      ThreadDetailPage(
-                                                        threadHead: message,
-                                                        allMessages:
-                                                            allMessages!,
-                                                        channelId:
-                                                            currentChannelId,
-                                                        currentPubkey:
-                                                            currentPubkey,
-                                                        isMember: isMember,
-                                                        isArchived: isArchived,
-                                                      ),
-                                                ),
-                                              );
-                                            },
-                                      onMediaMore: (viewerContext, imageUrl) =>
-                                          showImageActions(
-                                            context: viewerContext,
-                                            ref: ref,
-                                            message: message,
-                                            channelId: currentChannelId,
-                                            imageUrl: imageUrl,
-                                            canManageMessage: canManageMessage,
-                                            onDeleted: () {
-                                              if (viewerContext.mounted) {
-                                                Navigator.of(
-                                                  viewerContext,
-                                                ).maybePop();
-                                              }
-                                            },
-                                          ),
-                                      onChannelTap: (channelId) {
-                                        openChannelLink(
-                                          context: context,
-                                          ref: ref,
-                                          channelId: channelId,
-                                          currentChannelId: currentChannelId,
-                                        );
-                                      },
-                                      onMentionTap: (pubkey) =>
-                                          showUserProfileSheet(
-                                            context,
-                                            pubkey,
-                                            names: channelIdentityNamesProvider(
-                                              currentChannelId,
+                                    child: AgentDmRelayedFrame(
+                                      relayed: relayed,
+                                      child: MessageContent(
+                                        content: message.content,
+                                        bubble: true,
+                                        hasReactions:
+                                            message.reactions.isNotEmpty ||
+                                            replyFooter != null,
+                                        bubbleEnd: showAvatar,
+                                        bubbleStart: showAuthor,
+                                        ownMessage:
+                                            !relayed &&
+                                            currentPubkey?.toLowerCase() == pk,
+                                        mentionNames: resolvedMentionNames,
+                                        mentionLabels: mentionLabels,
+                                        agentMentionPubkeys:
+                                            agentMentionPubkeys,
+                                        channelNames: channelNames,
+                                        tags: message.tags,
+                                        baseStyle: messageBodyTextStyle
+                                            .copyWith(
+                                              color: context.colors.onSurface,
                                             ),
-                                          ),
+                                        scaleEmojiOnly: true,
+                                        mediaCarouselTrailingOverflow:
+                                            Grid.gutter,
+                                        onMediaReply: allMessages == null
+                                            ? null
+                                            : () {
+                                                if (!context.mounted) return;
+                                                Navigator.of(context).push(
+                                                  MaterialPageRoute<void>(
+                                                    builder: (_) =>
+                                                        ThreadDetailPage(
+                                                          threadHead: message,
+                                                          allMessages:
+                                                              allMessages!,
+                                                          channelId:
+                                                              currentChannelId,
+                                                          currentPubkey:
+                                                              currentPubkey,
+                                                          isMember: isMember,
+                                                          isArchived:
+                                                              isArchived,
+                                                        ),
+                                                  ),
+                                                );
+                                              },
+                                        onMediaMore:
+                                            (viewerContext, imageUrl) =>
+                                                showImageActions(
+                                                  context: viewerContext,
+                                                  ref: ref,
+                                                  message: message,
+                                                  channelId: currentChannelId,
+                                                  imageUrl: imageUrl,
+                                                  canManageMessage:
+                                                      canManageMessage,
+                                                  onDeleted: () {
+                                                    if (viewerContext.mounted) {
+                                                      Navigator.of(
+                                                        viewerContext,
+                                                      ).maybePop();
+                                                    }
+                                                  },
+                                                ),
+                                        onChannelTap: (channelId) {
+                                          openChannelLink(
+                                            context: context,
+                                            ref: ref,
+                                            channelId: channelId,
+                                            currentChannelId: currentChannelId,
+                                          );
+                                        },
+                                        onMentionTap: (pubkey) =>
+                                            showUserProfileSheet(
+                                              context,
+                                              pubkey,
+                                              names:
+                                                  channelIdentityNamesProvider(
+                                                    currentChannelId,
+                                                  ),
+                                            ),
+                                      ),
                                     ),
                                   ),
                                   ?AgentDmScope.footerFor(context, message),

@@ -3,6 +3,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../../../shared/agent_dm/agent_dm_markers.dart';
+import '../../../shared/agent_dm/agent_dm_mirror_display.dart';
 import '../../../shared/mentions/agent_identity_provider.dart';
 import '../../../shared/relay/relay.dart';
 import '../channel.dart';
@@ -145,19 +146,34 @@ class AgentDmScope extends InheritedWidget {
     return null;
   }
 
-  /// The "via email" badge line above a mirrored [message], or null.
+  /// The relay line above a mirrored [message] ("via Kiingo Tasks ·
+  /// relayed by Juniper"), or null.
   static Widget? mirrorMetaFor(BuildContext context, TimelineMessage message) {
     final scope = maybeOf(context);
-    final mirror = scope?.timeline.mirrorOf(message.id);
-    if (scope == null || mirror == null) return null;
+    if (scope == null || scope.timeline.mirrorOf(message.id) == null) {
+      return null;
+    }
     return AgentDmMirrorBadge(
       key: ValueKey('agent-dm-mirror-${message.id}'),
-      mirror: mirror,
+      timeline: scope.timeline,
+      message: message,
       channelId: scope.channel.id,
-      signerPubkey: message.pubkey,
-      relayed: scope.timeline.isRelayed(message),
     );
   }
+
+  /// Whether [message] is a requester mirror, which always takes the
+  /// distinct relayed style and never groups with its displayed author.
+  static bool isRelayed(BuildContext context, TimelineMessage message) =>
+      maybeOf(context)?.timeline.isRelayed(message) ?? false;
+
+  /// The shared display rule's result for [message] with [names], read
+  /// without subscribing (for callbacks such as Copy text), or null.
+  static AgentDmMirrorDisplay? mirrorDisplayOf(
+    BuildContext context,
+    TimelineMessage message,
+    String Function(String pubkey) names,
+  ) =>
+      maybeOf(context, listen: false)?.timeline.mirrorDisplayOf(message, names);
 
   /// The agent card, question card and action buttons under [message], or
   /// null.

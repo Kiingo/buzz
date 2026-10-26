@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../../../shared/agent_dm/agent_dm_markers.dart';
+import '../../../shared/agent_dm/agent_dm_mirror_display.dart';
 import '../../../shared/agent_dm/agent_dm_quiet.dart';
 import '../../../shared/relay/nostr_models.dart';
 import '../timeline_message.dart';
@@ -49,6 +50,7 @@ class AgentDmListingEvent {
 @immutable
 class AgentDmTimeline {
   final Set<String> _members;
+  final Set<String> _agents;
   final Map<String, String> _signers;
   final Map<String, AgentDmMirror> _mirrors;
   final Map<String, AgentDmCall> _calls;
@@ -65,6 +67,7 @@ class AgentDmTimeline {
 
   const AgentDmTimeline._({
     required Set<String> members,
+    Set<String> agents = const {},
     required Map<String, String> signers,
     required Map<String, AgentDmMirror> mirrors,
     Map<String, AgentDmCall> calls = const {},
@@ -79,6 +82,7 @@ class AgentDmTimeline {
     required Map<String, Set<String>> answerSigners,
     required Set<String> usedActionRefs,
   }) : _members = members,
+       _agents = agents,
        _signers = signers,
        _mirrors = mirrors,
        _calls = calls,
@@ -210,6 +214,7 @@ class AgentDmTimeline {
 
     return AgentDmTimeline._(
       members: Set.unmodifiable(members),
+      agents: Set.unmodifiable(agents),
       signers: Map.unmodifiable(signers),
       mirrors: Map.unmodifiable(mirrors),
       calls: Map.unmodifiable(calls),
@@ -302,25 +307,40 @@ class AgentDmTimeline {
     };
   }
 
-  /// The author shown for [message]: a DM member named by a requester
-  /// mirror when the rule allows it, otherwise the signer.
-  String authorOf(TimelineMessage message) {
-    final signer = message.pubkey.toLowerCase();
-    return _mirrors[message.id]?.authorOverride(
-          signerPubkey: signer,
-          memberPubkeys: _members,
-        ) ??
-        signer;
+  /// How to show mirrored [message] under the shared display rule
+  /// ([agentDmMirrorDisplay]), or null when it is not an honoured mirror.
+  /// [names] resolves a lowercase key to the label the surface uses.
+  AgentDmMirrorDisplay? mirrorDisplayOf(
+    TimelineMessage message,
+    String Function(String pubkey) names,
+  ) {
+    if (!_mirrors.containsKey(message.id)) return null;
+    final signer = message.pubkey.trim().toLowerCase();
+    return agentDmMirrorDisplay(
+      kind: agentDmQuietKind,
+      signerPubkey: signer,
+      tags: message.tags,
+      isDm: true,
+      memberPubkeys: _members,
+      names: names,
+      signerIsAgent: _agents.contains(signer),
+    );
   }
 
-  /// Whether [message] is a requester mirror shown as "Relayed by" its
-  /// signer because its claimed author is not a usable DM member.
-  bool isRelayed(TimelineMessage message) {
-    final mirror = _mirrors[message.id];
-    return mirror != null &&
-        mirror.role == AgentDmMirrorRole.requester &&
-        authorOf(message) == message.pubkey.toLowerCase();
-  }
+  /// The author shown for [message]: a DM member named by a requester
+  /// mirror when the shared rule allows it (the signer is an agent),
+  /// otherwise the signer.
+  String authorOf(TimelineMessage message) =>
+      mirrorDisplayOf(message, _keyName)?.authorPubkey ??
+      message.pubkey.toLowerCase();
+
+  static String _keyName(String pubkey) => pubkey;
+
+  /// Whether [message] is a requester mirror: it always takes the distinct
+  /// relayed style and never groups with messages its displayed author
+  /// signed, whoever it is attributed to.
+  bool isRelayed(TimelineMessage message) =>
+      _mirrors[message.id]?.role == AgentDmMirrorRole.requester;
 
   /// Drops rows that render nothing and marks dividers and listings as
   /// system rows, so they never group with messages or take read marks.
