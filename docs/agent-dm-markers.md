@@ -89,9 +89,19 @@ indistinguishable from a message the requester signed:
   `companion` → "the Companion", `ask` → "Kiingo Ask", anything else →
   the surface itself. The badge reads "via <label>". The tooltip or details
   view gives the original time and, when present, the subject.
-- Agent runtimes never read a mirror as input: an event carrying either
-  `buzz-mirror` or `buzz-mirror-author` (any role, any kind, any signer)
-  never starts, steers or enters the context of a turn.
+- Agent reads. No agent path presents a requester mirror as the
+  requester's own words, but the two paths differ on agent-role mirrors:
+  - The harness (`buzz-acp`) drops every mirror, either role: an event
+    carrying `buzz-mirror` or `buzz-mirror-author` (any kind, any signer)
+    never starts or steers a turn and never enters its DM or thread context.
+    So the agent's own replies homed on another surface (agent-role mirrors,
+    call cards) are not in its context either; its ordinary kind 9 replies
+    are.
+  - The agent's read tools (`buzz` CLI get, thread, search and feed) drop
+    requester mirrors through `buzz_core::agent_dm_marker`: any mirror tag
+    counts, unless every author tag has role `agent` (fail closed). They keep
+    agent-role mirrors, so an agent can still read back what it said on
+    another surface.
 - Quiet. Edits, deletion and moderation stay keyed to the signer; the agent
   deletes a mirror with an ordinary kind 5 deletion when the source's retention
   ends.

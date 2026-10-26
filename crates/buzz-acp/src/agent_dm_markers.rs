@@ -1,14 +1,17 @@
 //! Quiet agent DM markers (`docs/agent-dm-markers.md`): agent-signed history
 //! mirrored from other surfaces, session dividers, session listings and
 //! question-card state. They are presentation for people, not conversation:
-//! they never enter an agent's prompt context, never start or steer a turn,
-//! and never count as relayed provenance, whoever signed them.
+//! in this harness they never enter an agent's prompt context, never start or
+//! steer a turn, and never count as relayed provenance, whoever signed them.
 //!
-//! A requester mirror is signed by the agent's key on the requester's behalf.
-//! Because agent runtimes hold that key, nothing an agent runtime reads may
-//! treat such a line as the requester's own words. Either mirror tag alone
-//! (`buzz-mirror` or `buzz-mirror-author`, any role) is enough to make an
-//! event quiet, so dropping one tag never turns a mirror into an input.
+//! A requester mirror is signed by the agent's key on the requester's behalf,
+//! so nothing the harness feeds a turn may treat such a line as the
+//! requester's own words. Either mirror tag alone (`buzz-mirror` or
+//! `buzz-mirror-author`, any role) is enough to make an event quiet here, so
+//! dropping one tag never turns a mirror into an input; agent-role mirrors
+//! are dropped too. The agent's own CLI read tools are a separate path: they
+//! use `buzz_core::agent_dm_marker::is_requester_mirror`, which drops
+//! requester mirrors but keeps agent-role ones.
 
 use buzz_core::agent_dm_marker::is_quiet_marker_tag_name;
 
