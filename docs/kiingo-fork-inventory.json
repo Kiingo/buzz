@@ -2300,6 +2300,24 @@
         "mobile/test/shared/relay/relay_session_verify_test.dart",
         "mobile/test/shared/relay/served_event_fixture.dart"
       ]
+    },
+    {
+      "id": "desktop-relay-event-verification",
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
+      "purpose": "The desktop app verifies relay events in Rust before anything uses them. The websocket plugin that carries both renderer relay clients checks every inbound EVENT frame (the id is the NIP-01 hash of the fields, and the BIP-340 signature is the author's) and drops a forged or unreadable frame before the webview sees it; other relay messages pass unchanged. The native relay client verifies persistent archive-subscription events as well as finite requests, HTTP /query answers drop events that fail verification, and pairing messages are used only when they verify. Drops are logged by reason, never with content.",
+      "upstreamStatus": "Generic client hardening; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream desktop verifies received events at the transport boundary equivalently.",
+      "paths": [
+        "desktop/src-tauri/src/commands/pairing.rs",
+        "desktop/src-tauri/src/commands/pairing_relay_tests.rs",
+        "desktop/src-tauri/src/native_relay_client.rs",
+        "desktop/src-tauri/src/native_relay_client_tests.rs",
+        "desktop/src-tauri/src/native_websocket.rs",
+        "desktop/src-tauri/src/native_websocket_events.rs",
+        "desktop/src-tauri/src/relay.rs",
+        "desktop/src-tauri/src/relay/tests.rs"
+      ]
     }
   ],
   "budgetAmendments": [

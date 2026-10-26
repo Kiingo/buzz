@@ -471,7 +471,21 @@ async fn send_query_request(
     if !response.status().is_success() {
         return Err(relay_error_message(response).await);
     }
-    parse_json_response(response).await
+    let mut events: Vec<nostr::Event> = parse_json_response(response).await?;
+    retain_verified_events(&mut events);
+    Ok(events)
+}
+
+/// Drops every event whose id is not the NIP-01 hash of its fields or whose
+/// signature is not its author's. The relay verifies on ingest, but the app
+/// does not trust what it is served: no caller sees an unverified event.
+pub(crate) fn retain_verified_events(events: &mut Vec<nostr::Event>) {
+    let served = events.len();
+    events.retain(|event| event.verify().is_ok());
+    let dropped = served - events.len();
+    if dropped > 0 {
+        tracing::warn!("relay query: dropped {dropped} events that failed verification");
+    }
 }
 
 // ── Command response parsing ────────────────────────────────────────────────

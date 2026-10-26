@@ -923,3 +923,34 @@ mod transport_tests;
 
 #[path = "native_relay_client_finite_tests.rs"]
 mod finite_recovery_tests;
+
+/// The archive is live-only and trusts what it is handed, so the socket
+/// loop verifies persistent-subscription events: a forged one is dropped
+/// and the genuine one behind it still arrives.
+#[tokio::test]
+async fn a_forged_persistent_event_never_reaches_the_archive() {
+    let (relay_url, mut frames, commands) = stub_relay().await;
+    let (session, mut events) = start(relay_url, Keys::generate(), None).await;
+    session.set_subscriptions(vec![probe_subscription()]).await;
+    assert_eq!(next_req(&mut frames, "the archive REQ").await, PROBE_ID);
+
+    let author = Keys::generate();
+    let genuine = EventBuilder::text_note("genuine archive event")
+        .sign_with_keys(&author)
+        .unwrap();
+    let mut forged = serde_json::to_value(&genuine).unwrap();
+    forged["content"] = "edited after signing".into();
+    for event in [forged, serde_json::to_value(&genuine).unwrap()] {
+        commands
+            .send(StubCommand::Event(PROBE_ID.into(), event))
+            .await
+            .unwrap();
+    }
+
+    let delivered = tokio::time::timeout(Duration::from_secs(10), events.recv())
+        .await
+        .expect("timed out waiting for the genuine event")
+        .expect("archive receiver closed");
+    assert_eq!(*delivered.event, genuine);
+    session.shutdown();
+}

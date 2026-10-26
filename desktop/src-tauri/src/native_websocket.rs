@@ -9,6 +9,7 @@ use tauri::{
 };
 
 use crate::native_websocket_batch::{is_auth_challenge, FrameBatch, BATCH_MAX_SERIALIZED_BYTES};
+use crate::native_websocket_events::{classify_inbound_frame, InboundFrame};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_tungstenite::{
     connect_async,
@@ -302,6 +303,14 @@ async fn run_connection<S>(
                     Some(Err(error)) => OutboundMessage::Error(error.to_string()),
                     None => OutboundMessage::Close(None),
                 };
+                // Relay events are verified here, before the webview sees
+                // them; a forged or unreadable one is dropped.
+                if let OutboundMessage::Text(payload) = &message {
+                    if let InboundFrame::Drop(reason) = classify_inbound_frame(payload) {
+                        tracing::warn!(reason, "relay: dropped inbound frame");
+                        continue;
+                    }
+                }
                 let terminal = matches!(message, OutboundMessage::Close(_) | OutboundMessage::Error(_));
                 // Classify the relay payload before it is wrapped, while its
                 // structure is still readable.

@@ -36,6 +36,7 @@ mod models;
 mod native_relay_client;
 mod native_websocket;
 mod native_websocket_batch;
+mod native_websocket_events;
 mod nostr_bind;
 pub mod nostr_convert;
 mod observed_unread;

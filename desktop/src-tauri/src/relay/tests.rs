@@ -792,3 +792,59 @@ fn profile_event_rejects_invalid_auth_tag() {
         "error message should mention verification failure"
     );
 }
+
+// ── /query answers are verified before any caller sees them ─────────────
+//
+// The relay verifies on ingest, but the app does not trust what it is
+// served: an event whose content changed after signing, or whose signature
+// is another event's, is dropped from the answer, and the genuine events
+// around it are kept in order.
+#[tokio::test]
+async fn query_answers_drop_events_that_fail_verification() {
+    use std::io::{Read as _, Write as _};
+
+    let author = nostr::Keys::generate();
+    let first = nostr::EventBuilder::text_note("first")
+        .sign_with_keys(&author)
+        .unwrap();
+    let second = nostr::EventBuilder::text_note("second")
+        .sign_with_keys(&author)
+        .unwrap();
+    let mut edited = serde_json::to_value(&first).unwrap();
+    edited["content"] = "edited after signing".into();
+    let mut resigned = serde_json::to_value(&second).unwrap();
+    resigned["sig"] = serde_json::to_value(&first).unwrap()["sig"].clone();
+    let body = serde_json::json!([first, edited, resigned, second]).to_string();
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+            let _ = stream.flush();
+        }
+    });
+
+    let events = super::send_query_request(
+        &reqwest::Client::new(),
+        &format!("http://{addr}/query"),
+        "Nostr test-auth",
+        None,
+        b"[]".to_vec(),
+        std::time::Duration::from_secs(5),
+    )
+    .await
+    .expect("a verified subset is still a successful answer");
+
+    assert_eq!(events, vec![first, second]);
+    let _ = handle.join();
+}

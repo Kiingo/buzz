@@ -765,7 +765,8 @@ fn event_to_relay_json(event: &nostr::Event) -> String {
     format!("[\"EVENT\",{}]", nostr::JsonUtil::as_json(event))
 }
 
-/// Parse a relay EVENT message into a nostr 0.36 Event (buzz-core compatible).
+/// Parse a relay EVENT message into a nostr 0.36 Event (buzz-core compatible),
+/// or None when it is not one for `sub_id` or does not verify.
 fn parse_relay_event(text: &str, sub_id: &str) -> Option<nostr::Event> {
     let arr: serde_json::Value = serde_json::from_str(text).ok()?;
     let arr = arr.as_array()?;
@@ -778,7 +779,10 @@ fn parse_relay_event(text: &str, sub_id: &str) -> Option<nostr::Event> {
     if arr[1].as_str()? != sub_id {
         return None;
     }
-    serde_json::from_value(arr[2].clone()).ok()
+    let event: nostr::Event = serde_json::from_value(arr[2].clone()).ok()?;
+    // A pairing message is trusted only as its sender's signed event.
+    event.verify().ok()?;
+    Some(event)
 }
 
 /// Pairing route discovered from the main relay's NIP-11 document.

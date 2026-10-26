@@ -647,6 +647,14 @@ async fn run_connection(
                             }
                             continue;
                         }
+                        // A forged event proves nothing about the subscription
+                        // and must never reach the archive.
+                        if event.verify().is_err() {
+                            tracing::warn!(
+                                "native relay: dropped an archive event that failed verification"
+                            );
+                            continue;
+                        }
                         // Delivery proves the subscription is healthy, so any
                         // accumulated backoff for it is stale. Mirrors the JS
                         // port's per-event `closedRetryAttempt = 0`.

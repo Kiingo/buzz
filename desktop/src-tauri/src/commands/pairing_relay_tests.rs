@@ -1,5 +1,6 @@
 use super::{
-    pairing_relay_from_nip11, probe_pairing_relay, resolve_pairing_relay_url, PairingRelay,
+    pairing_relay_from_nip11, parse_relay_event, probe_pairing_relay, resolve_pairing_relay_url,
+    PairingRelay,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -101,4 +102,25 @@ fn main_relay_pairing_uses_main_relay_url() {
     .expect("resolve main pairing relay");
 
     assert_eq!(resolved, "wss://sprout-oss.stage.blox.sqprod.co");
+}
+
+#[test]
+fn pairing_messages_are_used_only_when_they_verify() {
+    let sender = nostr::Keys::generate();
+    let genuine = nostr::EventBuilder::text_note("pairing offer")
+        .sign_with_keys(&sender)
+        .unwrap();
+    let frame = |event: serde_json::Value, sub_id: &str| {
+        serde_json::json!(["EVENT", sub_id, event]).to_string()
+    };
+    let json = serde_json::to_value(&genuine).unwrap();
+    let mut edited = json.clone();
+    edited["content"] = "edited after signing".into();
+
+    assert_eq!(
+        parse_relay_event(&frame(json.clone(), "pair"), "pair"),
+        Some(genuine)
+    );
+    assert_eq!(parse_relay_event(&frame(edited, "pair"), "pair"), None);
+    assert_eq!(parse_relay_event(&frame(json, "other"), "pair"), None);
 }
