@@ -62,6 +62,7 @@ pub async fn cmd_get_feed(
     let resp = client.query(&filter).await?;
     let mut events: Vec<serde_json::Value> = serde_json::from_str(&resp).unwrap_or_default();
     events.sort_by_key(|e| Reverse(e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0)));
+    super::messages::drop_requester_mirrors(&mut events);
     super::hosted_quarantine::apply(client, &mut events).await;
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));

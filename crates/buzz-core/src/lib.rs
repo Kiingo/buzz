@@ -5,6 +5,8 @@
 //! Provides [`StoredEvent`], filter matching, kind constants, and event
 //! verification. All other Buzz crates depend on this one.
 
+/// Quiet agent DM marker tags and the requester-mirror read rule.
+pub mod agent_dm_marker;
 /// Signed, thread-scoped operational status, distinct from conversation output.
 pub mod agent_status;
 /// NIP-AM: Agent Turn Metric — payload type and encrypt/decrypt helpers.

@@ -354,6 +354,26 @@ fn format_events(normalized: &str, format: &crate::OutputFormat) -> String {
     }
 }
 
+/// Leaves requester mirrors out of what an agent reads back
+/// (`buzz_core::agent_dm_marker::is_requester_mirror_json`): an agent-signed
+/// line relayed on the requester's behalf must never read as the requester's
+/// own words. The agent's own mirrored messages (role `agent`) stay readable.
+pub(crate) fn drop_requester_mirrors(events: &mut Vec<serde_json::Value>) {
+    events.retain(|event| !buzz_core::agent_dm_marker::is_requester_mirror_json(event));
+}
+
+/// A thread whose selected event or root is a requester mirror reads as not
+/// found, the same as a missing event.
+fn reject_requester_mirror_thread(
+    event_id: &str,
+    event: Option<&serde_json::Value>,
+) -> Result<(), CliError> {
+    if event.is_some_and(buzz_core::agent_dm_marker::is_requester_mirror_json) {
+        return Err(CliError::NotFound(format!("event {event_id} not found")));
+    }
+    Ok(())
+}
+
 pub async fn cmd_get_messages(
     client: &BuzzClient,
     channel_id: &str,
@@ -390,6 +410,7 @@ pub async fn cmd_get_messages(
     let resp = client.query(&filter).await?;
     let mut events: Vec<serde_json::Value> = serde_json::from_str(&resp).unwrap_or_default();
     events.sort_by_key(|e| e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0));
+    drop_requester_mirrors(&mut events);
     super::hosted_quarantine::apply(client, &mut events).await;
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
@@ -431,6 +452,7 @@ pub async fn cmd_get_thread(
     let expected_channel_id = parse_uuid(channel_id)?;
     validate_hex64(event_id)?;
     let selected_event = fetch_event(client, event_id).await?;
+    reject_requester_mirror_thread(event_id, Some(&selected_event))?;
     let root_event_id = resolve_thread_target(
         expected_channel_id,
         event_id,
@@ -461,6 +483,13 @@ pub async fn cmd_get_thread(
             .and_then(|value| value.as_u64())
             .unwrap_or(0)
     });
+    reject_requester_mirror_thread(
+        &root_event_id,
+        events.iter().find(|event| {
+            event.get("id").and_then(serde_json::Value::as_str) == Some(root_event_id.as_str())
+        }),
+    )?;
+    drop_requester_mirrors(&mut events);
     super::hosted_quarantine::apply(client, &mut events).await;
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
@@ -509,6 +538,7 @@ pub async fn cmd_search(
             std::cmp::Reverse(e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0))
         });
     }
+    drop_requester_mirrors(&mut events);
     super::hosted_quarantine::apply(client, &mut events).await;
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
@@ -2142,5 +2172,72 @@ mod tests {
             emoji_tags.is_empty(),
             "palette-error fallback must produce no emoji tags, got: {emoji_tags:?}"
         );
+    }
+
+    #[test]
+    fn agent_reads_leave_requester_mirrors_out() {
+        let requester = "e".repeat(64);
+        let mut events = vec![
+            json!({"id": "1", "kind": 40002, "content": "relayed", "tags": [
+                ["h", "c"], ["buzz-mirror", "tasks", "t1", "1"],
+                ["buzz-mirror-author", "requester", requester, ""]
+            ]}),
+            json!({"id": "2", "kind": 9, "content": "author tag only", "tags": [
+                ["h", "c"], ["buzz-mirror-author", "requester", requester, ""]
+            ]}),
+            json!({"id": "3", "kind": 40002, "content": "no author tag", "tags": [
+                ["h", "c"], ["buzz-mirror", "email", "m1", "1"]
+            ]}),
+            json!({"id": "4", "kind": 40002, "content": "my own Teams reply", "tags": [
+                ["h", "c"], ["buzz-mirror", "teams", "m2", "1"],
+                ["buzz-mirror-author", "agent", "", ""]
+            ]}),
+            json!({"id": "5", "kind": 9, "content": "hello", "tags": [["h", "c"]]}),
+        ];
+        super::drop_requester_mirrors(&mut events);
+        let ids: Vec<&str> = events.iter().filter_map(|e| e["id"].as_str()).collect();
+        assert_eq!(ids, ["4", "5"]);
+    }
+
+    #[test]
+    fn a_requester_mirror_thread_reads_as_not_found() {
+        let mirror = json!({"id": "1", "kind": 40002, "tags": [
+            ["buzz-mirror", "tasks", "t1", "1"],
+            ["buzz-mirror-author", "requester", "", ""]
+        ]});
+        let plain = json!({"id": "2", "kind": 9, "tags": [["h", "c"]]});
+        assert!(matches!(
+            super::reject_requester_mirror_thread("1", Some(&mirror)),
+            Err(crate::error::CliError::NotFound(_))
+        ));
+        assert!(super::reject_requester_mirror_thread("2", Some(&plain)).is_ok());
+        assert!(super::reject_requester_mirror_thread("3", None).is_ok());
+    }
+
+    #[tokio::test]
+    async fn cmd_get_thread_on_a_requester_mirror_is_not_found() {
+        let channel = "6d1f6c49-0a3e-4b6a-9c43-2f2b8f8a7e10";
+        let event_id = "a".repeat(64);
+        let mirror = serde_json::json!([{
+            "id": event_id, "pubkey": "b".repeat(64), "created_at": 1, "kind": 40002,
+            "content": "Move my 3pm", "sig": "0".repeat(128), "tags": [
+                ["h", channel], ["buzz-mirror", "tasks", "t1", "1"],
+                ["buzz-mirror-author", "requester", "c".repeat(64), ""]
+            ]
+        }])
+        .to_string();
+        let (url, _, _) = fake_send_relay(mirror).await;
+        let client = BuzzClient::new(url, Keys::generate(), None, None).unwrap();
+        let result = cmd_get_thread(
+            &client,
+            channel,
+            &event_id,
+            None,
+            None,
+            None,
+            &crate::OutputFormat::Json,
+        )
+        .await;
+        assert!(matches!(result, Err(crate::error::CliError::NotFound(_))));
     }
 }

@@ -10,19 +10,7 @@
 //! (`buzz-mirror` or `buzz-mirror-author`, any role) is enough to make an
 //! event quiet, so dropping one tag never turns a mirror into an input.
 
-/// Tag names that mark a quiet agent DM event.
-const QUIET_MARKER_TAGS: [&str; 5] = [
-    "buzz-mirror",
-    "buzz-mirror-author",
-    "buzz-session",
-    "buzz-sessions",
-    "buzz-question-state",
-];
-
-/// Whether `name` is the name of a quiet agent DM marker tag.
-fn is_quiet_marker_tag_name(name: &str) -> bool {
-    QUIET_MARKER_TAGS.contains(&name)
-}
+use buzz_core::agent_dm_marker::is_quiet_marker_tag_name;
 
 /// Whether a relay event (as JSON) is a quiet agent DM marker.
 pub(crate) fn is_quiet_agent_dm_marker(event: &serde_json::Value) -> bool {
