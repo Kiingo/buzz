@@ -9,6 +9,7 @@
 /// Shared test vectors: `test-fixtures/mirror-display.json`.
 library;
 
+import '../utils/string_utils.dart';
 import 'agent_dm_markers.dart';
 
 /// How to show one honoured mirror.
@@ -109,7 +110,7 @@ AgentDmMirrorDisplay? agentDmMirrorDisplay({
           memberPubkeys: memberPubkeys,
         )
       : null;
-  final relayedByName = names(signer);
+  final relayedByName = _profileName(signer, names);
   final surfaceLabel = agentDmMirrorSurfaceLabel(mirror.surface);
   final relayed = mirror.role == AgentDmMirrorRole.requester;
   return AgentDmMirrorDisplay(
@@ -119,7 +120,7 @@ AgentDmMirrorDisplay? agentDmMirrorDisplay({
         ? relayedByName
         : requester == viewerPubkey?.trim().toLowerCase()
         ? 'You'
-        : names(requester),
+        : _profileName(requester, names),
     relayedByPubkey: signer,
     relayedByName: relayedByName,
     surfaceLabel: surfaceLabel,
@@ -128,6 +129,14 @@ AgentDmMirrorDisplay? agentDmMirrorDisplay({
         : 'via $surfaceLabel',
     relayed: relayed,
   );
+}
+
+/// A resolved name for [pubkey]. Profile names are self-asserted, and "You"
+/// is reserved for the viewer's own attributed lines, so a profile named
+/// "You" (any case, after trimming) reads as its compact npub instead.
+String _profileName(String pubkey, String Function(String pubkey) names) {
+  final name = names(pubkey);
+  return name.trim().toLowerCase() == 'you' ? shortPubkey(pubkey) : name;
 }
 
 /// The text "Copy text" puts on the clipboard: a mirrored line in its

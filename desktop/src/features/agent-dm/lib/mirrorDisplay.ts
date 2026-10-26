@@ -10,6 +10,8 @@
  * mobile rule, `mobile/lib/shared/agent_dm/agent_dm_mirror_display.dart`).
  */
 
+import { truncateNpub } from "@/shared/lib/pubkey";
+
 import {
   areAgentDmMarkersHonoured,
   KIND_AGENT_DM_QUIET,
@@ -91,7 +93,7 @@ export function mirrorDisplay({
     ? mirrorDisplayAuthorPubkey(mirror, signer, channel)
     : null;
   const authorPubkey = requester ?? signer;
-  const relayedByName = names(signer);
+  const relayedByName = profileName(signer, names);
   const surfaceLabel = mirrorSurfaceLabel(mirror.surface);
   const relayed = mirror.role === "requester";
   return {
@@ -114,7 +116,19 @@ function requesterName(
   names: MirrorDisplayNames,
 ) {
   if (!requester) return null;
-  return requester === viewerPubkey?.toLowerCase() ? "You" : names(requester);
+  return requester === viewerPubkey?.toLowerCase()
+    ? "You"
+    : profileName(requester, names);
+}
+
+/**
+ * A resolved name for `pubkey`. Profile names are self-asserted, and "You"
+ * is reserved for the viewer's own attributed lines, so a profile named
+ * "You" (any case, after trimming) reads as its compact npub instead.
+ */
+function profileName(pubkey: string, names: MirrorDisplayNames) {
+  const name = names(pubkey);
+  return name.trim().toLowerCase() === "you" ? truncateNpub(pubkey) : name;
 }
 
 /**

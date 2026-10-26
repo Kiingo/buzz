@@ -3,7 +3,9 @@
   "names": {
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "Agent",
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "Alex",
-    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "Mallory"
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "Mallory",
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": " YOU ",
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "You"
   },
   "cases": [
     {
@@ -1682,6 +1684,95 @@
       "signerIsAgent": true,
       "content": "Can you move my 3pm to Thursday?",
       "expected": null
+    },
+    {
+      "name": "a signer profile named You reads as its compact npub",
+      "event": {
+        "kind": 40002,
+        "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "You",
+        "relayedByPubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "relayedByName": "npub1mhw…dmpv",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by npub1mhw…dmpv",
+        "relayed": true,
+        "plainText": "You (via Kiingo Tasks, relayed by npub1mhw…dmpv): Can you move my 3pm to Thursday?"
+      },
+      "viewer": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "name": "a requester profile named You reads as its compact npub to another viewer",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "authorName": "npub1amh…nwcq",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "npub1amh…nwcq (via Kiingo Tasks, relayed by Agent): Can you move my 3pm to Thursday?"
+      }
     }
   ]
 }
