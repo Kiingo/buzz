@@ -164,11 +164,41 @@ class ThreadDetailPage extends HookConsumerWidget {
           );
     final hasFetchedReplies = fetchedReplies != null;
     // The thread route has no channel page above it, so it indexes the DM's
-    // markers itself (replies plus the live channel events, which carry the
-    // head).
-    final agentDmEvents = useMemoized(
+    // markers itself (replies plus the live channel events, which usually
+    // carry the head).
+    final loadedThreadEvents = useMemoized(
       () => mergeThreadEvents(replyEvents ?? const [], liveChannelEvents),
       [replyEvents, liveChannelEvents],
+    );
+    // A mirrored head that neither source holds (a deep link, or a head that
+    // left the channel window) would read as the agent's own words: keep the
+    // head event once seen, and otherwise fetch it by id.
+    final loadedHeadEvent = loadedThreadEvents
+        .where((event) => event.id == threadHead.id)
+        .firstOrNull;
+    final seenHeadEvent = useRef<NostrEvent?>(null);
+    if (loadedHeadEvent != null) seenHeadEvent.value = loadedHeadEvent;
+    final fetchedHeadEvent =
+        loadedHeadEvent == null &&
+            seenHeadEvent.value == null &&
+            agentDmHeadNeedsEvent(threadHead.tags)
+        ? ref
+              .watch(
+                agentDmThreadHeadProvider((
+                  channelId: channelId,
+                  eventId: threadHead.id,
+                )),
+              )
+              .value
+        : null;
+    final missingHeadEvent = loadedHeadEvent == null
+        ? seenHeadEvent.value ?? fetchedHeadEvent
+        : null;
+    final agentDmEvents = useMemoized(
+      () => missingHeadEvent == null
+          ? loadedThreadEvents
+          : [missingHeadEvent, ...loadedThreadEvents],
+      [loadedThreadEvents, missingHeadEvent],
     );
     // A terminal query error cannot produce a more authoritative list. Keep
     // loading states provisional, but let the hydrated route snapshot drive

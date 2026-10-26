@@ -99,4 +99,16 @@ void main() {
     await pump(tester, _channel('stream'));
     expect(find.text('relayed=false author=false'), findsOneWidget);
   });
+
+  test('only a head with a mirror tag needs its event fetched', () {
+    expect(agentDmHeadNeedsEvent(_mirror.tags), isTrue);
+    expect(
+      agentDmHeadNeedsEvent(const [
+        ['h', 'dm'],
+        ['buzz-mirror-author', 'requester', _alex, ''],
+      ]),
+      isFalse,
+    );
+    expect(agentDmHeadNeedsEvent(const [[]]), isFalse);
+  });
 }

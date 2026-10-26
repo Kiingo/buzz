@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import '../../../shared/agent_dm/agent_dm_markers.dart';
 import '../../../shared/relay/relay.dart';
 import '../channel.dart';
 import 'agent_dm_scope.dart';
@@ -79,3 +80,43 @@ class _DmThreadScope extends HookConsumerWidget {
     child: child,
   );
 }
+
+/// Whether [tags] carry a mirror marker, so a thread head with them needs its
+/// event for the shared display rule.
+bool agentDmHeadNeedsEvent(List<List<String>> tags) =>
+    tags.any((tag) => tag.isNotEmpty && tag.first == 'buzz-mirror');
+
+/// The head event of a DM thread whose head neither the channel window nor
+/// the replies query holds (a deep link to a mirror's thread, or a head that
+/// left the channel window). Only a kind 40002 event in [channelId] with
+/// exactly the requested id is returned; anything else is null, and the head
+/// then renders as before.
+final agentDmThreadHeadProvider = FutureProvider.autoDispose
+    .family<NostrEvent?, ({String channelId, String eventId})>((
+      ref,
+      args,
+    ) async {
+      final events = await ref
+          .read(relaySessionProvider.notifier)
+          .fetchHistory(
+            NostrFilter(
+              kinds: const [agentDmQuietKind],
+              ids: [args.eventId],
+              tags: {
+                '#h': [args.channelId],
+              },
+              limit: 1,
+            ),
+          );
+      for (final event in events) {
+        final inChannel = event.tags.any(
+          (tag) => tag.length >= 2 && tag[0] == 'h' && tag[1] == args.channelId,
+        );
+        if (event.id == args.eventId &&
+            event.kind == agentDmQuietKind &&
+            inChannel) {
+          return event;
+        }
+      }
+      return null;
+    });
