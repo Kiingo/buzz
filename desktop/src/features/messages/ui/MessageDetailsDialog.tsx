@@ -10,15 +10,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
+import { mirrorDetails } from "@/features/agent-dm/lib/mirrorDisplay";
 import { readReplyDetails } from "../lib/replyDetails";
 import type { TimelineMessage } from "../types";
 
 function DetailRow({
   copyLabel,
+  copyValue,
   label,
   value,
 }: {
   copyLabel?: string;
+  /** What the copy button copies, when it differs from the shown value. */
+  copyValue?: string;
   label: string;
   value: string;
 }) {
@@ -32,7 +36,7 @@ function DetailRow({
         <Button
           aria-label={`Copy ${label.toLowerCase()}`}
           className="h-7 w-7 shrink-0 p-0"
-          onClick={() => copyTextToClipboard(value, copyLabel)}
+          onClick={() => copyTextToClipboard(copyValue ?? value, copyLabel)}
           size="sm"
           type="button"
           variant="ghost"
@@ -57,6 +61,12 @@ export function MessageDetailsDialog({
 }) {
   const { detailsUrl, missionId } = readReplyDetails(message.tags);
   const sentAt = new Date(message.createdAt * 1000);
+  // A mirrored row is attributed to the requester in the timeline, but the
+  // agent signed it: details always name the signer as the author.
+  const mirror = message.agentDmMirror
+    ? mirrorDetails(message.agentDmMirror)
+    : null;
+  const signerName = message.agentDmMirror?.relayedByName;
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -64,7 +74,8 @@ export function MessageDetailsDialog({
         <DialogHeader>
           <DialogTitle>Message details</DialogTitle>
           <DialogDescription>
-            {message.author} · {sentAt.toLocaleString()}
+            {mirror ? `Signed by ${signerName}` : message.author} ·{" "}
+            {sentAt.toLocaleString()}
           </DialogDescription>
         </DialogHeader>
 
@@ -106,7 +117,29 @@ export function MessageDetailsDialog({
             label="Event ID"
             value={message.id}
           />
-          {message.pubkey ? (
+          {mirror ? (
+            <>
+              <DetailRow
+                copyLabel="Signer key copied"
+                copyValue={mirror.signerPubkey}
+                label="Signed by"
+                value={mirror.signedBy}
+              />
+              {mirror.relayedFor ? (
+                <DetailRow label="Relayed for" value={mirror.relayedFor} />
+              ) : null}
+              {mirror.requesterPubkey ? (
+                <DetailRow
+                  copyLabel="Requester key copied"
+                  label="Requester key"
+                  value={mirror.requesterPubkey}
+                />
+              ) : null}
+              {mirror.mirroredVia ? (
+                <DetailRow label="Mirrored" value={mirror.mirroredVia} />
+              ) : null}
+            </>
+          ) : message.pubkey ? (
             <DetailRow
               copyLabel="Author key copied"
               label="Author key"

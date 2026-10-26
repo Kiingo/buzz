@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   mirrorAwareAuthorLabel,
   mirrorAwareCopyText,
+  mirrorDetails,
   mirrorDisplay,
   mirrorPlainText,
 } from "./mirrorDisplay.ts";
@@ -121,4 +122,58 @@ test("one-line author labels and copy text use the relayed form", () => {
   const plain = { author: "Alex", body: "Hi" };
   assert.equal(mirrorAwareAuthorLabel(plain), "Alex");
   assert.equal(mirrorAwareCopyText(plain), "Hi");
+});
+
+test("details name the signer as the author and the requester as relayed for", () => {
+  const ALEX = "b".repeat(64);
+  const AGENT = "a".repeat(64);
+  const channel = { channelType: "dm", participantPubkeys: [AGENT, ALEX] };
+  const names = (pubkey) => (pubkey === ALEX ? "Alex" : "Agent");
+  const shown = (tags, viewerPubkey) =>
+    mirrorDetails(
+      mirrorDisplay({
+        event: { kind: 40002, pubkey: AGENT, tags },
+        channel,
+        names,
+        signerIsAgent: true,
+        viewerPubkey,
+      }),
+    );
+
+  const own = shown(
+    [
+      ["buzz-mirror", "email", "e1", "1"],
+      ["buzz-mirror-author", "requester", ALEX, ""],
+    ],
+    ALEX,
+  );
+  assert.deepEqual(own, {
+    signedBy: `Agent (${AGENT})`,
+    signerPubkey: AGENT,
+    relayedFor: "You · via email",
+    requesterPubkey: ALEX,
+    mirroredVia: null,
+  });
+
+  const other = shown([
+    ["buzz-mirror", "email", "e1", "1"],
+    ["buzz-mirror-author", "requester", ALEX, ""],
+  ]);
+  assert.equal(other.relayedFor, "Alex · via email");
+  assert.equal(other.signerPubkey, AGENT);
+
+  // Missing author tag: still relayed, never attributed to anyone.
+  const unattributed = shown([["buzz-mirror", "email", "e1", "1"]]);
+  assert.equal(unattributed.signedBy, `Agent (${AGENT})`);
+  assert.equal(unattributed.relayedFor, "unknown requester · via email");
+  assert.equal(unattributed.requesterPubkey, null);
+
+  // The agent's own mirror has no requester.
+  const agentOwn = shown([
+    ["buzz-mirror", "teams", "m1", "1"],
+    ["buzz-mirror-author", "agent", "", ""],
+  ]);
+  assert.equal(agentOwn.relayedFor, null);
+  assert.equal(agentOwn.requesterPubkey, null);
+  assert.equal(agentOwn.signerPubkey, AGENT);
 });

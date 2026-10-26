@@ -160,3 +160,40 @@ export function mirrorAwareCopyText(message: {
     ? mirrorPlainText(message.agentDmMirror, message.body)
     : message.body;
 }
+
+export type MirrorDetails = {
+  /** "Agent (<agent key>)": the key that signed the event, never the requester. */
+  signedBy: string;
+  signerPubkey: string;
+  /**
+   * "You · via email" / "Alex · via email" for an attributed requester
+   * mirror, "unknown requester · via email" when the author tag was missing
+   * or malformed, `null` for the agent's own mirror.
+   */
+  relayedFor: string | null;
+  /** The membership-checked requester key, when the row is attributed. */
+  requesterPubkey: string | null;
+  /** "via Teams" for the agent's own mirror, otherwise `null`. */
+  mirroredVia: string | null;
+};
+
+/**
+ * Message details for a mirrored row: the signer is shown as the author and
+ * the requester only as "Relayed for", matching the mobile details sheet,
+ * which lists the signing key as the author key.
+ */
+export function mirrorDetails(display: MirrorDisplay): MirrorDetails {
+  const signerPubkey = display.relayedByPubkey;
+  const attributed =
+    display.relayed && display.authorPubkey !== display.relayedByPubkey;
+  const via = `via ${display.surfaceLabel}`;
+  return {
+    signedBy: `${display.relayedByName} (${signerPubkey})`,
+    signerPubkey,
+    relayedFor: display.relayed
+      ? `${attributed ? display.authorName : "unknown requester"} · ${via}`
+      : null,
+    requesterPubkey: attributed ? display.authorPubkey : null,
+    mirroredVia: display.relayed ? null : via,
+  };
+}
