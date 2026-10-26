@@ -27,8 +27,12 @@ import { useCommunities } from "@/features/communities/useCommunities";
 import { formatInboxTypeLabel } from "@/features/home/lib/inbox";
 import {
   hasInboxThreadContext,
+  inboxMessageMirror,
   toTimelineMessage,
 } from "@/features/home/lib/inboxViewHelpers";
+import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
+import { resolveUserLabel } from "@/features/profile/lib/identity";
+import { normalizePubkey } from "@/shared/lib/pubkey";
 import {
   type InboxDisplayMessage,
   InboxMessageRow,
@@ -275,8 +279,41 @@ function InboxMessageDetailPane({
       ...pendingReplyMessages,
     ];
   }, [item, messages, replies]);
+  // The shared mirror display rule per row: a mirrored DM line takes the
+  // relay line and relayed style here too, and never groups with its
+  // displayed author's messages.
+  const knownAgentPubkeys = useKnownAgentPubkeys();
+  const mirrorsById = React.useMemo(() => {
+    const isAgent = (pubkey: string) => {
+      const normalized = normalizePubkey(pubkey);
+      return (
+        knownAgentPubkeys.has(normalized) ||
+        agentPubkeys?.has(normalized) === true
+      );
+    };
+    const names = (pubkey: string) =>
+      resolveUserLabel({
+        currentPubkey,
+        pubkey,
+        profiles,
+        preferResolvedSelfLabel: true,
+      });
+    return new Map(
+      displayMessages.map((message) => [
+        message.id,
+        inboxMessageMirror(message, { channel, isAgent, names }),
+      ]),
+    );
+  }, [
+    agentPubkeys,
+    channel,
+    currentPubkey,
+    displayMessages,
+    knownAgentPubkeys,
+    profiles,
+  ]);
   const videoReviewMessages = React.useMemo(
-    () => displayMessages.map(toTimelineMessage),
+    () => displayMessages.map((message) => toTimelineMessage(message)),
     [displayMessages],
   );
   const videoReviewChannelType =
@@ -744,8 +781,16 @@ function InboxMessageDetailPane({
                 !isAfterSeparator &&
                 !startsNewMessageGroup(message) &&
                 hasSameMessageAuthor(
-                  { pubkey: previousMessage?.authorPubkey },
-                  { pubkey: message.authorPubkey },
+                  {
+                    pubkey: previousMessage?.authorPubkey,
+                    agentDmMirror: previousMessage
+                      ? mirrorsById.get(previousMessage.id)
+                      : null,
+                  },
+                  {
+                    pubkey: message.authorPubkey,
+                    agentDmMirror: mirrorsById.get(message.id),
+                  },
                 ) &&
                 isWithinGroupingWindow(
                   previousMessage?.createdAt,
@@ -780,6 +825,7 @@ function InboxMessageDetailPane({
                   isFocusHighlightVisible={isFocusHighlightVisible}
                   key={message.id}
                   message={message}
+                  mirror={mirrorsById.get(message.id) ?? null}
                   onDelete={
                     canEditMessage
                       ? () => onDeleteMessage(message.id)

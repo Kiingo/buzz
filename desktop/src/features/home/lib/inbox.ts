@@ -23,10 +23,7 @@ import {
   formatItemTimestamp,
 } from "@/shared/lib/datetime";
 import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
-import {
-  mirrorDisplay,
-  mirrorPlainText,
-} from "@/features/agent-dm/lib/mirrorDisplay";
+import { isAgentDmQuietEvent } from "@/features/agent-dm/lib/quiet";
 
 export type InboxFilter =
   | "all"
@@ -489,6 +486,17 @@ export function buildInboxItems({
     return [];
   }
 
+  const channelById = new Map(
+    (channels ?? []).map((channel) => [channel.id, channel]),
+  );
+  // Quiet agent DM markers (mirrors, session dividers and listings, question
+  // state) never raise a Home or activity row, even when addressed: a mirror
+  // is history the agent relayed, not a new message to anyone.
+  const isLoud = (item: FeedItem) =>
+    !isAgentDmQuietEvent(
+      item,
+      item.channelId ? channelById.get(item.channelId) : null,
+    );
   const feedItems = [
     ...feed.feed.mentions.map((item) => ({
       ...item,
@@ -506,10 +514,7 @@ export function buildInboxItems({
       ...item,
       category: "agent_activity" as const,
     })),
-  ];
-  const channelById = new Map(
-    (channels ?? []).map((channel) => [channel.id, channel]),
-  );
+  ].filter(isLoud);
 
   const threadGroups = new Map<
     string,
@@ -588,26 +593,14 @@ export function buildInboxItems({
       const categories = [
         ...new Set(group.items.map((groupItem) => groupItem.category)),
       ].sort((left, right) => categoryPriority(left) - categoryPriority(right));
-      const labelFor = (pubkey: string) =>
-        resolveUserLabel({
-          pubkey,
-          currentPubkey,
-          profiles,
-          preferResolvedSelfLabel: true,
-        });
-      // A mirrored line previews in its relayed form under the agent that
-      // signed it, never as the displayed author's own message.
-      const mirror = mirrorDisplay({
-        event: item,
-        channel: item.channelId ? channelById.get(item.channelId) : null,
-        names: labelFor,
-        signerIsAgent: profiles?.[item.pubkey.toLowerCase()]?.isAgent === true,
+      const senderLabel = resolveUserLabel({
+        pubkey: item.pubkey,
+        currentPubkey,
+        profiles,
+        preferResolvedSelfLabel: true,
       });
-      const senderLabel = mirror ? mirror.relayedByName : labelFor(item.pubkey);
       const subject = feedHeadline(item, group.items);
-      const preview = mirror
-        ? mirrorPlainText(mirror, feedPreview(item))
-        : feedPreview(item);
+      const preview = feedPreview(item);
       const { mentionNames, mentionPubkeysByName } = resolveMentionProps(
         item.tags,
         profiles,

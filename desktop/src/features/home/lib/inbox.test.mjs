@@ -595,53 +595,54 @@ test("nested-anchor: old selected event stays resolvable by conversationId after
   assert.equal(inboxItem.id, LATEST_EVENT_ID);
 });
 
-test("a relayed mirror previews in its relayed form under the agent that signed it", () => {
+test("quiet agent DM markers never raise a Home row, even when addressed", () => {
   const AGENT = "a".repeat(64);
-  const ROSS = "b".repeat(64);
+  const ALEX = "b".repeat(64);
   const dmChannels = [
     {
       id: DM_CHANNEL_ID,
-      name: "dm-juniper",
+      name: "dm-agent",
       channelType: "dm",
-      participantPubkeys: [AGENT, ROSS],
-      memberPubkeys: [AGENT, ROSS],
+      participantPubkeys: [AGENT, ALEX],
+      memberPubkeys: [AGENT, ALEX],
     },
   ];
   const profiles = {
-    [AGENT]: { displayName: "Juniper", isAgent: true },
-    [ROSS]: { displayName: "Ross" },
+    [AGENT]: { displayName: "Agent", isAgent: true },
+    [ALEX]: { displayName: "Alex" },
   };
-  const [inboxItem] = buildInboxItems({
+  const quiet = (tags) =>
+    item({
+      kind: 40002,
+      pubkey: AGENT,
+      content: "Move my 3pm",
+      channelId: DM_CHANNEL_ID,
+      tags: [["h", DM_CHANNEL_ID], ["p", ALEX], ...tags],
+    });
+  const items = buildInboxItems({
     channels: dmChannels,
-    currentPubkey: ROSS,
+    currentPubkey: ALEX,
     profiles,
     feed: feedWith({
       mentions: [
-        item({
-          kind: 40002,
-          pubkey: AGENT,
-          content: "Move my 3pm",
-          channelId: DM_CHANNEL_ID,
-          tags: [
-            ["h", DM_CHANNEL_ID],
-            ["p", ROSS],
-            ["buzz-mirror", "tasks", "t1", "1760000000"],
-            ["buzz-mirror-author", "requester", ROSS, ""],
-          ],
-        }),
+        quiet([
+          ["buzz-mirror", "tasks", "t1", "1760000000"],
+          ["buzz-mirror-author", "requester", ALEX, ""],
+        ]),
+        quiet([
+          ["buzz-mirror", "email", "m1", "1760000000"],
+          ["buzz-mirror-author", "agent", "", ""],
+        ]),
+        quiet([["buzz-session", "new", ""]]),
       ],
     }),
   });
-  assert.equal(inboxItem.senderLabel, "Juniper");
-  assert.equal(
-    inboxItem.preview,
-    "Ross (via Kiingo Tasks, relayed by Juniper): Move my 3pm",
-  );
+  assert.deepEqual(items, []);
 
-  // An ordinary message keeps its own sender and content.
+  // An ordinary message keeps its own row, sender and content.
   const [plain] = buildInboxItems({
     channels: dmChannels,
-    currentPubkey: ROSS,
+    currentPubkey: ALEX,
     profiles,
     feed: feedWith({
       mentions: [
@@ -649,6 +650,6 @@ test("a relayed mirror previews in its relayed form under the agent that signed 
       ],
     }),
   });
-  assert.equal(plain.senderLabel, "Juniper");
+  assert.equal(plain.senderLabel, "Agent");
   assert.equal(plain.preview, "Done");
 });

@@ -1,4 +1,10 @@
 import {
+  mirrorDisplay,
+  type MirrorDisplay,
+  type MirrorDisplayNames,
+} from "@/features/agent-dm/lib/mirrorDisplay";
+import type { DmChannelLike } from "@/features/agent-dm/lib/markers";
+import {
   formatInboxFullTimestamp,
   type InboxContextMessage,
   type InboxFilter,
@@ -241,11 +247,42 @@ export function toInboxContextMessage(
  * config-nudge gate — `kind` and `signerPubkey` ride through for
  * `getConfigNudgeAuthorPubkey`).
  */
+/**
+ * The shared mirror display rule for an inbox detail row, judged on the raw
+ * signer: a mirrored DM line takes the relay line and relayed style there
+ * too, never reading as its displayed author's own message.
+ */
+export function inboxMessageMirror(
+  message: Pick<
+    InboxContextMessage,
+    "authorPubkey" | "kind" | "signerPubkey" | "tags"
+  >,
+  {
+    channel,
+    isAgent,
+    names,
+  }: {
+    channel: DmChannelLike | null | undefined;
+    isAgent: (pubkey: string) => boolean;
+    names: MirrorDisplayNames;
+  },
+): MirrorDisplay | null {
+  const signer = message.signerPubkey ?? message.authorPubkey;
+  return mirrorDisplay({
+    event: { kind: message.kind, pubkey: signer, tags: message.tags },
+    channel,
+    names,
+    signerIsAgent: isAgent(signer),
+  });
+}
+
 export function toTimelineMessage(
   message: InboxContextMessage,
+  agentDmMirror: MirrorDisplay | null = null,
 ): TimelineMessage {
   const threadReference = getThreadReference(message.tags ?? []);
   return {
+    agentDmMirror,
     id: message.id,
     author: message.authorLabel,
     isAgent: message.isAgent,

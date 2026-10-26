@@ -1,5 +1,10 @@
 import * as React from "react";
 
+import {
+  AgentMirrorMarker,
+  AgentRelayedMirrorFrame,
+} from "@/features/agent-dm/ui/AgentMirrorMarker";
+import type { MirrorDisplay } from "@/features/agent-dm/lib/mirrorDisplay";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import type { InboxContextMessage } from "@/features/home/lib/inbox";
 import { toTimelineMessage } from "@/features/home/lib/inboxViewHelpers";
@@ -39,6 +44,8 @@ type InboxMessageRowProps = {
   isFirst?: boolean;
   isFocusHighlightVisible: boolean;
   message: InboxDisplayMessage;
+  /** The shared mirror display rule's result for this row, if a mirror. */
+  mirror?: MirrorDisplay | null;
   onDelete?: (message: InboxDisplayMessage) => void;
   onEdit?: (message: InboxDisplayMessage) => void;
   onSelectReplyTarget: (message: InboxDisplayMessage) => void;
@@ -76,6 +83,7 @@ function InboxChatMessageRow({
   isFirst = false,
   isFocusHighlightVisible,
   message,
+  mirror = null,
   onDelete,
   onEdit,
   onSelectReplyTarget,
@@ -86,8 +94,8 @@ function InboxChatMessageRow({
   videoReviewContext,
 }: InboxMessageRowProps) {
   const timelineMessage = React.useMemo(
-    () => toTimelineMessage(message),
-    [message],
+    () => toTimelineMessage(message, mirror),
+    [message, mirror],
   );
   const imetaByUrl = React.useMemo(
     () => (message.tags ? parseImetaTags(message.tags) : undefined),
@@ -278,32 +286,35 @@ function InboxChatMessageRow({
             className={isContinuation ? "mt-0" : "mt-conversation-body"}
             data-testid="message-body"
           >
-            <VideoReviewCommentMarkdown
-              className={cn(
-                "max-w-full text-left text-message text-foreground",
-                emojiOnly &&
-                  "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
-              )}
-              // Only pass the author pubkey for agent-authored messages so
-              // config-nudge cards can authenticate the sender. Uses the
-              // raw event signer (signerPubkey), not a relay-delegated display
-              // author, because the agent itself must have signed the card.
-              configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
-                timelineMessage,
-                isKnownAgentPubkey,
-              )}
-              content={message.content}
-              messageId={message.id}
-              linkPreviewsSuppressed={hasLinkPreviewSuppression(
-                timelineMessage.tags,
-              )}
-              customEmoji={customEmoji}
-              imetaByUrl={imetaByUrl}
-              mentionNames={message.mentionNames}
-              mentionPubkeysByName={message.mentionPubkeysByName}
-              videoReviewCommentRootId={videoReviewCommentRootId}
-              videoReviewContext={videoReviewContext}
-            />
+            <AgentRelayedMirrorFrame message={timelineMessage}>
+              <VideoReviewCommentMarkdown
+                className={cn(
+                  "max-w-full text-left text-message text-foreground",
+                  emojiOnly &&
+                    "text-4xl leading-tight [&_p]:leading-tight [&_img[data-custom-emoji]]:h-[1.45em] [&_img[data-custom-emoji]]:align-middle [&_button:has(img[data-custom-emoji])]:align-middle",
+                )}
+                // Only pass the author pubkey for agent-authored messages so
+                // config-nudge cards can authenticate the sender. Uses the
+                // raw event signer (signerPubkey), not a relay-delegated display
+                // author, because the agent itself must have signed the card.
+                configNudgeAuthorPubkey={getConfigNudgeAuthorPubkey(
+                  timelineMessage,
+                  isKnownAgentPubkey,
+                )}
+                content={message.content}
+                messageId={message.id}
+                linkPreviewsSuppressed={hasLinkPreviewSuppression(
+                  timelineMessage.tags,
+                )}
+                customEmoji={customEmoji}
+                imetaByUrl={imetaByUrl}
+                mentionNames={message.mentionNames}
+                mentionPubkeysByName={message.mentionPubkeysByName}
+                videoReviewCommentRootId={videoReviewCommentRootId}
+                videoReviewContext={videoReviewContext}
+              />
+              <AgentMirrorMarker message={timelineMessage} />
+            </AgentRelayedMirrorFrame>
             <MessageReactions
               canToggle={canToggleReactions}
               messageId={message.id}

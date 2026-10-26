@@ -8,6 +8,7 @@ import {
   getContextMessageDepth,
   getReactionTargetId,
   hasInboxThreadContext,
+  inboxMessageMirror,
   isInboxDmContextEvent,
   isInboxThreadContextEvent,
   matchesInboxAllView,
@@ -516,4 +517,44 @@ test("inbox mappings: unknown signer never enables the card", () => {
     getConfigNudgeAuthorPubkey(message, () => false),
     undefined,
   );
+});
+
+test("inbox detail rows apply the shared mirror rule on the raw signer", () => {
+  const AGENT = "a".repeat(64);
+  const ALEX = "b".repeat(64);
+  const channel = { channelType: "dm", participantPubkeys: [AGENT, ALEX] };
+  const names = (pubkey) => (pubkey === ALEX ? "Alex" : "Agent");
+  const isAgent = (pubkey) => pubkey === AGENT;
+  // The projector already attributed the row to the requester; the signer
+  // stays on `signerPubkey`.
+  const message = {
+    id: "m1",
+    authorLabel: "Alex",
+    authorPubkey: ALEX,
+    signerPubkey: AGENT,
+    avatarUrl: null,
+    content: "Move my 3pm",
+    createdAt: 1,
+    depth: 0,
+    fullTimestampLabel: "",
+    isSelected: true,
+    kind: 40002,
+    mentionNames: [],
+    tags: [
+      ["h", "dm"],
+      ["buzz-mirror", "tasks", "t1", "1"],
+      ["buzz-mirror-author", "requester", ALEX, ""],
+    ],
+  };
+  const mirror = inboxMessageMirror(message, { channel, isAgent, names });
+  assert.equal(mirror?.relayed, true);
+  assert.equal(mirror?.relayedByName, "Agent");
+  assert.equal(mirror?.relayLine, "via Kiingo Tasks · relayed by Agent");
+  // Copy, grouping and the relayed frame read it off the timeline message.
+  const timeline = toTimelineMessage(message, mirror);
+  assert.equal(timeline.agentDmMirror, mirror);
+  assert.equal(toTimelineMessage(message).agentDmMirror, null);
+
+  const plain = { ...message, kind: 9, tags: [["h", "dm"]] };
+  assert.equal(inboxMessageMirror(plain, { channel, isAgent, names }), null);
 });
