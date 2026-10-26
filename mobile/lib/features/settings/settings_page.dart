@@ -31,6 +31,7 @@ part 'settings_page/profile_section.dart';
 part 'settings_page/status_section.dart';
 part 'settings_page/connection_section.dart';
 part 'settings_page/notifications_section.dart';
+part 'settings_page/relay_checks_note.dart';
 
 Widget _emptyProfileEditPage(BuildContext context) => const SizedBox.shrink();
 
@@ -135,6 +136,7 @@ class SettingsPage extends HookConsumerWidget {
             _ConnectionSection(
               identityRecoveryPageBuilder: identityRecoveryPageBuilder,
             ),
+            const _RelayChecksNote(),
             if (packageInfo.hasData)
               _VersionFooter(
                 version: packageInfo.data!.version,

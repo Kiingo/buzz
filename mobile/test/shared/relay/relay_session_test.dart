@@ -151,7 +151,7 @@ void main() {
     final session = RelaySessionNotifier(httpClient: client);
     final container = ProviderContainer(
       overrides: [
-        authProvider.overrideWith(() => _PendingAuthNotifier()),
+        authProvider.overrideWith(() => PendingAuthNotifier()),
         relaySessionProvider.overrideWith(() => session),
         relayConfigProvider.overrideWith(
           () => _FakeRelayConfigNotifier(
@@ -218,7 +218,7 @@ void main() {
     );
     final container = ProviderContainer(
       overrides: [
-        authProvider.overrideWith(() => _PendingAuthNotifier()),
+        authProvider.overrideWith(() => PendingAuthNotifier()),
         relaySessionProvider.overrideWith(() => session),
         relayConfigProvider.overrideWith(
           () => _FakeRelayConfigNotifier(
@@ -247,7 +247,7 @@ void main() {
     );
     final container = ProviderContainer(
       overrides: [
-        authProvider.overrideWith(() => _PendingAuthNotifier()),
+        authProvider.overrideWith(() => PendingAuthNotifier()),
         relaySessionProvider.overrideWith(() => session),
         relayConfigProvider.overrideWith(
           () => _FakeRelayConfigNotifier(
@@ -287,7 +287,7 @@ void main() {
       );
       final container = ProviderContainer(
         overrides: [
-          authProvider.overrideWith(() => _PendingAuthNotifier()),
+          authProvider.overrideWith(() => PendingAuthNotifier()),
           relaySessionProvider.overrideWith(() => session),
           relayConfigProvider.overrideWith(
             () => _FakeRelayConfigNotifier(
@@ -512,7 +512,7 @@ void main() {
 
   group('searchProfiles', () {
     Map<String, dynamic> profileJson(int kind, String name) =>
-        servedEvent(kind: kind, content: jsonEncode({'name': name})).toJson();
+        signedEvent(kind: kind, content: jsonEncode({'name': name})).toJson();
 
     ({
       ProviderContainer container,
@@ -531,7 +531,7 @@ void main() {
       );
       final container = ProviderContainer(
         overrides: [
-          authProvider.overrideWith(() => _PendingAuthNotifier()),
+          authProvider.overrideWith(() => PendingAuthNotifier()),
           relaySessionProvider.overrideWith(() => session),
           relayConfigProvider.overrideWith(
             () => _FakeRelayConfigNotifier(
@@ -924,7 +924,7 @@ void main() {
   );
 
   test('delivers the same live event to each matching subscription', () async {
-    final session = RelaySessionNotifier();
+    final session = RelaySessionNotifier(signatureBackend: verifyingNow);
     final firstEvents = <NostrEvent>[];
     final secondEvents = <NostrEvent>[];
     const filter = NostrFilter(
@@ -962,7 +962,7 @@ void main() {
   });
 
   test('flushes replay events before a post-EOSE query can begin', () async {
-    final session = RelaySessionNotifier();
+    final session = RelaySessionNotifier(signatureBackend: verifyingNow);
     final deliveryPhases = <bool>[];
     var queryHasBegun = false;
     const filter = NostrFilter(
@@ -1047,6 +1047,7 @@ void main() {
     final deliveredEvents = <NostrEvent>[];
     final statuses = <RelaySubscriptionStatus>[];
     final session = RelaySessionNotifier(
+      signatureBackend: verifyingNow,
       retryTimerFactory: (duration, callback) {
         final timer = _ManualTimer(duration, callback);
         timers.add(timer);
@@ -1158,6 +1159,7 @@ void main() {
     final timers = <_ManualTimer>[];
     final socket = _RecordingRelaySocket();
     final session = RelaySessionNotifier(
+      signatureBackend: verifyingNow,
       retryTimerFactory: (duration, callback) {
         final timer = _ManualTimer(duration, callback);
         timers.add(timer);
@@ -1919,7 +1921,7 @@ _QueryHarness _queryHarness({
   final session = RelaySessionNotifier(httpClient: client, rateLimitGate: gate);
   final container = ProviderContainer(
     overrides: [
-      authProvider.overrideWith(() => _PendingAuthNotifier()),
+      authProvider.overrideWith(() => PendingAuthNotifier()),
       relaySessionProvider.overrideWith(() => session),
       relayConfigProvider.overrideWith(
         () => _FakeRelayConfigNotifier(
@@ -1993,7 +1995,7 @@ class _FakeRelayConfigNotifier extends RelayConfigNotifier {
   RelayConfig build() => RelayConfig(baseUrl: _baseUrl, nsec: _nsec);
 }
 
-NostrEvent _event({int createdAt = 20, String? id}) => servedEvent(
+NostrEvent _event({int createdAt = 20, String? id}) => signedEvent(
   kind: EventKind.streamMessageV2,
   tags: [
     ['h', _channelId],
@@ -2077,11 +2079,4 @@ class _MutableAgeNotifier extends AgeSignalNotifier {
   AgeSignalState build() => AgeSignalState.allowed;
 
   void setState(AgeSignalState value) => state = value;
-}
-
-// HTTP transport tests hold authentication steady, avoiding unrelated native
-// storage initialization and provider retirement while a query is in flight.
-class _PendingAuthNotifier extends AuthNotifier {
-  @override
-  Future<AuthState> build() => Completer<AuthState>().future;
 }

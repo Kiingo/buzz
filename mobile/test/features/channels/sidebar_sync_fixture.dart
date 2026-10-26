@@ -8,6 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nostr/nostr.dart' as nostr;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../shared/relay/served_event_fixture.dart';
+
 /// A scripted relay behind the real [RelaySessionNotifier], so REQ/EOSE,
 /// CLOSED classification, event batching and OK all run production code.
 /// Retains replaceable heads the way the relay does: `created_at DESC, id ASC`.
@@ -118,9 +120,10 @@ class SidebarRelay {
 
 class ConnectedRelaySession extends RelaySessionNotifier {
   // The fixture models the relay's `id ASC` tie-break with hand-picked ids,
-  // which a real event cannot have; the session's id check is covered in
-  // relay_session_test.dart.
-  ConnectedRelaySession() : super(eventCheck: (_) => null);
+  // which a real event cannot have; the session's id and signature checks
+  // are covered in test/shared/relay.
+  ConnectedRelaySession()
+    : super(eventCheck: (_) => null, signatureBackend: trustingSignatures);
 
   @override
   SessionState build() => const SessionState(status: SessionStatus.connected);

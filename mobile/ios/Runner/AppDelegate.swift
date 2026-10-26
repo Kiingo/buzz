@@ -10,6 +10,7 @@ import os.log
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var nativeMessagePresentationCoordinator: NativeMessagePresentationCoordinator?
   private var mediaUploadChannel: FlutterMethodChannel?
+  private var relaySignatureChannel: FlutterMethodChannel?
   private var pushChannel: FlutterMethodChannel?
   private let apnsRegistrationBuffer = APNsRegistrationBuffer()
   private let pushNavigationBuffer = BuzzPushNavigationBuffer()
@@ -70,6 +71,18 @@ import os.log
     agentCallPlugin = MainActor.assumeIsolated { AgentCallPlugin(messenger: messenger) }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "BuzzIosNavigationBar") {
       registrar.register(IosNavigationBarFactory(messenger: messenger, parent: registrar.viewController), withId: "buzz/ios_navigation_bar")
+    }
+    // The relay session binds the libsecp256k1 BIP-340 check through FFI.
+    relaySignatureChannel = FlutterMethodChannel(
+      name: "buzz/relay_signature",
+      binaryMessenger: messenger
+    )
+    relaySignatureChannel?.setMethodCallHandler { call, result in
+      if call.method == "verifierAddress" {
+        result(NostrSignatureCheck.address)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
     }
     mediaUploadChannel = FlutterMethodChannel(
       name: "buzz/media_upload",

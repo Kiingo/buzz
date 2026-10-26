@@ -93,7 +93,10 @@ NostrEvent _event(String name, int createdAt) => servedEvent(
 class _SyntheticSession extends RelaySessionNotifier {
   final int historySize;
 
-  _SyntheticSession(this.historySize);
+  // Measures delivery with the shape and id checks; signatures are checked
+  // off the UI isolate (or natively) and are not part of this burst.
+  _SyntheticSession(this.historySize)
+    : super(signatureBackend: trustingSignatures);
 
   @override
   SessionState build() => const SessionState(status: SessionStatus.connected);

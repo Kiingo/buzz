@@ -1,8 +1,8 @@
-import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 
 import 'package:buzz/shared/auth/auth_provider.dart';
+import 'package:buzz/shared/relay/relay_event_verifier.dart';
 import 'package:buzz/shared/relay/relay.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -14,12 +14,43 @@ import 'served_event_fixture.dart';
 
 /// Events the relay might serve, each but the first failing the session's
 /// boundary checks, with the reason it must be dropped.
-List<(Object? json, RelayEventRejection? rejection)> _served() {
+final _served = _variants();
+
+List<(Object? json, RelayEventRejection? rejection)> _variants() {
   final genuine = _message('genuine', 20);
   final other = _message('other', 21);
   final json = genuine.toJson();
+  // Signed by another key, then re-attributed to the fixture author with a
+  // matching id: only the signature check catches it.
+  final forged = signedEvent(
+    kind: genuine.kind,
+    tags: genuine.tags,
+    content: 'forged',
+    createdAt: 22,
+    secretKey: otherSecretKey,
+  );
+  final reattributed = NostrEvent(
+    id: '',
+    pubkey: genuine.pubkey,
+    createdAt: forged.createdAt,
+    kind: forged.kind,
+    tags: forged.tags,
+    content: forged.content,
+    sig: forged.sig,
+  );
+  final flipped = genuine.sig.endsWith('0') ? '1' : '0';
   return [
     (json, null),
+    (
+      {...reattributed.toJson(), 'id': nostrEventId(reattributed)},
+      RelayEventRejection.badSignature,
+    ),
+    // The author's genuine signature of a different event.
+    ({...json, 'sig': other.sig}, RelayEventRejection.badSignature),
+    (
+      {...json, 'sig': genuine.sig.substring(0, 127) + flipped},
+      RelayEventRejection.badSignature,
+    ),
     // The content was edited after the id was computed.
     ({...json, 'content': 'edited'}, RelayEventRejection.idMismatch),
     // The id was replaced with another event's.
@@ -46,25 +77,26 @@ List<(Object? json, RelayEventRejection? rejection)> _served() {
 
 Map<RelayEventRejection, int> _expectedCounts() {
   final counts = <RelayEventRejection, int>{};
-  for (final (_, rejection) in _served()) {
+  for (final (_, rejection) in _served) {
     if (rejection != null) counts[rejection] = (counts[rejection] ?? 0) + 1;
   }
   return counts;
 }
 
 void main() {
+  // The HTTP path runs the platform backend: the isolate pool on this host.
   test('HTTP queries drop events that fail the boundary checks', () async {
     final session = RelaySessionNotifier(
       httpClient: http_testing.MockClient(
         (_) async => http.Response(
-          jsonEncode([for (final (json, _) in _served()) json]),
+          jsonEncode([for (final (json, _) in _served) json]),
           200,
         ),
       ),
     );
     final container = ProviderContainer(
       overrides: [
-        authProvider.overrideWith(() => _PendingAuthNotifier()),
+        authProvider.overrideWith(() => PendingAuthNotifier()),
         relaySessionProvider.overrideWith(() => session),
         relayConfigProvider.overrideWith(
           () => _FakeRelayConfigNotifier(nostr.Keys.generate().nsec),
@@ -84,13 +116,13 @@ void main() {
   test(
     'live socket events that fail the checks never reach the subscriber',
     () async {
-      final session = RelaySessionNotifier();
+      final session = RelaySessionNotifier(signatureBackend: verifyingNow);
       final delivered = <NostrEvent>[];
       final subscribe = session.subscribe(_filter, delivered.add);
       session.debugHandleMessage(['EOSE', 'l-1']);
       final unsubscribe = await subscribe;
 
-      for (final (json, _) in _served()) {
+      for (final (json, _) in _served) {
         session.debugHandleMessage(['EVENT', 'l-1', json]);
       }
       session.debugFlushEventBuffer();
@@ -103,11 +135,12 @@ void main() {
 
   test('socket history keeps only events that pass the checks', () async {
     final socket = _RecordingRelaySocket();
-    final session = RelaySessionNotifier()..debugAttachSocketForTest(socket);
+    final session = RelaySessionNotifier(signatureBackend: verifyingNow)
+      ..debugAttachSocketForTest(socket);
 
     final history = session.fetchHistory(_filter);
     final subId = socket.messages.last[1] as String;
-    for (final (json, _) in _served()) {
+    for (final (json, _) in _served) {
       session.debugHandleMessage(['EVENT', subId, json]);
     }
     session.debugHandleMessage(['EOSE', subId]);
@@ -117,7 +150,7 @@ void main() {
   });
 
   test('an event that throws while it is read is one shape drop', () async {
-    final session = RelaySessionNotifier();
+    final session = RelaySessionNotifier(signatureBackend: verifyingNow);
     final delivered = <NostrEvent>[];
     final subscribe = session.subscribe(_filter, delivered.add);
     session.debugHandleMessage(['EOSE', 'l-1']);
@@ -162,7 +195,7 @@ const _filter = NostrFilter(
   limit: 50,
 );
 
-NostrEvent _message(String content, int createdAt) => servedEvent(
+NostrEvent _message(String content, int createdAt) => signedEvent(
   kind: EventKind.streamMessageV2,
   tags: [
     ['h', _channelId],
@@ -179,11 +212,6 @@ class _FakeRelayConfigNotifier extends RelayConfigNotifier {
   @override
   RelayConfig build() =>
       RelayConfig(baseUrl: 'https://relay.example', nsec: _nsec);
-}
-
-class _PendingAuthNotifier extends AuthNotifier {
-  @override
-  Future<AuthState> build() => Completer<AuthState>().future;
 }
 
 class _RecordingRelaySocket extends RelaySocket {

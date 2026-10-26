@@ -18,12 +18,15 @@ import 'relay_client.dart';
 import 'relay_closed_policy.dart';
 import 'relay_event_verifier.dart';
 import 'relay_http_query_client.dart';
+import 'relay_ingest_queue.dart';
 import 'relay_provider.dart';
 import 'relay_rate_limit_gate.dart';
 import 'relay_session_types.dart';
+import 'relay_signature_backend.dart';
 import 'relay_socket.dart';
 
 export 'relay_event_verifier.dart' show RelayEventCheck, RelayEventRejection;
+export 'relay_signature_backend.dart' show RelaySignatureBackend;
 export 'relay_session_types.dart';
 
 part 'relay_session_auth.dart';
@@ -85,7 +88,11 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     RelayTimerFactory retryTimerFactory = Timer.new,
     Future<void> Function(Duration) replayDelay = Future.delayed,
     @visibleForTesting RelayEventCheck eventCheck = relayEventRejection,
-  }) : _eventVerifier = RelayEventVerifier(check: eventCheck),
+    @visibleForTesting RelaySignatureBackend? signatureBackend,
+  }) : _eventVerifier = RelayEventVerifier(
+         check: eventCheck,
+         signatures: signatureBackend,
+       ),
        _httpQueryClient = RelayHttpQueryClient(
          client: httpClient,
          clientFactory: httpClientFactory,
@@ -103,9 +110,10 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   final RelayTimerFactory _retryTimerFactory;
   final Future<void> Function(Duration) _replayDelay;
   final RelayEventVerifier _eventVerifier;
+  final _ingest = RelayIngestQueue();
 
   /// How many received events this session dropped, by reason, on both the
-  /// HTTP query and socket paths.
+  /// HTTP query and socket paths. Shown in Settings when any were.
   Map<RelayEventRejection, int> get droppedEventCounts =>
       _eventVerifier.rejections;
 
@@ -266,16 +274,17 @@ class RelaySessionNotifier extends Notifier<SessionState> {
       _activateRateLimitGateFromHttpError(response.body);
       throw RelayException(response.statusCode, response.body);
     }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! List) {
-      throw const FormatException('relay returned malformed query response');
-    }
     // Each event is checked on its own: one forged or malformed event is
-    // dropped and counted, and the rest of the answer stands.
-    return [
-      for (final eventJson in decoded)
-        ?_eventVerifier.admit(eventJson, path: path),
-    ];
+    // dropped and counted, and the rest of the answer stands. The answer
+    // completes only once every signature is verified.
+    final verified = await _eventVerifier.verifySignatures(
+      await _eventVerifier.admitAnswer(response.body, path: path),
+      path: path,
+    );
+    if (_disposed || _ageRestricted || generation != _contextGeneration) {
+      throw StateError('Relay query belongs to a retired session');
+    }
+    return verified;
   }
 
   void _activateRateLimitGateFromHttpError(String body) {
@@ -443,7 +452,10 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   void debugDispose() => _dispose();
 
   @visibleForTesting
-  void debugSupersedeConnection() => _connectionGeneration++;
+  void debugSupersedeConnection() {
+    _connectionGeneration++;
+    _ingest.clear();
+  }
 
   @visibleForTesting
   void debugHandleDisconnected([Object? error]) {
@@ -522,6 +534,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   void _pauseNow() {
     _paused = true;
     _socketConnected = false;
+    _ingest.clear();
     _reconnectTimer?.cancel();
     _cancelAllHistory(Exception('App moved to background'));
     _rejectAllPending(Exception('App moved to background'));
@@ -557,6 +570,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     if (_disposed || _ageRestricted) return;
 
     final generation = ++_connectionGeneration;
+    _ingest.clear();
     state = SessionState(
       status: _hasConnectedOnce
           ? SessionStatus.reconnecting
@@ -594,6 +608,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     _cancelAllHistory(error);
     _rejectAllPending(error);
     _resetAllClosedRetries();
+    _ingest.clear();
     _eventBuffer.clear();
     _flushTimer?.cancel();
     _flushTimer = null;
@@ -704,25 +719,37 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   void _handleMessage(List<dynamic> data) {
     if (data.isEmpty) return;
     final type = data[0] as String;
-
-    switch (type) {
-      case 'EVENT':
-        _handleEvent(data);
-      case 'EOSE':
-        _handleEose(data);
-      case 'CLOSED':
-        _handleClosed(data);
-      case 'OK':
-        _handleOk(data);
+    if (type == 'EVENT') {
+      _receiveEvent(data);
+      return;
     }
+    // EOSE, CLOSED and OK wait behind the signature checks of the events
+    // that arrived before them, so a history query or a live subscription is
+    // complete, or ready, only once those events are verified.
+    _ingest.add(true, (_) {
+      switch (type) {
+        case 'EOSE':
+          _handleEose(data);
+        case 'CLOSED':
+          _handleClosed(data);
+        case 'OK':
+          _handleOk(data);
+      }
+    });
   }
 
-  void _handleEvent(List<dynamic> data) {
+  void _receiveEvent(List<dynamic> data) {
     if (data.length < 3) return;
     final subId = data[1] as String;
     final event = _eventVerifier.admit(data[2], path: 'socket');
     if (event == null) return;
+    _ingest.add(_eventVerifier.verifySignature(event, path: 'socket'), (valid) {
+      if (valid) _handleEvent(subId, event);
+    });
+  }
 
+  /// Hands a verified [event] to the subscription it arrived on.
+  void _handleEvent(String subId, NostrEvent event) {
     // History subscriptions accumulate immediately.
     final historySub = _historySubscriptions[subId];
     if (historySub != null) {
@@ -1047,6 +1074,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     _contextGeneration++;
     _beforePauseCallbacks.clear();
     _connectionGeneration++;
+    _ingest.clear();
     _reconnectTimer?.cancel();
     _flushTimer?.cancel();
     _backgroundGraceTimer?.cancel();
