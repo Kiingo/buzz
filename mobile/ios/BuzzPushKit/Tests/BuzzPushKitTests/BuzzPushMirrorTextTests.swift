@@ -61,7 +61,7 @@ final class BuzzPushMirrorTextTests: XCTestCase {
     ])))
     XCTAssertEqual(authorOnly.body, "Relayed by Agent One: Move my 3pm")
     let mirrorOnly = try XCTUnwrap(resolve(mirror([["buzz-mirror", "companion", "c1", "1"]])))
-    XCTAssertEqual(mirrorOnly.body, "Relayed by Agent One (via Kiingo Companion): Move my 3pm")
+    XCTAssertEqual(mirrorOnly.body, "Relayed by Agent One (via the Companion): Move my 3pm")
     let unknownRole = try XCTUnwrap(resolve(mirror([
       ["buzz-mirror", "teams", "m1", "1"],
       ["buzz-mirror-author", "someone", "", ""],
@@ -96,7 +96,7 @@ final class BuzzPushMirrorTextTests: XCTestCase {
   func testSurfaceLabelsMatchTheApps() {
     let expected = [
       "email": "email", "teams": "Teams", "sms": "SMS", "web": "web", "voice": "voice call",
-      "tasks": "Kiingo Tasks", "companion": "Kiingo Companion", "ask": "Kiingo Ask", "fax": "fax",
+      "tasks": "Kiingo Tasks", "companion": "the Companion", "ask": "Kiingo Ask", "fax": "fax",
     ]
     for (surface, label) in expected {
       XCTAssertEqual(BuzzPushMirrorText.surfaceLabel(surface), label, surface)

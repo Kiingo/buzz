@@ -55,6 +55,7 @@ test("the shared mirror display vectors hold", () => {
       channel: channelFor(vector),
       names,
       signerIsAgent: vector.signerIsAgent,
+      viewerPubkey: vector.viewer ?? null,
     });
     assert.deepEqual(
       project(display, vector.content),
@@ -66,7 +67,7 @@ test("the shared mirror display vectors hold", () => {
 
 test("surface labels cover the Kiingo surfaces and keep the existing badges", () => {
   assert.equal(mirrorSurfaceLabel("tasks"), "Kiingo Tasks");
-  assert.equal(mirrorSurfaceLabel("companion"), "Kiingo Companion");
+  assert.equal(mirrorSurfaceLabel("companion"), "the Companion");
   assert.equal(mirrorSurfaceLabel("ask"), "Kiingo Ask");
   assert.equal(mirrorBadgeLabel("tasks"), "via Kiingo Tasks");
   assert.equal(mirrorBadgeLabel("email"), "via email");
@@ -76,7 +77,7 @@ test("surface labels cover the Kiingo surfaces and keep the existing badges", ()
 });
 
 test("one-line author labels and copy text use the relayed form", () => {
-  const ROSS = "b".repeat(64);
+  const ALEX = "b".repeat(64);
   const AGENT = "a".repeat(64);
   const display = mirrorDisplay({
     event: {
@@ -84,20 +85,40 @@ test("one-line author labels and copy text use the relayed form", () => {
       pubkey: AGENT,
       tags: [
         ["buzz-mirror", "tasks", "t1", "1"],
-        ["buzz-mirror-author", "requester", ROSS, ""],
+        ["buzz-mirror-author", "requester", ALEX, ""],
       ],
     },
-    channel: { channelType: "dm", participantPubkeys: [AGENT, ROSS] },
-    names: (pubkey) => (pubkey === ROSS ? "Ross" : "Juniper"),
+    channel: { channelType: "dm", participantPubkeys: [AGENT, ALEX] },
+    names: (pubkey) => (pubkey === ALEX ? "Alex" : "Agent"),
     signerIsAgent: true,
   });
-  const row = { author: "Ross", body: "Move my 3pm", agentDmMirror: display };
-  assert.equal(mirrorAwareAuthorLabel(row), "Ross (relayed by Juniper)");
+  const row = { author: "Alex", body: "Move my 3pm", agentDmMirror: display };
+  assert.equal(mirrorAwareAuthorLabel(row), "Alex (relayed by Agent)");
   assert.equal(
     mirrorAwareCopyText(row),
-    "Ross (via Kiingo Tasks, relayed by Juniper): Move my 3pm",
+    "Alex (via Kiingo Tasks, relayed by Agent): Move my 3pm",
   );
-  const plain = { author: "Ross", body: "Hi" };
-  assert.equal(mirrorAwareAuthorLabel(plain), "Ross");
+  const own = mirrorDisplay({
+    event: {
+      kind: 40002,
+      pubkey: AGENT,
+      tags: [
+        ["buzz-mirror", "email", "e1", "1"],
+        ["buzz-mirror-author", "requester", ALEX, ""],
+      ],
+    },
+    channel: { channelType: "dm", participantPubkeys: [AGENT, ALEX] },
+    names: (pubkey) => (pubkey === ALEX ? "Alex" : "Agent"),
+    signerIsAgent: true,
+    viewerPubkey: ALEX.toUpperCase(),
+  });
+  const ownRow = { author: "You", body: "Send it", agentDmMirror: own };
+  assert.equal(mirrorAwareAuthorLabel(ownRow), "You (relayed by Agent)");
+  assert.equal(
+    mirrorAwareCopyText(ownRow),
+    "You (via email, relayed by Agent): Send it",
+  );
+  const plain = { author: "Alex", body: "Hi" };
+  assert.equal(mirrorAwareAuthorLabel(plain), "Alex");
   assert.equal(mirrorAwareCopyText(plain), "Hi");
 });

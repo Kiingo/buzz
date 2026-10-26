@@ -56,10 +56,14 @@ test("markers are honoured only in a DM and only for a member signer", () => {
   );
   assert.equal(areAgentDmMarkersHonoured(null, AGENT), false);
   assert.equal(areAgentDmMarkersHonoured(DM, "not-hex"), false);
-  // An unknown roster leans on the relay's DM membership enforcement.
+  // An empty or unknown roster honours nothing, the same rule as mobile.
+  assert.equal(areAgentDmMarkersHonoured({ channelType: "dm" }, AGENT), false);
   assert.equal(
-    areAgentDmMarkersHonoured({ channelType: "dm" }, STRANGER),
-    true,
+    areAgentDmMarkersHonoured(
+      { channelType: "dm", participantPubkeys: [], memberPubkeys: [] },
+      AGENT,
+    ),
+    false,
   );
 });
 
@@ -77,11 +81,70 @@ test("mirror parsing validates surface, source id, time, role and pubkey", () =>
   assert.equal(parseMirror(mirrorTags({ sourceId: "x".repeat(257) })), null);
   assert.equal(parseMirror(mirrorTags({ sourceId: "" })), null);
   assert.equal(parseMirror(mirrorTags({ at: "-5" })), null);
-  assert.equal(parseMirror(mirrorTags({ role: "owner" })), null);
-  assert.equal(parseMirror(mirrorTags({ pubkey: "abc" })), null);
-  assert.equal(parseMirror(mirrorTags({ subject: "s".repeat(201) })), null);
   assert.equal(parseMirror(mirrorTags({ pubkey: "" })).authorPubkey, null);
-  assert.equal(parseMirror([["buzz-mirror", "email", "m", "1"]]), null);
+  assert.equal(
+    parseMirror(mirrorTags({ pubkey: PERSON.toUpperCase() })).authorPubkey,
+    PERSON,
+  );
+});
+
+test("a malformed author tag fails closed to an unattributed requester mirror", () => {
+  const unattributed = (tags) => {
+    const mirror = parseMirror(tags);
+    return mirror && { role: mirror.role, authorPubkey: mirror.authorPubkey };
+  };
+  const expected = { role: "requester", authorPubkey: null };
+  const [, mirror, author] = mirrorTags();
+  assert.deepEqual(unattributed(mirrorTags({ role: "owner" })), expected);
+  assert.deepEqual(unattributed(mirrorTags({ pubkey: "abc" })), expected);
+  assert.deepEqual(
+    unattributed(mirrorTags({ role: "agent", pubkey: "abc" })),
+    expected,
+  );
+  assert.deepEqual(unattributed([mirror]), expected);
+  assert.deepEqual(unattributed([mirror, author, author]), expected);
+  assert.deepEqual(
+    unattributed([mirror, ["buzz-mirror-author", "agent", "", ""], author]),
+    expected,
+  );
+  assert.deepEqual(unattributed([mirror, [...author, "extra"]]), expected);
+  assert.deepEqual(
+    unattributed([mirror, ["buzz-mirror-author", "agent"]]),
+    expected,
+  );
+  // The agent's own mirror stays the agent's.
+  assert.deepEqual(
+    unattributed([mirror, ["buzz-mirror-author", "agent", "", ""]]),
+    { role: "agent", authorPubkey: null },
+  );
+  // The author tag alone is not a mirror.
+  assert.equal(parseMirror([author]), null);
+});
+
+test("a bad subject is dropped and the mirror kept", () => {
+  const subjectOf = (tags) => parseMirror(tags)?.subject;
+  assert.equal(subjectOf(mirrorTags({ subject: "s".repeat(201) })), null);
+  assert.equal(subjectOf(mirrorTags({ subject: "   " })), null);
+  assert.equal(
+    subjectOf([...mirrorTags({ subject: "one" }), ["subject", "two"]]),
+    null,
+  );
+  assert.equal(
+    subjectOf([...mirrorTags(), ["subject", "Q3 plan", "extra"]]),
+    null,
+  );
+});
+
+test("the first mirror tag decides whether an event is a mirror", () => {
+  const [, mirror, author] = mirrorTags();
+  assert.equal(
+    parseMirror([mirror, ["buzz-mirror", "Bad", "", ""], author])?.surface,
+    "email",
+  );
+  assert.equal(
+    parseMirror([["buzz-mirror", "email", "m", "soon"], mirror, author]),
+    null,
+  );
 });
 
 test("mirror badge labels and the requester override rule", () => {

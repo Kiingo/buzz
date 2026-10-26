@@ -76,6 +76,7 @@ class _MessageTile extends ConsumerWidget {
             names: (pubkey) =>
                 watchChannelIdentityLabel(ref, hitChannel.id, pubkey),
             signerIsAgent: knownAgentPubkeys.contains(hit.pubkey.toLowerCase()),
+            viewerPubkey: currentPubkey,
           );
 
     return ListTile(

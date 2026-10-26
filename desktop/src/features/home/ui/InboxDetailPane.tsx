@@ -301,7 +301,12 @@ function InboxMessageDetailPane({
     return new Map(
       displayMessages.map((message) => [
         message.id,
-        inboxMessageMirror(message, { channel, isAgent, names }),
+        inboxMessageMirror(message, {
+          channel,
+          isAgent,
+          names,
+          viewerPubkey: currentPubkey,
+        }),
       ]),
     );
   }, [

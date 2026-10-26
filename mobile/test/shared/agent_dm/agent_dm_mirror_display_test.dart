@@ -54,6 +54,7 @@ void main() {
         ],
         names: (pubkey) => names[pubkey] ?? pubkey,
         signerIsAgent: vector['signerIsAgent'] as bool,
+        viewerPubkey: vector['viewer'] as String?,
       );
       expect(
         _project(display, vector['content'] as String),
@@ -65,7 +66,7 @@ void main() {
 
   test('surface labels cover the Kiingo surfaces and keep the badges', () {
     expect(agentDmMirrorSurfaceLabel('tasks'), 'Kiingo Tasks');
-    expect(agentDmMirrorSurfaceLabel('companion'), 'Kiingo Companion');
+    expect(agentDmMirrorSurfaceLabel('companion'), 'the Companion');
     expect(agentDmMirrorSurfaceLabel('ask'), 'Kiingo Ask');
     expect(agentDmMirrorSurfaceLabel('fax'), 'fax');
     final mirror = readAgentDmMirror(const [
@@ -83,24 +84,67 @@ void main() {
   test('copy text uses the relayed form for a mirror only', () {
     const agent =
         'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-    const ross =
+    const alex =
         'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
     final display = agentDmMirrorDisplay(
       kind: agentDmQuietKind,
       signerPubkey: agent,
       tags: const [
         ['buzz-mirror', 'companion', 'c1', '1'],
-        ['buzz-mirror-author', 'requester', ross, ''],
+        ['buzz-mirror-author', 'requester', alex, ''],
       ],
       isDm: true,
-      memberPubkeys: const [agent, ross],
-      names: (pubkey) => pubkey == ross ? 'Ross' : 'Juniper',
+      memberPubkeys: const [agent, alex],
+      names: (pubkey) => pubkey == alex ? 'Alex' : 'Agent',
       signerIsAgent: true,
     );
     expect(
       agentDmMirrorCopyText(display, 'Book the room'),
-      'Ross (via Kiingo Companion, relayed by Juniper): Book the room',
+      'Alex (via the Companion, relayed by Agent): Book the room',
     );
     expect(agentDmMirrorCopyText(null, 'Book the room'), 'Book the room');
+  });
+
+  test('a malformed author tag reads as an unattributed requester', () {
+    const mirror = ['buzz-mirror', 'tasks', 't1', '1'];
+    for (final tags in const [
+      [mirror],
+      [
+        mirror,
+        ['buzz-mirror-author', 'owner', '', ''],
+      ],
+      [
+        mirror,
+        ['buzz-mirror-author', 'agent', 'not-a-key', ''],
+      ],
+      [
+        mirror,
+        ['buzz-mirror-author', 'agent', '', '', 'extra'],
+      ],
+      [
+        mirror,
+        ['buzz-mirror-author', 'agent', '', ''],
+        ['buzz-mirror-author', 'agent', '', ''],
+      ],
+    ]) {
+      final parsed = readAgentDmMirror(tags);
+      expect(parsed?.role, AgentDmMirrorRole.requester, reason: '$tags');
+      expect(parsed?.authorPubkey, '', reason: '$tags');
+    }
+    expect(
+      readAgentDmMirror(const [
+        ['buzz-mirror-author', 'requester', '', ''],
+      ]),
+      isNull,
+    );
+    expect(
+      readAgentDmMirror(const [
+        ['buzz-mirror', 'email', 'm1', '1'],
+        ['buzz-mirror-author', 'agent', '', ''],
+        ['subject', 'one'],
+        ['subject', 'two'],
+      ])?.subject,
+      isNull,
+    );
   });
 }

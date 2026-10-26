@@ -239,7 +239,12 @@ class _ThreadMessage extends HookConsumerWidget {
                                                           fontSize: 11,
                                                           height: 17 / 11,
                                                         ),
-                                                displayName: displayName,
+                                                displayName:
+                                                    AgentDmScope.authorLabelOf(
+                                                      context,
+                                                      message,
+                                                      displayName,
+                                                    ),
                                                 username: messageUsernameLabel(
                                                   profile,
                                                 ),

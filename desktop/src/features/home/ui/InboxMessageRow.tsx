@@ -257,7 +257,7 @@ function InboxChatMessageRow({
                   className="block max-w-full truncate rounded text-message font-semibold leading-message-author text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   data-testid="message-author"
                 >
-                  {message.authorLabel}
+                  {timelineMessage.author}
                 </span>
               </UserProfilePopover>
               {message.isAgent ? (

@@ -1,8 +1,8 @@
 {
-  "description": "Shared vectors for the mirrored-message display rule (docs/agent-dm-markers.md §1). Loaded by desktop/src/features/agent-dm/lib/mirrorDisplay.test.mjs and mobile/test/shared/agent_dm/agent_dm_mirror_display_test.dart; both rules must produce exactly these outputs. channel.isDm maps to a DM channel type; channel.memberPubkeys is the DM roster.",
+  "description": "Shared vectors for the mirrored-message display rule (docs/agent-dm-markers.md §1). Loaded by desktop/src/features/agent-dm/lib/mirrorDisplay.test.mjs and mobile/test/shared/agent_dm/agent_dm_mirror_display_test.dart; both rules must produce exactly these outputs. channel.isDm maps to a DM channel type; channel.memberPubkeys is the DM roster (an empty roster honours nothing); viewer, when present, is the viewing account's pubkey, and an attributed requester who is the viewer reads \"You\".",
   "names": {
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "Juniper",
-    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "Ross",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "Agent",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "Alex",
     "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "Mallory"
   },
   "cases": [
@@ -41,17 +41,17 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "Kiingo Tasks",
-        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via Kiingo Tasks, relayed by Juniper): Can you move my 3pm to Thursday?"
+        "plainText": "Alex (via Kiingo Tasks, relayed by Agent): Can you move my 3pm to Thursday?"
       }
     },
     {
-      "name": "requester mirror from Kiingo Companion",
+      "name": "requester mirror from the Companion",
       "event": {
         "kind": 40002,
         "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -85,13 +85,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
-        "surfaceLabel": "Kiingo Companion",
-        "relayLine": "via Kiingo Companion · relayed by Juniper",
+        "relayedByName": "Agent",
+        "surfaceLabel": "the Companion",
+        "relayLine": "via the Companion · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via Kiingo Companion, relayed by Juniper): Can you move my 3pm to Thursday?"
+        "plainText": "Alex (via the Companion, relayed by Agent): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -129,13 +129,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "Kiingo Ask",
-        "relayLine": "via Kiingo Ask · relayed by Juniper",
+        "relayLine": "via Kiingo Ask · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via Kiingo Ask, relayed by Juniper): Can you move my 3pm to Thursday?"
+        "plainText": "Alex (via Kiingo Ask, relayed by Agent): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -173,13 +173,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "email",
-        "relayLine": "via email · relayed by Juniper",
+        "relayLine": "via email · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via email, relayed by Juniper): Can you move my 3pm to Thursday?"
+        "plainText": "Alex (via email, relayed by Agent): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -217,13 +217,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "Teams",
-        "relayLine": "via Teams · relayed by Juniper",
+        "relayLine": "via Teams · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via Teams, relayed by Juniper): Can you move my 3pm to Thursday?"
+        "plainText": "Alex (via Teams, relayed by Agent): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -261,13 +261,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "SMS",
-        "relayLine": "via SMS · relayed by Juniper",
+        "relayLine": "via SMS · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via SMS, relayed by Juniper): Can you move my 3pm to Thursday?"
+        "plainText": "Alex (via SMS, relayed by Agent): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -305,13 +305,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "web",
-        "relayLine": "via web · relayed by Juniper",
+        "relayLine": "via web · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via web, relayed by Juniper): Can you move my 3pm to Thursday?"
+        "plainText": "Alex (via web, relayed by Agent): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -349,13 +349,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "voice call",
-        "relayLine": "via voice call · relayed by Juniper",
+        "relayLine": "via voice call · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via voice call, relayed by Juniper): Can you move my 3pm to Thursday?"
+        "plainText": "Alex (via voice call, relayed by Agent): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -393,13 +393,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "fax",
-        "relayLine": "via fax · relayed by Juniper",
+        "relayLine": "via fax · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via fax, relayed by Juniper): Can you move my 3pm to Thursday?"
+        "plainText": "Alex (via fax, relayed by Agent): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -437,13 +437,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "authorName": "Juniper",
+        "authorName": "Agent",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "Teams",
         "relayLine": "via Teams",
         "relayed": false,
-        "plainText": "Juniper (via Teams): Can you move my 3pm to Thursday?"
+        "plainText": "Agent (via Teams): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -481,13 +481,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "authorName": "Juniper",
+        "authorName": "Agent",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "Kiingo Tasks",
-        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
         "relayed": true,
-        "plainText": "Relayed by Juniper (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -525,13 +525,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "authorName": "Juniper",
+        "authorName": "Agent",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "Kiingo Tasks",
-        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
         "relayed": true,
-        "plainText": "Relayed by Juniper (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -569,13 +569,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "authorName": "Juniper",
+        "authorName": "Agent",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "Kiingo Tasks",
-        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
         "relayed": true,
-        "plainText": "Relayed by Juniper (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -613,13 +613,13 @@
       "content": "Can you move my 3pm to Thursday?",
       "expected": {
         "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "authorName": "Juniper",
+        "authorName": "Agent",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "Kiingo Tasks",
-        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
         "relayed": true,
-        "plainText": "Relayed by Juniper (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
       }
     },
     {
@@ -657,13 +657,13 @@
       "content": "  hello \n",
       "expected": {
         "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "authorName": "Ross",
+        "authorName": "Alex",
         "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "relayedByName": "Juniper",
+        "relayedByName": "Agent",
         "surfaceLabel": "Kiingo Tasks",
-        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
         "relayed": true,
-        "plainText": "Ross (via Kiingo Tasks, relayed by Juniper): hello"
+        "plainText": "Alex (via Kiingo Tasks, relayed by Agent): hello"
       }
     },
     {
@@ -801,7 +801,7 @@
       "expected": null
     },
     {
-      "name": "a mirror without the author tag is not renderable",
+      "name": "a mirror without the author tag is an unattributed relayed line",
       "event": {
         "kind": 40002,
         "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -815,6 +815,860 @@
             "tasks",
             "src-1",
             "1760000000"
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Agent",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "on the owner's own device the attributed requester reads You",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "You",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "You (via Kiingo Tasks, relayed by Agent): Can you move my 3pm to Thursday?"
+      },
+      "viewer": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "name": "You via email keeps relayed by",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "email",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "You",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "email",
+        "relayLine": "via email · relayed by Agent",
+        "relayed": true,
+        "plainText": "You (via email, relayed by Agent): Can you move my 3pm to Thursday?"
+      },
+      "viewer": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "name": "a viewer who is not the requester sees the requester's name",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Alex",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Alex (via Kiingo Tasks, relayed by Agent): Can you move my 3pm to Thursday?"
+      },
+      "viewer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "an unattributed line never reads You",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Agent",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      },
+      "viewer": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "name": "an empty DM roster honours no markers",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": []
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": null
+    },
+    {
+      "name": "duplicate author tags are an unattributed relayed line",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Agent",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "an agent author tag next to a requester one is an unattributed relayed line",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "agent",
+            "",
+            ""
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Agent",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "a non-hex author key is an unattributed relayed line",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "not-a-key",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Agent",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "a non-hex key on an agent author tag is an unattributed relayed line",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "agent",
+            "not-a-key",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Agent",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "a five-element author tag is an unattributed relayed line",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "",
+            "extra"
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Agent",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "a short author tag is an unattributed relayed line",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "agent"
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Agent",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "an unknown author role is an unattributed relayed line",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "owner",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Agent",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Relayed by Agent (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "an uppercase author key is normalised",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Alex",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Alex (via Kiingo Tasks, relayed by Agent): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "an oversized subject is dropped and the mirror kept",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ],
+          [
+            "subject",
+            "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Alex",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Alex (via Kiingo Tasks, relayed by Agent): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "duplicate subjects are dropped and the mirror kept",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ],
+          [
+            "subject",
+            "one"
+          ],
+          [
+            "subject",
+            "two"
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Alex",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Alex (via Kiingo Tasks, relayed by Agent): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "the first mirror tag decides",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror",
+            "Bad Surface",
+            "",
+            ""
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Alex",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Alex (via Kiingo Tasks, relayed by Agent): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "a malformed first mirror tag is a plain message",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "soon"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": null
+    },
+    {
+      "name": "a twelve-digit mirror time with a leading zero is accepted",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "017600000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Alex",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Agent",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Agent",
+        "relayed": true,
+        "plainText": "Alex (via Kiingo Tasks, relayed by Agent): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "a thirteen-digit mirror time is a plain message",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
           ]
         ]
       },

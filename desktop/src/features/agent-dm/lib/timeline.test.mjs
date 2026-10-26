@@ -12,7 +12,7 @@ import {
 import { agentDmMessageKinds, agentDmRowEqual } from "./timeline.ts";
 
 const AGENT = "a".repeat(64);
-const ROSS = "b".repeat(64);
+const ALEX = "b".repeat(64);
 const STRANGER = "c".repeat(64);
 const DM_ID = "36411e44-0e2d-4cfe-bd6e-567eb169db9f";
 
@@ -26,11 +26,11 @@ function dm(overrides = {}) {
     topic: null,
     purpose: null,
     memberCount: 2,
-    memberPubkeys: [AGENT, ROSS],
+    memberPubkeys: [AGENT, ALEX],
     lastMessageAt: null,
     archivedAt: null,
-    participants: ["Agent", "Ross"],
-    participantPubkeys: [AGENT, ROSS],
+    participants: ["Agent", "Alex"],
+    participantPubkeys: [AGENT, ALEX],
     isMember: true,
     ttlSeconds: null,
     ttlDeadline: null,
@@ -40,11 +40,11 @@ function dm(overrides = {}) {
 
 const PROFILES = {
   [AGENT]: {
-    displayName: "Ross's agent",
+    displayName: "Alex's agent",
     avatarUrl: "agent.png",
     isAgent: true,
   },
-  [ROSS]: { displayName: "Ross", avatarUrl: "ross.png" },
+  [ALEX]: { displayName: "Alex", avatarUrl: "alex.png" },
 };
 
 let sequence = 0;
@@ -70,26 +70,27 @@ function mirror(pubkey, role = "requester") {
 }
 
 function format(events, channel = dm()) {
-  return formatTimelineMessages(events, channel, ROSS, "me.png", PROFILES);
+  return formatTimelineMessages(events, channel, ALEX, "me.png", PROFILES);
 }
 
 test("a requester mirror takes the member's identity; manage stays with the signer", () => {
-  const [row] = format([mirror(ROSS)]);
-  assert.equal(row.pubkey, ROSS);
+  const [row] = format([mirror(ALEX)]);
+  assert.equal(row.pubkey, ALEX);
   assert.equal(row.signerPubkey, AGENT);
-  assert.equal(row.author, "Ross");
+  // The viewer is the requester here, so the row reads "You".
+  assert.equal(row.author, "You");
   assert.equal(row.avatarUrl, "me.png");
   assert.equal(row.isAgent, false);
   assert.equal(row.agentDmMarkers, true);
   assert.deepEqual(agentDmMessageKinds(row), ["mirror"]);
-  // Ross does not own this agent here, so he cannot edit or delete the
+  // Alex does not own this agent here, so they cannot edit or delete the
   // agent-signed mirror even though it is displayed as his.
-  assert.equal(canManageMessageForCurrentUser(row, ROSS, PROFILES), false);
+  assert.equal(canManageMessageForCurrentUser(row, ALEX, PROFILES), false);
   const owned = {
     ...PROFILES,
-    [AGENT]: { ...PROFILES[AGENT], ownerPubkey: ROSS },
+    [AGENT]: { ...PROFILES[AGENT], ownerPubkey: ALEX },
   };
-  assert.equal(canManageMessageForCurrentUser(row, ROSS, owned), true);
+  assert.equal(canManageMessageForCurrentUser(row, ALEX, owned), true);
 });
 
 test("a mirror that fails the override rule stays the signer's row", () => {
@@ -97,25 +98,25 @@ test("a mirror that fails the override rule stays the signer's row", () => {
     mirror(STRANGER),
     mirror(AGENT),
     mirror(""),
-    mirror(ROSS, "agent"),
+    mirror(ALEX, "agent"),
   ]) {
     const [row] = format([candidate]);
     assert.equal(row.pubkey, AGENT);
-    assert.equal(row.author, "Ross's agent");
+    assert.equal(row.author, "Alex's agent");
     assert.equal(row.agentDmMarkers, true);
   }
   // A signer not known to be an agent never takes another member's identity.
-  const [human] = formatTimelineMessages([mirror(ROSS)], dm(), ROSS, null, {
-    [ROSS]: PROFILES[ROSS],
+  const [human] = formatTimelineMessages([mirror(ALEX)], dm(), ALEX, null, {
+    [ALEX]: PROFILES[ALEX],
   });
   assert.equal(human.pubkey, AGENT);
 });
 
 test("markers outside a DM or from a non-member are plain messages", () => {
-  const [stream] = format([mirror(ROSS)], dm({ channelType: "stream" }));
+  const [stream] = format([mirror(ALEX)], dm({ channelType: "stream" }));
   assert.equal(stream.pubkey, AGENT);
   assert.equal(stream.agentDmMarkers, undefined);
-  const [outsider] = format([{ ...mirror(ROSS), pubkey: STRANGER }]);
+  const [outsider] = format([{ ...mirror(ALEX), pubkey: STRANGER }]);
   assert.equal(outsider.pubkey, STRANGER);
   assert.equal(outsider.agentDmMarkers, undefined);
   const state = event(40002, [["buzz-question-state", "ask-1", "closed"]]);
@@ -149,7 +150,7 @@ test("question-state events render no row and close or answer the card", () => {
 
   const answered = format([
     ask,
-    event(9, [["buzz-answer", "ask-1"]], { pubkey: ROSS, content: "Basic" }),
+    event(9, [["buzz-answer", "ask-1"]], { pubkey: ALEX, content: "Basic" }),
   ]);
   assert.equal(answered[0].agentDmQuestionState, "answered");
   assert.equal(answered.length, 2, "the answer stays visible as a message");
@@ -158,7 +159,7 @@ test("question-state events render no row and close or answer the card", () => {
   const unrelated = format([
     ask,
     event(9, [["buzz-answer", "ask-1"]]),
-    event(9, [["buzz-answer", "ask-2"]], { pubkey: ROSS }),
+    event(9, [["buzz-answer", "ask-2"]], { pubkey: ALEX }),
   ]);
   assert.equal(unrelated[0].agentDmQuestionState, "open");
 });
@@ -192,7 +193,7 @@ test("the row comparator tracks the projection fields", () => {
   );
 });
 
-function tasksMirror(pubkey = ROSS) {
+function tasksMirror(pubkey = ALEX) {
   return event(40002, [
     ["buzz-mirror", "tasks", "task-1", "1760000000"],
     ["buzz-mirror-author", "requester", pubkey, "Claimed Name"],
@@ -201,28 +202,28 @@ function tasksMirror(pubkey = ROSS) {
 
 test("a relayed requester mirror row is never drawn like the viewer's own message", () => {
   const [row] = format([tasksMirror()]);
-  assert.equal(row.pubkey, ROSS);
-  assert.equal(row.author, "Ross");
+  assert.equal(row.pubkey, ALEX);
+  assert.equal(row.author, "You");
   assert.equal(row.accent, false, "no own-message accent");
   assert.equal(row.agentDmMirror?.relayed, true);
   assert.equal(
     row.agentDmMirror?.relayLine,
-    "via Kiingo Tasks · relayed by Ross's agent",
+    "via Kiingo Tasks · relayed by Alex's agent",
   );
   // A signer-attributed requester mirror is relayed too.
   const [fallback] = format([tasksMirror(STRANGER)]);
   assert.equal(fallback.pubkey, AGENT);
   assert.equal(fallback.agentDmMirror?.relayed, true);
   // The agent's own mirror keeps the plain badge.
-  const [own] = format([mirror(ROSS, "agent")]);
+  const [own] = format([mirror(ALEX, "agent")]);
   assert.equal(own.agentDmMirror?.relayed, false);
   assert.equal(own.agentDmMirror?.relayLine, "via email");
 });
 
 test("a relayed row never groups with messages its displayed author signed", () => {
-  const real = event(9, [], { pubkey: ROSS });
+  const real = event(9, [], { pubkey: ALEX });
   const relayed = tasksMirror();
-  const realAfter = event(9, [], { pubkey: ROSS });
+  const realAfter = event(9, [], { pubkey: ALEX });
   const rows = format([real, relayed, realAfter]);
   const items = buildTimelineItems(
     rows.map((message) => ({ message, summary: null })),
@@ -238,9 +239,22 @@ test("copy and reply labels of a relayed row use the relayed form", () => {
   const [row] = format([tasksMirror()]);
   assert.equal(
     mirrorAwareCopyText(row),
-    `Ross (via Kiingo Tasks, relayed by Ross's agent): ${row.body}`,
+    `You (via Kiingo Tasks, relayed by Alex's agent): ${row.body}`,
   );
-  assert.equal(mirrorAwareAuthorLabel(row), "Ross (relayed by Ross's agent)");
+  assert.equal(mirrorAwareAuthorLabel(row), "You (relayed by Alex's agent)");
+  // Another viewer sees the requester's name.
+  const [other] = formatTimelineMessages(
+    [tasksMirror()],
+    dm(),
+    STRANGER,
+    null,
+    PROFILES,
+  );
+  assert.equal(other.author, "Alex");
+  assert.equal(
+    mirrorAwareCopyText(other),
+    `Alex (via Kiingo Tasks, relayed by Alex's agent): ${other.body}`,
+  );
 });
 
 test("the row comparator tracks the mirror display", () => {

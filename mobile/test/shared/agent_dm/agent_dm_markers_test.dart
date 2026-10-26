@@ -110,32 +110,69 @@ void main() {
         isNull,
       );
       expect(
-        readAgentDmMirror(
-          tags(mirror: const ['buzz-mirror', 'email', 'i', '1', 'extra']),
-        ),
-        isNull,
-      );
-      expect(
-        readAgentDmMirror(
-          tags(author: const ['buzz-mirror-author', 'boss', '', '']),
-        ),
-        isNull,
-      );
-      expect(
         readAgentDmMirror(const [
-          ['buzz-mirror', 'email', 'i', '1'],
+          ['buzz-mirror', 'email', 'i'],
+          ['buzz-mirror-author', 'agent', '', ''],
         ]),
         isNull,
-        reason: 'the author tag is required',
+      );
+      expect(
+        readAgentDmMirror(
+          tags(mirror: ['buzz-mirror', 'email', 'i', '1' * 13]),
+        ),
+        isNull,
+      );
+    });
+
+    test('the first mirror tag decides, as on desktop', () {
+      expect(
+        readAgentDmMirror(
+          tags(mirror: const ['buzz-mirror', 'email', 'i', '1', 'extra']),
+        )?.surface,
+        'email',
       );
       expect(
         readAgentDmMirror([
           ...tags(),
           const ['buzz-mirror', 'teams', 'j', '2'],
+        ])?.surface,
+        'email',
+      );
+      expect(
+        readAgentDmMirror([
+          const ['buzz-mirror', 'email', 'i', 'soon'],
+          ...tags(),
         ]),
         isNull,
-        reason: 'a repeated marker is ambiguous',
       );
+    });
+
+    test('a bad author tag fails closed to an unattributed requester', () {
+      for (final mirror in [
+        readAgentDmMirror(
+          tags(author: const ['buzz-mirror-author', 'boss', '', '']),
+        ),
+        readAgentDmMirror(const [
+          ['buzz-mirror', 'email', 'i', '1'],
+        ]),
+        readAgentDmMirror(
+          tags(author: const ['buzz-mirror-author', 'agent', 'short', '']),
+        ),
+        readAgentDmMirror(
+          tags(author: const ['buzz-mirror-author', 'agent', '', '', 'x']),
+        ),
+        readAgentDmMirror(
+          tags(
+            author: const ['buzz-mirror-author', 'agent', '', ''],
+            extra: const [
+              ['buzz-mirror-author', 'agent', '', ''],
+            ],
+          ),
+        ),
+      ]) {
+        expect(mirror?.role, AgentDmMirrorRole.requester);
+        expect(mirror?.authorPubkey, '');
+      }
     });
 
     test('drops an oversized or repeated subject but keeps the mirror', () {

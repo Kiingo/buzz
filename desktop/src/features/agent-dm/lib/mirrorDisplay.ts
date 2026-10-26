@@ -40,15 +40,18 @@ export type MirrorDisplay = {
    * signer. Edits, deletion and moderation stay with the signer regardless.
    */
   authorPubkey: string;
+  /** "You" when the attributed requester is the viewer, otherwise a name. */
   authorName: string;
   /** The agent that signed (relayed) the line. */
   relayedByPubkey: string;
   relayedByName: string;
-  /** "Kiingo Tasks", "email", ... */
+  /** "Kiingo Tasks", "the Companion", "email", ... */
   surfaceLabel: string;
   /**
    * Always-visible line under the row: "via Kiingo Tasks · relayed by
-   * Juniper" for a requester mirror, "via Teams" for the agent's own one.
+   * Agent" for a requester mirror, "via Teams" for the agent's own one. With
+   * the author name it reads "You · via Kiingo Tasks · relayed by Agent" on
+   * the owner's own device.
    */
   relayLine: string;
   /**
@@ -69,12 +72,15 @@ export function mirrorDisplay({
   channel,
   names,
   signerIsAgent,
+  viewerPubkey,
 }: {
   event: MirrorDisplayEvent;
   channel: DmChannelLike | null | undefined;
   names: MirrorDisplayNames;
   /** Whether the signer is known to be an agent. */
   signerIsAgent: boolean;
+  /** The viewer's own pubkey: an attributed requester who is the viewer reads "You". */
+  viewerPubkey?: string | null;
 }): MirrorDisplay | null {
   if (event.kind !== KIND_AGENT_DM_QUIET) return null;
   if (!areAgentDmMarkersHonoured(channel, event.pubkey)) return null;
@@ -91,7 +97,7 @@ export function mirrorDisplay({
   return {
     mirror,
     authorPubkey,
-    authorName: requester ? names(requester) : relayedByName,
+    authorName: requesterName(requester, viewerPubkey, names) ?? relayedByName,
     relayedByPubkey: signer,
     relayedByName,
     surfaceLabel,
@@ -102,11 +108,22 @@ export function mirrorDisplay({
   };
 }
 
+function requesterName(
+  requester: string | null,
+  viewerPubkey: string | null | undefined,
+  names: MirrorDisplayNames,
+) {
+  if (!requester) return null;
+  return requester === viewerPubkey?.toLowerCase() ? "You" : names(requester);
+}
+
 /**
  * Plain-text form for previews, notifications, search and copy:
- * "Ross (via Kiingo Tasks, relayed by Juniper): text". A requester mirror
- * that could not be attributed reads "Relayed by Juniper (via Kiingo Tasks):
- * text"; the agent's own mirror reads "Juniper (via Teams): text".
+ * "Alex (via Kiingo Tasks, relayed by Agent): text", or "You (via Kiingo
+ * Tasks, relayed by Agent): text" on the owner's own device. A requester
+ * mirror that could not be attributed reads "Relayed by Agent (via Kiingo
+ * Tasks): text"; the agent's own mirror reads "Agent (via Teams): text".
+ * "relayed by" is always kept, even for "You (via email, ...)".
  */
 export function mirrorPlainText(display: MirrorDisplay, content: string) {
   const text = content.trim();

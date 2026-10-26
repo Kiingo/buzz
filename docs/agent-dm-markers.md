@@ -6,9 +6,10 @@ ordinary signed Nostr tag. Clients that do not know a marker still show the
 event's content as a plain message, so each marker degrades to readable text.
 
 All markers below are honoured only in a DM channel (NIP-29 group whose metadata
-declares `t=dm` or `hidden`), and only on events signed by a member of that DM.
-In any other channel a client renders the event as a plain message from its
-signer and applies none of the overrides.
+declares `t=dm` or `hidden`), and only on events signed by a known member of
+that DM. A DM whose roster is empty or not yet loaded honours nothing. In any
+other channel a client renders the event as a plain message from its signer and
+applies none of the overrides.
 
 "Quiet" means: the event never makes a channel or thread unread, never counts as
 a mention, never raises a DM alert, desktop notification, sound or home-activity
@@ -30,7 +31,7 @@ only in the addressed case below.
 - `["buzz-mirror", <surface>, <source_id>, <original_unix_seconds>]`
   - `surface` matches `^[a-z][a-z0-9_-]{0,31}$`. Known values: `email`,
     `teams`, `sms`, `web`, `voice`, `tasks` (Kiingo Tasks), `companion`
-    (the Kiingo Companion Mac app), `ask`.
+    (the Companion Mac app), `ask`.
   - `source_id` is opaque (at most 256 characters); it identifies the original
     message on its surface.
   - `original_unix_seconds` is the original message's time.
@@ -39,6 +40,16 @@ only in the addressed case below.
     agent's own message on the other surface).
 - Optional `["subject", <text>]` (at most 200 characters), for email.
 - Content: the message text (markdown).
+
+Parsing fails closed to a relayed line, the same on desktop and mobile:
+
+- The first `buzz-mirror` tag decides. If its surface, source id or time
+  (1 to 12 digits) is invalid, the event is not a mirror and shows as a plain
+  message from its signer.
+- A missing, repeated or malformed `buzz-mirror-author` tag (not exactly four
+  elements, an unknown role, or a pubkey that is neither empty nor 64-hex)
+  reads as an unattributed requester mirror: shown as the signer, relayed.
+- A missing, repeated or malformed subject is dropped; the mirror is kept.
 
 Rendering: one display rule, shared by desktop
 (`desktop/src/features/agent-dm/lib/mirrorDisplay.ts`) and mobile
@@ -56,22 +67,26 @@ indistinguishable from a message the requester signed:
   the signer. A claimed name is never displayed as an author.
 - Relay line, always visible under the row:
   - requester mirror: "via <Surface> · relayed by <signer name>", for
-    example "via Kiingo Tasks · relayed by Juniper";
+    example "via Kiingo Tasks · relayed by Agent";
   - agent mirror: "via <Surface>".
 - Style: a requester mirror always uses the distinct relayed style: an
   outlined, muted body with a relay glyph and the relay line. Never the
   own-message treatment (accent, outgoing bubble colour), even when it is
   attributed to the reader, and it never groups with messages its displayed
   author signed.
+- You. On the requester's own device an attributed requester reads "You",
+  so the row reads "You · via Kiingo Tasks · relayed by Agent". "relayed by"
+  stays even for "You · via email".
 - Plain text, for previews, notifications, search and copy:
-  - attributed requester mirror: "Ross (via Kiingo Tasks, relayed by
-    Juniper): text";
-  - requester mirror shown as the signer: "Relayed by Juniper (via Kiingo
+  - attributed requester mirror: "Alex (via Kiingo Tasks, relayed by
+    Agent): text", or "You (via Kiingo Tasks, relayed by Agent): text" on
+    Alex's own device;
+  - requester mirror shown as the signer: "Relayed by Agent (via Kiingo
     Tasks): text";
-  - agent mirror: "Juniper (via Teams): text".
+  - agent mirror: "Agent (via Teams): text".
 - Surface labels: `email` → "email", `teams` → "Teams", `sms` → "SMS",
   `web` → "web", `voice` → "voice call", `tasks` → "Kiingo Tasks",
-  `companion` → "Kiingo Companion", `ask` → "Kiingo Ask", anything else →
+  `companion` → "the Companion", `ask` → "Kiingo Ask", anything else →
   the surface itself. The badge reads "via <label>". The tooltip or details
   view gives the original time and, when present, the subject.
 - Agent runtimes never read a mirror as input: an event carrying either

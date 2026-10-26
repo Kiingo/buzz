@@ -261,10 +261,12 @@ export function inboxMessageMirror(
     channel,
     isAgent,
     names,
+    viewerPubkey,
   }: {
     channel: DmChannelLike | null | undefined;
     isAgent: (pubkey: string) => boolean;
     names: MirrorDisplayNames;
+    viewerPubkey?: string | null;
   },
 ): MirrorDisplay | null {
   const signer = message.signerPubkey ?? message.authorPubkey;
@@ -273,7 +275,22 @@ export function inboxMessageMirror(
     channel,
     names,
     signerIsAgent: isAgent(signer),
+    viewerPubkey,
   });
+}
+
+/**
+ * The author label an inbox row shows: the mirror rule's name ("You" on the
+ * requester's own device) when the row is attributed to the mirror's
+ * author, otherwise the row's own label.
+ */
+export function inboxAuthorLabel(
+  message: Pick<InboxContextMessage, "authorLabel" | "authorPubkey">,
+  mirror: MirrorDisplay | null | undefined,
+) {
+  return mirror && mirror.authorPubkey === message.authorPubkey.toLowerCase()
+    ? mirror.authorName
+    : message.authorLabel;
 }
 
 export function toTimelineMessage(
@@ -284,7 +301,7 @@ export function toTimelineMessage(
   return {
     agentDmMirror,
     id: message.id,
-    author: message.authorLabel,
+    author: inboxAuthorLabel(message, agentDmMirror),
     isAgent: message.isAgent,
     ownerLabel: message.ownerLabel,
     ownerPubkey: message.ownerPubkey,

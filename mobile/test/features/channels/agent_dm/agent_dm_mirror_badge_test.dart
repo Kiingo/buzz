@@ -52,7 +52,7 @@ TimelineMessage _message(NostrEvent event) => TimelineMessage(
 void main() {
   final requester = _event('requester', const [
     ['buzz-mirror', 'tasks', 't-1', '1700000000'],
-    ['buzz-mirror-author', 'requester', _me, 'Ross'],
+    ['buzz-mirror-author', 'requester', _me, 'Alex'],
   ]);
   final own = _event('own', const [
     ['buzz-mirror', 'teams', 't-2', '1700000000'],
@@ -73,7 +73,7 @@ void main() {
             channelIdentityNamesProvider('dm').overrideWithValue(
               const IdentityNameSources().scope(
                 const [_agent, _me],
-                fallbackNames: const {_agent: 'Juniper', _me: 'Ross'},
+                fallbackNames: const {_agent: 'Agent', _me: 'Alex'},
               ),
             ),
           ],
@@ -102,7 +102,7 @@ void main() {
   testWidgets('a requester mirror always shows who relayed it', (tester) async {
     await pumpMeta(tester, requester);
     expect(find.text('via Kiingo Tasks'), findsOneWidget);
-    expect(find.text('relayed by Juniper'), findsOneWidget);
+    expect(find.text('relayed by Agent'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('agent-dm-mirror-relay-glyph')),
       findsOneWidget,
@@ -113,7 +113,7 @@ void main() {
     );
     // One screen-reader stop carries the whole relay line.
     expect(
-      find.bySemanticsLabel('via Kiingo Tasks · relayed by Juniper'),
+      find.bySemanticsLabel('via Kiingo Tasks · relayed by Agent'),
       findsOneWidget,
     );
   });
@@ -135,11 +135,20 @@ void main() {
     final display = AgentDmScope.mirrorDisplayOf(
       context,
       _message(requester),
-      (pubkey) => pubkey == _me ? 'Ross' : 'Juniper',
+      (pubkey) => pubkey == _me ? 'Alex' : 'Agent',
     );
+    // The reader is the requester, so the line reads "You".
     expect(
       display?.plainText('Move my 3pm'),
-      'Ross (via Kiingo Tasks, relayed by Juniper): Move my 3pm',
+      'You (via Kiingo Tasks, relayed by Agent): Move my 3pm',
+    );
+    expect(
+      AgentDmScope.authorLabelOf(context, _message(requester), 'Alex'),
+      'You',
+    );
+    expect(
+      AgentDmScope.authorLabelOf(context, _message(own), 'Agent'),
+      'Agent',
     );
   });
 }

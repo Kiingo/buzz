@@ -51,6 +51,10 @@ class AgentDmListingEvent {
 class AgentDmTimeline {
   final Set<String> _members;
   final Set<String> _agents;
+
+  /// The reader's own lowercase key, if known: an attributed requester who
+  /// is the reader reads "You".
+  final String? _viewer;
   final Map<String, String> _signers;
   final Map<String, AgentDmMirror> _mirrors;
   final Map<String, AgentDmCall> _calls;
@@ -68,6 +72,7 @@ class AgentDmTimeline {
   const AgentDmTimeline._({
     required Set<String> members,
     Set<String> agents = const {},
+    String? viewer,
     required Map<String, String> signers,
     required Map<String, AgentDmMirror> mirrors,
     Map<String, AgentDmCall> calls = const {},
@@ -83,6 +88,7 @@ class AgentDmTimeline {
     required Set<String> usedActionRefs,
   }) : _members = members,
        _agents = agents,
+       _viewer = viewer,
        _signers = signers,
        _mirrors = mirrors,
        _calls = calls,
@@ -215,6 +221,7 @@ class AgentDmTimeline {
     return AgentDmTimeline._(
       members: Set.unmodifiable(members),
       agents: Set.unmodifiable(agents),
+      viewer: self,
       signers: Map.unmodifiable(signers),
       mirrors: Map.unmodifiable(mirrors),
       calls: Map.unmodifiable(calls),
@@ -324,6 +331,7 @@ class AgentDmTimeline {
       memberPubkeys: _members,
       names: names,
       signerIsAgent: _agents.contains(signer),
+      viewerPubkey: _viewer,
     );
   }
 
@@ -341,6 +349,18 @@ class AgentDmTimeline {
   /// signed, whoever it is attributed to.
   bool isRelayed(TimelineMessage message) =>
       _mirrors[message.id]?.role == AgentDmMirrorRole.requester;
+
+  /// The author label for [message]: "You" for a relayed line attributed to
+  /// the reader, the shared rule's wording on the owner's own device;
+  /// otherwise [label].
+  String authorLabelOf(TimelineMessage message, String label) {
+    final author = authorOf(message);
+    final relayedAsReader =
+        isRelayed(message) &&
+        author == _viewer &&
+        author != message.pubkey.trim().toLowerCase();
+    return relayedAsReader ? 'You' : label;
+  }
 
   /// Drops rows that render nothing and marks dividers and listings as
   /// system rows, so they never group with messages or take read marks.

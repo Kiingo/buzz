@@ -696,6 +696,7 @@ export function TopbarSearch({
             signerIsAgent:
               resultProfiles?.[result.hit.pubkey.toLowerCase()]?.isAgent ===
               true,
+            viewerPubkey: currentPubkey,
           })
         : null;
     const title =

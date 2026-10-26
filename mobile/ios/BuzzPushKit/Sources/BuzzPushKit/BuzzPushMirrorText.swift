@@ -21,7 +21,7 @@ enum BuzzPushMirrorText {
     case "web": return "web"
     case "voice": return "voice call"
     case "tasks": return "Kiingo Tasks"
-    case "companion": return "Kiingo Companion"
+    case "companion": return "the Companion"
     case "ask": return "Kiingo Ask"
     default: return surface
     }

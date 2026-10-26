@@ -555,6 +555,17 @@ test("inbox detail rows apply the shared mirror rule on the raw signer", () => {
   assert.equal(timeline.agentDmMirror, mirror);
   assert.equal(toTimelineMessage(message).agentDmMirror, null);
 
+  assert.equal(timeline.author, "Alex");
+  // On the requester's own device the row reads "You".
+  const own = inboxMessageMirror(message, {
+    channel,
+    isAgent,
+    names,
+    viewerPubkey: ALEX,
+  });
+  assert.equal(own?.authorName, "You");
+  assert.equal(toTimelineMessage(message, own).author, "You");
+
   const plain = { ...message, kind: 9, tags: [["h", "dm"]] };
   assert.equal(inboxMessageMirror(plain, { channel, isAgent, names }), null);
 });

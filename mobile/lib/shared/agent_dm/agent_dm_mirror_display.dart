@@ -21,7 +21,8 @@ class AgentDmMirrorDisplay {
   /// otherwise the signer. Managing the message stays with the signer.
   final String authorPubkey;
 
-  /// The display name for [authorPubkey].
+  /// The display name for [authorPubkey], or "You" when the attributed
+  /// requester is the viewer.
   final String authorName;
 
   /// The agent that signed (relayed) the line, lowercase.
@@ -30,11 +31,13 @@ class AgentDmMirrorDisplay {
   /// The display name for [relayedByPubkey].
   final String relayedByName;
 
-  /// "Kiingo Tasks", "email", ...
+  /// "Kiingo Tasks", "the Companion", "email", ...
   final String surfaceLabel;
 
   /// Always-visible line by the row: "via Kiingo Tasks · relayed by
-  /// Juniper" for a requester mirror, "via Teams" for the agent's own one.
+  /// Agent" for a requester mirror, "via Teams" for the agent's own one.
+  /// With the author name it reads "You · via Kiingo Tasks · relayed by
+  /// Agent" on the owner's own device.
   final String relayLine;
 
   /// True for every requester mirror: the row uses the distinct relayed
@@ -54,9 +57,11 @@ class AgentDmMirrorDisplay {
   });
 
   /// Plain-text form for previews, notifications, search and copy:
-  /// "Ross (via Kiingo Tasks, relayed by Juniper): text". A requester mirror
-  /// shown as its signer reads "Relayed by Juniper (via Kiingo Tasks):
-  /// text"; the agent's own mirror reads "Juniper (via Teams): text".
+  /// "Alex (via Kiingo Tasks, relayed by Agent): text", or "You (via Kiingo
+  /// Tasks, relayed by Agent): text" on the owner's own device. A requester
+  /// mirror shown as its signer reads "Relayed by Agent (via Kiingo Tasks):
+  /// text"; the agent's own mirror reads "Agent (via Teams): text".
+  /// "relayed by" is always kept, even for "You (via email, ...)".
   String plainText(String content) {
     final text = content.trim();
     if (!relayed) return '$authorName (via $surfaceLabel): $text';
@@ -74,7 +79,9 @@ class AgentDmMirrorDisplay {
 /// their signer).
 ///
 /// [names] resolves a lowercase key to the label the surface already uses;
-/// [signerIsAgent] is whether the signer is known to be an agent.
+/// [signerIsAgent] is whether the signer is known to be an agent;
+/// [viewerPubkey] is the viewer's own key, and an attributed requester who is
+/// the viewer reads "You".
 AgentDmMirrorDisplay? agentDmMirrorDisplay({
   required int kind,
   required String signerPubkey,
@@ -83,6 +90,7 @@ AgentDmMirrorDisplay? agentDmMirrorDisplay({
   required Iterable<String> memberPubkeys,
   required String Function(String pubkey) names,
   required bool signerIsAgent,
+  String? viewerPubkey,
 }) {
   if (kind != agentDmQuietKind) return null;
   if (!agentDmMarkersApply(
@@ -107,7 +115,11 @@ AgentDmMirrorDisplay? agentDmMirrorDisplay({
   return AgentDmMirrorDisplay(
     mirror: mirror,
     authorPubkey: requester ?? signer,
-    authorName: requester == null ? relayedByName : names(requester),
+    authorName: requester == null
+        ? relayedByName
+        : requester == viewerPubkey?.trim().toLowerCase()
+        ? 'You'
+        : names(requester),
     relayedByPubkey: signer,
     relayedByName: relayedByName,
     surfaceLabel: surfaceLabel,

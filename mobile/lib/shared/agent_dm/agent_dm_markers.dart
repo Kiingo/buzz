@@ -19,6 +19,7 @@ const agentDmMaxActions = 3;
 final _hexPubkey = RegExp(r'^[0-9a-f]{64}$');
 final _surface = RegExp(r'^[a-z][a-z0-9_-]{0,31}$');
 final _unsigned = RegExp(r'^(0|[1-9][0-9]{0,15})$');
+final _mirrorTime = RegExp(r'^\d{1,12}$');
 
 /// Session ids go into `/sessions load <id>`, so they never hold whitespace.
 final _sessionId = RegExp(r'^[A-Za-z0-9._:\-]{1,128}$');
@@ -135,8 +136,9 @@ class AgentDmMirror {
   }
 }
 
-/// The surface a mirror came from, as a noun: "Kiingo Tasks", "email", or
-/// the surface itself. Same labels as desktop's `mirrorSurfaceLabel`.
+/// The surface a mirror came from, as a noun: "Kiingo Tasks", "the
+/// Companion", "email", or the surface itself. Same labels as desktop's
+/// `mirrorSurfaceLabel`.
 String agentDmMirrorSurfaceLabel(String surface) => switch (surface) {
   'email' => 'email',
   'teams' => 'Teams',
@@ -144,48 +146,65 @@ String agentDmMirrorSurfaceLabel(String surface) => switch (surface) {
   'web' => 'web',
   'voice' => 'voice call',
   'tasks' => 'Kiingo Tasks',
-  'companion' => 'Kiingo Companion',
+  'companion' => 'the Companion',
   'ask' => 'Kiingo Ask',
   _ => surface,
 };
 
-/// Reads `buzz-mirror`, `buzz-mirror-author` and the optional `subject`.
+/// Reads `buzz-mirror`, `buzz-mirror-author` and the optional `subject`, the
+/// same rule as desktop's `parseMirror` (shared vectors:
+/// `test-fixtures/mirror-display.json`). It fails closed to a relayed line:
+///
+/// - the first `buzz-mirror` tag must carry a valid surface, source id and
+///   time, otherwise this is not a mirror and the event is a plain message;
+/// - a missing, repeated or malformed `buzz-mirror-author` tag (not exactly
+///   four elements, an unknown role, a key that is neither empty nor 64-hex)
+///   reads as an unattributed requester mirror, so the line shows relayed by
+///   its signer and never as the signer's own words or as a member's;
+/// - a missing, repeated or malformed subject is dropped and the mirror kept.
 AgentDmMirror? readAgentDmMirror(List<List<String>> tags) {
-  final mirror = _single(tags, 'buzz-mirror', 4);
-  final author = _single(tags, 'buzz-mirror-author', 4);
-  if (mirror == null || author == null) return null;
+  final mirrors = _named(tags, 'buzz-mirror');
+  if (mirrors.isEmpty || mirrors.first.length < 4) return null;
+  final mirror = mirrors.first;
   final surface = mirror[1];
   final sourceId = mirror[2];
-  final originalAt = _seconds(mirror[3]);
+  // Same bound as desktop's mirror time: 1 to 12 digits.
+  final originalAt = _mirrorTime.hasMatch(mirror[3])
+      ? int.parse(mirror[3])
+      : null;
   if (!_surface.hasMatch(surface) ||
       !_bounded(sourceId, 256) ||
       originalAt == null) {
     return null;
   }
-  final role = switch (author[1]) {
-    'requester' => AgentDmMirrorRole.requester,
-    'agent' => AgentDmMirrorRole.agent,
-    _ => null,
-  };
-  if (role == null) return null;
-  // The subject is optional: a repeated or oversized one is dropped rather
-  // than discarding the mirror.
-  final subjects = _named(tags, 'subject');
-  final subject =
-      subjects.length == 1 &&
-          subjects.single.length == 2 &&
-          _bounded(subjects.single[1], 200)
-      ? subjects.single[1]
-      : null;
+  final (role, authorPubkey, authorName) = _mirrorAuthor(tags);
+  final subject = _single(tags, 'subject', 2)?[1];
   return AgentDmMirror(
     surface: surface,
     sourceId: sourceId,
     originalAt: originalAt,
     role: role,
-    authorPubkey: author[2],
-    authorName: author[3],
-    subject: subject,
+    authorPubkey: authorPubkey,
+    authorName: authorName,
+    subject: subject != null && _bounded(subject, 200) ? subject.trim() : null,
   );
+}
+
+/// The mirror author as (role, lowercase key or empty, claimed name), or an
+/// unattributed requester when the tag is missing, repeated or malformed.
+(AgentDmMirrorRole, String, String) _mirrorAuthor(List<List<String>> tags) {
+  const unattributed = (AgentDmMirrorRole.requester, '', '');
+  final author = _single(tags, 'buzz-mirror-author', 4);
+  if (author == null) return unattributed;
+  final role = switch (author[1]) {
+    'requester' => AgentDmMirrorRole.requester,
+    'agent' => AgentDmMirrorRole.agent,
+    _ => null,
+  };
+  if (role == null) return unattributed;
+  final key = author[2].toLowerCase();
+  if (key.isNotEmpty && !_hexPubkey.hasMatch(key)) return unattributed;
+  return (role, key, author[3]);
 }
 
 /// Which way a recorded call went.

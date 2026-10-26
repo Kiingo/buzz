@@ -52,6 +52,24 @@ test("an email mirror says email", () => {
   );
 });
 
+test("the requester's own search reads You and keeps relayed by", () => {
+  const mirrored = hit([
+    ["buzz-mirror", "email", "m1", "1"],
+    ["buzz-mirror-author", "requester", ALEX, ""],
+  ]);
+  const mirror = searchHitMirror({
+    hit: mirrored,
+    channel: DM,
+    names,
+    signerIsAgent: true,
+    viewerPubkey: ALEX,
+  });
+  assert.equal(
+    searchHitPreviewText(mirrored, mirror),
+    "You (via email, relayed by Agent): Move my 3pm",
+  );
+});
+
 test("hits without tags, outside a DM or not mirrors keep their content", () => {
   const plain = hit(undefined, 9);
   assert.equal(

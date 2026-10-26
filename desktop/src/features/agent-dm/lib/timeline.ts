@@ -194,6 +194,7 @@ export function createAgentDmProjector(
           names: (pubkey) =>
             pubkey === signer ? message.author : identityFor(pubkey).author,
           signerIsAgent: message.isAgent === true,
+          viewerPubkey: context.currentPubkey,
         });
         if (display) {
           if (display.authorPubkey === signer) {
@@ -205,6 +206,8 @@ export function createAgentDmProjector(
             {
               ...message,
               ...identityFor(display.authorPubkey),
+              // "You" on the owner's own device, otherwise the member's name.
+              author: display.authorName,
               // A relayed line never takes the own-message treatment, even
               // when it is attributed to the viewer.
               accent: false,

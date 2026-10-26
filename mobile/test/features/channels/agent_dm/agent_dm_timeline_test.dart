@@ -42,11 +42,12 @@ AgentDmTimeline _build(
   List<String> members = const [_agent, _me],
   Map<String, String> owners = const {_agent: _me},
   Set<String> agents = const {_agent},
+  String viewer = _me,
 }) => AgentDmTimeline.build(
   events: events,
   isDm: isDm,
   memberPubkeys: members,
-  currentPubkey: _me,
+  currentPubkey: viewer,
   agentPubkeys: agents,
   verifiedAgentOwners: owners,
 );
@@ -60,7 +61,7 @@ const _question = [
 void main() {
   final mirror = _event('mirror', const [
     ['buzz-mirror', 'email', 'm-1', '1700000000'],
-    ['buzz-mirror-author', 'requester', _me, 'Ross'],
+    ['buzz-mirror-author', 'requester', _me, 'Alex'],
   ]);
   final relayed = _event('relayed', const [
     ['buzz-mirror', 'teams', 'm-2', '1700000000'],
@@ -126,20 +127,33 @@ void main() {
 
   test('the shared rule names the requester and who relayed the line', () {
     final timeline = _build([mirror, relayed]);
-    String names(String pubkey) => pubkey == _me ? 'Ross' : 'Juniper';
+    String names(String pubkey) => pubkey == _me ? 'Alex' : 'Agent';
+    // The reader is the requester here, so the line reads "You".
     final display = timeline.mirrorDisplayOf(_message(mirror), names)!;
     expect(display.authorPubkey, _me);
-    expect(display.authorName, 'Ross');
-    expect(display.relayedByName, 'Juniper');
-    expect(display.relayLine, 'via email · relayed by Juniper');
+    expect(display.authorName, 'You');
+    expect(display.relayedByName, 'Agent');
+    expect(display.relayLine, 'via email · relayed by Agent');
     expect(
       display.plainText('Move my 3pm'),
-      'Ross (via email, relayed by Juniper): Move my 3pm',
+      'You (via email, relayed by Agent): Move my 3pm',
     );
+    expect(timeline.authorLabelOf(_message(mirror), 'Alex'), 'You');
     final fallback = timeline.mirrorDisplayOf(_message(relayed), names)!;
     expect(fallback.authorPubkey, _agent);
-    expect(fallback.plainText('Hi'), 'Relayed by Juniper (via Teams): Hi');
+    expect(fallback.plainText('Hi'), 'Relayed by Agent (via Teams): Hi');
+    expect(timeline.authorLabelOf(_message(relayed), 'Agent'), 'Agent');
     expect(timeline.mirrorDisplayOf(_message(divider), names), isNull);
+
+    // Another reader sees the requester's name.
+    final other = _build([mirror], viewer: _outsider);
+    final seen = other.mirrorDisplayOf(_message(mirror), names)!;
+    expect(seen.authorName, 'Alex');
+    expect(
+      seen.plainText('Move my 3pm'),
+      'Alex (via email, relayed by Agent): Move my 3pm',
+    );
+    expect(other.authorLabelOf(_message(mirror), 'Alex'), 'Alex');
   });
 
   test('a mirror from a signer not known as an agent keeps its signer', () {
@@ -156,7 +170,7 @@ void main() {
     final timeline = _build([own]);
     expect(timeline.isRelayed(_message(own)), isFalse);
     expect(
-      timeline.mirrorDisplayOf(_message(own), (_) => 'Juniper')?.relayLine,
+      timeline.mirrorDisplayOf(_message(own), (_) => 'Agent')?.relayLine,
       'via Teams',
     );
   });

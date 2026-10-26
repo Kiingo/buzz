@@ -84,7 +84,12 @@ export function isDmMember(
   return members.has(pubkey.toLowerCase());
 }
 
-/** The honour rule shared by every marker: DM channel, signed by a member. */
+/**
+ * The honour rule shared by every marker: DM channel, signed by a known
+ * member. An empty or unknown roster honours nothing (the same rule as
+ * mobile's `agentDmMarkersApply`), so the event shows as a plain message
+ * from its signer until the roster loads.
+ */
 export function areAgentDmMarkersHonoured(
   channel: DmChannelLike | null | undefined,
   signerPubkey: string,
@@ -92,7 +97,7 @@ export function areAgentDmMarkersHonoured(
   return (
     isAgentDmChannel(channel) &&
     normalizeHex(signerPubkey) !== null &&
-    isDmMember(channel as DmChannelLike, signerPubkey, true)
+    isDmMember(channel as DmChannelLike, signerPubkey, false)
   );
 }
 
@@ -110,10 +115,22 @@ export type AgentMirror = {
   subject: string | null;
 };
 
+/**
+ * Reads `buzz-mirror`, `buzz-mirror-author` and the optional `subject`, the
+ * same rule as mobile's `readAgentDmMirror` (shared vectors:
+ * test-fixtures/mirror-display.json). It fails closed to a relayed line:
+ *
+ * - the first `buzz-mirror` tag must carry a valid surface, source id and
+ *   time, otherwise this is not a mirror and the event is a plain message;
+ * - a missing, repeated or malformed `buzz-mirror-author` tag (not exactly
+ *   four elements, an unknown role, a key that is neither empty nor 64-hex)
+ *   reads as an unattributed requester mirror, so the line shows relayed by
+ *   its signer and never as the signer's own words or as a member's;
+ * - a missing, repeated or malformed subject is dropped and the mirror kept.
+ */
 export function parseMirror(tags: Tags): AgentMirror | null {
   const mirror = firstTag(tags, "buzz-mirror");
-  const author = firstTag(tags, "buzz-mirror-author");
-  if (!mirror || !author) return null;
+  if (!mirror) return null;
   const [, surface, sourceId, originalAt] = mirror;
   if (
     !surface ||
@@ -124,21 +141,43 @@ export function parseMirror(tags: Tags): AgentMirror | null {
   ) {
     return null;
   }
-  const [, role, pubkey = "", name = ""] = author;
-  if (role !== "requester" && role !== "agent") return null;
-  if (pubkey !== "" && normalizeHex(pubkey) === null) return null;
-  if (typeof name !== "string") return null;
-  const subjectTag = firstTag(tags, "subject");
-  const subject = subjectTag?.[1];
-  if (subjectTag && !isText(subject, MIRROR_SUBJECT_MAX)) return null;
   return {
     surface,
     sourceId,
     originalAt: Number(originalAt),
-    role,
-    authorPubkey: normalizeHex(pubkey),
-    subject: subject?.trim() ? subject.trim() : null,
+    ...parseMirrorAuthor(tags),
+    subject: parseMirrorSubject(tags),
   };
+}
+
+const UNATTRIBUTED_REQUESTER = {
+  role: "requester",
+  authorPubkey: null,
+} as const satisfies Pick<AgentMirror, "role" | "authorPubkey">;
+
+function namedTags(tags: Tags, name: string) {
+  return (tags ?? []).filter((tag) => tag[0] === name);
+}
+
+function parseMirrorAuthor(
+  tags: Tags,
+): Pick<AgentMirror, "role" | "authorPubkey"> {
+  const authors = namedTags(tags, "buzz-mirror-author");
+  const author = authors.length === 1 ? authors[0] : undefined;
+  if (author?.length !== 4) return UNATTRIBUTED_REQUESTER;
+  const [, role, pubkey] = author;
+  if (role !== "requester" && role !== "agent") return UNATTRIBUTED_REQUESTER;
+  if (pubkey === "") return { role, authorPubkey: null };
+  const authorPubkey = normalizeHex(pubkey);
+  return authorPubkey ? { role, authorPubkey } : UNATTRIBUTED_REQUESTER;
+}
+
+function parseMirrorSubject(tags: Tags): string | null {
+  const subjects = namedTags(tags, "subject");
+  const tag = subjects.length === 1 ? subjects[0] : undefined;
+  if (tag?.length !== 2) return null;
+  const subject = tag[1];
+  return isNonEmptyText(subject, MIRROR_SUBJECT_MAX) ? subject.trim() : null;
 }
 
 const SURFACE_LABELS: Record<string, string> = {
@@ -148,7 +187,7 @@ const SURFACE_LABELS: Record<string, string> = {
   web: "web",
   voice: "voice call",
   tasks: "Kiingo Tasks",
-  companion: "Kiingo Companion",
+  companion: "the Companion",
   ask: "Kiingo Ask",
 };
 

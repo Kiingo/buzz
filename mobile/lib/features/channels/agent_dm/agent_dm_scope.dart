@@ -147,7 +147,7 @@ class AgentDmScope extends InheritedWidget {
   }
 
   /// The relay line above a mirrored [message] ("via Kiingo Tasks ·
-  /// relayed by Juniper"), or null.
+  /// relayed by Agent"), or null.
   static Widget? mirrorMetaFor(BuildContext context, TimelineMessage message) {
     final scope = maybeOf(context);
     if (scope == null || scope.timeline.mirrorOf(message.id) == null) {
@@ -165,6 +165,14 @@ class AgentDmScope extends InheritedWidget {
   /// distinct relayed style and never groups with its displayed author.
   static bool isRelayed(BuildContext context, TimelineMessage message) =>
       maybeOf(context)?.timeline.isRelayed(message) ?? false;
+
+  /// The author label for [message]: "You" for a relayed line attributed to
+  /// the reader, otherwise [label].
+  static String authorLabelOf(
+    BuildContext context,
+    TimelineMessage message,
+    String label,
+  ) => maybeOf(context)?.timeline.authorLabelOf(message, label) ?? label;
 
   /// The shared display rule's result for [message] with [names], read
   /// without subscribing (for callbacks such as Copy text), or null.

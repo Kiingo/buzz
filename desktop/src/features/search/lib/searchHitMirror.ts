@@ -10,25 +10,30 @@ import type { SearchHit } from "@/shared/api/types";
 /**
  * The shared mirror display rule for a search hit: a mirrored DM line is
  * listed under the agent that signed it and its preview is the relayed plain
- * form ("Alex (via Kiingo Tasks, relayed by Agent): text"), never as its
- * displayed author's own words. Null for any other hit.
+ * form ("Alex (via Kiingo Tasks, relayed by Agent): text", or "You (...)"
+ * on the requester's own device), never as its displayed author's own
+ * words. Null for any other hit.
  */
 export function searchHitMirror({
   hit,
   channel,
   names,
   signerIsAgent,
+  viewerPubkey,
 }: {
   hit: Pick<SearchHit, "kind" | "pubkey" | "tags">;
   channel: DmChannelLike | null | undefined;
   names: MirrorDisplayNames;
   signerIsAgent: boolean;
+  /** An attributed requester who is the viewer reads "You". */
+  viewerPubkey?: string | null;
 }): MirrorDisplay | null {
   return mirrorDisplay({
     event: { kind: hit.kind, pubkey: hit.pubkey, tags: hit.tags },
     channel,
     names,
     signerIsAgent,
+    viewerPubkey,
   });
 }
 
