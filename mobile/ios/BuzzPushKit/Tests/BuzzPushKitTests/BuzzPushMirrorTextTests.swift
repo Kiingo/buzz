@@ -106,6 +106,7 @@ final class BuzzPushMirrorTextTests: XCTestCase {
     let names = [
       "You", " you ", "YOU", "\u{04AE}ou", "Yo\u{200B}u", "You.", "\u{FF39}\u{FF4F}\u{FF55}",
       "Y\u{0332}o\u{0332}u\u{0332}", "\u{24CE}\u{24C4}\u{24CA}", "\u{02B8}\u{1D52}\u{1D58}",
+      "Y\u{00F3}u", "Yo\u{0301}u", "\u{00DD}\u{00D6}\u{00DC}",
     ]
     for name in names {
       let resolution = try XCTUnwrap(resolve(mirror([
@@ -117,7 +118,7 @@ final class BuzzPushMirrorTextTests: XCTestCase {
   }
 
   func testNamesThatOnlyContainYouStayNames() {
-    for name in ["Young", "Yours truly", "Agent You", "Yo"] {
+    for name in ["Young", "Yours truly", "Agent You", "Yo", "Yo\u{00F9} r"] {
       XCTAssertFalse(BuzzPushMirrorText.readsAsYou(name), name)
     }
   }

@@ -162,10 +162,21 @@ void main() {
       '\u24ce\u24c4\u24ca',
       '\u24e8\u24de\u24e4',
       '\u02b8\u1d52\u1d58',
+      'Y\u00f3u',
+      'Yo\u0301u',
+      '\u00dd\u00d6\u00dc',
+      '\u00ff\u014d\u016b',
     ]) {
       expect(agentDmNameReadsAsYou(name), isTrue, reason: name);
     }
-    for (final name in ['Young', 'Yours truly', 'Agent You', 'Yo', '']) {
+    for (final name in [
+      'Young',
+      'Yours truly',
+      'Agent You',
+      'Yo',
+      '',
+      'Yo\u00f9 r',
+    ]) {
       expect(agentDmNameReadsAsYou(name), isFalse, reason: name);
     }
   });

@@ -2265,6 +2265,7 @@
         "mobile/lib/features/search/search_page.dart",
         "mobile/lib/features/search/search_page/message_tile.dart",
         "mobile/lib/shared/agent_dm/agent_dm_mirror_display.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_you_decompositions.dart",
         "mobile/test/features/channels/agent_dm/agent_dm_mirror_badge_test.dart",
         "mobile/test/features/channels/agent_dm/agent_dm_thread_scope_test.dart",
         "mobile/test/features/search/search_page_test.dart",

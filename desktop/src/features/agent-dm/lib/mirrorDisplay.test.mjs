@@ -193,10 +193,21 @@ test("only a name that reads as You is refused", () => {
     "\u24CE\u24C4\u24CA",
     "\u24E8\u24DE\u24E4",
     "\u02B8\u1D52\u1D58",
+    "Y\u00F3u",
+    "Yo\u0301u",
+    "\u00DD\u00D6\u00DC",
+    "\u00FF\u014D\u016B",
   ]) {
     assert.equal(readsAsYou(name), true, name);
   }
-  for (const name of ["Young", "Yours truly", "Agent You", "Yo", ""]) {
+  for (const name of [
+    "Young",
+    "Yours truly",
+    "Agent You",
+    "Yo",
+    "",
+    "Yo\u00F9 r",
+  ]) {
     assert.equal(readsAsYou(name), false, name);
   }
 });

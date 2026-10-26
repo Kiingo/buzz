@@ -163,15 +163,16 @@ const EDGE_PUNCTUATION = /^[\p{P}\p{S}\p{Z}\s]+|[\p{P}\p{S}\p{Z}\s]+$/gu;
 const COMBINING_MARKS = /[\p{Mn}\p{Me}]/gu;
 
 /**
- * Whether a self-asserted name would read as "You": NFKC (which also folds
- * circled and modifier letters), characters that draw nothing removed (Cf
- * and default-ignorables), combining marks (Mn, Me) removed, surrounding
- * punctuation, symbols and spaces trimmed, look-alike letters folded, then
- * compared case-insensitively. "Ｙｏｕ", "Yo\u200Bu", "You.",
- * "Y\u0332o\u0332u\u0332", "ⓎⓄⓊ", "ʸᵒᵘ" and Cyrillic "Үou" all read as "You".
+ * Whether a self-asserted name would read as "You": NFKD (which also folds
+ * circled, modifier and fullwidth letters and splits accents off), characters
+ * that draw nothing removed (Cf and default-ignorables), combining marks
+ * (Mn, Me) removed, surrounding punctuation, symbols and spaces trimmed,
+ * look-alike letters folded, then compared case-insensitively. "Ｙｏｕ",
+ * "Yo\u200Bu", "You.", "Y\u0332o\u0332u\u0332", "ⓎⓄⓊ", "ʸᵒᵘ", "Yóu" (precomposed
+ * or not) and Cyrillic "Үou" all read as "You".
  */
 export function readsAsYou(name: string): boolean {
-  const clean = withoutInvisible(name.normalize("NFKC"))
+  const clean = withoutInvisible(name.normalize("NFKD"))
     .replace(COMBINING_MARKS, "")
     .replace(EDGE_PUNCTUATION, "");
   let folded = "";
