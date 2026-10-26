@@ -23,6 +23,10 @@ import {
   formatItemTimestamp,
 } from "@/shared/lib/datetime";
 import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
+import {
+  mirrorDisplay,
+  mirrorPlainText,
+} from "@/features/agent-dm/lib/mirrorDisplay";
 
 export type InboxFilter =
   | "all"
@@ -106,7 +110,8 @@ export type InboxGroup = {
   items: InboxItem[];
 };
 
-type InboxChannel = Pick<Channel, "channelType" | "id" | "name">;
+type InboxChannel = Pick<Channel, "channelType" | "id" | "name"> &
+  Partial<Pick<Channel, "memberPubkeys" | "participantPubkeys">>;
 
 const fullTimeFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -583,14 +588,26 @@ export function buildInboxItems({
       const categories = [
         ...new Set(group.items.map((groupItem) => groupItem.category)),
       ].sort((left, right) => categoryPriority(left) - categoryPriority(right));
-      const senderLabel = resolveUserLabel({
-        pubkey: item.pubkey,
-        currentPubkey,
-        profiles,
-        preferResolvedSelfLabel: true,
+      const labelFor = (pubkey: string) =>
+        resolveUserLabel({
+          pubkey,
+          currentPubkey,
+          profiles,
+          preferResolvedSelfLabel: true,
+        });
+      // A mirrored line previews in its relayed form under the agent that
+      // signed it, never as the displayed author's own message.
+      const mirror = mirrorDisplay({
+        event: item,
+        channel: item.channelId ? channelById.get(item.channelId) : null,
+        names: labelFor,
+        signerIsAgent: profiles?.[item.pubkey.toLowerCase()]?.isAgent === true,
       });
+      const senderLabel = mirror ? mirror.relayedByName : labelFor(item.pubkey);
       const subject = feedHeadline(item, group.items);
-      const preview = feedPreview(item);
+      const preview = mirror
+        ? mirrorPlainText(mirror, feedPreview(item))
+        : feedPreview(item);
       const { mentionNames, mentionPubkeysByName } = resolveMentionProps(
         item.tags,
         profiles,

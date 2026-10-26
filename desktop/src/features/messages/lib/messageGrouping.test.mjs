@@ -44,6 +44,24 @@ test("operational status never hides a contribution's author", () => {
   assert.equal(hasSameMessageAuthor(reply, status), false);
 });
 
+test("a relayed mirror line never groups with its displayed author", () => {
+  const relayed = {
+    pubkey: "abc",
+    kind: 40002,
+    agentDmMirror: { relayed: true },
+  };
+  const own = { pubkey: "abc", kind: 9 };
+  assert.equal(hasSameMessageAuthor(own, relayed), false);
+  assert.equal(hasSameMessageAuthor(relayed, own), false);
+  assert.equal(hasSameMessageAuthor(relayed, relayed), false);
+  const agentMirror = {
+    pubkey: "abc",
+    kind: 40002,
+    agentDmMirror: { relayed: false },
+  };
+  assert.equal(hasSameMessageAuthor(own, agentMirror), true);
+});
+
 test("isWithinGroupingWindow: at or under the boundary is in window", () => {
   const base = 1_000_000;
   assert.equal(isWithinGroupingWindow(base, base), true);

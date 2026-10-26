@@ -1,3 +1,5 @@
+import type { MirrorDisplay } from "@/features/agent-dm/lib/mirrorDisplay";
+
 export type TimelineReaction = {
   emoji: string;
   /** Custom (image) emoji URL from the reaction's NIP-30 `emoji` tag, if any. */
@@ -51,6 +53,12 @@ export type TimelineMessage = {
   reactions?: TimelineReaction[];
   /** True when this DM row's agent DM markers are honoured (docs/agent-dm-markers.md). */
   agentDmMarkers?: boolean;
+  /**
+   * Display rule for an honoured mirrored message (`mirrorDisplay`): who the
+   * row is attributed to, its relay line, and whether it needs the distinct
+   * relayed style.
+   */
+  agentDmMirror?: MirrorDisplay | null;
   /** Projected state of an honoured agent question card. */
   agentDmQuestionState?: "open" | "answered" | "closed";
 };

@@ -1,0 +1,833 @@
+{
+  "description": "Shared vectors for the mirrored-message display rule (docs/agent-dm-markers.md §1). Loaded by desktop/src/features/agent-dm/lib/mirrorDisplay.test.mjs and mobile/test/shared/agent_dm/agent_dm_mirror_display_test.dart; both rules must produce exactly these outputs. channel.isDm maps to a DM channel type; channel.memberPubkeys is the DM roster.",
+  "names": {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "Juniper",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "Ross",
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": "Mallory"
+  },
+  "cases": [
+    {
+      "name": "requester mirror from Kiingo Tasks is attributed to the member, relayed",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via Kiingo Tasks, relayed by Juniper): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "requester mirror from Kiingo Companion",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "companion",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Kiingo Companion",
+        "relayLine": "via Kiingo Companion · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via Kiingo Companion, relayed by Juniper): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "requester mirror from Kiingo Ask",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "ask",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Kiingo Ask",
+        "relayLine": "via Kiingo Ask · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via Kiingo Ask, relayed by Juniper): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "requester mirror via email keeps its existing label",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "email",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "email",
+        "relayLine": "via email · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via email, relayed by Juniper): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "requester mirror via teams keeps its existing label",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "teams",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Teams",
+        "relayLine": "via Teams · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via Teams, relayed by Juniper): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "requester mirror via sms keeps its existing label",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "sms",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "SMS",
+        "relayLine": "via SMS · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via SMS, relayed by Juniper): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "requester mirror via web keeps its existing label",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "web",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "web",
+        "relayLine": "via web · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via web, relayed by Juniper): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "requester mirror via voice keeps its existing label",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "voice",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "voice call",
+        "relayLine": "via voice call · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via voice call, relayed by Juniper): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "an unknown surface reads as itself",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "fax",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "fax",
+        "relayLine": "via fax · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via fax, relayed by Juniper): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "the agent's own mirror stays the signer and is not relayed",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "teams",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "agent",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Juniper",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Teams",
+        "relayLine": "via Teams",
+        "relayed": false,
+        "plainText": "Juniper (via Teams): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "a claimed requester who is not a member falls back to the signer",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Juniper",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Relayed by Juniper (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "an empty requester key falls back to the signer",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Juniper",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Relayed by Juniper (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "a requester key equal to the signer falls back to the signer",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Juniper",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Relayed by Juniper (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "a signer not known to be an agent is never attributed to the requester",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": false,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": {
+        "authorPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorName": "Juniper",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Relayed by Juniper (via Kiingo Tasks): Can you move my 3pm to Thursday?"
+      }
+    },
+    {
+      "name": "plain text trims the content",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "  hello \n",
+      "expected": {
+        "authorPubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "authorName": "Ross",
+        "relayedByPubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relayedByName": "Juniper",
+        "surfaceLabel": "Kiingo Tasks",
+        "relayLine": "via Kiingo Tasks · relayed by Juniper",
+        "relayed": true,
+        "plainText": "Ross (via Kiingo Tasks, relayed by Juniper): hello"
+      }
+    },
+    {
+      "name": "outside a DM a mirror is a plain message",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": false,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": null
+    },
+    {
+      "name": "a signer who is not a DM member is never honoured",
+      "event": {
+        "kind": 40002,
+        "pubkey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": null
+    },
+    {
+      "name": "a kind 9 event is never a mirror",
+      "event": {
+        "kind": 9,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": null
+    },
+    {
+      "name": "the author tag alone is not a renderable mirror",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror-author",
+            "requester",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ""
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": null
+    },
+    {
+      "name": "a mirror without the author tag is not renderable",
+      "event": {
+        "kind": 40002,
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tags": [
+          [
+            "h",
+            "dm-1"
+          ],
+          [
+            "buzz-mirror",
+            "tasks",
+            "src-1",
+            "1760000000"
+          ]
+        ]
+      },
+      "channel": {
+        "isDm": true,
+        "memberPubkeys": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "signerIsAgent": true,
+      "content": "Can you move my 3pm to Thursday?",
+      "expected": null
+    }
+  ]
+}

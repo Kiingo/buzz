@@ -55,6 +55,7 @@ import { isPositiveEmojiParticle } from "@/shared/ui/EmojiBurstProvider";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { ProtectedMessageAction } from "@protected-feature-components";
+import { mirrorAwareCopyText } from "@/features/agent-dm/lib/mirrorDisplay";
 
 const ACTION_BUTTON_CLASS = "h-8 w-8 rounded-full p-0";
 const ACTION_ICON_CLASS = "!h-4 !w-4";
@@ -232,12 +233,15 @@ function MoreActionsMenu({
           {hasCopyActions ? (
             <DropdownMenuItem
               onClick={() => {
+                // A mirrored line copies in its relayed form, never as
+                // bare text that reads as the displayed author's own words.
+                const text = mirrorAwareCopyText(message);
                 copyTextToClipboard(
-                  message.body,
+                  text,
                   "Message copied to clipboard",
                   buildMentionClipboardHtml({
                     identities: mentionIdentities,
-                    text: message.body,
+                    text,
                   }) ?? undefined,
                 );
               }}

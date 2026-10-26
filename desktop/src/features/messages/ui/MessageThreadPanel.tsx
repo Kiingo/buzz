@@ -1,6 +1,7 @@
 import * as React from "react";
 import { ArrowDown } from "lucide-react";
 
+import { mirrorAwareAuthorLabel } from "@/features/agent-dm/lib/mirrorDisplay";
 import { HuddleTranscriptIntro } from "@/features/huddle/components/HuddleTranscriptIntro";
 import {
   buildThreadSummaryFromVisibleEntries,
@@ -285,7 +286,7 @@ export function MessageThreadPanel({
   const composerReplyTarget =
     replyTargetMessage && threadHead && replyTargetMessage.id !== threadHead.id
       ? {
-          author: replyTargetMessage.author,
+          author: mirrorAwareAuthorLabel(replyTargetMessage),
           body: replyTargetMessage.body,
           id: replyTargetMessage.id,
         }
@@ -859,7 +860,7 @@ export function MessageThreadPanel({
               placeholder={
                 isHuddleTranscript
                   ? "Message the huddle"
-                  : `Reply in thread to ${threadHead.author}`
+                  : `Reply in thread to ${mirrorAwareAuthorLabel(threadHead)}`
               }
               profiles={profiles}
               recentMentionPubkeys={recentMentionPubkeys}

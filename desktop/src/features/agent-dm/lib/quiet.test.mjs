@@ -192,3 +192,32 @@ test("the in-channel unread marker skips honoured quiet rows", () => {
     "mirror",
   );
 });
+
+test("relayed requester mirrors from every Kiingo surface never notify", async () => {
+  const fired = [];
+  const h = await mountLiveUpdates({
+    onLiveMention: () => fired.push("mention"),
+    onChannelMessage: (_id, relayEvent) =>
+      fired.push(`unread:${relayEvent.id}`),
+    onDmMessage: (relayEvent) => fired.push(`dm:${relayEvent.id}`),
+    onThreadReplyNotification: (_id, relayEvent) =>
+      fired.push(`activity:${relayEvent.id}`),
+  });
+  try {
+    for (const surface of ["tasks", "companion", "ask", "email", "teams"]) {
+      const relayed = event(40002, [
+        ["buzz-mirror", surface, `src-${surface}`, "1760000000"],
+        ["buzz-mirror-author", "requester", VIEWER, ""],
+        // The addressed mirror's single p for the requester.
+        ["p", VIEWER],
+      ]);
+      assert.equal(isAgentDmQuietEvent(relayed, DM), true, surface);
+      await h.deliver(relayed);
+    }
+    // No toast, so no notification text can ever present the line as the
+    // viewer's own message.
+    assert.deepEqual(fired, []);
+  } finally {
+    h.restore();
+  }
+});

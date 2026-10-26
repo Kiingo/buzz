@@ -29,7 +29,8 @@ only in the addressed case below.
   mirror below.
 - `["buzz-mirror", <surface>, <source_id>, <original_unix_seconds>]`
   - `surface` matches `^[a-z][a-z0-9_-]{0,31}$`. Known values: `email`,
-    `teams`, `sms`, `web`, `voice`.
+    `teams`, `sms`, `web`, `voice`, `tasks` (Kiingo Tasks), `companion`
+    (the Kiingo Companion Mac app), `ask`.
   - `source_id` is opaque (at most 256 characters); it identifies the original
     message on its surface.
   - `original_unix_seconds` is the original message's time.
@@ -39,17 +40,43 @@ only in the addressed case below.
 - Optional `["subject", <text>]` (at most 200 characters), for email.
 - Content: the message text (markdown).
 
-Rendering:
+Rendering: one display rule, shared by desktop
+(`desktop/src/features/agent-dm/lib/mirrorDisplay.ts`) and mobile
+(`mobile/lib/shared/agent_dm/agent_dm_mirror_display.dart`) and pinned by the
+shared vectors in `test-fixtures/mirror-display.json`. Every surface that
+shows a mirror (timeline row, inbox and list previews, notifications, search,
+copy) goes through it; none decides on its own.
 
-- `role = agent`: shown as the signer, with a badge.
-- `role = requester`: shown as the member whose pubkey is in the tag only when
-  that pubkey is 64-hex, differs from the signer, and is a member of this DM.
-  Otherwise shown as the signer with the label "Relayed by <signer name>"; a
-  claimed name is never displayed as an author.
-- Badge: `email` → "via email", `teams` → "via Teams", `sms` → "via SMS",
-  `web` → "via web", `voice` → "via voice call", anything else → "via
-  <surface>". The tooltip or details
+Agent runtimes hold the agent's key, so an agent-signed line must never be
+indistinguishable from a message the requester signed:
+
+- Author. `role = requester`: the member whose pubkey is in the tag, only when
+  that pubkey is 64-hex, differs from the signer, is a member of this DM and
+  the signer is known to be an agent. Otherwise the signer. `role = agent`:
+  the signer. A claimed name is never displayed as an author.
+- Relay line, always visible under the row:
+  - requester mirror: "via <Surface> · relayed by <signer name>", for
+    example "via Kiingo Tasks · relayed by Juniper";
+  - agent mirror: "via <Surface>".
+- Style: a requester mirror always uses the distinct relayed style: an
+  outlined, muted body with a relay glyph and the relay line. Never the
+  own-message treatment (accent, outgoing bubble colour), even when it is
+  attributed to the reader, and it never groups with messages its displayed
+  author signed.
+- Plain text, for previews, notifications, search and copy:
+  - attributed requester mirror: "Ross (via Kiingo Tasks, relayed by
+    Juniper): text";
+  - requester mirror shown as the signer: "Relayed by Juniper (via Kiingo
+    Tasks): text";
+  - agent mirror: "Juniper (via Teams): text".
+- Surface labels: `email` → "email", `teams` → "Teams", `sms` → "SMS",
+  `web` → "web", `voice` → "voice call", `tasks` → "Kiingo Tasks",
+  `companion` → "Kiingo Companion", `ask` → "Kiingo Ask", anything else →
+  the surface itself. The badge reads "via <label>". The tooltip or details
   view gives the original time and, when present, the subject.
+- Agent runtimes never read a mirror as input: an event carrying either
+  `buzz-mirror` or `buzz-mirror-author` (any role, any kind, any signer)
+  never starts, steers or enters the context of a turn.
 - Quiet. Edits, deletion and moderation stay keyed to the signer; the agent
   deletes a mirror with an ordinary kind 5 deletion when the source's retention
   ends.

@@ -5,6 +5,10 @@ import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManag
 import { formatTimelineMessages } from "@/features/messages/lib/formatTimelineMessages";
 import { buildTimelineItems } from "@/features/messages/lib/timelineItems";
 
+import {
+  mirrorAwareAuthorLabel,
+  mirrorAwareCopyText,
+} from "./mirrorDisplay.ts";
 import { agentDmMessageKinds, agentDmRowEqual } from "./timeline.ts";
 
 const AGENT = "a".repeat(64);
@@ -184,6 +188,66 @@ test("the row comparator tracks the projection fields", () => {
   );
   assert.equal(
     agentDmRowEqual(row, { ...row, agentDmMarkers: undefined }),
+    false,
+  );
+});
+
+function tasksMirror(pubkey = ROSS) {
+  return event(40002, [
+    ["buzz-mirror", "tasks", "task-1", "1760000000"],
+    ["buzz-mirror-author", "requester", pubkey, "Claimed Name"],
+  ]);
+}
+
+test("a relayed requester mirror row is never drawn like the viewer's own message", () => {
+  const [row] = format([tasksMirror()]);
+  assert.equal(row.pubkey, ROSS);
+  assert.equal(row.author, "Ross");
+  assert.equal(row.accent, false, "no own-message accent");
+  assert.equal(row.agentDmMirror?.relayed, true);
+  assert.equal(
+    row.agentDmMirror?.relayLine,
+    "via Kiingo Tasks · relayed by Ross's agent",
+  );
+  // A signer-attributed requester mirror is relayed too.
+  const [fallback] = format([tasksMirror(STRANGER)]);
+  assert.equal(fallback.pubkey, AGENT);
+  assert.equal(fallback.agentDmMirror?.relayed, true);
+  // The agent's own mirror keeps the plain badge.
+  const [own] = format([mirror(ROSS, "agent")]);
+  assert.equal(own.agentDmMirror?.relayed, false);
+  assert.equal(own.agentDmMirror?.relayLine, "via email");
+});
+
+test("a relayed row never groups with messages its displayed author signed", () => {
+  const real = event(9, [], { pubkey: ROSS });
+  const relayed = tasksMirror();
+  const realAfter = event(9, [], { pubkey: ROSS });
+  const rows = format([real, relayed, realAfter]);
+  const items = buildTimelineItems(
+    rows.map((message) => ({ message, summary: null })),
+    null,
+  ).items.filter((item) => item.kind === "message");
+  assert.deepEqual(
+    items.map((item) => item.isContinuation),
+    [false, false, false],
+  );
+});
+
+test("copy and reply labels of a relayed row use the relayed form", () => {
+  const [row] = format([tasksMirror()]);
+  assert.equal(
+    mirrorAwareCopyText(row),
+    `Ross (via Kiingo Tasks, relayed by Ross's agent): ${row.body}`,
+  );
+  assert.equal(mirrorAwareAuthorLabel(row), "Ross (relayed by Ross's agent)");
+});
+
+test("the row comparator tracks the mirror display", () => {
+  const [row] = format([tasksMirror()]);
+  assert.equal(agentDmRowEqual(row, { ...row }), true);
+  assert.equal(
+    agentDmRowEqual(row, { ...row, agentDmMirror: undefined }),
     false,
   );
 });

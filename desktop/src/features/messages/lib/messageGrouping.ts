@@ -4,6 +4,7 @@ import { KIND_AGENT_STATUS } from "@/shared/constants/kinds";
 type MessageAuthorCandidate = {
   pubkey?: string | null;
   kind?: number;
+  agentDmMirror?: { relayed: boolean } | null;
 };
 
 type MessageGroupingCandidate = {
@@ -37,6 +38,10 @@ export function hasSameMessageAuthor(
     previous?.kind === KIND_AGENT_STATUS ||
     current?.kind === KIND_AGENT_STATUS
   )
+    return false;
+  // A relayed mirror line always shows its own header and relay line: it
+  // never folds into, or absorbs, messages its displayed author signed.
+  if (previous?.agentDmMirror?.relayed || current?.agentDmMirror?.relayed)
     return false;
   const previousPubkey = previous?.pubkey?.trim().toLowerCase();
   const currentPubkey = current?.pubkey?.trim().toLowerCase();

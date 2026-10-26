@@ -142,15 +142,25 @@ export function parseMirror(tags: Tags): AgentMirror | null {
 }
 
 const SURFACE_LABELS: Record<string, string> = {
-  email: "via email",
-  teams: "via Teams",
-  sms: "via SMS",
-  web: "via web",
-  voice: "via voice call",
+  email: "email",
+  teams: "Teams",
+  sms: "SMS",
+  web: "web",
+  voice: "voice call",
+  tasks: "Kiingo Tasks",
+  companion: "Kiingo Companion",
+  ask: "Kiingo Ask",
 };
 
+/** The surface a mirror came from, as a noun: "Kiingo Tasks", "email". */
+export function mirrorSurfaceLabel(surface: string) {
+  return Object.hasOwn(SURFACE_LABELS, surface)
+    ? SURFACE_LABELS[surface]
+    : surface;
+}
+
 export function mirrorBadgeLabel(surface: string) {
-  return SURFACE_LABELS[surface] ?? `via ${surface}`;
+  return `via ${mirrorSurfaceLabel(surface)}`;
 }
 
 /**

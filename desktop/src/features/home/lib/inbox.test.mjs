@@ -594,3 +594,61 @@ test("nested-anchor: old selected event stays resolvable by conversationId after
   // The new representative is the latest reply.
   assert.equal(inboxItem.id, LATEST_EVENT_ID);
 });
+
+test("a relayed mirror previews in its relayed form under the agent that signed it", () => {
+  const AGENT = "a".repeat(64);
+  const ROSS = "b".repeat(64);
+  const dmChannels = [
+    {
+      id: DM_CHANNEL_ID,
+      name: "dm-juniper",
+      channelType: "dm",
+      participantPubkeys: [AGENT, ROSS],
+      memberPubkeys: [AGENT, ROSS],
+    },
+  ];
+  const profiles = {
+    [AGENT]: { displayName: "Juniper", isAgent: true },
+    [ROSS]: { displayName: "Ross" },
+  };
+  const [inboxItem] = buildInboxItems({
+    channels: dmChannels,
+    currentPubkey: ROSS,
+    profiles,
+    feed: feedWith({
+      mentions: [
+        item({
+          kind: 40002,
+          pubkey: AGENT,
+          content: "Move my 3pm",
+          channelId: DM_CHANNEL_ID,
+          tags: [
+            ["h", DM_CHANNEL_ID],
+            ["p", ROSS],
+            ["buzz-mirror", "tasks", "t1", "1760000000"],
+            ["buzz-mirror-author", "requester", ROSS, ""],
+          ],
+        }),
+      ],
+    }),
+  });
+  assert.equal(inboxItem.senderLabel, "Juniper");
+  assert.equal(
+    inboxItem.preview,
+    "Ross (via Kiingo Tasks, relayed by Juniper): Move my 3pm",
+  );
+
+  // An ordinary message keeps its own sender and content.
+  const [plain] = buildInboxItems({
+    channels: dmChannels,
+    currentPubkey: ROSS,
+    profiles,
+    feed: feedWith({
+      mentions: [
+        item({ pubkey: AGENT, content: "Done", channelId: DM_CHANNEL_ID }),
+      ],
+    }),
+  });
+  assert.equal(plain.senderLabel, "Juniper");
+  assert.equal(plain.preview, "Done");
+});

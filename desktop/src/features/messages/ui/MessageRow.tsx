@@ -66,6 +66,7 @@ import {
   renderAgentDmBody,
 } from "@/features/agent-dm/ui/AgentDmMessageExtras";
 import { agentDmRowEqual } from "@/features/agent-dm/lib/timeline";
+import { AgentRelayedMirrorFrame } from "@/features/agent-dm/ui/AgentMirrorMarker";
 const DiffMessage = React.lazy(() => import("./DiffMessage"));
 const DiffMessageExpanded = React.lazy(() => import("./DiffMessageExpanded"));
 export type ThreadDepthGuideAction = {
@@ -694,9 +695,11 @@ export const MessageRow = React.memo(
     const messageBodyNode = (
       <>
         <SentFromThreadLine channelId={channelId} tags={message.tags} />
-        {renderBody()}
-        <GuestReplyMarker createdAt={message.createdAt} tags={message.tags} />
-        <AgentDmMessageExtras channelId={channelId} message={message} />
+        <AgentRelayedMirrorFrame message={message}>
+          {renderBody()}
+          <GuestReplyMarker createdAt={message.createdAt} tags={message.tags} />
+          <AgentDmMessageExtras channelId={channelId} message={message} />
+        </AgentRelayedMirrorFrame>
         {continuationMetadataNode}
         <MessageReactions
           messageId={message.id}

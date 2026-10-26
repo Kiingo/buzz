@@ -9,7 +9,6 @@ import {
   areAgentDmMarkersHonoured,
   KIND_AGENT_DM_QUIET,
   KIND_AGENT_DM_STREAM_MESSAGE,
-  mirrorDisplayAuthorPubkey,
   parseActions,
   parseAnswerAskId,
   parseCall,
@@ -21,6 +20,7 @@ import {
   parseSurface,
   type AgentQuestionStateValue,
 } from "./markers";
+import { mirrorDisplay } from "./mirrorDisplay";
 
 export type AgentDmQuestionState = "open" | AgentQuestionStateValue;
 
@@ -87,7 +87,10 @@ export function agentDmManagePubkey(message: TimelineMessage) {
 export function agentDmRowEqual(prev: TimelineMessage, next: TimelineMessage) {
   return (
     prev.agentDmMarkers === next.agentDmMarkers &&
-    prev.agentDmQuestionState === next.agentDmQuestionState
+    prev.agentDmQuestionState === next.agentDmQuestionState &&
+    prev.agentDmMirror?.relayLine === next.agentDmMirror?.relayLine &&
+    prev.agentDmMirror?.authorName === next.agentDmMirror?.authorName &&
+    prev.agentDmMirror?.relayed === next.agentDmMirror?.relayed
   );
 }
 
@@ -185,23 +188,34 @@ export function createAgentDmProjector(
 
       if (event.kind === KIND_AGENT_DM_QUIET) {
         if (parseQuestionState(event.tags)) return [];
-        const mirror = parseMirror(event.tags);
-        if (mirror) {
-          const requester = message.isAgent
-            ? mirrorDisplayAuthorPubkey(mirror, signer, dm)
-            : null;
-          if (!requester) return [{ ...message, agentDmMarkers: true }];
+        const display = mirrorDisplay({
+          event,
+          channel: dm,
+          names: (pubkey) =>
+            pubkey === signer ? message.author : identityFor(pubkey).author,
+          signerIsAgent: message.isAgent === true,
+        });
+        if (display) {
+          if (display.authorPubkey === signer) {
+            return [
+              { ...message, agentDmMarkers: true, agentDmMirror: display },
+            ];
+          }
           return [
             {
               ...message,
-              ...identityFor(requester),
-              pubkey: requester,
+              ...identityFor(display.authorPubkey),
+              // A relayed line never takes the own-message treatment, even
+              // when it is attributed to the viewer.
+              accent: false,
+              pubkey: display.authorPubkey,
               ownerPubkey: null,
               ownerLabel: null,
               role: undefined,
               personaDisplayName: undefined,
               respondTo: undefined,
               agentDmMarkers: true,
+              agentDmMirror: display,
             },
           ];
         }
