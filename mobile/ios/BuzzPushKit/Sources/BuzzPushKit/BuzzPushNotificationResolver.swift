@@ -341,8 +341,12 @@ public final class BuzzPushNotificationResolver: BuzzPushNotificationResolving {
     profile: BuzzPushCachedProfile?,
     channel: BuzzPushCachedChannel?
   ) -> BuzzPushResolution? {
-    let body = previewBody(event.content)
-    guard !body.isEmpty else { return nil }
+    let preview = previewBody(event.content)
+    guard !preview.isEmpty else { return nil }
+    // A mirrored line is relayed by its signer: never shown as the requester.
+    let body =
+      BuzzPushMirrorText.body(
+        tags: event.tags, preview: preview, signerName: profile?.displayName) ?? preview
     let channelID = tagValue("h", in: event)
     let conversationIdentifier = channelID.map {
       BuzzPushPresentationIdentity.conversation(communityID: community.id, channelID: $0)

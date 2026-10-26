@@ -93,8 +93,11 @@ DM with the agent.
   the DM unread, count as a mention, or raise a desktop notification or
   activity row.
 - **On mobile:** it matches the self-directed `#p` push subscription, which
-  includes kind `40002`. So it wakes the requester's phone, and the
-  notification shows the mirror's content.
+  includes kind `40002`. So it wakes the requester's phone. The notification
+  is titled with the agent and its body is the relayed form, for example
+  "Relayed by <agent> (via Kiingo Tasks): text"
+  (`mobile/ios/BuzzPushKit/Sources/BuzzPushKit/BuzzPushMirrorText.swift`);
+  it never reads as the requester's own message.
 - **Muting:** a muted DM stays silent. The mobile lease's muted-channel ignore
   filters cover kinds `9` and `40002`.
 - **Publisher rules:**
