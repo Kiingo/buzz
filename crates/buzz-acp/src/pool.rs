@@ -4820,7 +4820,7 @@ where
             nostr::Kind::Custom(buzz_core::kind::KIND_STREAM_MESSAGE_V2 as u16),
         ])
         .custom_tags(h_tag, [ch_str.as_str()])
-        .limit(limit as usize);
+        .limit(dm_context_fetch_limit(limit) as usize);
 
     fetch_with_retry(|| async {
         match timeout(CONTEXT_FETCH_TIMEOUT, query(vec![filter.clone()])).await {
@@ -5025,14 +5025,20 @@ fn parse_nostr_thread_response_with_meta(
     let mut root_msg = None;
     let mut reply_msgs = Vec::new();
     let mut seen_reply_ids = HashSet::new();
+    // Replies the relay returned, quiet markers included: whether its window
+    // was full is decided on what it sent, not on what context keeps.
+    let mut relay_reply_ids = HashSet::new();
 
     for ev in events {
+        let ev_id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if ev_id != root_event_id {
+            relay_reply_ids.insert(ev_id);
+        }
         // Quiet agent DM markers are presentation, never prompt context, in a
         // thread as in a DM (and never the pinned agent reply).
         if crate::agent_dm_markers::is_quiet_agent_dm_marker(ev) {
             continue;
         }
-        let ev_id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("");
         if let Some(msg) = json_to_context_message(ev) {
             if ev_id == root_event_id {
                 root_msg = Some(msg);
@@ -5059,7 +5065,7 @@ fn parse_nostr_thread_response_with_meta(
         .max_by_key(|(_, ts, _, _, _)| *ts)
         .cloned();
 
-    let relay_window_truncated = fetched_reply_count > reply_fetch_limit as usize;
+    let relay_window_truncated = relay_reply_ids.len() > reply_fetch_limit as usize;
     let new_reply_count = reply_msgs
         .iter()
         .filter(|(_, _, _, was_delivered, _)| !was_delivered)
@@ -5135,11 +5141,23 @@ fn parse_nostr_thread_response_with_meta(
     })
 }
 
+/// How many DM events to fetch for a context of `limit` messages. Quiet agent
+/// DM markers (mirrors, session dividers) are dropped after the fetch, and a
+/// DM used from other surfaces can be mostly markers, so the window
+/// over-fetches to keep `limit` real messages.
+fn dm_context_fetch_limit(limit: u32) -> u32 {
+    limit.saturating_mul(2)
+}
+
 /// Parse a Nostr query response (array of events) into DM context.
 ///
 /// Events arrive in relay order (newest first); reversed to chronological.
+/// The newest `limit` messages are kept. `truncated` holds when older
+/// messages exist: more than `limit` remained after dropping quiet markers,
+/// or the relay window itself was full.
 fn parse_nostr_dm_response(json: serde_json::Value, limit: u32) -> Option<ConversationContext> {
     let events = json.as_array()?;
+    let window_full = events.len() >= dm_context_fetch_limit(limit) as usize;
 
     let mut messages: Vec<(u64, ContextMessage)> = events
         .iter()
@@ -5155,8 +5173,13 @@ fn parse_nostr_dm_response(json: serde_json::Value, limit: u32) -> Option<Conver
     // Sort chronologically (oldest first).
     messages.sort_by_key(|(ts, _)| *ts);
 
-    let messages: Vec<ContextMessage> = messages.into_iter().map(|(_, msg)| msg).collect();
-    let truncated = messages.len() >= limit as usize;
+    let dropped_older = messages.len().saturating_sub(limit as usize);
+    let messages: Vec<ContextMessage> = messages
+        .into_iter()
+        .skip(dropped_older)
+        .map(|(_, msg)| msg)
+        .collect();
+    let truncated = dropped_older > 0 || window_full;
     let total = if truncated {
         messages.len() + 1
     } else {
@@ -7004,6 +7027,119 @@ pub(crate) mod tests {
         let contents: Vec<&str> = messages.iter().map(|m| m.content.as_str()).collect();
         assert_eq!(contents, vec!["root", "real reply"]);
         assert_eq!(total, 2);
+    }
+
+    fn dm_event(id: usize, created_at: u64, quiet: bool) -> serde_json::Value {
+        let mut tags = vec![json!(["h", "c"])];
+        if quiet {
+            tags.push(json!(["buzz-mirror", "tasks", format!("t{id}"), "1"]));
+            tags.push(json!(["buzz-mirror-author", "requester", "", ""]));
+        }
+        json!({
+            "id": format!("{id:064x}"), "pubkey": "d".repeat(64), "kind": 40002,
+            "created_at": created_at, "content": format!("m{id}"), "tags": tags
+        })
+    }
+
+    #[test]
+    fn dm_context_over_fetches_so_quiet_markers_do_not_shrink_it() {
+        assert_eq!(dm_context_fetch_limit(20), 40);
+        // A 4-message window over a DM that is mostly mirrors: 6 markers and
+        // 3 real messages. All 3 stay, and nothing older is claimed.
+        let mut events: Vec<serde_json::Value> =
+            (0..6).map(|i| dm_event(i, 100 + i as u64, true)).collect();
+        events.extend((6..9).map(|i| dm_event(i, 100 + i as u64, false)));
+        let Some(ConversationContext::Dm {
+            messages,
+            total,
+            truncated,
+        }) = parse_nostr_dm_response(json!(events), 4)
+        else {
+            panic!("expected DM context");
+        };
+        assert_eq!(messages.len(), 3);
+        assert!(!truncated);
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn dm_context_truncation_counts_what_the_relay_sent() {
+        // The relay filled its window (8 for a limit of 4), mostly with
+        // markers: older messages may exist, so the context says so.
+        let mut events: Vec<serde_json::Value> =
+            (0..6).map(|i| dm_event(i, 100 + i as u64, true)).collect();
+        events.extend((6..8).map(|i| dm_event(i, 100 + i as u64, false)));
+        let Some(ConversationContext::Dm {
+            messages,
+            truncated,
+            ..
+        }) = parse_nostr_dm_response(json!(events), 4)
+        else {
+            panic!("expected DM context");
+        };
+        assert_eq!(messages.len(), 2);
+        assert!(truncated);
+
+        // More real messages than the limit: the newest are kept.
+        let events: Vec<serde_json::Value> =
+            (0..6).map(|i| dm_event(i, 100 + i as u64, false)).collect();
+        let Some(ConversationContext::Dm {
+            messages,
+            truncated,
+            ..
+        }) = parse_nostr_dm_response(json!(events), 4)
+        else {
+            panic!("expected DM context");
+        };
+        let contents: Vec<&str> = messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(contents, vec!["m2", "m3", "m4", "m5"]);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn thread_truncation_counts_quiet_markers_the_relay_sent() {
+        let agent = Keys::generate();
+        let root_id = "1".repeat(64);
+        let mut events = vec![json!({
+            "id": root_id, "pubkey": "rootpub", "content": "root",
+            "created_at": 1, "tags": [["h", "c"]]
+        })];
+        // A full reply window of 3 plus one more, all but one quiet markers.
+        for i in 0..4u64 {
+            let mut tags = vec![json!(["h", "c"]), json!(["e", root_id, "", "root"])];
+            if i > 0 {
+                tags.push(json!(["buzz-session", "new", ""]));
+            }
+            events.push(json!({
+                "id": format!("{:064x}", i + 10), "pubkey": "humanpub", "kind": 9,
+                "content": format!("r{i}"), "created_at": 10 + i, "tags": tags
+            }));
+        }
+        let parsed = parse_nostr_thread_response_with_meta(
+            json!(events),
+            &root_id,
+            3,
+            &agent.public_key(),
+            false,
+            3,
+            &HashSet::new(),
+        )
+        .expect("should parse");
+        let ConversationContext::Thread {
+            messages,
+            truncated,
+            ..
+        } = parsed.context
+        else {
+            panic!("expected Thread context");
+        };
+        let contents: Vec<&str> = messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(contents, vec!["root", "r0"]);
+        assert!(
+            truncated,
+            "the relay window was full; older replies may exist"
+        );
+        assert!(parsed.needs_exact_count);
     }
 
     #[test]
