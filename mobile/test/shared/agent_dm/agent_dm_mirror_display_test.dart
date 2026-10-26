@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:buzz/shared/agent_dm/agent_dm_markers.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_mirror_display.dart';
+import 'package:buzz/shared/agent_dm/agent_dm_you_decompositions.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // The same vectors drive desktop's rule
@@ -179,5 +180,15 @@ void main() {
     ]) {
       expect(agentDmNameReadsAsYou(name), isFalse, reason: name);
     }
+  });
+
+  test('the NFKD stand-in table keeps its generated size', () {
+    // Regenerate with scripts/generate-agent-dm-you-decompositions.py. A
+    // Unicode version change that moves this count must be reviewed, and the
+    // shared vectors rerun on every client.
+    expect(agentDmYouDecompositions.length, 340);
+    expect(agentDmYouDecompositions[0x00f3], 0x6f);
+    expect(agentDmYouDecompositions[0x00fd], 0x79);
+    expect(agentDmYouDecompositions[0x00fc], 0x75);
   });
 }

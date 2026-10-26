@@ -2270,6 +2270,7 @@
         "mobile/test/features/channels/agent_dm/agent_dm_thread_scope_test.dart",
         "mobile/test/features/search/search_page_test.dart",
         "mobile/test/shared/agent_dm/agent_dm_mirror_display_test.dart",
+        "scripts/generate-agent-dm-you-decompositions.py",
         "test-fixtures/mirror-display.json"
       ]
     }
