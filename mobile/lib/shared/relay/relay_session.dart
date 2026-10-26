@@ -16,12 +16,14 @@ import 'nostr_filters.dart';
 import 'nostr_models.dart';
 import 'relay_client.dart';
 import 'relay_closed_policy.dart';
+import 'relay_event_verifier.dart';
 import 'relay_http_query_client.dart';
 import 'relay_provider.dart';
 import 'relay_rate_limit_gate.dart';
 import 'relay_session_types.dart';
 import 'relay_socket.dart';
 
+export 'relay_event_verifier.dart' show RelayEventCheck, RelayEventRejection;
 export 'relay_session_types.dart';
 
 part 'relay_session_auth.dart';
@@ -82,7 +84,9 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     RelayRateLimitGate? rateLimitGate,
     RelayTimerFactory retryTimerFactory = Timer.new,
     Future<void> Function(Duration) replayDelay = Future.delayed,
-  }) : _httpQueryClient = RelayHttpQueryClient(
+    @visibleForTesting RelayEventCheck eventCheck = relayEventRejection,
+  }) : _eventVerifier = RelayEventVerifier(check: eventCheck),
+       _httpQueryClient = RelayHttpQueryClient(
          client: httpClient,
          clientFactory: httpClientFactory,
        ),
@@ -98,6 +102,12 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   final RelayRateLimitGate _rateLimitGate;
   final RelayTimerFactory _retryTimerFactory;
   final Future<void> Function(Duration) _replayDelay;
+  final RelayEventVerifier _eventVerifier;
+
+  /// How many received events this session dropped, by reason, on both the
+  /// HTTP query and socket paths.
+  Map<RelayEventRejection, int> get droppedEventCounts =>
+      _eventVerifier.rejections;
 
   static const _baseReconnectDelayMs = 1000;
   static const _maxReconnectDelayMs = 30000;
@@ -260,18 +270,12 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     if (decoded is! List) {
       throw const FormatException('relay returned malformed query response');
     }
-    try {
-      return [
-        for (final eventJson in decoded)
-          if (eventJson is Map<String, dynamic>)
-            NostrEvent.fromJson(eventJson)
-          else
-            throw const FormatException('relay returned malformed query event'),
-      ];
-    } catch (error) {
-      if (error is FormatException) rethrow;
-      throw FormatException('relay returned malformed query event: $error');
-    }
+    // Each event is checked on its own: one forged or malformed event is
+    // dropped and counted, and the rest of the answer stands.
+    return [
+      for (final eventJson in decoded)
+        ?_eventVerifier.admit(eventJson, path: path),
+    ];
   }
 
   void _activateRateLimitGateFromHttpError(String body) {
@@ -716,8 +720,8 @@ class RelaySessionNotifier extends Notifier<SessionState> {
   void _handleEvent(List<dynamic> data) {
     if (data.length < 3) return;
     final subId = data[1] as String;
-    final eventJson = data[2] as Map<String, dynamic>;
-    final event = NostrEvent.fromJson(eventJson);
+    final event = _eventVerifier.admit(data[2], path: 'socket');
+    if (event == null) return;
 
     // History subscriptions accumulate immediately.
     final historySub = _historySubscriptions[subId];

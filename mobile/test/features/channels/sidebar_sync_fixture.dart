@@ -117,6 +117,11 @@ class SidebarRelay {
 }
 
 class ConnectedRelaySession extends RelaySessionNotifier {
+  // The fixture models the relay's `id ASC` tie-break with hand-picked ids,
+  // which a real event cannot have; the session's id check is covered in
+  // relay_session_test.dart.
+  ConnectedRelaySession() : super(eventCheck: (_) => null);
+
   @override
   SessionState build() => const SessionState(status: SessionStatus.connected);
 }

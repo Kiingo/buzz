@@ -8,6 +8,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import '../shared/relay/served_event_fixture.dart';
+
 void main() {
   test(
     'buffered live channel delivery',
@@ -78,16 +80,14 @@ Future<void> _measureBurst(int historySize, int burstSize, int run) async {
 
 const _channelId = '11111111-1111-4111-8111-111111111111';
 
-NostrEvent _event(String id, int createdAt) => NostrEvent(
-  id: id,
-  pubkey: 'synthetic-author',
-  createdAt: createdAt,
+// Live events pass the session's boundary checks, so the burst includes them.
+NostrEvent _event(String name, int createdAt) => servedEvent(
   kind: EventKind.streamMessageV2,
   tags: const [
     ['h', _channelId],
   ],
-  content: 'Synthetic message',
-  sig: 'synthetic-signature',
+  content: 'Synthetic message $name',
+  createdAt: createdAt,
 );
 
 class _SyntheticSession extends RelaySessionNotifier {

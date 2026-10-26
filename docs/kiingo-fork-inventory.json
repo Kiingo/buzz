@@ -2273,6 +2273,23 @@
         "scripts/generate-agent-dm-you-decompositions.py",
         "test-fixtures/mirror-display.json"
       ]
+    },
+    {
+      "id": "mobile-relay-event-verification",
+      "classification": "retain-generic",
+      "owner": "Buzz mobile maintainers",
+      "purpose": "The mobile relay session checks every event it receives, on the HTTP query path and the socket path (live and history), before any provider or cache sees it: lowercase hex id, author and signature of the NIP-01 lengths, a valid kind and time, and an id that is the NIP-01 hash of the event's fields. Events that fail, or that do not parse, are dropped and counted by reason on RelaySessionNotifier.droppedEventCounts; debug logs carry only the path, reason and a well-formed id. Signature verification is a follow-up behind the same check.",
+      "upstreamStatus": "Generic client hardening; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream mobile verifies received events at the session boundary equivalently.",
+      "paths": [
+        "mobile/lib/shared/relay/relay_event_verifier.dart",
+        "mobile/lib/shared/relay/relay_session.dart",
+        "mobile/test/benchmark/channel_live_burst_test.dart",
+        "mobile/test/features/channels/sidebar_sync_fixture.dart",
+        "mobile/test/shared/relay/relay_session_test.dart",
+        "mobile/test/shared/relay/relay_session_verify_test.dart",
+        "mobile/test/shared/relay/served_event_fixture.dart"
+      ]
     }
   ],
   "budgetAmendments": [

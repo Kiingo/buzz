@@ -13,6 +13,8 @@ import 'package:buzz/features/channels/agent_activity/observer_models.dart';
 import 'package:buzz/shared/auth/auth_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
 
+import 'served_event_fixture.dart';
+
 void main() {
   test(
     'confirmed minor tears down retained relay and observer providers',
@@ -207,11 +209,11 @@ void main() {
     expect(tags.any((tag) => tag.length == 2 && tag[0] == 'nonce'), isTrue);
   });
 
-  test('queryRelay rejects malformed event arrays', () async {
+  test('queryRelay rejects an answer that is not an event array', () async {
     final keychain = nostr.Keys.generate();
     final session = RelaySessionNotifier(
       httpClient: http_testing.MockClient(
-        (_) async => http.Response('[{}]', 200),
+        (_) async => http.Response('{}', 200),
       ),
     );
     final container = ProviderContainer(
@@ -509,15 +511,8 @@ void main() {
   );
 
   group('searchProfiles', () {
-    Map<String, dynamic> profileJson(int kind, String name) => {
-      'id': name.padRight(64, '0'),
-      'pubkey': 'a' * 64,
-      'created_at': 1,
-      'kind': kind,
-      'tags': <List<String>>[],
-      'content': jsonEncode({'name': name}),
-      'sig': 'b' * 128,
-    };
+    Map<String, dynamic> profileJson(int kind, String name) =>
+        servedEvent(kind: kind, content: jsonEncode({'name': name})).toJson();
 
     ({
       ProviderContainer container,
@@ -1731,7 +1726,7 @@ void main() {
       final session = RelaySessionNotifier(rateLimitGate: gate);
       session.debugAttachSocketForTest(_RecordingRelaySocket());
 
-      final publish = session.publish(_event());
+      final publish = session.publish(_event(id: 'event-1'));
       session.debugHandleMessage([
         'OK',
         'event-1',
@@ -1840,7 +1835,7 @@ void main() {
     final session = RelaySessionNotifier(rateLimitGate: gate);
     session.debugAttachSocketForTest(_RecordingRelaySocket());
 
-    final publish = session.publish(_event());
+    final publish = session.publish(_event(id: 'event-1'));
     session.debugHandleMessage([
       'OK',
       'event-1',
@@ -1998,19 +1993,15 @@ class _FakeRelayConfigNotifier extends RelayConfigNotifier {
   RelayConfig build() => RelayConfig(baseUrl: _baseUrl, nsec: _nsec);
 }
 
-NostrEvent _event({int createdAt = 20, String id = 'event-1'}) {
-  return NostrEvent(
-    id: id,
-    pubkey: 'alice',
-    createdAt: createdAt,
-    kind: EventKind.streamMessageV2,
-    tags: [
-      ['h', _channelId],
-    ],
-    content: 'hello',
-    sig: 'sig',
-  );
-}
+NostrEvent _event({int createdAt = 20, String? id}) => servedEvent(
+  kind: EventKind.streamMessageV2,
+  tags: [
+    ['h', _channelId],
+  ],
+  content: 'hello',
+  createdAt: createdAt,
+  id: id,
+);
 
 const _visibleChannelId = '99999999-9999-4999-8999-999999999999';
 const _channelFilter = NostrFilter(
