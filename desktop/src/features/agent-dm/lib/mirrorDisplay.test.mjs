@@ -8,6 +8,7 @@ import {
   mirrorDetails,
   mirrorDisplay,
   mirrorPlainText,
+  readsAsYou,
 } from "./mirrorDisplay.ts";
 import { mirrorBadgeLabel, mirrorSurfaceLabel } from "./markers.ts";
 
@@ -176,4 +177,22 @@ test("details name the signer as the author and the requester as relayed for", (
   assert.equal(agentOwn.relayedFor, null);
   assert.equal(agentOwn.requesterPubkey, null);
   assert.equal(agentOwn.signerPubkey, AGENT);
+});
+
+test("only a name that reads as You is refused", () => {
+  for (const name of [
+    "You",
+    " you ",
+    "\u04AEou",
+    "Yo\u200Bu",
+    "You.",
+    "(You)",
+    "\uFF39\uFF4F\uFF55",
+    "Y0u",
+  ]) {
+    assert.equal(readsAsYou(name), true, name);
+  }
+  for (const name of ["Young", "Yours truly", "Agent You", "Yo", ""]) {
+    assert.equal(readsAsYou(name), false, name);
+  }
 });

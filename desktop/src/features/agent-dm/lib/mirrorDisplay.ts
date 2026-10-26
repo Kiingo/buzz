@@ -10,6 +10,7 @@
  * mobile rule, `mobile/lib/shared/agent_dm/agent_dm_mirror_display.dart`).
  */
 
+import { withoutInvisible } from "@/features/surfaces/core/text";
 import { truncateNpub } from "@/shared/lib/pubkey";
 
 import {
@@ -123,12 +124,58 @@ function requesterName(
 
 /**
  * A resolved name for `pubkey`. Profile names are self-asserted, and "You"
- * is reserved for the viewer's own attributed lines, so a profile named
- * "You" (any case, after trimming) reads as its compact npub instead.
+ * is reserved for the viewer's own attributed lines, so a profile name that
+ * reads as "You" ({@link readsAsYou}) shows as its compact npub instead.
  */
 function profileName(pubkey: string, names: MirrorDisplayNames) {
   const name = names(pubkey);
-  return name.trim().toLowerCase() === "you" ? truncateNpub(pubkey) : name;
+  return readsAsYou(name) ? truncateNpub(pubkey) : name;
+}
+
+/**
+ * Letters that pass for y, o and u in "You": Cyrillic, Greek, Armenian,
+ * small capitals and the digit zero. Same table as the mobile rule.
+ */
+const YOU_LOOKALIKES: Readonly<Record<string, string>> = Object.freeze({
+  "\u0423": "y", // У
+  "\u0443": "y", // у
+  "\u04AE": "y", // Ү
+  "\u04AF": "y", // ү
+  "\u03A5": "y", // Υ
+  "\u028F": "y", // ʏ
+  "\u13A9": "y", // Ꭹ
+  "\u041E": "o", // О
+  "\u043E": "o", // о
+  "\u039F": "o", // Ο
+  "\u03BF": "o", // ο
+  "\u0555": "o", // Օ
+  "\u0585": "o", // օ
+  "\u1D0F": "o", // ᴏ
+  "0": "o",
+  "\u03C5": "u", // υ
+  "\u054D": "u", // Ս
+  "\u057D": "u", // ս
+  "\u1D1C": "u", // ᴜ
+  "\u028B": "u", // ʋ
+});
+
+const EDGE_PUNCTUATION = /^[\p{P}\p{S}\p{Z}\s]+|[\p{P}\p{S}\p{Z}\s]+$/gu;
+
+/**
+ * Whether a self-asserted name would read as "You": NFKC, characters that
+ * draw nothing removed (Cf and default-ignorables), surrounding
+ * punctuation, symbols and spaces trimmed, look-alike letters folded, then
+ * compared case-insensitively. "Ｙｏｕ", "Yo\u200Bu", "You." and Cyrillic
+ * "Үou" all read as "You".
+ */
+export function readsAsYou(name: string): boolean {
+  const clean = withoutInvisible(name.normalize("NFKC")).replace(
+    EDGE_PUNCTUATION,
+    "",
+  );
+  let folded = "";
+  for (const char of clean) folded += YOU_LOOKALIKES[char] ?? char;
+  return folded.toLowerCase() === "you";
 }
 
 /**

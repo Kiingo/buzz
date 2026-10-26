@@ -40,11 +40,48 @@ enum BuzzPushMirrorText {
     }
   }
 
+  /// Letters that pass for y, o and u in "You": Cyrillic, Greek, Armenian,
+  /// small capitals and the digit zero. Same table as the apps.
+  static let youLookalikes: [UInt32: Character] = [
+    0x0423: "y", 0x0443: "y", 0x04AE: "y", 0x04AF: "y", 0x03A5: "y", 0x028F: "y", 0x13A9: "y",
+    0x041E: "o", 0x043E: "o", 0x039F: "o", 0x03BF: "o", 0x0555: "o", 0x0585: "o", 0x1D0F: "o",
+    0x30: "o",
+    0x03C5: "u", 0x054D: "u", 0x057D: "u", 0x1D1C: "u", 0x028B: "u",
+  ]
+
+  /// Whether a self-asserted name would read as "You", as the apps decide:
+  /// NFKC, characters that draw nothing removed (Cf and default-ignorables),
+  /// surrounding punctuation, symbols and spaces trimmed, look-alike letters
+  /// folded, then compared case-insensitively.
+  static func readsAsYou(_ name: String) -> Bool {
+    let visible = name.precomposedStringWithCompatibilityMapping.unicodeScalars.filter {
+      $0.properties.generalCategory != .format && !$0.properties.isDefaultIgnorableCodePoint
+    }
+    let scalars = Array(visible)
+    func isEdge(_ scalar: Unicode.Scalar) -> Bool {
+      switch scalar.properties.generalCategory {
+      case .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation,
+        .initialPunctuation, .finalPunctuation, .otherPunctuation, .mathSymbol,
+        .currencySymbol, .modifierSymbol, .otherSymbol, .spaceSeparator, .lineSeparator,
+        .paragraphSeparator:
+        return true
+      default:
+        return scalar.properties.isWhitespace
+      }
+    }
+    guard let first = scalars.firstIndex(where: { !isEdge($0) }),
+      let last = scalars.lastIndex(where: { !isEdge($0) })
+    else { return false }
+    let folded = String(
+      scalars[first...last].map { youLookalikes[$0.value] ?? Character($0) })
+    return folded.lowercased() == "you"
+  }
+
   /// The notification body for `tags` and its sanitized `preview`, or nil
   /// when the event is not a mirror. Either mirror tag makes it one. Unless
   /// every author tag has role `agent`, it is a requester mirror (fail
-  /// closed). `signerName` is the signer's display name, if known; a name of
-  /// "You" (any case, after trimming) is self-asserted and reads as "Agent".
+  /// closed). `signerName` is the signer's display name, if known; a
+  /// self-asserted name that reads as "You" (`readsAsYou`) reads as "Agent".
   /// A malformed surface value is left out rather than shown.
   static func body(tags: [[String]], preview: String, signerName: String?) -> String? {
     var mirrored = false
@@ -65,7 +102,7 @@ enum BuzzPushMirrorText {
     let signer =
       signerName.flatMap { name in
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty || trimmed.lowercased() == "you" ? nil : name
+        return trimmed.isEmpty || readsAsYou(name) ? nil : name
       } ?? "Agent"
     let via = surface.flatMap { $0.isEmpty ? nil : " (via \(surfaceLabel($0)))" } ?? ""
     if agentAuthor && !requester {

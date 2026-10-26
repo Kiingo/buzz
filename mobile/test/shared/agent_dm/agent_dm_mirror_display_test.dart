@@ -147,4 +147,22 @@ void main() {
       isNull,
     );
   });
+
+  test('only a name that reads as You is refused', () {
+    for (final name in [
+      'You',
+      ' you ',
+      '\u04aeou',
+      'Yo\u200bu',
+      'You.',
+      '(You)',
+      '\uff39\uff4f\uff55',
+      'Y0u',
+    ]) {
+      expect(agentDmNameReadsAsYou(name), isTrue, reason: name);
+    }
+    for (final name in ['Young', 'Yours truly', 'Agent You', 'Yo', '']) {
+      expect(agentDmNameReadsAsYou(name), isFalse, reason: name);
+    }
+  });
 }

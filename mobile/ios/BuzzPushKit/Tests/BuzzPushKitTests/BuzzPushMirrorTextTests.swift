@@ -103,12 +103,21 @@ final class BuzzPushMirrorTextTests: XCTestCase {
   }
 
   func testSignerProfileNamedYouReadsAsAgent() throws {
-    for name in ["You", " you ", "YOU"] {
+    let names = [
+      "You", " you ", "YOU", "\u{04AE}ou", "Yo\u{200B}u", "You.", "\u{FF39}\u{FF4F}\u{FF55}",
+    ]
+    for name in names {
       let resolution = try XCTUnwrap(resolve(mirror([
         ["buzz-mirror", "email", "m1", "1"],
         ["buzz-mirror-author", "requester", Self.requester, ""],
       ]), name: name))
       XCTAssertEqual(resolution.body, "Relayed by Agent (via email): Move my 3pm", name)
+    }
+  }
+
+  func testNamesThatOnlyContainYouStayNames() {
+    for name in ["Young", "Yours truly", "Agent You", "Yo"] {
+      XCTAssertFalse(BuzzPushMirrorText.readsAsYou(name), name)
     }
   }
 

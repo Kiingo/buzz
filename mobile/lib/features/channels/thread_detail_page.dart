@@ -187,6 +187,7 @@ class ThreadDetailPage extends HookConsumerWidget {
                 agentDmThreadHeadProvider((
                   channelId: channelId,
                   eventId: threadHead.id,
+                  pubkey: threadHead.pubkey,
                 )),
               )
               .value

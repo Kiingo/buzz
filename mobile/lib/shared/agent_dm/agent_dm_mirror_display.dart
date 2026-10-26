@@ -9,6 +9,7 @@
 /// Shared test vectors: `test-fixtures/mirror-display.json`.
 library;
 
+import '../surfaces/surface_text.dart';
 import '../utils/string_utils.dart';
 import 'agent_dm_markers.dart';
 
@@ -132,11 +133,56 @@ AgentDmMirrorDisplay? agentDmMirrorDisplay({
 }
 
 /// A resolved name for [pubkey]. Profile names are self-asserted, and "You"
-/// is reserved for the viewer's own attributed lines, so a profile named
-/// "You" (any case, after trimming) reads as its compact npub instead.
+/// is reserved for the viewer's own attributed lines, so a profile name that
+/// reads as "You" ([agentDmNameReadsAsYou]) shows as its compact npub.
 String _profileName(String pubkey, String Function(String pubkey) names) {
   final name = names(pubkey);
-  return name.trim().toLowerCase() == 'you' ? shortPubkey(pubkey) : name;
+  return agentDmNameReadsAsYou(name) ? shortPubkey(pubkey) : name;
+}
+
+/// Letters that pass for y, o and u in "You": Cyrillic, Greek, Armenian,
+/// small capitals and the digit zero. Same table as desktop.
+const _youLookalikes = {
+  0x0423: 0x79, // У
+  0x0443: 0x79, // у
+  0x04ae: 0x79, // Ү
+  0x04af: 0x79, // ү
+  0x03a5: 0x79, // Υ
+  0x028f: 0x79, // ʏ
+  0x13a9: 0x79, // Ꭹ
+  0x041e: 0x6f, // О
+  0x043e: 0x6f, // о
+  0x039f: 0x6f, // Ο
+  0x03bf: 0x6f, // ο
+  0x0555: 0x6f, // Օ
+  0x0585: 0x6f, // օ
+  0x1d0f: 0x6f, // ᴏ
+  0x30: 0x6f, // 0
+  0x03c5: 0x75, // υ
+  0x054d: 0x75, // Ս
+  0x057d: 0x75, // ս
+  0x1d1c: 0x75, // ᴜ
+  0x028b: 0x75, // ʋ
+};
+
+final _edgePunctuation = RegExp(
+  r'^[\p{P}\p{S}\p{Z}\s]+|[\p{P}\p{S}\p{Z}\s]+$',
+  unicode: true,
+);
+
+/// Whether a self-asserted name would read as "You": compatibility forms
+/// folded (this app's NFKC stand-in), characters that draw nothing removed
+/// (Cf and default-ignorables), surrounding punctuation, symbols and spaces
+/// trimmed, look-alike letters folded, then compared case-insensitively.
+/// "Ｙｏｕ", "Yo\u200Bu", "You." and Cyrillic "Үou" all read as "You".
+bool agentDmNameReadsAsYou(String name) {
+  final clean = withoutInvisible(
+    foldCompatibilityForms(name),
+  ).replaceAll(_edgePunctuation, '');
+  final folded = String.fromCharCodes(
+    clean.runes.map((code) => _youLookalikes[code] ?? code),
+  );
+  return folded.toLowerCase() == 'you';
 }
 
 /// The text "Copy text" puts on the clipboard: a mirrored line in its

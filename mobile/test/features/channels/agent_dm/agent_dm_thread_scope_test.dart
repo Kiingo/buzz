@@ -7,6 +7,7 @@ import 'package:buzz/shared/mentions/agent_identity_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nostr/nostr.dart' as nostr;
 
 import '../../../helpers/widget_helpers.dart';
 
@@ -110,5 +111,47 @@ void main() {
       isFalse,
     );
     expect(agentDmHeadNeedsEvent(const [[]]), isFalse);
+  });
+
+  test('a fetched head is used only when it is the signed head asked for', () {
+    const secret =
+        '0000000000000000000000000000000000000000000000000000000000000003';
+    final signed = nostr.Event.from(
+      kind: 40002,
+      content: 'Move my 3pm',
+      tags: const [
+        ['h', 'dm'],
+        ['buzz-mirror', 'tasks', 't-1', '1700000000'],
+      ],
+      secretKey: secret,
+      createdAt: 1700000000,
+    );
+    NostrEvent head({String? content, String? sig, int? kind}) => NostrEvent(
+      id: signed.id,
+      pubkey: signed.pubkey,
+      createdAt: signed.createdAt,
+      kind: kind ?? signed.kind,
+      tags: signed.tags,
+      content: content ?? signed.content,
+      sig: sig ?? signed.sig,
+    );
+    bool matches(NostrEvent event, {String? pubkey, String channel = 'dm'}) =>
+        agentDmThreadHeadMatches(
+          event,
+          channelId: channel,
+          eventId: signed.id,
+          pubkey: pubkey ?? signed.pubkey,
+        );
+
+    expect(matches(head()), isTrue);
+    expect(matches(head(), pubkey: signed.pubkey.toUpperCase()), isTrue);
+    // Another signer than the head's own.
+    expect(matches(head(), pubkey: _agent), isFalse);
+    // Content changed after signing: the id no longer verifies.
+    expect(matches(head(content: 'Send it')), isFalse);
+    // A signature that does not verify.
+    expect(matches(head(sig: '0' * 128)), isFalse);
+    expect(matches(head(kind: 9)), isFalse);
+    expect(matches(head(), channel: 'other'), isFalse);
   });
 }
