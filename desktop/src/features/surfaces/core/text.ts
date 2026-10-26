@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 280b8811c46f5aaa8c44a036f0bf0be29fabdbeb; do not edit here.
+// Generated from the Kiingo surface renderer packages at c72e3863b9419a77a51b527a9ff4255646c6384c; do not edit here.
 import { asNumber } from "./json";
 
 // Agent text is plain text: control characters, format characters
@@ -234,6 +234,37 @@ const SECRET_WORDS = [
   "secret",
 ];
 
+/**
+ * Multi-letter secret words without spaces, read after the separators
+ * between letters are removed ("Pass word", "p.a.s.s.w.o.r.d"; 79 S2
+ * residual). The server's UI_SECRET_COMPACT_WORDS (`@kiingo/ui-catalog`).
+ * Short or common words (pin, otp, token, secret, one-time) are left out.
+ */
+const SECRET_COMPACT_WORDS = [
+  "password",
+  "passcode",
+  "passphrase",
+  "apikey",
+  "accesstoken",
+  "authtoken",
+  "twofactor",
+  "verificationcode",
+  "securitycode",
+  "socialsecurity",
+  "cardnumber",
+  "creditcard",
+  "debitcard",
+  "securitynumber",
+  "routingnumber",
+  "accountnumber",
+  "privatekey",
+  "seedphrase",
+  "recoverycode",
+  "recoveryphrase",
+];
+
+const BETWEEN_LETTERS = /(?<=\p{L})[^\p{L}\p{N}]+(?=\p{L})/gu;
+
 const isLetter = (char: string | undefined): boolean =>
   char !== undefined && /\p{L}/u.test(char);
 
@@ -285,19 +316,50 @@ const SKELETON: Readonly<Record<string, string>> = Object.freeze({
   ɑ: "a",
   ı: "i",
   ɩ: "i",
-  // Digits standing in for letters
+  // Digits standing in for letters ("1" is both i and l: see skeletons)
   "0": "o",
 });
 
-/** `text` with look-alike letters folded to Latin ({@link SKELETON}). */
-const skeleton = (text: string): string => {
+/**
+ * Digits and signs that stand in for letters ("p4$$w0rd", 79 W6 NIT), the
+ * same extras as the server's UI_SECRET_FOLD (`@kiingo/ui-catalog`).
+ */
+const DIGIT_SKELETON: Readonly<Record<string, string>> = Object.freeze({
+  "3": "e",
+  "4": "a",
+  "5": "s",
+  $: "s",
+});
+
+const foldWith = (
+  text: string,
+  table: Readonly<Record<string, string>>,
+): string => {
   let out = "";
   for (const char of text) {
-    out += Object.prototype.hasOwnProperty.call(SKELETON, char)
-      ? SKELETON[char]
+    out += Object.prototype.hasOwnProperty.call(table, char)
+      ? table[char]
       : char;
   }
   return out;
+};
+
+/**
+ * `text` with look-alike letters folded to Latin ({@link SKELETON}), then
+ * also with {@link DIGIT_SKELETON} and "1" read as i, and as l. The plain
+ * letter fold stays a form of its own, so a digit next to a short word
+ * ("pin5") still reads as before.
+ */
+const skeletons = (text: string): string[] => {
+  const letters = foldWith(text, SKELETON);
+  const digits = foldWith(letters, DIGIT_SKELETON);
+  return [
+    ...new Set([
+      letters,
+      digits.replace(/1/gu, "i"),
+      digits.replace(/1/gu, "l"),
+    ]),
+  ];
 };
 
 /**
@@ -313,23 +375,33 @@ export const asksForSecret = (
     if (!raw) {
       return false;
     }
-    const text = skeleton(comparableText(raw));
-    return SECRET_WORDS.some((word) => {
-      let from = 0;
-      for (;;) {
-        const at = text.indexOf(word, from);
-        if (at < 0) {
-          return false;
+    const forms = skeletons(comparableText(raw));
+    if (
+      forms.some((text) => {
+        const compact = text.replace(BETWEEN_LETTERS, "");
+        return SECRET_COMPACT_WORDS.some((word) => compact.includes(word));
+      })
+    ) {
+      return true;
+    }
+    return forms.some((text) =>
+      SECRET_WORDS.some((word) => {
+        let from = 0;
+        for (;;) {
+          const at = text.indexOf(word, from);
+          if (at < 0) {
+            return false;
+          }
+          if (word.length > 3) {
+            return true;
+          }
+          if (!isLetter(text[at - 1]) && !isLetter(text[at + word.length])) {
+            return true;
+          }
+          from = at + 1;
         }
-        if (word.length > 3) {
-          return true;
-        }
-        if (!isLetter(text[at - 1]) && !isLetter(text[at + word.length])) {
-          return true;
-        }
-        from = at + 1;
-      }
-    });
+      }),
+    );
   });
 
 /** Initials from a name ("Dana Lee" → "DL"). */

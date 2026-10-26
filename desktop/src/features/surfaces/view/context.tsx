@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 280b8811c46f5aaa8c44a036f0bf0be29fabdbeb; do not edit here.
+// Generated from the Kiingo surface renderer packages at c72e3863b9419a77a51b527a9ff4255646c6384c; do not edit here.
 import { createContext, useContext, useSyncExternalStore } from "react";
 import {
   bindingOf,
@@ -68,6 +68,11 @@ export class NodeContext {
      * snapshot, by node key (79 W6: MAX_SURFACE_CELLS and
      * MAX_SURFACE_DIFF_CELLS per surface). A redraw re-claims its own key,
      * so it never counts twice.
+     *
+     * claimCells and claimDiff write these maps during render on purpose:
+     * the budget is a per-snapshot ledger, not React state, so nothing
+     * re-renders from it. Keying by node keeps it idempotent under
+     * StrictMode's double render and any re-render of one node (79 W6 NIT).
      */
     readonly cells: {
       grid: Map<string, number>;
