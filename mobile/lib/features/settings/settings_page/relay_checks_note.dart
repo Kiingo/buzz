@@ -1,7 +1,7 @@
 part of '../settings_page.dart';
 
 /// A diagnostic line above the version: how many events the relay session
-/// dropped because they failed its checks. A history page whose events
+/// dropped because they failed its checks, or could not be checked. A history page whose events
 /// were all dropped looks like the end of history, so this says why.
 class _RelayChecksNote extends ConsumerWidget {
   const _RelayChecksNote();
@@ -10,6 +10,7 @@ class _RelayChecksNote extends ConsumerWidget {
     RelayEventRejection.shape: 'malformed',
     RelayEventRejection.idMismatch: 'altered',
     RelayEventRejection.badSignature: 'badly signed',
+    RelayEventRejection.verifierUnavailable: 'unchecked',
   };
 
   @override
@@ -31,7 +32,7 @@ class _RelayChecksNote extends ConsumerWidget {
       child: Center(
         child: Text(
           'Dropped $total relay ${total == 1 ? 'event' : 'events'} '
-          'that failed checks (${parts.join(', ')})',
+          'that did not pass checks (${parts.join(', ')})',
           textAlign: TextAlign.center,
           style: context.textTheme.bodySmall?.copyWith(
             color: context.colors.onSurfaceVariant.withValues(alpha: 0.6),

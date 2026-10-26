@@ -59,8 +59,25 @@ void main() {
 
     expect(
       find.text(
-        'Dropped 3 relay events that failed checks '
+        'Dropped 3 relay events that did not pass checks '
         '(2 malformed, 1 badly signed)',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('tells an unchecked event from a badly signed one', (
+    tester,
+  ) async {
+    await pumpSettings(tester, {
+      RelayEventRejection.badSignature: 1,
+      RelayEventRejection.verifierUnavailable: 4,
+    });
+
+    expect(
+      find.text(
+        'Dropped 5 relay events that did not pass checks '
+        '(1 badly signed, 4 unchecked)',
       ),
       findsOneWidget,
     );

@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:buzz/features/channels/channel_messages_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
+import 'package:buzz/shared/relay/relay_signature_backend.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -26,6 +27,76 @@ void main() {
     skip: !const bool.fromEnvironment('BUZZ_RUN_BENCHMARKS'),
     timeout: const Timeout(Duration(minutes: 3)),
   );
+
+  test(
+    'live delivery behind isolate signature checks',
+    () async {
+      for (final burstSize in [500, 2000]) {
+        // Signed once up front: pure-Dart signing is slower than checking.
+        final burst = [
+          for (var index = 0; index < burstSize; index++)
+            _signedEvent('live-$index', _verifiedHistory + index),
+        ];
+        for (var run = 0; run < 6; run++) {
+          await _measureVerifiedBurst(burst, run);
+        }
+      }
+    },
+    skip: !const bool.fromEnvironment('BUZZ_RUN_BENCHMARKS'),
+    timeout: const Timeout(Duration(minutes: 10)),
+  );
+}
+
+const _verifiedHistory = 50;
+
+/// Time from the first live event to the last one reaching the channel,
+/// with every signature checked by the pure-Dart isolate pool the app uses
+/// off iOS. Each run is a fresh session, so nothing is cached as verified.
+Future<void> _measureVerifiedBurst(List<NostrEvent> burst, int run) async {
+  final session = _SyntheticSession(
+    _verifiedHistory,
+    signatureBackend: IsolateSignatureBackend.shared,
+  );
+  final container = ProviderContainer(
+    overrides: [relaySessionProvider.overrideWith(() => session)],
+  );
+  try {
+    final loaded = Completer<void>();
+    final delivered = Completer<void>();
+    final total = _verifiedHistory + burst.length;
+    container.listen(channelMessagesProvider(_channelId), (_, next) {
+      final length = next.value?.length;
+      if (!loaded.isCompleted && length == _verifiedHistory) loaded.complete();
+      if (!delivered.isCompleted && length == total) delivered.complete();
+    });
+    await loaded.future.timeout(const Duration(seconds: 5));
+
+    final watch = Stopwatch()..start();
+    for (final event in burst) {
+      session.debugHandleMessage(['EVENT', 'l-1', event.toJson()]);
+    }
+    final enqueueUs = watch.elapsedMicroseconds;
+    await delivered.future.timeout(const Duration(minutes: 2));
+    final deliveryUs = watch.elapsedMicroseconds;
+
+    expect(session.droppedEventCounts, isEmpty);
+    if (run >= 2) {
+      debugPrint(
+        jsonEncode({
+          'backend': 'isolate',
+          'workers': IsolateSignatureBackend.shared.workers,
+          'history': _verifiedHistory,
+          'burst': burst.length,
+          'run': run - 2,
+          'enqueue_us': enqueueUs,
+          'delivery_us': deliveryUs,
+        }),
+      );
+    }
+  } finally {
+    container.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
 }
 
 Future<void> _measureBurst(int historySize, int burstSize, int run) async {
@@ -90,13 +161,24 @@ NostrEvent _event(String name, int createdAt) => servedEvent(
   createdAt: createdAt,
 );
 
+NostrEvent _signedEvent(String name, int createdAt) => signedEvent(
+  kind: EventKind.streamMessageV2,
+  tags: const [
+    ['h', _channelId],
+  ],
+  content: 'Synthetic message $name',
+  createdAt: createdAt,
+);
+
 class _SyntheticSession extends RelaySessionNotifier {
   final int historySize;
 
-  // Measures delivery with the shape and id checks; signatures are checked
-  // off the UI isolate (or natively) and are not part of this burst.
-  _SyntheticSession(this.historySize)
-    : super(signatureBackend: trustingSignatures);
+  // By default measures delivery with the shape and id checks only; the
+  // isolate case passes the real pure-Dart signature backend.
+  _SyntheticSession(
+    this.historySize, {
+    RelaySignatureBackend signatureBackend = trustingSignatures,
+  }) : super(signatureBackend: signatureBackend);
 
   @override
   SessionState build() => const SessionState(status: SessionStatus.connected);

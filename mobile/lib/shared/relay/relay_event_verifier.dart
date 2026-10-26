@@ -22,6 +22,11 @@ enum RelayEventRejection {
   /// The signature is not the author's BIP-340 signature of the id: the
   /// event was forged under someone else's key.
   badSignature,
+
+  /// The signature could not be checked: the platform's verifier is not
+  /// available, or did not answer in time. Nothing unverified is used, so
+  /// the event is dropped, but it is not judged forged.
+  verifierUnavailable,
 }
 
 /// Why an event must be dropped, or null when it may be used.
@@ -77,6 +82,7 @@ class RelayEventVerifier {
   RelayEventVerifier({
     this.check = relayEventRejection,
     RelaySignatureBackend? signatures,
+    this.verdictTimeout = const Duration(seconds: 30),
   }) : signatures = signatures ?? platformSignatureBackend();
 
   /// Decides whether an event is dropped, and why. Production sessions use
@@ -86,6 +92,12 @@ class RelayEventVerifier {
 
   /// Checks signatures; only fixtures pass anything but the platform's.
   final RelaySignatureBackend signatures;
+
+  /// How long a pending signature check may take before its event is
+  /// dropped as [RelayEventRejection.verifierUnavailable]. Live events are
+  /// delivered in order, so a check that never answers must not hold every
+  /// event behind it.
+  final Duration verdictTimeout;
 
   static const _maxVerified = 4096;
 
@@ -108,14 +120,18 @@ class RelayEventVerifier {
   }
 
   /// The events of an HTTP answer [body] that [admit] would keep, in order.
-  /// Decoding and hashing run on a background isolate, so a long history
-  /// page costs the UI isolate nothing; drops are counted here. Throws a
-  /// [FormatException] when the body is not a JSON array.
+  /// Decoding and hashing of all but a short answer run on a background
+  /// isolate, so a long history page costs the UI isolate nothing; drops
+  /// are counted here. Throws a [FormatException] when the body is not a
+  /// JSON array.
   Future<List<NostrEvent>> admitAnswer(
     String body, {
     required String path,
   }) async {
-    final answer = await _admitOnIsolate(body, check);
+    // Starting an isolate costs more than checking a few events here.
+    final answer = body.length <= _inlineAnswerLength
+        ? _admitAll(body, check)
+        : await _admitOnIsolate(body, check);
     for (final (rejection, id) in answer.drops) {
       _drop(rejection, id, path);
     }
@@ -123,8 +139,10 @@ class RelayEventVerifier {
   }
 
   /// Whether [event] (already [admit]ted) carries its author's signature of
-  /// its id. A bad signature is counted and dropped. Answers synchronously
-  /// for a recently verified event and for a synchronous backend.
+  /// its id. An event that fails, or whose check cannot run or does not
+  /// answer within [verdictTimeout], is counted and dropped. Answers
+  /// synchronously for a recently verified event and for a synchronous
+  /// backend.
   FutureOr<bool> verifySignature(NostrEvent event, {required String path}) {
     final key = '${event.id}${event.sig}${event.pubkey}';
     if (_verified.remove(key)) {
@@ -135,14 +153,22 @@ class RelayEventVerifier {
     try {
       verdict = signatures.verify(event.id, event.pubkey, event.sig);
     } catch (_) {
-      return _settle(false, key, event.id, path);
+      return _settle(_unchecked, key, event.id, path);
     }
-    if (verdict is bool) return _settle(verdict, key, event.id, path);
-    return verdict.then(
-      (valid) => _settle(valid, key, event.id, path),
-      onError: (Object _) => _settle(false, key, event.id, path),
-    );
+    if (verdict is bool) return _settle(_judged(verdict), key, event.id, path);
+    return verdict
+        .timeout(verdictTimeout)
+        .then(
+          (valid) => _settle(_judged(valid), key, event.id, path),
+          // A backend error or a timeout: the check did not run.
+          onError: (Object _) => _settle(_unchecked, key, event.id, path),
+        );
   }
+
+  static const _unchecked = RelayEventRejection.verifierUnavailable;
+
+  static RelayEventRejection? _judged(bool valid) =>
+      valid ? null : RelayEventRejection.badSignature;
 
   /// The events of [events] (already [admit]ted) whose signatures verify,
   /// in order, once every check has settled. Synchronous checks yield to
@@ -169,9 +195,16 @@ class RelayEventVerifier {
 
   static const _checksPerTurn = 32;
 
-  bool _settle(bool valid, String key, String id, String path) {
-    if (!valid) {
-      _drop(RelayEventRejection.badSignature, id, path);
+  static const _inlineAnswerLength = 8 * 1024;
+
+  bool _settle(
+    RelayEventRejection? rejection,
+    String key,
+    String id,
+    String path,
+  ) {
+    if (rejection != null) {
+      _drop(rejection, id, path);
       return false;
     }
     _verified.add(key);
@@ -218,7 +251,11 @@ Object? _idOf(Map<String, dynamic> json) {
 
 // Top-level so the isolate closure captures only the body and the check.
 Future<({List<NostrEvent> events, List<(RelayEventRejection, Object?)> drops})>
-_admitOnIsolate(String body, RelayEventCheck check) => Isolate.run(() {
+_admitOnIsolate(String body, RelayEventCheck check) =>
+    Isolate.run(() => _admitAll(body, check));
+
+({List<NostrEvent> events, List<(RelayEventRejection, Object?)> drops})
+_admitAll(String body, RelayEventCheck check) {
   final decoded = jsonDecode(body);
   if (decoded is! List) {
     throw const FormatException('relay returned malformed query response');
@@ -231,4 +268,4 @@ _admitOnIsolate(String body, RelayEventCheck check) => Isolate.run(() {
     if (rejection != null) drops.add((rejection, id is String ? id : null));
   }
   return (events: events, drops: drops);
-});
+}

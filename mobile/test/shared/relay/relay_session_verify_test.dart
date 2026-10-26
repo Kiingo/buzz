@@ -85,33 +85,45 @@ Map<RelayEventRejection, int> _expectedCounts() {
 
 void main() {
   // The HTTP path runs the platform backend: the isolate pool on this host.
-  test('HTTP queries drop events that fail the boundary checks', () async {
-    final session = RelaySessionNotifier(
-      httpClient: http_testing.MockClient(
-        (_) async => http.Response(
-          jsonEncode([for (final (json, _) in _served) json]),
-          200,
+  // A short answer is checked inline, a long one on a background isolate.
+  for (final (answer, padding) in [
+    ('short', ''),
+    ('long', 'x' * (16 * 1024)),
+  ]) {
+    test('HTTP queries drop events that fail the boundary checks '
+        '($answer answer)', () async {
+      final long = _message('long$padding', 30);
+      final served = [
+        for (final (json, _) in _served) json,
+        if (padding.isNotEmpty) long.toJson(),
+      ];
+      final session = RelaySessionNotifier(
+        httpClient: http_testing.MockClient(
+          (_) async => http.Response(jsonEncode(served), 200),
         ),
-      ),
-    );
-    final container = ProviderContainer(
-      overrides: [
-        authProvider.overrideWith(() => PendingAuthNotifier()),
-        relaySessionProvider.overrideWith(() => session),
-        relayConfigProvider.overrideWith(
-          () => _FakeRelayConfigNotifier(nostr.Keys.generate().nsec),
-        ),
-      ],
-    );
-    addTearDown(container.dispose);
+      );
+      final container = ProviderContainer(
+        overrides: [
+          authProvider.overrideWith(() => PendingAuthNotifier()),
+          relaySessionProvider.overrideWith(() => session),
+          relayConfigProvider.overrideWith(
+            () => _FakeRelayConfigNotifier(nostr.Keys.generate().nsec),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
 
-    final events = await container
-        .read(relaySessionProvider.notifier)
-        .queryRelay(const []);
+      final events = await container
+          .read(relaySessionProvider.notifier)
+          .queryRelay(const []);
 
-    expect(events.map((event) => event.content), ['genuine']);
-    expect(session.droppedEventCounts, _expectedCounts());
-  });
+      expect(
+        events.map((event) => event.content),
+        unorderedEquals(['genuine', if (padding.isNotEmpty) long.content]),
+      );
+      expect(session.droppedEventCounts, _expectedCounts());
+    });
+  }
 
   test(
     'live socket events that fail the checks never reach the subscriber',

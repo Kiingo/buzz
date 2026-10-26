@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 import 'dart:isolate';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:nostr/nostr.dart' as nostr;
 
 import 'relay_signature_native.dart';
@@ -11,8 +12,20 @@ import 'relay_signature_native.dart';
 /// Checks BIP-340 signatures over Nostr event ids.
 abstract interface class RelaySignatureBackend {
   /// Whether [sig] is [pubkey]'s BIP-340 signature of [id], each lowercase
-  /// hex of its NIP-01 length. Answers synchronously when it can.
+  /// hex of its NIP-01 length. Answers synchronously when it can. Throws, or
+  /// completes with, [SignatureCheckUnavailable] when it cannot check at
+  /// all, which is not a verdict on the signature.
   FutureOr<bool> verify(String id, String pubkey, String sig);
+}
+
+/// The backend could not check a signature: its verifier is not loaded or
+/// did not run. The event is dropped unverified, not judged forged.
+class SignatureCheckUnavailable implements Exception {
+  /// An unavailable check.
+  const SignatureCheckUnavailable();
+
+  @override
+  String toString() => 'SignatureCheckUnavailable';
 }
 
 /// The backend for this platform: the app's vendored libsecp256k1 through
@@ -36,9 +49,15 @@ bool verifyBip340(String id, String pubkey, String sig) {
 /// time. Requests made in the same microtask turn travel together in chunks
 /// of at most [chunkSize], so a burst is checked in parallel and in order.
 class IsolateSignatureBackend implements RelaySignatureBackend {
-  /// A pool of at most [workers] concurrent isolates.
-  IsolateSignatureBackend({this.workers = 2, this.chunkSize = 32})
-    : assert(workers > 0 && chunkSize > 0);
+  /// A pool of at most [workers] concurrent isolates. Only tests pass
+  /// [runChunk], to stand in for the isolate that checks one chunk.
+  IsolateSignatureBackend({
+    this.workers = 2,
+    this.chunkSize = 32,
+    @visibleForTesting
+    Future<List<bool>> Function(List<List<String>> items)? runChunk,
+  }) : assert(workers > 0 && chunkSize > 0),
+       _runChunk = runChunk ?? _verifyOnIsolate;
 
   /// The process-wide pool, sized to leave a core for the UI.
   static final shared = IsolateSignatureBackend(
@@ -50,6 +69,8 @@ class IsolateSignatureBackend implements RelaySignatureBackend {
 
   /// The most signatures one isolate checks per run.
   final int chunkSize;
+
+  final Future<List<bool>> Function(List<List<String>> items) _runChunk;
 
   List<_Request>? _batch;
   final _chunks = Queue<List<_Request>>();
@@ -80,7 +101,7 @@ class IsolateSignatureBackend implements RelaySignatureBackend {
     while (_running < workers && _chunks.isNotEmpty) {
       final chunk = _chunks.removeFirst();
       _running++;
-      _verifyOnIsolate([
+      _runChunk([
             for (final request in chunk)
               [request.id, request.pubkey, request.sig],
           ])
@@ -91,9 +112,9 @@ class IsolateSignatureBackend implements RelaySignatureBackend {
               }
             },
             onError: (Object _) {
-              // An isolate that cannot run verifies nothing.
+              // An isolate that cannot run verifies nothing, and says so.
               for (final request in chunk) {
-                request.result.complete(false);
+                request.result.completeError(const SignatureCheckUnavailable());
               }
             },
           )
