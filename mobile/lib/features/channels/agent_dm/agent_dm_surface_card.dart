@@ -14,6 +14,7 @@ import '../../../shared/surfaces/surface_sends.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/modal_presentation.dart';
 import '../channel_identity_names_provider.dart';
+import 'agent_dm_expanded_surface.dart';
 import 'agent_dm_scope.dart';
 import 'agent_dm_sent_provider.dart';
 
@@ -136,8 +137,9 @@ class AgentDmSurfaceCard extends HookConsumerWidget {
                     ? 'From $agentName'
                     : loaded.surface.title,
                 isScrollControlled: true,
-                builder: (sheetContext) => _ExpandedSurface(
+                builder: (sheetContext) => AgentDmExpandedSurface(
                   surfaceKey: key,
+                  signer: signer,
                   host: hostFor(expanded: true),
                 ),
               ),
@@ -155,24 +157,6 @@ class AgentDmSurfaceCard extends HookConsumerWidget {
         borderRadius: BorderRadius.circular(Radii.lg),
       ),
       child: AgentSurfaceView(loaded: loaded, host: hostFor(expanded: false)),
-    );
-  }
-}
-
-/// The card in the large sheet, following the same read as the message.
-class _ExpandedSurface extends ConsumerWidget {
-  final ({String id, int revision}) surfaceKey;
-  final SurfaceHost host;
-
-  const _ExpandedSurface({required this.surfaceKey, required this.host});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final loaded = ref.watch(agentSurfaceProvider(surfaceKey)).value;
-    if (loaded == null) return const SizedBox.shrink();
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(Grid.xs),
-      child: AgentSurfaceView(loaded: loaded, host: host, expanded: true),
     );
   }
 }
