@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		BZZ00000000000000000030 /* AgentCallPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = BZZ00000000000000000031 /* AgentCallPlugin.swift */; };
+		BZZ00000000000000000040 /* AgentCallStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = BZZ00000000000000000041 /* AgentCallStream.swift */; };
 		BZZ00000000000000000034 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = BZZ00000000000000000033 /* WebRTC */; };
 		DAAB00000000000000000001 /* NativeTabler.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAAB00000000000000000002; };
 		4A71C0192F40D00100A17E02 /* MeAvatarLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A71C01A2F40D00100A17E02 /* MeAvatarLoader.swift */; };
@@ -98,6 +99,7 @@
 
 /* Begin PBXFileReference section */
 		BZZ00000000000000000031 /* AgentCallPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallPlugin.swift; sourceTree = "<group>"; };
+		BZZ00000000000000000041 /* AgentCallStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallStream.swift; sourceTree = "<group>"; };
 		DAAB00000000000000000002 /* NativeTabler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTabler.swift; sourceTree = "<group>"; };
 		4A71C01A2F40D00100A17E02 /* MeAvatarLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeAvatarLoader.swift; sourceTree = "<group>"; };
 		C0AF00000000000000000002 /* NativeConfirmationDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeConfirmationDialog.swift; sourceTree = "<group>"; };
@@ -295,6 +297,7 @@
 				4A71C0122F40900100A17E01 /* NativeEmojiPickerView.swift */,
 				4A71C0142F40A00100A17E01 /* NativeMessageActionSurface.swift */,
 				BZZ00000000000000000031 /* AgentCallPlugin.swift */,
+				BZZ00000000000000000041 /* AgentCallStream.swift */,
 				4A71C0162F40B00100A17E01 /* HuddleMediaPlugin.swift */,
 				4A71C0182F40C00100A17E01 /* HuddleAudioEngine.swift */,
 				C0AF00000000000000000002 /* NativeConfirmationDialog.swift */,
@@ -637,6 +640,7 @@
 				4A71C0112F40900100A17E01 /* NativeEmojiPickerView.swift in Sources */,
 				4A71C0132F40A00100A17E01 /* NativeMessageActionSurface.swift in Sources */,
 				BZZ00000000000000000030 /* AgentCallPlugin.swift in Sources */,
+				BZZ00000000000000000040 /* AgentCallStream.swift in Sources */,
 				4A71C0152F40B00100A17E01 /* HuddleMediaPlugin.swift in Sources */,
 				4A71C0172F40C00100A17E01 /* HuddleAudioEngine.swift in Sources */,
 				C0AF00000000000000000001 /* NativeConfirmationDialog.swift in Sources */,

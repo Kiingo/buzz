@@ -4,11 +4,11 @@ import 'package:flutter/foundation.dart';
 /// (Kiingo voice-provider-neutral §4, §9.1 and §9.3), read leniently. The
 /// words match the desktop app and the Kiingo iPhone and Mac apps.
 
-/// Whether this app runs Gemini's `kiingo-voice-v1` stream. Until it does,
-/// "Call with Gemini" is shown greyed with the reason, a plain tap whose
-/// choice is Gemini runs as GPT-Live and says so, and the saved choices
-/// still apply on the person's other devices.
-const agentCallRunsGeminiStream = false;
+/// Whether this app runs Gemini's `kiingo-voice-v1` stream (the native
+/// `AgentCallStream`). Off, "Call with Gemini" is shown greyed with the
+/// reason, a plain tap whose choice is Gemini runs as GPT-Live and says so,
+/// and the saved choices still apply on the person's other devices.
+const agentCallRunsGeminiStream = true;
 
 enum VoiceProviderId {
   gptLive('gpt-live', 'GPT-Live'),

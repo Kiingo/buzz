@@ -15,6 +15,11 @@ const _call = '0192a6b0-0000-7000-8000-0000000000ac';
 const _channel = '0192a6b0-0000-7000-8000-0000000000af';
 const _agentId = '0192a6b0-0000-7000-8000-0000000000ab';
 final _agent = 'b' * 64;
+final _offer = {
+  'url': 'wss://api.example.com/api/voice/calls/$_call/stream',
+  'protocol': 'kiingo-voice-v1',
+  'capability': 'vsc1.${'a' * 32}',
+};
 
 Map<String, Object?> _settings({
   String effective = 'gemini',
@@ -70,6 +75,26 @@ class _FakeMedia implements AgentCallMedia {
 
   @override
   Future<void> end() async => calls.add('end');
+
+  @override
+  Future<String> beginStream({required String agentName}) async {
+    calls.add('beginStream');
+    return 'callkit';
+  }
+
+  @override
+  Future<AgentCallOffer> makeOffer() async {
+    calls.add('makeOffer');
+    return const AgentCallOffer(sdp: 'v=0 offer', systemCallUI: 'callkit');
+  }
+
+  @override
+  Future<void> streamConnect({
+    required Map<Object?, Object?> offer,
+    required String callId,
+    required String apiOrigin,
+    bool pending = false,
+  }) async => calls.add(pending ? 'streamConnect:pending' : 'streamConnect');
 }
 
 AgentCallApi _api(MockClient client) => AgentCallApi(
@@ -220,10 +245,14 @@ void main() {
     late ProviderContainer container;
     late List<Map<String, Object?>> starts;
     late http.Response Function() startAnswer;
+    late http.Response Function() tokenAnswer;
+    late int tokenReads;
 
     setUp(() {
       media = _FakeMedia();
       starts = [];
+      tokenReads = 0;
+      tokenAnswer = () => http.Response('{}', 500);
       startAnswer = () => http.Response(
         jsonEncode({'callId': _call, 'sdpAnswer': 'v=0 answer'}),
         201,
@@ -232,6 +261,10 @@ void main() {
         if (request.url.path.endsWith('/calls')) {
           starts.add(jsonDecode(request.body) as Map<String, Object?>);
           return startAnswer();
+        }
+        if (request.url.path.endsWith('/stream-token')) {
+          tokenReads++;
+          return tokenAnswer();
         }
         if (request.url.path.endsWith('/feed')) {
           await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -250,20 +283,158 @@ void main() {
 
     tearDown(() => container.dispose());
 
-    test('an inherited Gemini choice this app cannot run says so', () async {
-      await container
-          .read(agentCallProvider.notifier)
-          .start(
-            agentPubkey: _agent,
-            channelId: _channel,
-            agentName: 'Alfred',
-            expectedProvider: VoiceProviderId.gemini,
+    Future<void> call({
+      VoiceProviderId? provider,
+      VoiceProviderId? expectedProvider,
+    }) => container
+        .read(agentCallProvider.notifier)
+        .start(
+          agentPubkey: _agent,
+          channelId: _channel,
+          agentName: 'Alfred',
+          provider: provider,
+          expectedProvider: expectedProvider,
+        );
+
+    test(
+      'a plain tap whose choice is Gemini starts on the stream with no offer',
+      () async {
+        startAnswer = () => http.Response(
+          jsonEncode({
+            'callId': _call,
+            'transport': 'gemini_ws',
+            'stream': _offer,
+            'provider': {'id': 'gemini', 'source': 'user'},
+          }),
+          201,
+        );
+        await call(expectedProvider: VoiceProviderId.gemini);
+        expect(starts.single.containsKey('provider'), isFalse);
+        expect(starts.single.containsKey('sdpOffer'), isFalse);
+        expect(starts.single['clientCapabilities'], ['gemini_ws']);
+        expect(media.calls, ['beginStream', 'streamConnect']);
+        expect(
+          voiceProviderLine(container.read(agentCallProvider).voice),
+          'Voice: Gemini',
+        );
+      },
+    );
+
+    test(
+      'a plain tap the host resolved to GPT-Live goes on over WebRTC',
+      () async {
+        var first = true;
+        startAnswer = () {
+          if (first) {
+            first = false;
+            return http.Response('{"error":"invalid_request"}', 400);
+          }
+          return http.Response(
+            jsonEncode({'callId': _call, 'sdpAnswer': 'v=0 answer'}),
+            201,
           );
-      expect(starts.single.containsKey('provider'), isFalse);
-      expect(
-        voiceProviderLine(container.read(agentCallProvider).voice),
-        'Voice: GPT-Live (Gemini unavailable)',
-      );
+        };
+        await call(expectedProvider: VoiceProviderId.gemini);
+        expect(starts, hasLength(2));
+        expect(starts[1]['sdpOffer'], 'v=0 offer');
+        expect(starts[1].containsKey('clientCapabilities'), isFalse);
+        expect(media.calls, ['beginStream', 'makeOffer', 'accept']);
+        expect(
+          container.read(agentCallProvider).phase,
+          AgentCallPhase.connecting,
+        );
+      },
+    );
+
+    group('a live Gemini call', () {
+      late List<http.Response Function()> tokens;
+
+      setUp(() {
+        tokens = [];
+        tokenAnswer = () => tokens.isEmpty
+            ? http.Response('{"error":"voice_call_not_live"}', 409)
+            : tokens.removeAt(0)();
+        startAnswer = () => http.Response(
+          jsonEncode({
+            'callId': _call,
+            'transport': 'gemini_ws',
+            'stream': _offer,
+          }),
+          201,
+        );
+      });
+
+      Future<void> live() async {
+        await call(provider: VoiceProviderId.gemini);
+        media.events$.add(
+          const AgentCallMediaEventData(AgentCallMediaEvent.connected),
+        );
+        await pumpEventQueue();
+        expect(container.read(agentCallProvider).phase, AgentCallPhase.live);
+      }
+
+      test('reconnects on a dropped socket with a fresh offer', () async {
+        await live();
+        tokens.add(() => http.Response(jsonEncode({'stream': _offer}), 201));
+        media.events$.add(
+          const AgentCallMediaEventData(
+            AgentCallMediaEvent.streamLost,
+            code: 1006,
+          ),
+        );
+        await pumpEventQueue();
+        expect(container.read(agentCallProvider).reconnecting, isTrue);
+        expect(tokenReads, 1);
+        expect(
+          media.calls.where((call) => call == 'streamConnect'),
+          hasLength(2),
+        );
+        media.events$.add(
+          const AgentCallMediaEventData(AgentCallMediaEvent.streamResumed),
+        );
+        await pumpEventQueue();
+        final state = container.read(agentCallProvider);
+        expect(state.reconnecting, isFalse);
+        expect(state.phase, AgentCallPhase.live);
+      });
+
+      test('a call the host ended closes the microphone', () async {
+        await live();
+        media.events$.add(
+          const AgentCallMediaEventData(
+            AgentCallMediaEvent.streamLost,
+            code: 1006,
+          ),
+        );
+        await pumpEventQueue();
+        expect(tokenReads, 1);
+        expect(container.read(agentCallProvider).endReason, 'connection_lost');
+        expect(media.calls.last, 'end');
+      });
+
+      test('an input-policy close ends the call without a reconnect', () async {
+        await live();
+        media.events$.add(
+          const AgentCallMediaEventData(
+            AgentCallMediaEvent.streamLost,
+            code: 4008,
+          ),
+        );
+        await pumpEventQueue();
+        expect(tokenReads, 0);
+        expect(container.read(agentCallProvider).endReason, 'media_failed');
+        expect(media.calls.last, 'end');
+      });
+
+      test('a planned handover opens the new socket beside the old', () async {
+        await live();
+        tokens.add(() => http.Response(jsonEncode({'stream': _offer}), 201));
+        media.events$.add(
+          const AgentCallMediaEventData(AgentCallMediaEvent.streamHandover),
+        );
+        await pumpEventQueue();
+        expect(media.calls.last, 'streamConnect:pending');
+      });
     });
 
     test("the host's own provider wins over the settings read", () async {
@@ -314,7 +485,7 @@ void main() {
         expect(state.phase, AgentCallPhase.error);
         expect(state.offersGptLive, isTrue);
         // The microphone closes on the failed start.
-        expect(media.calls, ['begin', 'end']);
+        expect(media.calls, ['beginStream', 'end']);
 
         startAnswer = () => http.Response(
           jsonEncode({'callId': _call, 'sdpAnswer': 'v=0 answer'}),
@@ -323,6 +494,7 @@ void main() {
         await notifier.retryWithGptLive();
         state = container.read(agentCallProvider);
         expect(starts.last['provider'], 'gpt-live');
+        expect(media.calls.last, 'begin');
         expect(state.phase, AgentCallPhase.connecting);
         expect(state.offersGptLive, isFalse);
       },

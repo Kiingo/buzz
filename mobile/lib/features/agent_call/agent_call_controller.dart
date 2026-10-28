@@ -48,6 +48,7 @@ class AgentCallState {
     this.systemCallUI,
     this.voice,
     this.offersGptLive = false,
+    this.reconnecting = false,
   });
 
   final AgentCallPhase phase;
@@ -74,6 +75,9 @@ class AgentCallState {
   /// with GPT-Live.
   final bool offersGptLive;
 
+  /// A live Gemini call whose socket dropped and is coming back.
+  final bool reconnecting;
+
   bool get isBusy =>
       phase == AgentCallPhase.connecting ||
       phase == AgentCallPhase.live ||
@@ -91,6 +95,7 @@ class AgentCallState {
     String? systemCallUI,
     VoiceStartProvider? voice,
     bool? offersGptLive,
+    bool? reconnecting,
   }) => AgentCallState(
     phase: phase ?? this.phase,
     agentPubkey: agentPubkey,
@@ -106,6 +111,7 @@ class AgentCallState {
     systemCallUI: systemCallUI ?? this.systemCallUI,
     voice: voice ?? this.voice,
     offersGptLive: offersGptLive ?? this.offersGptLive,
+    reconnecting: reconnecting ?? this.reconnecting,
   );
 }
 
@@ -162,7 +168,62 @@ const _feedAfterEnd = Duration(seconds: 90);
 const _resumeTimeout = Duration(seconds: 8);
 const _huddleRefusal = 'Leave the huddle first, then call.';
 
+/// A Gemini call's reconnect and handover budgets (as the desktop and the
+/// Kiingo apps): reconnects within 20 s, at most 5 per call, 16 stream-token
+/// reads and 8 planned handovers.
+class _StreamBudget {
+  static const reconnectWindow = Duration(seconds: 20);
+  static const maxReconnects = 5;
+  static const maxTokenReads = 16;
+  static const maxHandovers = 8;
+
+  int reconnects = 0;
+  int tokenReads = 0;
+  int handovers = 0;
+  bool busy = false;
+  Completer<bool>? _resume;
+
+  Future<Map<Object?, Object?>> readToken(
+    Future<Map<Object?, Object?>> Function() read,
+  ) {
+    if (tokenReads >= maxTokenReads) throw const _StreamBudgetSpent();
+    tokenReads++;
+    return read();
+  }
+
+  /// True when the socket comes back before [deadline].
+  Future<bool> waitForResume(DateTime deadline) {
+    final completer = Completer<bool>();
+    _resume = completer;
+    final left = deadline.difference(DateTime.now());
+    Timer(left.isNegative ? Duration.zero : left, () {
+      if (!completer.isCompleted) completer.complete(false);
+    });
+    return completer.future;
+  }
+
+  /// The socket a reconnect opened started ([back]) or dropped too.
+  void settle({required bool back}) {
+    final completer = _resume;
+    _resume = null;
+    if (completer != null && !completer.isCompleted) completer.complete(back);
+  }
+
+  /// The call can't take a stream any more.
+  static bool isFatal(AgentCallApiException error) =>
+      error.status == 401 ||
+      error.status == 403 ||
+      error.status == 404 ||
+      error.code == 'voice_call_not_live' ||
+      error.code == 'voice_provider_mismatch';
+}
+
+class _StreamBudgetSpent implements Exception {
+  const _StreamBudgetSpent();
+}
+
 class AgentCallNotifier extends Notifier<AgentCallState> {
+  _StreamBudget? _stream;
   int _attempt = 0;
   int _feedToken = 0;
   AgentCallApi? _api;
@@ -243,9 +304,23 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
     }
     _api = api;
 
-    AgentCallOffer offer;
+    // A Gemini pick, or a plain tap whose settings said Gemini, starts on
+    // the stream with no offer (the host resolves a plain tap and may still
+    // answer GPT-Live); everything else is today's WebRTC start.
+    final streams =
+        agentCallRunsGeminiStream &&
+        (provider == VoiceProviderId.gemini ||
+            (provider == null && expectedProvider == VoiceProviderId.gemini));
+    String systemCallUI;
+    String? sdpOffer;
     try {
-      offer = await _media.begin(agentName: agentName);
+      if (streams) {
+        systemCallUI = await _media.beginStream(agentName: agentName);
+      } else {
+        final offer = await _media.begin(agentName: agentName);
+        systemCallUI = offer.systemCallUI;
+        sdpOffer = offer.sdp;
+      }
     } on AgentCallMediaException catch (error) {
       if (attempt == _attempt) _fail(_describeMediaError(error.code));
       return;
@@ -260,7 +335,7 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
       _fail(_huddleRefusal);
       return;
     }
-    state = state.copyWith(systemCallUI: offer.systemCallUI);
+    state = state.copyWith(systemCallUI: systemCallUI);
     _later(
       ref.read(agentCallConnectTimeoutProvider),
       () => _onConnectTimeout(attempt),
@@ -268,14 +343,36 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
 
     AgentCallStart started;
     try {
-      started = await api.start(
-        agentPubkey: agentPubkey,
-        channelId: channelId,
-        sdpOffer: offer.sdp,
-        clientTapAt: tapAt,
-        systemCallUI: offer.systemCallUI,
-        provider: provider,
-      );
+      try {
+        started = await api.start(
+          agentPubkey: agentPubkey,
+          channelId: channelId,
+          sdpOffer: sdpOffer,
+          clientTapAt: tapAt,
+          systemCallUI: systemCallUI,
+          provider: provider,
+          streams: streams,
+        );
+      } on AgentCallOfferRequired {
+        // A plain tap the host resolved to GPT-Live: the same call over
+        // WebRTC. Nothing was created on the host.
+        if (attempt != _attempt) return;
+        final offer = await _media.makeOffer();
+        if (attempt != _attempt) return;
+        started = await api.start(
+          agentPubkey: agentPubkey,
+          channelId: channelId,
+          sdpOffer: offer.sdp,
+          clientTapAt: tapAt,
+          systemCallUI: systemCallUI,
+        );
+      }
+    } on AgentCallMediaException catch (error) {
+      if (attempt == _attempt) {
+        unawaited(_media.end());
+        _fail(_describeMediaError(error.code));
+      }
+      return;
     } catch (error) {
       if (attempt == _attempt) {
         unawaited(_media.end());
@@ -300,9 +397,20 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
       voice: _shownVoice(started.provider, provider, expectedProvider),
     );
     _followFeed(api, started.callId);
+    _stream = null;
 
     try {
-      await _media.accept(started.sdpAnswer);
+      final stream = started.stream;
+      if (stream != null) {
+        _stream = _StreamBudget();
+        await _media.streamConnect(
+          offer: stream,
+          callId: started.callId,
+          apiOrigin: api.origin,
+        );
+      } else {
+        await _media.accept(started.sdpAnswer ?? '');
+      }
     } on AgentCallMediaException {
       if (attempt == _attempt) {
         unawaited(_quietEnd(api, started.callId, 'media_failed'));
@@ -422,6 +530,121 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
       case AgentCallMediaEvent.resumed:
         _resumeTimer?.cancel();
         _resumeTimer = null;
+      case AgentCallMediaEvent.streamResumed:
+        _stream?.settle(back: true);
+        if (state.reconnecting) state = state.copyWith(reconnecting: false);
+      case AgentCallMediaEvent.streamLost:
+        if (state.phase == AgentCallPhase.connecting) {
+          final api = _api;
+          final callId = state.callId;
+          if (api != null && callId != null) {
+            unawaited(_quietEnd(api, callId, 'media_failed'));
+          }
+          unawaited(_media.end());
+          _fail("Audio couldn't connect. Check your connection and try again.");
+        } else if (state.phase == AgentCallPhase.live) {
+          // 4008: the host refused this phone's audio; a new socket would be
+          // refused too.
+          final budget = _stream;
+          if (data.code == 4008) {
+            unawaited(_finish('media_failed'));
+          } else if (budget != null && budget.busy) {
+            // The reconnect's own socket dropped: its next try.
+            budget.settle(back: false);
+          } else {
+            unawaited(_reconnectStream());
+          }
+        }
+      case AgentCallMediaEvent.streamHandover:
+        if (state.phase == AgentCallPhase.live) unawaited(_handOverStream());
+      case AgentCallMediaEvent.streamHandoverFailed:
+        // The old socket goes on; if it is gone too, `streamLost` follows.
+        break;
+    }
+  }
+
+  /// A live Gemini call's socket dropped: a fresh offer from stream-token
+  /// and a new socket, within 20 s and the call's budgets, else the call
+  /// ends (the microphone and every socket close).
+  Future<void> _reconnectStream() async {
+    final budget = _stream;
+    final api = _api;
+    final callId = state.callId;
+    if (budget == null || api == null || callId == null || budget.busy) return;
+    final attempt = _attempt;
+    budget.busy = true;
+    state = state.copyWith(reconnecting: true);
+    final deadline = DateTime.now().add(_StreamBudget.reconnectWindow);
+    var tries = 0;
+    try {
+      while (attempt == _attempt && state.phase == AgentCallPhase.live) {
+        if (budget.reconnects >= _StreamBudget.maxReconnects ||
+            !DateTime.now().isBefore(deadline)) {
+          break;
+        }
+        if (tries > 0) {
+          await Future<void>.delayed(
+            Duration(milliseconds: math.min(4000, 500 * (1 << (tries - 1)))),
+          );
+          if (attempt != _attempt) return;
+        }
+        tries++;
+        budget.reconnects++;
+        final Map<Object?, Object?> offer;
+        try {
+          offer = await budget.readToken(() => api.streamToken(callId));
+        } on _StreamBudgetSpent {
+          break;
+        } on AgentCallApiException catch (error) {
+          if (_StreamBudget.isFatal(error)) break;
+          continue;
+        }
+        if (attempt != _attempt) return;
+        final back = budget.waitForResume(deadline);
+        try {
+          await _media.streamConnect(
+            offer: offer,
+            callId: callId,
+            apiOrigin: api.origin,
+          );
+        } on AgentCallMediaException {
+          break;
+        }
+        if (await back) return;
+      }
+      if (attempt == _attempt && state.isBusy) {
+        state = state.copyWith(reconnecting: false);
+        await _finish('connection_lost');
+      }
+    } finally {
+      budget.busy = false;
+      if (attempt == _attempt && state.reconnecting) {
+        state = state.copyWith(reconnecting: false);
+      }
+    }
+  }
+
+  /// The host's planned handover: a new socket beside the old one, which
+  /// keeps playing until the new one starts (make before break).
+  Future<void> _handOverStream() async {
+    final budget = _stream;
+    final api = _api;
+    final callId = state.callId;
+    if (budget == null || api == null || callId == null || budget.busy) return;
+    if (budget.handovers >= _StreamBudget.maxHandovers) return;
+    budget.handovers++;
+    final attempt = _attempt;
+    try {
+      final offer = await budget.readToken(() => api.streamToken(callId));
+      if (attempt != _attempt || state.phase != AgentCallPhase.live) return;
+      await _media.streamConnect(
+        offer: offer,
+        callId: callId,
+        apiOrigin: api.origin,
+        pending: true,
+      );
+    } catch (_) {
+      // Stay on the old socket; if it closes, the reconnect takes over.
     }
   }
 

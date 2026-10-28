@@ -71,6 +71,26 @@ class _FakeMedia implements AgentCallMedia {
 
   @override
   Future<void> end() async => calls.add('end');
+
+  @override
+  Future<String> beginStream({required String agentName}) async {
+    calls.add('beginStream:$agentName');
+    return 'callkit';
+  }
+
+  @override
+  Future<AgentCallOffer> makeOffer() async {
+    calls.add('makeOffer');
+    return const AgentCallOffer(sdp: 'v=0 offer', systemCallUI: 'callkit');
+  }
+
+  @override
+  Future<void> streamConnect({
+    required Map<Object?, Object?> offer,
+    required String callId,
+    required String apiOrigin,
+    bool pending = false,
+  }) async => calls.add(pending ? 'streamConnect:pending' : 'streamConnect');
 }
 
 void main() {

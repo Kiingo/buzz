@@ -153,6 +153,7 @@ class AgentCallButton extends ConsumerWidget {
 
 String _statusLine(AgentCallState call, int seconds) => switch (call.phase) {
   AgentCallPhase.connecting => 'Calling…',
+  AgentCallPhase.live when call.reconnecting => 'Reconnecting…',
   AgentCallPhase.live =>
     '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}',
   AgentCallPhase.ending => 'Hanging up…',

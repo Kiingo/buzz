@@ -26,13 +26,29 @@ enum AgentCallMediaEvent {
 
   /// The audio came back.
   resumed,
+
+  /// A Gemini call's socket came back after a reconnect or a handover.
+  streamResumed,
+
+  /// A Gemini call's socket closed without the call ending (see
+  /// [AgentCallMediaEventData.code]): ask stream-token for a new one.
+  streamLost,
+
+  /// The host asked for a planned handover: open a new socket beside it.
+  streamHandover,
+
+  /// A handover's new socket failed; the old one goes on if it can.
+  streamHandoverFailed,
 }
 
 class AgentCallMediaEventData {
-  const AgentCallMediaEventData(this.event, {this.muted});
+  const AgentCallMediaEventData(this.event, {this.muted, this.code});
 
   final AgentCallMediaEvent event;
   final bool? muted;
+
+  /// A stream socket's close code.
+  final int? code;
 }
 
 class AgentCallOffer {
@@ -60,6 +76,24 @@ abstract interface class AgentCallMedia {
 
   /// Asks for the microphone, starts the system call and returns the offer.
   Future<AgentCallOffer> begin({required String agentName});
+
+  /// A Gemini call: asks for the microphone and starts the system call with
+  /// no WebRTC offer. Returns `callkit` or `in_app`.
+  Future<String> beginStream({required String agentName});
+
+  /// A stream call the host resolved to GPT-Live: the same call goes on
+  /// over WebRTC; returns the offer.
+  Future<AgentCallOffer> makeOffer();
+
+  /// Opens a Gemini stream socket for the host's [offer] (checked natively
+  /// against [callId] and [apiOrigin] first; a refusal throws its code).
+  /// [pending] opens it beside the current one (a planned handover).
+  Future<void> streamConnect({
+    required Map<Object?, Object?> offer,
+    required String callId,
+    required String apiOrigin,
+    bool pending = false,
+  });
 
   Future<void> accept(String sdpAnswer);
 
@@ -93,14 +127,80 @@ final class MethodChannelAgentCallMedia implements AgentCallMedia {
       'muted' => AgentCallMediaEvent.muted,
       'interrupted' => AgentCallMediaEvent.interrupted,
       'resumed' => AgentCallMediaEvent.resumed,
+      'streamResumed' => AgentCallMediaEvent.streamResumed,
+      'streamLost' => AgentCallMediaEvent.streamLost,
+      'streamHandover' => AgentCallMediaEvent.streamHandover,
+      'streamHandoverFailed' => AgentCallMediaEvent.streamHandoverFailed,
       _ => null,
     };
     if (event == null) return null;
     final muted = arguments['muted'];
+    final code = arguments['code'];
     _events.add(
-      AgentCallMediaEventData(event, muted: muted is bool ? muted : null),
+      AgentCallMediaEventData(
+        event,
+        muted: muted is bool ? muted : null,
+        code: code is int ? code : null,
+      ),
     );
     return null;
+  }
+
+  @override
+  Future<String> beginStream({required String agentName}) async {
+    try {
+      final result = await _channel.invokeMapMethod<String, Object?>(
+        'beginStream',
+        {'agentName': agentName},
+      );
+      final ui = result?['systemCallUI'];
+      return ui is String ? ui : 'callkit';
+    } on PlatformException catch (error) {
+      throw AgentCallMediaException(error.code);
+    } on MissingPluginException {
+      throw const AgentCallMediaException('unsupported');
+    }
+  }
+
+  @override
+  Future<AgentCallOffer> makeOffer() async {
+    try {
+      final result = await _channel.invokeMapMethod<String, Object?>(
+        'makeOffer',
+      );
+      final sdp = result?['sdp'];
+      if (sdp is! String || sdp.isEmpty) {
+        throw const AgentCallMediaException('media_failed');
+      }
+      final ui = result?['systemCallUI'];
+      return AgentCallOffer(
+        sdp: sdp,
+        systemCallUI: ui is String ? ui : 'callkit',
+      );
+    } on PlatformException catch (error) {
+      throw AgentCallMediaException(error.code);
+    }
+  }
+
+  @override
+  Future<void> streamConnect({
+    required Map<Object?, Object?> offer,
+    required String callId,
+    required String apiOrigin,
+    bool pending = false,
+  }) async {
+    try {
+      await _channel.invokeMethod<void>('streamConnect', {
+        'offer': offer,
+        'callId': callId,
+        'apiOrigin': apiOrigin,
+        'role': pending ? 'pending' : 'current',
+      });
+    } on PlatformException catch (error) {
+      throw AgentCallMediaException(error.code);
+    } on MissingPluginException {
+      throw const AgentCallMediaException('unsupported');
+    }
   }
 
   @override

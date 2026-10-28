@@ -21,7 +21,12 @@ const agentCallMount = '/api/buzz-voice/ios';
 const _requestTimeout = Duration(seconds: 35);
 
 class AgentCallApiException implements Exception {
-  const AgentCallApiException(this.status, this.code, [this.reason]);
+  const AgentCallApiException(
+    this.status,
+    this.code, [
+    this.reason,
+    this.field,
+  ]);
 
   final int? status;
   final String? code;
@@ -29,8 +34,19 @@ class AgentCallApiException implements Exception {
   /// `details.reason` of `voice_provider_unavailable` (a code, never content).
   final String? reason;
 
+  /// The refused field of an `invalid_request`, when the host names one.
+  final String? field;
+
   @override
   String toString() => 'AgentCallApiException($status, $code)';
+}
+
+/// A start sent without an SDP offer and without a provider (a plain tap
+/// from this app running Gemini's stream) that the host resolved to
+/// GPT-Live, which needs one: a bare `400 invalid_request`. Nothing was
+/// created; the same start goes again with an offer.
+class AgentCallOfferRequired implements Exception {
+  const AgentCallOfferRequired();
 }
 
 class AgentCallStart {
@@ -39,11 +55,19 @@ class AgentCallStart {
     required this.sdpAnswer,
     required this.executeUntil,
     this.provider,
+    this.stream,
   });
 
   final String callId;
-  final String sdpAnswer;
+
+  /// GPT-Live's SDP answer; null for a Gemini call.
+  final String? sdpAnswer;
   final DateTime? executeUntil;
+
+  /// A Gemini call's stream offer, handed unread to the native side, which
+  /// checks it before anything opens. Holds a one-use capability: never
+  /// logged, stored or shown.
+  final Map<Object?, Object?>? stream;
 
   /// Null from a host older than the provider choice.
   final VoiceStartProvider? provider;
@@ -119,7 +143,12 @@ class AgentCallApi {
       final reason = details is Map && details['reason'] is String
           ? details['reason'] as String
           : null;
-      throw AgentCallApiException(status, code, reason);
+      final field = details is Map && details['field'] is String
+          ? details['field'] as String
+          : decoded is Map && decoded['field'] is String
+          ? decoded['field'] as String
+          : null;
+      throw AgentCallApiException(status, code, reason, field);
     }
     return decoded;
   }
@@ -144,36 +173,72 @@ class AgentCallApi {
 
   String _call(String callId) => 'calls/${Uri.encodeComponent(callId)}';
 
+  /// `POST calls`. [sdpOffer] is GPT-Live's; with [streams] the start says
+  /// this app runs Gemini's stream (`clientCapabilities: ['gemini_ws']`),
+  /// and may then go without an offer.
   Future<AgentCallStart> start({
     required String agentPubkey,
     required String channelId,
-    required String sdpOffer,
+    required String? sdpOffer,
     required String clientTapAt,
     required String systemCallUI,
     VoiceProviderId? provider,
+    bool streams = false,
   }) async {
-    final body = await _send('POST', 'calls', {
-      'agentPubkey': agentPubkey,
-      'channelId': channelId,
-      'sdpOffer': sdpOffer,
-      'clientTapAt': clientTapAt,
-      'clientDiagnostics': {'systemCallUI': systemCallUI},
-      // Only a chooser pick: a plain tap lets the host resolve the voice
-      // (the caller's override for this agent, then their default).
-      'provider': ?provider?.wire,
-    });
-    if (body is! Map ||
-        body['callId'] is! String ||
-        body['sdpAnswer'] is! String) {
+    Object? body;
+    try {
+      body = await _send('POST', 'calls', {
+        'agentPubkey': agentPubkey,
+        'channelId': channelId,
+        'sdpOffer': ?sdpOffer,
+        'clientTapAt': clientTapAt,
+        'clientDiagnostics': {'systemCallUI': systemCallUI},
+        // Only a chooser pick: a plain tap lets the host resolve the voice
+        // (the caller's override for this agent, then their default).
+        'provider': ?provider?.wire,
+        if (streams) 'clientCapabilities': const ['gemini_ws'],
+      });
+    } on AgentCallApiException catch (error) {
+      if (sdpOffer == null &&
+          provider == null &&
+          error.status == 400 &&
+          error.code == 'invalid_request' &&
+          error.field == null) {
+        throw const AgentCallOfferRequired();
+      }
+      rethrow;
+    }
+    if (body is! Map || body['callId'] is! String) {
       throw const AgentCallApiException(null, 'response_invalid');
     }
     final until = body['executeUntil'];
+    final stream = body['transport'] == 'gemini_ws' ? body['stream'] : null;
+    final answer = body['sdpAnswer'];
+    if (stream is! Map && (answer is! String || answer.isEmpty)) {
+      throw const AgentCallApiException(null, 'response_invalid');
+    }
     return AgentCallStart(
       callId: body['callId'] as String,
-      sdpAnswer: body['sdpAnswer'] as String,
+      sdpAnswer: stream is Map ? null : answer as String,
       executeUntil: until is String ? DateTime.tryParse(until) : null,
       provider: VoiceStartProvider.tryParse(body['provider']),
+      stream: stream is Map ? stream : null,
     );
+  }
+
+  /// A fresh stream offer for a live Gemini call (a reconnect or a
+  /// handover, §9.4).
+  Future<Map<Object?, Object?>> streamToken(String callId) async {
+    final body = await _send(
+      'POST',
+      '${_call(callId)}/stream-token',
+      const <String, Object?>{},
+    );
+    final stream = body is Map ? body['stream'] : null;
+    if (stream is! Map) {
+      throw const AgentCallApiException(null, 'response_invalid');
+    }
+    return stream;
   }
 
   /// The caller's voice settings for this agent (§9.1), by its key. Null

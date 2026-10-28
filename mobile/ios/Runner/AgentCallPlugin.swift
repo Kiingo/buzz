@@ -31,6 +31,14 @@ enum VoiceAudioSessionOwner {
 ///
 /// The provider is created when the plugin is (at engine start), not at the
 /// first call, mirroring the host's own phone apps.
+///
+/// A Gemini call (`beginStream`) is the same CallKit call with no peer
+/// connection: `AgentCallStream` runs the `kiingo-voice-v1` socket and its
+/// own audio engine, started when the session is active. A plain tap the
+/// host resolves to GPT-Live switches the same call to WebRTC (`makeOffer`).
+/// Every end, failure and system hang-up closes the microphone and every
+/// socket; a stream call still connecting, or running without CallKit, ends
+/// when the app goes to the background.
 @MainActor
 final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDelegate,
   RTCDataChannelDelegate
@@ -56,6 +64,13 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
   private var track: RTCAudioTrack?
   private var connected = false
   private var closed = true
+
+  /// The call runs Gemini's stream instead of WebRTC.
+  private var streamMode = false
+  private var stream: AgentCallStream?
+  /// The audio session is active for the current call (CallKit activated
+  /// it, or the app's own session for an in-app call).
+  private var sessionActive = false
 
   init(messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(name: "buzz/agent_call", binaryMessenger: messenger)
@@ -85,7 +100,14 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     switch call.method {
     case "begin":
       let name = Self.callerName(arguments["agentName"] as? String)
-      Task { @MainActor in await self.begin(agentName: name, result: result) }
+      Task { @MainActor in await self.begin(agentName: name, stream: false, result: result) }
+    case "beginStream":
+      let name = Self.callerName(arguments["agentName"] as? String)
+      Task { @MainActor in await self.begin(agentName: name, stream: true, result: result) }
+    case "makeOffer":
+      Task { @MainActor in await self.switchToWebRTC(result: result) }
+    case "streamConnect":
+      streamConnect(arguments, result: result)
     case "accept":
       guard let sdp = arguments["sdp"] as? String, !sdp.isEmpty else {
         result(FlutterError(code: "invalid_arguments", message: nil, details: nil))
@@ -124,7 +146,7 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
 
   // MARK: Call lifecycle
 
-  private func begin(agentName: String, result: @escaping FlutterResult) async {
+  private func begin(agentName: String, stream: Bool, result: @escaping FlutterResult) async {
     if !closed || callId != nil {
       result(FlutterError(code: "call_in_progress", message: nil, details: nil))
       return
@@ -137,6 +159,8 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     callId = id
     closed = false
     connected = false
+    streamMode = stream
+    sessionActive = false
     VoiceAudioSessionOwner.agentCallActive = true
     let handle = CXHandle(type: .generic, value: agentName)
     let action = CXStartCallAction(call: id, handle: handle)
@@ -158,12 +182,18 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
       log.error(
         "CallKit refused the call: \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)"
       )
-      guard Self.reactivateAudio() else {
+      guard Self.reactivateAudio(webRTC: !stream) else {
         reset()
         result(FlutterError(code: "audio_unavailable", message: nil, details: nil))
         return
       }
       inApp = true
+      sessionActive = true
+    }
+    if stream {
+      // Dart starts the call with no offer; the stream comes back from it.
+      result(["systemCallUI": inApp ? "in_app" : "callkit"])
+      return
     }
     do {
       let sdp = try await makeOffer()
@@ -191,8 +221,89 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     }
   }
 
+  /// A stream start the host resolved to GPT-Live: the same call goes on
+  /// over WebRTC.
+  private func switchToWebRTC(result: @escaping FlutterResult) async {
+    guard callId != nil, !closed, streamMode, connection == nil else {
+      result(FlutterError(code: "no_call", message: nil, details: nil))
+      return
+    }
+    stream?.stop()
+    stream = nil
+    streamMode = false
+    if sessionActive { RTCAudioSession.sharedInstance().isAudioEnabled = true }
+    do {
+      let sdp = try await makeOffer()
+      result(["sdp": sdp, "systemCallUI": inApp ? "in_app" : "callkit"])
+    } catch {
+      await end()
+      result(FlutterError(code: "media_failed", message: nil, details: nil))
+    }
+  }
+
+  /// Opens a stream socket for the host's offer (`role`: `current` or
+  /// `pending`). The offer is checked first; a refusal is its code. The
+  /// API origin is the app's own call routes' origin.
+  private func streamConnect(_ arguments: [String: Any], result: @escaping FlutterResult) {
+    guard let callId, !closed, streamMode,
+      let streamCallId = arguments["callId"] as? String,
+      let origin = arguments["apiOrigin"] as? String
+    else {
+      result(FlutterError(code: "no_call", message: nil, details: nil))
+      return
+    }
+    if stream == nil {
+      let created = AgentCallStream(callId: streamCallId, apiOrigin: origin) {
+        [weak self] type, extra in
+        self?.streamEvent(type, extra)
+      }
+      stream = created
+      if !inApp { provider.reportOutgoingCall(with: callId, startedConnectingAt: Date()) }
+      if sessionActive, !created.audioSessionActivated() {
+        endedRemotely("connectionLost")
+        result(FlutterError(code: "media_failed", message: nil, details: nil))
+        return
+      }
+    }
+    guard let stream, stream.callId == streamCallId else {
+      result(FlutterError(code: "no_call", message: nil, details: nil))
+      return
+    }
+    do {
+      try stream.connect(arguments["offer"], pendingRole: arguments["role"] as? String == "pending")
+      result(nil)
+    } catch let refusal as VoiceStreamRefusal {
+      log.error("stream offer refused: \(refusal.rawValue, privacy: .public)")
+      result(FlutterError(code: refusal.rawValue, message: nil, details: nil))
+    } catch {
+      result(FlutterError(code: "offer_malformed", message: nil, details: nil))
+    }
+  }
+
+  private func streamEvent(_ type: String, _ extra: [String: Any]) {
+    guard !closed else { return }
+    switch type {
+    case "streamStarted":
+      streamConnected()
+    case "streamClosed", "streamReplaced":
+      endedRemotely("remoteClosed")
+    default:
+      // streamResumed, streamLost, streamHandover, streamHandoverFailed:
+      // Dart decides (it reads stream-token for a new socket).
+      emit(type, extra)
+    }
+  }
+
+  private func streamConnected() {
+    guard !closed, !connected, let callId else { return }
+    connected = true
+    if !inApp { provider.reportOutgoingCall(with: callId, connectedAt: Date()) }
+    emit("connected")
+  }
+
   private func setMuted(_ muted: Bool) {
     track?.isEnabled = !muted
+    stream?.setMuted(muted)
     guard let callId, !inApp else { return }
     Task { @MainActor in
       try? await self.request(CXSetMutedCallAction(call: callId, muted: muted))
@@ -242,6 +353,8 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     inApp = false
     connected = false
     closed = true
+    streamMode = false
+    sessionActive = false
     VoiceAudioSessionOwner.agentCallActive = false
   }
 
@@ -285,6 +398,8 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
   }
 
   private func closeMedia() {
+    stream?.stop()
+    stream = nil
     dataChannel?.delegate = nil
     dataChannel?.close()
     connection?.close()
@@ -339,7 +454,22 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
           self.resumeAudio()
         }
       },
+      center.addObserver(
+        forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+      ) { [weak self] _ in
+        MainActor.assumeIsolated { self?.enteredBackground() }
+      },
     ]
+  }
+
+  /// A stream call still connecting, or one running without CallKit (no
+  /// system call keeps it alive), ends in the background: the microphone
+  /// and the socket close. A connected CallKit call goes on, as a GPT-Live
+  /// call does.
+  private func enteredBackground() {
+    guard streamMode, !closed, callId != nil, inApp || !connected else { return }
+    log.notice("stream call ended in the background")
+    endedRemotely("connectionLost")
   }
 
   private func interruption(began: Bool) {
@@ -359,7 +489,14 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     Task { @MainActor [weak self] in
       for _ in 0..<6 {
         guard let self, self.callId == id, self.connected else { return }
-        if Self.reactivateAudio() {
+        if Self.reactivateAudio(webRTC: !self.streamMode) {
+          if let stream = self.stream {
+            stream.audioSessionDeactivated()
+            guard stream.audioSessionActivated() else {
+              self.endedRemotely("connectionLost")
+              return
+            }
+          }
           self.log.notice("audio resumed after interruption")
           self.emit("resumed")
           return
@@ -370,7 +507,9 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     }
   }
 
-  nonisolated static func reactivateAudio() -> Bool {
+  /// Activates the session; `webRTC` also restarts WebRTC's audio unit (a
+  /// stream call has none).
+  nonisolated static func reactivateAudio(webRTC: Bool = true) -> Bool {
     let rtc = RTCAudioSession.sharedInstance()
     rtc.lockForConfiguration()
     defer { rtc.unlockForConfiguration() }
@@ -379,8 +518,10 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     } catch {
       return false
     }
-    rtc.isAudioEnabled = false
-    rtc.isAudioEnabled = true
+    if webRTC {
+      rtc.isAudioEnabled = false
+      rtc.isAudioEnabled = true
+    }
     return true
   }
 
@@ -459,6 +600,7 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     MainActor.assumeIsolated {
       guard self.callId == uuid else { return }
       self.track?.isEnabled = !muted
+      self.stream?.setMuted(muted)
       self.emit("muted", ["muted": muted])
     }
     action.fulfill()
@@ -474,8 +616,17 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     rtc.lockForConfiguration()
     try? rtc.setConfiguration(Self.audioConfiguration())
     rtc.unlockForConfiguration()
-    rtc.isAudioEnabled = true
     MainActor.assumeIsolated {
+      self.sessionActive = true
+      if self.streamMode {
+        // The stream's own engine, not WebRTC's audio unit.
+        if let stream = self.stream, !stream.audioSessionActivated() {
+          self.endedRemotely("connectionLost")
+          return
+        }
+      } else {
+        rtc.isAudioEnabled = true
+      }
       if self.connected { self.emit("resumed") }
     }
   }
@@ -485,6 +636,8 @@ final class AgentCallPlugin: NSObject, CXProviderDelegate, RTCPeerConnectionDele
     rtc.audioSessionDidDeactivate(audioSession)
     rtc.isAudioEnabled = false
     MainActor.assumeIsolated {
+      self.sessionActive = false
+      self.stream?.audioSessionDeactivated()
       if self.connected, !self.closed {
         self.log.notice("audio session deactivated mid-call")
         self.emit("interrupted")
