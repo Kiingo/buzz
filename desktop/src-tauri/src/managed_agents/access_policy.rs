@@ -69,10 +69,16 @@ pub(crate) fn projected_access_with_policy(
 }
 
 /// Guest-turn route baked into internal builds (`BUZZ_BUILD_GUEST_ROUTE_URL`),
-/// or set for development through `BUZZ_DESKTOP_GUEST_ROUTE_URL`.
+/// or set for development through `BUZZ_DESKTOP_GUEST_ROUTE_URL` (debug
+/// builds only: a release build never takes the route, which also names the
+/// voice, summary and remote-signer origins, from its environment).
 pub(crate) fn guest_route_url() -> Option<String> {
-    std::env::var("BUZZ_DESKTOP_GUEST_ROUTE_URL")
-        .ok()
+    let development = if cfg!(debug_assertions) {
+        std::env::var("BUZZ_DESKTOP_GUEST_ROUTE_URL").ok()
+    } else {
+        None
+    };
+    development
         .or_else(|| option_env!("BUZZ_DESKTOP_BUILD_GUEST_ROUTE_URL").map(str::to_string))
         .map(|url| url.trim().to_string())
         .filter(|url| !url.is_empty())

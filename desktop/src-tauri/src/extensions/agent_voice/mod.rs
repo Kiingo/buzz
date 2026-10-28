@@ -87,12 +87,12 @@ fn is_ask_id(value: &str) -> bool {
     true
 }
 
-/// `agentPubkey=<64 hex>` or `agentId=<uuid | default>`: the only query the
-/// settings read takes.
+/// `agentPubkey=<64 hex>`: the only query the settings read takes. The
+/// desktop names the agent by its Buzz key only; the server maps it to the
+/// agent (a raw `agentId` is not relayed).
 fn is_settings_query(query: &str) -> bool {
     match query.split_once('=') {
         Some(("agentPubkey", key)) => key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()),
-        Some(("agentId", id)) => id == "default" || is_uuid(id),
         _ => false,
     }
 }
@@ -340,8 +340,8 @@ mod tests {
             allowed_path("GET", &format!("settings?agentPubkey={key}")),
             Some(format!("settings?agentPubkey={key}"))
         );
-        assert!(allowed_path("GET", &format!("settings?agentId={CALL}")).is_some());
-        assert!(allowed_path("GET", "settings?agentId=default").is_some());
+        assert!(allowed_path("GET", &format!("settings?agentId={CALL}")).is_none());
+        assert!(allowed_path("GET", "settings?agentId=default").is_none());
         assert!(allowed_path("GET", "settings?agentPubkey=abc").is_none());
         assert!(allowed_path("GET", &format!("settings?agentId={CALL}&x=1")).is_none());
         assert!(allowed_path("PUT", &format!("settings?agentId={CALL}")).is_none());
