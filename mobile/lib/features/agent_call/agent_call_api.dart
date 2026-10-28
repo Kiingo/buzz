@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../../shared/guest_access/guest_access_client.dart';
 import '../../shared/relay/relay.dart';
 import 'agent_call_feed.dart';
+import 'voice_provider.dart';
 
 /// The agent host's call routes for this app (`<origin>/api/buzz-voice/ios`),
 /// every request NIP-98 signed by the signed-in user (exact URL with query,
@@ -20,10 +21,13 @@ const agentCallMount = '/api/buzz-voice/ios';
 const _requestTimeout = Duration(seconds: 35);
 
 class AgentCallApiException implements Exception {
-  const AgentCallApiException(this.status, this.code);
+  const AgentCallApiException(this.status, this.code, [this.reason]);
 
   final int? status;
   final String? code;
+
+  /// `details.reason` of `voice_provider_unavailable` (a code, never content).
+  final String? reason;
 
   @override
   String toString() => 'AgentCallApiException($status, $code)';
@@ -34,11 +38,15 @@ class AgentCallStart {
     required this.callId,
     required this.sdpAnswer,
     required this.executeUntil,
+    this.provider,
   });
 
   final String callId;
   final String sdpAnswer;
   final DateTime? executeUntil;
+
+  /// Null from a host older than the provider choice.
+  final VoiceStartProvider? provider;
 }
 
 enum AgentCallStopOutcome { stopped, nothingToStop }
@@ -107,7 +115,11 @@ class AgentCallApi {
       final code = decoded is Map && decoded['error'] is String
           ? decoded['error'] as String
           : null;
-      throw AgentCallApiException(status, code);
+      final details = decoded is Map ? decoded['details'] : null;
+      final reason = details is Map && details['reason'] is String
+          ? details['reason'] as String
+          : null;
+      throw AgentCallApiException(status, code, reason);
     }
     return decoded;
   }
@@ -138,6 +150,7 @@ class AgentCallApi {
     required String sdpOffer,
     required String clientTapAt,
     required String systemCallUI,
+    VoiceProviderId? provider,
   }) async {
     final body = await _send('POST', 'calls', {
       'agentPubkey': agentPubkey,
@@ -145,6 +158,9 @@ class AgentCallApi {
       'sdpOffer': sdpOffer,
       'clientTapAt': clientTapAt,
       'clientDiagnostics': {'systemCallUI': systemCallUI},
+      // Only a chooser pick: a plain tap lets the host resolve the voice
+      // (the caller's override for this agent, then their default).
+      'provider': ?provider?.wire,
     });
     if (body is! Map ||
         body['callId'] is! String ||
@@ -156,8 +172,48 @@ class AgentCallApi {
       callId: body['callId'] as String,
       sdpAnswer: body['sdpAnswer'] as String,
       executeUntil: until is String ? DateTime.tryParse(until) : null,
+      provider: VoiceStartProvider.tryParse(body['provider']),
     );
   }
+
+  /// The caller's voice settings for this agent (§9.1), by its key. Null
+  /// from a host without the settings read (then there's no chooser).
+  Future<VoiceSettings?> voiceSettings(String agentPubkey) async {
+    try {
+      return VoiceSettings.tryParse(
+        await _send(
+          'GET',
+          'settings?agentPubkey=${Uri.encodeQueryComponent(agentPubkey)}',
+        ),
+      );
+    } on AgentCallApiException catch (error) {
+      if (error.status == 404 && error.code == null) return null;
+      rethrow;
+    }
+  }
+
+  /// "Make … my default" (`null` clears it).
+  Future<VoiceSettings?> setVoiceDefault(
+    VoiceProviderId? provider,
+    int expectedRevision,
+  ) async => VoiceSettings.tryParse(
+    await _send('PUT', 'settings', {
+      'defaultProvider': provider?.wire,
+      'expectedRevision': expectedRevision,
+    }),
+  );
+
+  /// "Always use … for this agent" (`null` clears it), by the agent's id.
+  Future<VoiceSettings?> setVoiceOverride(
+    String agentId,
+    VoiceProviderId? provider,
+    int expectedRevision,
+  ) async => VoiceSettings.tryParse(
+    await _send('PUT', 'settings/agents/${Uri.encodeComponent(agentId)}', {
+      'provider': provider?.wire,
+      'expectedRevision': expectedRevision,
+    }),
+  );
 
   Future<void> end(String callId, String reason) async {
     await _send('POST', '${_call(callId)}/end', {'reason': reason});
@@ -265,7 +321,39 @@ String describeAgentCallError(Object error) {
       return "Couldn't reach the call service. Check your connection.";
     case 'nip98_expired':
       return "The call request expired. Check your phone's clock.";
+    case 'voice_provider_unavailable':
+    case 'voice_provider_unsupported':
+      return voiceProviderUnavailableSentence(
+        error is AgentCallApiException ? error.reason : null,
+        'Gemini',
+      );
+    case 'voice_transport_unsupported':
+      return voiceProviderUnavailableSentence('client_transport', 'Gemini');
+    case 'voice_stream_origin_unconfigured':
+      return voiceProviderUnavailableSentence('provider_error', 'Gemini');
   }
   if (status == 401) return "Couldn't sign the call request. Try again.";
   return 'Calls are unavailable right now. Try again.';
+}
+
+/// Codes that mean the chosen voice can't take this call (the screen then
+/// offers the same call with GPT-Live).
+bool isVoiceProviderUnavailable(Object error) {
+  final code = error is AgentCallApiException ? error.code : null;
+  return code == 'voice_provider_unavailable' ||
+      code == 'voice_transport_unsupported' ||
+      code == 'voice_provider_unsupported' ||
+      code == 'voice_stream_origin_unconfigured';
+}
+
+/// One sentence for a failed settings write.
+String describeVoiceSettingsError(Object error) {
+  final code = error is AgentCallApiException ? error.code : null;
+  return switch (code) {
+    'voice_settings_conflict' =>
+      'Your voice choice changed on another device. Showing the latest.',
+    'voice_provider_unsupported' => "That voice isn't one Kiingo offers.",
+    'agent_not_found' => "This isn't an agent you can call.",
+    _ => "Couldn't save your voice choice. Try again.",
+  };
 }

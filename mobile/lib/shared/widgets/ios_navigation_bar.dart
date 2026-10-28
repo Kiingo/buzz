@@ -20,6 +20,7 @@ export 'ios_navigation_metrics.dart';
 class IosNavigationAction {
   const IosNavigationAction({
     required this.label,
+    this.subtitle,
     this.symbol,
     this.icon,
     this.imageUrl,
@@ -36,9 +37,13 @@ class IosNavigationAction {
 
     this.plain = false,
     this.sharesBackground = true,
+    this.menuOnLongPress = false,
   });
 
   final String label;
+
+  /// A menu row's second line (for example why it is unavailable).
+  final String? subtitle;
   final String? symbol;
 
   /// Custom font artwork rendered as a native template image.
@@ -65,9 +70,15 @@ class IosNavigationAction {
   /// Whether this action can share its glass background with adjacent actions.
   final bool sharesBackground;
 
+  /// With [children]: a tap runs [onPressed] and a long press opens the
+  /// menu (otherwise a tap opens the menu). A child that has children of
+  /// its own is drawn as an inline group of its rows.
+  final bool menuOnLongPress;
+
   Map<String, Object?> _encode(String id) => {
     'id': id,
     'label': label,
+    'subtitle': subtitle,
     'symbol': avatarInitial == null ? symbol : null,
     'avatarInitial': avatarInitial,
     'avatarIsAgent': avatarIsAgent,
@@ -82,6 +93,7 @@ class IosNavigationAction {
 
     'plain': plain,
     'sharesBackground': sharesBackground,
+    'menuOnLongPress': menuOnLongPress,
     'children': [
       for (var i = 0; i < children.length; i++) children[i]._encode('$id.$i'),
     ],

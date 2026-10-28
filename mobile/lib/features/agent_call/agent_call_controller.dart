@@ -11,6 +11,7 @@ import '../../shared/relay/relay.dart';
 import 'agent_call_api.dart';
 import 'agent_call_feed.dart';
 import 'agent_call_media.dart';
+import 'voice_provider.dart';
 
 /// The app's one 1:1 agent call (the host allows one per person): the same
 /// voice core and call screen contract as the host's own phone apps. Media
@@ -45,6 +46,8 @@ class AgentCallState {
     this.endReason,
     this.feed,
     this.systemCallUI,
+    this.voice,
+    this.offersGptLive = false,
   });
 
   final AgentCallPhase phase;
@@ -63,6 +66,14 @@ class AgentCallState {
   /// the system call screen.
   final String? systemCallUI;
 
+  /// The voice the host started (its `provider`), for the call screen's
+  /// "Voice: …" line.
+  final VoiceStartProvider? voice;
+
+  /// A Gemini pick that can't run: the error screen offers the same call
+  /// with GPT-Live.
+  final bool offersGptLive;
+
   bool get isBusy =>
       phase == AgentCallPhase.connecting ||
       phase == AgentCallPhase.live ||
@@ -78,6 +89,8 @@ class AgentCallState {
     String? endReason,
     AgentCallFeed? feed,
     String? systemCallUI,
+    VoiceStartProvider? voice,
+    bool? offersGptLive,
   }) => AgentCallState(
     phase: phase ?? this.phase,
     agentPubkey: agentPubkey,
@@ -91,6 +104,8 @@ class AgentCallState {
     endReason: endReason ?? this.endReason,
     feed: feed ?? this.feed,
     systemCallUI: systemCallUI ?? this.systemCallUI,
+    voice: voice ?? this.voice,
+    offersGptLive: offersGptLive ?? this.offersGptLive,
   );
 }
 
@@ -195,11 +210,16 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
     _resumeTimer = null;
   }
 
-  /// Starts a call from the caller's 1:1 DM with the agent.
+  /// Starts a call from the caller's 1:1 DM with the agent. [provider] is
+  /// a chooser pick (sent to the host); with none the host resolves the
+  /// voice. [expectedProvider] is what the last settings read said a plain
+  /// tap would get, for the "Voice: …" line when this app can't run it.
   Future<void> start({
     required String agentPubkey,
     required String channelId,
     required String agentName,
+    VoiceProviderId? provider,
+    VoiceProviderId? expectedProvider,
   }) async {
     if (state.isBusy) return;
     _clearTimers();
@@ -254,11 +274,17 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
         sdpOffer: offer.sdp,
         clientTapAt: tapAt,
         systemCallUI: offer.systemCallUI,
+        provider: provider,
       );
     } catch (error) {
       if (attempt == _attempt) {
         unawaited(_media.end());
-        _fail(describeAgentCallError(error));
+        _fail(
+          describeAgentCallError(error),
+          offersGptLive:
+              provider == VoiceProviderId.gemini &&
+              isVoiceProviderUnavailable(error),
+        );
       }
       return;
     }
@@ -269,7 +295,10 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
       unawaited(_quietEnd(api, started.callId, reason));
       return;
     }
-    state = state.copyWith(callId: started.callId);
+    state = state.copyWith(
+      callId: started.callId,
+      voice: _shownVoice(started.provider, provider, expectedProvider),
+    );
     _followFeed(api, started.callId);
 
     try {
@@ -290,6 +319,48 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
         }
       });
     }
+  }
+
+  /// An inherited Gemini choice this app can't run goes to the host as a
+  /// plain GPT-Live start, which the host answers with no fallback: say so
+  /// (never a silent change of voice). The host's own fallback wins.
+  static VoiceStartProvider? _shownVoice(
+    VoiceStartProvider? started,
+    VoiceProviderId? picked,
+    VoiceProviderId? expected,
+  ) {
+    if (started?.fallbackFrom != null || picked != null) return started;
+    if (expected != VoiceProviderId.gemini || agentCallRunsGeminiStream) {
+      return started;
+    }
+    if (started != null && started.id != VoiceProviderId.gptLive) {
+      return started;
+    }
+    return const VoiceStartProvider(
+      id: VoiceProviderId.gptLive,
+      fallbackFrom: VoiceProviderId.gemini,
+      fallbackReason: 'client_transport',
+    );
+  }
+
+  /// The error screen's "Call with GPT-Live" after a Gemini pick failed.
+  Future<void> retryWithGptLive() async {
+    final agentPubkey = state.agentPubkey;
+    final channelId = state.channelId;
+    final agentName = state.agentName;
+    if (state.isBusy ||
+        !state.offersGptLive ||
+        agentPubkey == null ||
+        channelId == null ||
+        agentName == null) {
+      return;
+    }
+    await start(
+      agentPubkey: agentPubkey,
+      channelId: channelId,
+      agentName: agentName,
+      provider: VoiceProviderId.gptLive,
+    );
   }
 
   /// Still connecting after the timeout: end as `media_failed` and close
@@ -494,11 +565,15 @@ class AgentCallNotifier extends Notifier<AgentCallState> {
     }
   }
 
-  void _fail(String message) {
+  void _fail(String message, {bool offersGptLive = false}) {
     _attempt++;
     _feedToken++;
     _clearTimers();
-    state = state.copyWith(phase: AgentCallPhase.error, error: message);
+    state = state.copyWith(
+      phase: AgentCallPhase.error,
+      error: message,
+      offersGptLive: offersGptLive,
+    );
   }
 
   /// Closes the error or "Call ended" screen.

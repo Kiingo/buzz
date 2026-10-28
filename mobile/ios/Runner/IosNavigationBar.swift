@@ -607,11 +607,21 @@ private final class IosNavigationBarView: NSObject, FlutterPlatformView {
     let id = data["id"] as? String ?? ""
     let enabled = data["enabled"] as? Bool == true
     let symbol = (data["symbol"] as? String).flatMap { NativeTabler.image($0) }
-    return UIAction(title: data["label"] as? String ?? "", image: symbol,
-                    attributes: enabled ? [] : [.disabled],
-                    state: data["selected"] as? Bool == true ? .on : .off) { [weak self] _ in
+    let action = UIAction(title: data["label"] as? String ?? "", image: symbol,
+                          attributes: enabled ? [] : [.disabled],
+                          state: data["selected"] as? Bool == true ? .on : .off) { [weak self] _ in
       self?.channel.invokeMethod("action", arguments: id)
     }
+    action.subtitle = data["subtitle"] as? String
+    return action
+  }
+
+  /// A menu row, or an inline group for a child that has rows of its own.
+  private func makeMenuElement(_ data: [String: Any]) -> UIMenuElement {
+    let children = data["children"] as? [[String: Any]] ?? []
+    guard !children.isEmpty else { return makeAction(data) }
+    return UIMenu(title: data["label"] as? String ?? "", options: .displayInline,
+                  children: children.map(makeMenuElement))
   }
 
   private func makeControlGroup(_ actions: [[String: Any]]) -> UIBarButtonItem {
@@ -646,7 +656,9 @@ private final class IosNavigationBarView: NSObject, FlutterPlatformView {
         if item.image == nil { button.setTitle(item.title, for: .normal) }
         if let action = item.primaryAction { button.addAction(action, for: .touchUpInside) }
         button.menu = item.menu
-        button.showsMenuAsPrimaryAction = item.menu != nil
+        // A tap runs the primary action when there is one; the menu is then
+        // the long press (UIKit's default for a button with both).
+        button.showsMenuAsPrimaryAction = item.menu != nil && item.primaryAction == nil
         button.isEnabled = item.isEnabled
         button.accessibilityLabel = item.accessibilityLabel
         button.accessibilityValue = item.accessibilityValue
@@ -683,10 +695,12 @@ private final class IosNavigationBarView: NSObject, FlutterPlatformView {
   private func makeItem(_ data: [String: Any]) -> UIBarButtonItem {
     let action = makeAction(data)
     let children = data["children"] as? [[String: Any]] ?? []
+    let longPressMenu = data["menuOnLongPress"] as? Bool == true
     let item = children.isEmpty
       ? UIBarButtonItem(primaryAction: action)
-      : UIBarButtonItem(title: action.title, image: action.image, primaryAction: nil,
-                        menu: UIMenu(children: children.map(makeAction)))
+      : UIBarButtonItem(title: action.title, image: action.image,
+                        primaryAction: longPressMenu ? action : nil,
+                        menu: UIMenu(children: children.map(makeMenuElement)))
     if #available(iOS 26.0, *) {
       item.hidesSharedBackground = data["plain"] as? Bool == true
       item.sharesBackground = data["sharesBackground"] as? Bool ?? true

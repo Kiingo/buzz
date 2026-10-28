@@ -10,18 +10,22 @@ import '../../shared/theme/buzz_icons.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/ios_navigation_bar.dart';
 import 'agent_call_api.dart';
+import 'agent_call_chooser.dart';
 import 'agent_call_controller.dart';
 import 'agent_call_feed.dart';
+import 'voice_provider.dart';
 
 /// Starts (or returns to) the call with the agent of a 1:1 DM and shows the
 /// call screen. The host checks that this is the caller's own private DM
-/// with the agent before it answers.
+/// with the agent before it answers. [provider] is a chooser pick; a plain
+/// tap leaves the voice to the host.
 Future<void> openAgentCall(
   BuildContext context,
   WidgetRef ref, {
   required String agentPubkey,
   required String channelId,
   required String agentName,
+  VoiceProviderId? provider,
 }) async {
   final call = ref.read(agentCallProvider);
   final notifier = ref.read(agentCallProvider.notifier);
@@ -35,6 +39,12 @@ Future<void> openAgentCall(
         agentPubkey: agentPubkey,
         channelId: channelId,
         agentName: agentName,
+        provider: provider,
+        expectedProvider: ref
+            .read(agentVoiceSettingsProvider(agentPubkey))
+            .value
+            ?.effective
+            ?.provider,
       ),
     );
   }
@@ -46,25 +56,42 @@ Future<void> openAgentCall(
   );
 }
 
+/// The native bar's Call item: a tap calls, a long press opens the voice
+/// chooser when the host offers more than one voice.
 IosNavigationAction agentCallNavigationAction(
   BuildContext context,
   WidgetRef ref, {
   required String agentPubkey,
   required String channelId,
   required String agentName,
-}) => IosNavigationAction(
-  label: 'Call $agentName',
-  symbol: 'phone',
-  onPressed: () => unawaited(
-    openAgentCall(
-      context,
-      ref,
-      agentPubkey: agentPubkey,
-      channelId: channelId,
-      agentName: agentName,
+}) {
+  final busy = ref.watch(agentCallProvider.select((call) => call.isBusy));
+  final settings = agentVoiceChoices(ref, agentPubkey);
+  return IosNavigationAction(
+    label: 'Call $agentName',
+    symbol: 'phone',
+    menuOnLongPress: true,
+    onPressed: () => unawaited(
+      openAgentCall(
+        context,
+        ref,
+        agentPubkey: agentPubkey,
+        channelId: channelId,
+        agentName: agentName,
+      ),
     ),
-  ),
-);
+    children: settings == null || busy
+        ? const []
+        : agentCallChooserActions(
+            context,
+            ref,
+            settings: settings,
+            agentPubkey: agentPubkey,
+            channelId: channelId,
+            agentName: agentName,
+          ),
+  );
+}
 
 /// The "Call" button in a 1:1 agent DM header. Calls run on iOS only (the
 /// native media is iOS), so elsewhere there is no button.
@@ -88,7 +115,8 @@ class AgentCallButton extends ConsumerWidget {
     final call = ref.watch(agentCallProvider);
     final onThisCall = call.isBusy && call.agentPubkey == agentPubkey;
     final label = onThisCall ? 'Back to the call' : 'Call $agentName';
-    return IconButton(
+    final chooser = !call.isBusy && agentVoiceChoices(ref, agentPubkey) != null;
+    final button = IconButton(
       key: const ValueKey('agent-call-button'),
       color: onThisCall ? context.appColors.success : context.colors.primary,
       tooltip: label,
@@ -102,6 +130,23 @@ class AgentCallButton extends ConsumerWidget {
         ),
       ),
       icon: Icon(Icons.call_outlined, size: 22, semanticLabel: label),
+    );
+    if (!chooser) return button;
+    return Semantics(
+      onLongPressHint: 'Choose the voice',
+      child: GestureDetector(
+        key: const ValueKey('agent-call-chooser'),
+        onLongPress: () => unawaited(
+          showAgentCallChooser(
+            context,
+            ref,
+            agentPubkey: agentPubkey,
+            channelId: channelId,
+            agentName: agentName,
+          ),
+        ),
+        child: button,
+      ),
     );
   }
 }
@@ -176,6 +221,14 @@ class AgentCallScreen extends HookConsumerWidget {
                 ),
               ),
             ),
+            if (voiceProviderLine(call.voice) case final line?)
+              Text(
+                line,
+                key: const ValueKey('agent-call-voice'),
+                style: context.textTheme.bodySmall?.copyWith(
+                  color: context.colors.onSurfaceVariant,
+                ),
+              ),
           ],
         ),
         centerTitle: true,
@@ -184,9 +237,19 @@ class AgentCallScreen extends HookConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.all(Grid.gutter),
           children: [
-            if (call.phase == AgentCallPhase.error)
-              Text(call.error ?? "The call couldn't start.")
-            else ...[
+            if (call.phase == AgentCallPhase.error) ...[
+              Text(call.error ?? "The call couldn't start."),
+              if (call.offersGptLive)
+                Padding(
+                  padding: const EdgeInsets.only(top: Grid.twelve),
+                  child: FilledButton.tonalIcon(
+                    key: const ValueKey('agent-call-gpt-live'),
+                    onPressed: () => unawaited(notifier.retryWithGptLive()),
+                    icon: const Icon(Icons.call_outlined),
+                    label: const Text('Call with GPT-Live'),
+                  ),
+                ),
+            ] else ...[
               if (busy && call.systemCallUI == 'in_app') const _InAppBanner(),
               if (feed?.openQuestion case final question?)
                 _QuestionCard(question: question),
