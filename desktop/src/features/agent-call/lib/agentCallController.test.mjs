@@ -342,3 +342,45 @@ test("a timed-out call the host answers late is ended as media_failed", async ()
   await starting;
   assert.deepEqual(h.log.ends, [{ callId: CALL, reason: "media_failed" }]);
 });
+
+test("a plain tap sends an offer and no provider; an explicit Gemini pick that fails offers GPT-Live", async () => {
+  const h = harness();
+  await h.controller.start({ agentPubkey: AGENT, channelId: CHANNEL });
+  assert.equal(h.log.starts[0].sdpOffer, "v=0 offer");
+  assert.equal(h.log.starts[0].provider, undefined);
+  assert.equal(h.log.starts[0].clientCapabilities, undefined);
+  await h.controller.hangUp();
+  h.controller.dismiss();
+
+  const g = harness();
+  await g.controller.start({
+    agentPubkey: AGENT,
+    channelId: CHANNEL,
+    provider: "gemini",
+  });
+  // This app (no stream support here) can't run Gemini: no call is placed.
+  assert.equal(g.log.starts.length, 0);
+  assert.equal(g.controller.getState().phase, "error");
+  assert.equal(g.controller.getState().error?.kind, "provider_unavailable");
+  assert.equal(g.controller.getState().retryWith, "gpt-live");
+});
+
+test("a refused explicit Gemini start offers GPT-Live", async () => {
+  const h = harness({
+    startCall: async () => {
+      throw new AgentCallApiError(409, "voice_provider_unavailable", "model_grant_missing");
+    },
+  });
+  // Pretend this app can stream, but never reach the stream itself.
+  h.controller.transport.canStream = () => true;
+  await h.controller.start({
+    agentPubkey: AGENT,
+    channelId: CHANNEL,
+    provider: "gemini",
+  });
+  const state = h.controller.getState();
+  assert.equal(state.phase, "error");
+  assert.equal(state.error?.kind, "provider_unavailable");
+  assert.equal(state.error?.message, "Gemini isn’t enabled for your account yet.");
+  assert.equal(state.retryWith, "gpt-live");
+});

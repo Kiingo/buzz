@@ -1,13 +1,33 @@
 import { invokeTauri } from "@/shared/api/tauri";
+import { isMacPlatform } from "@/shared/lib/platform";
 
 import {
   type StartAgentCallResponse,
   describeAgentCallError,
   endAgentCall,
+  getAgentCall,
   getAgentCallFeed,
+  getAgentCallStreamHost,
+  getAgentCallStreamToken,
+  isProviderUnavailableError,
   startAgentCall,
   stopAgentCallWork,
 } from "./agentCallApi";
+import {
+  VOICE_STREAM_CLIENT_CAPABILITY,
+  VOICE_STREAM_MIC_CONSTRAINTS,
+  VoiceStreamPlayback,
+  VoiceStreamSession,
+  canRunVoiceStream,
+  createVoiceStreamAudioContext,
+  parseVoiceStreamOffer,
+  startVoiceStreamCapture,
+  type VoiceProviderId,
+  type VoiceStartProvider,
+  type VoiceStreamCapture,
+  type VoiceStreamOffer,
+  type VoiceStreamSessionEvent,
+} from "./voice-stream";
 import {
   type AgentCallFeed,
   feedWantsMore,
@@ -30,6 +50,13 @@ import {
  * (`GET calls/:id/feed?rev&wait=20`, backing off 1 s → 15 s on errors)
  * instead of a 1.5 s status poll. After hang-up the feed is followed until
  * the recap is written (at most 90 s) and the screen keeps it until closed.
+ *
+ * Voice provider (Kiingo docs/design/voice-provider-neutral.md): GPT-Live
+ * over WebRTC as above, or Gemini over the host's `kiingo-voice-v1` stream
+ * socket (`./voice-stream`, vendored from Kiingo's shared client). The
+ * provider is chosen at call start and fixed for the call; the feed, Stop,
+ * answers and hang-up are the same on both. Gemini runs on macOS only (the
+ * Windows app is frozen): elsewhere `gemini_ws` is never advertised.
  *
  * Hang-up ends the call only. It never cancels the agent's work; its answers
  * land in the DM. Stop does that, through the host's stop control.
@@ -56,7 +83,14 @@ export type AgentCallClientErrorKind =
   | "mic_unavailable"
   | "unsupported"
   | "huddle_active"
+  | "provider_unavailable"
   | "connection_failed";
+
+/** What the call screen says about its voice. */
+export type AgentCallProvider = Pick<
+  VoiceStartProvider,
+  "id" | "source" | "fallbackFrom" | "fallbackReason"
+>;
 
 export type AgentCallEndReason =
   | "hangup"
@@ -85,6 +119,14 @@ export type AgentCallState = {
   muted: boolean;
   stop: AgentCallStopState;
   error: { kind: AgentCallClientErrorKind; message: string } | null;
+  /** The explicit one-tap choice this call was placed with, if any. */
+  requestedProvider: VoiceProviderId | null;
+  /** After a failed explicit pick: the provider the error offers instead. */
+  retryWith: VoiceProviderId | null;
+  /** The call's voice; null before the host answers (or an older host). */
+  provider: AgentCallProvider | null;
+  /** A Gemini stream dropped and is reconnecting. */
+  reconnecting: boolean;
   endReason: AgentCallEndReason | null;
   /** The host's call screen feed (latest snapshot), or null before it. */
   feed: AgentCallFeed | null;
@@ -102,6 +144,10 @@ const IDLE: AgentCallState = {
   muted: false,
   stop: { status: "idle" },
   error: null,
+  requestedProvider: null,
+  retryWith: null,
+  provider: null,
+  reconnecting: false,
   endReason: null,
   feed: null,
 };
@@ -136,6 +182,12 @@ type Transport = {
   isSupported: () => boolean;
   /** Whether a huddle holds (or is taking) the mic in this app. */
   isHuddleActive: () => Promise<boolean>;
+  /** This app runs Gemini's stream transport (macOS only). */
+  canStream: () => boolean;
+  createAudioContext: () => AudioContext | null;
+  getStreamToken: typeof getAgentCallStreamToken;
+  getStreamHost: typeof getAgentCallStreamHost;
+  getCall: typeof getAgentCall;
   connectTimeoutMs: number;
   now: () => number;
 };
@@ -168,6 +220,14 @@ async function webviewHuddleActive(): Promise<boolean> {
   return state.phase !== "idle";
 }
 
+/**
+ * Whether this app may offer and run Gemini calls: macOS only (Windows is
+ * frozen and Linux is untested), with Web Audio worklets and WebSockets.
+ */
+export function canRunAgentCallStream(): boolean {
+  return isMacPlatform() && canRunVoiceStream();
+}
+
 /** Whether this webview can place a call at all (WebRTC and a mic API). */
 export function isAgentCallSupported(): boolean {
   return (
@@ -196,6 +256,11 @@ const webviewTransport = (): Transport => ({
   getFeed: getAgentCallFeed,
   isSupported: isAgentCallSupported,
   isHuddleActive: webviewHuddleActive,
+  canStream: canRunAgentCallStream,
+  createAudioContext: createVoiceStreamAudioContext,
+  getStreamToken: getAgentCallStreamToken,
+  getStreamHost: getAgentCallStreamHost,
+  getCall: getAgentCall,
   connectTimeoutMs: CONNECT_TIMEOUT_MS,
   now: () => Date.now(),
 });
@@ -248,6 +313,10 @@ export class AgentCallController {
   private peer: RTCPeerConnection | null = null;
   private channel: RTCDataChannel | null = null;
   private audio: HTMLAudioElement | null = null;
+  private audioContext: AudioContext | null = null;
+  private streamSession: VoiceStreamSession | null = null;
+  private capture: VoiceStreamCapture | null = null;
+  private playback: VoiceStreamPlayback | null = null;
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** The attempt the connect timeout ended, so its late answer ends as such. */
@@ -257,6 +326,9 @@ export class AgentCallController {
   constructor(transport?: Partial<Transport>) {
     this.transport = {
       connectTimeoutMs: CONNECT_TIMEOUT_MS,
+      // Without a webview (tests), no Gemini stream unless given one.
+      canStream: () => false,
+      createAudioContext: () => null,
       ...(typeof window !== "undefined" ? webviewTransport() : {}),
       ...transport,
     } as Transport;
@@ -302,10 +374,22 @@ export class AgentCallController {
     agentPubkey: string;
     channelId: string;
     agentName?: string | null;
+    /** The one-tap choice (explicit: never changes silently). */
+    provider?: VoiceProviderId | null;
+    /** What a start without a choice is expected to get (settings `effective`). */
+    expectedProvider?: VoiceProviderId | null;
   }) => {
     if (this.isBusy) {
       return;
     }
+    const choice = input.provider ?? null;
+    const canStream = this.transport.canStream();
+    // No choice: the host resolves, with an offer in case it's GPT-Live.
+    const needsOffer = choice !== "gemini";
+    const mayStream =
+      canStream &&
+      (choice === "gemini" ||
+        (choice === null && input.expectedProvider !== "gpt-live"));
     this.clearTimers();
     this.feedToken++;
     const attempt = ++this.attempt;
@@ -316,7 +400,18 @@ export class AgentCallController {
       agentPubkey: input.agentPubkey,
       agentName: input.agentName ?? null,
       channelId: input.channelId,
+      requestedProvider: choice,
     });
+    if (choice === "gemini" && !canStream) {
+      this.fail(
+        {
+          kind: "provider_unavailable",
+          message: "This version of the app can't run Gemini calls.",
+        },
+        "gpt-live",
+      );
+      return;
+    }
     if (!this.transport.isSupported()) {
       this.fail({
         kind: "unsupported",
@@ -327,20 +422,17 @@ export class AgentCallController {
     // Unlock playback inside the gesture; the stream is attached later.
     this.audio = this.transport.createAudioElement();
     void this.audio.play().catch(() => undefined);
+    // Gemini plays through Web Audio: its context starts inside the gesture.
+    if (mayStream) {
+      this.audioContext = this.transport.createAudioContext();
+    }
     if (await this.abandonForHuddle(attempt)) {
       return;
     }
 
     let stream: MediaStream;
     try {
-      stream = await this.transport.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video: false,
-      });
+      stream = await this.transport.getUserMedia(VOICE_STREAM_MIC_CONSTRAINTS);
     } catch (error) {
       if (attempt === this.attempt) {
         this.fail(describeMicError(error));
@@ -364,54 +456,56 @@ export class AgentCallController {
     );
 
     let peer: RTCPeerConnection | null = null;
-    let offerSdp: string;
-    try {
-      peer = this.transport.createPeerConnection();
-      this.peer = peer;
-      for (const track of stream.getAudioTracks()) {
-        peer.addTrack(track, stream);
-      }
-      peer.ontrack = (event) => {
-        if (!this.audio) {
-          return;
+    let offerSdp: string | null = null;
+    if (needsOffer) {
+      try {
+        peer = this.transport.createPeerConnection();
+        this.peer = peer;
+        for (const track of stream.getAudioTracks()) {
+          peer.addTrack(track, stream);
         }
-        this.audio.srcObject =
-          event.streams[0] ?? new MediaStream([event.track]);
-        void this.audio.play().catch(() => undefined);
-      };
-      peer.onconnectionstatechange = () => this.onPeerState(attempt);
-      this.channel = peer.createDataChannel("oai-events");
-      this.channel.onmessage = (event) => this.onChannelMessage(event.data);
-      this.channel.onclose = () => {
-        if (attempt === this.attempt && this.state.phase === "live") {
-          void this.finish("remote");
+        peer.ontrack = (event) => {
+          if (!this.audio) {
+            return;
+          }
+          this.audio.srcObject =
+            event.streams[0] ?? new MediaStream([event.track]);
+          void this.audio.play().catch(() => undefined);
+        };
+        peer.onconnectionstatechange = () => this.onPeerState(attempt);
+        this.channel = peer.createDataChannel("oai-events");
+        this.channel.onmessage = (event) => this.onChannelMessage(event.data);
+        this.channel.onclose = () => {
+          if (attempt === this.attempt && this.state.phase === "live") {
+            void this.finish("remote");
+          }
+        };
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        offerSdp = offer.sdp ?? "";
+        if (!offerSdp) {
+          throw new Error("empty_offer");
         }
-      };
-      const offer = await peer.createOffer();
-      await peer.setLocalDescription(offer);
-      offerSdp = offer.sdp ?? "";
-      if (!offerSdp) {
-        throw new Error("empty_offer");
-      }
-    } catch {
-      if (attempt === this.attempt) {
-        this.fail({
-          kind: "connection_failed",
-          message: "The call couldn't be set up. Try again.",
-        });
-      }
-      return;
-    }
-    if (attempt !== this.attempt) {
-      // Hung up while the offer was made: never ask the host to answer it.
-      if (this.peer !== peer) {
-        try {
-          peer.close();
-        } catch {
-          // Already closed.
+      } catch {
+        if (attempt === this.attempt) {
+          this.fail({
+            kind: "connection_failed",
+            message: "The call couldn't be set up. Try again.",
+          });
         }
+        return;
       }
-      return;
+      if (attempt !== this.attempt) {
+        // Hung up while the offer was made: never ask the host to answer it.
+        if (peer && this.peer !== peer) {
+          try {
+            peer.close();
+          } catch {
+            // Already closed.
+          }
+        }
+        return;
+      }
     }
 
     let response: StartAgentCallResponse;
@@ -419,15 +513,24 @@ export class AgentCallController {
       response = await this.transport.startCall({
         agentPubkey: input.agentPubkey,
         channelId: input.channelId,
-        sdpOffer: offerSdp,
+        ...(offerSdp ? { sdpOffer: offerSdp } : {}),
+        ...(choice ? { provider: choice } : {}),
+        ...(canStream
+          ? { clientCapabilities: [VOICE_STREAM_CLIENT_CAPABILITY] }
+          : {}),
         clientTapAt: tapAt,
       });
     } catch (error) {
       if (attempt === this.attempt) {
-        this.fail({
-          kind: "request_failed",
-          message: describeAgentCallError(error),
-        });
+        const unavailable = isProviderUnavailableError(error);
+        // An explicit pick that fails offers the default (as on the phone).
+        this.fail(
+          {
+            kind: unavailable ? "provider_unavailable" : "request_failed",
+            message: describeAgentCallError(error),
+          },
+          unavailable && choice === "gemini" ? "gpt-live" : null,
+        );
       }
       return;
     }
@@ -441,8 +544,52 @@ export class AgentCallController {
         .catch(() => undefined);
       return;
     }
-    this.set({ callId: response.callId, executeUntil: response.executeUntil });
+    this.set({
+      callId: response.callId,
+      executeUntil: response.executeUntil,
+      provider: response.provider
+        ? {
+            id: response.provider.id,
+            source: response.provider.source,
+            fallbackFrom: response.provider.fallbackFrom,
+            fallbackReason: response.provider.fallbackReason,
+          }
+        : {
+            id: response.transport === "gemini_ws" ? "gemini" : "gpt-live",
+            source: "system",
+            fallbackFrom: null,
+            fallbackReason: null,
+          },
+    });
     this.followFeed(response.callId);
+
+    if (response.transport === "gemini_ws") {
+      if (choice === "gpt-live" || !canStream) {
+        // Never a voice the caller didn't pick, nor one this app can't run.
+        void this.transport
+          .endCall(response.callId, "media_failed")
+          .catch(() => undefined);
+        this.fail({
+          kind: "connection_failed",
+          message: "The call couldn't start with that voice. Try again.",
+        });
+        return;
+      }
+      this.releasePeer();
+      await this.startStream(attempt, response.callId, response.stream);
+      return;
+    }
+    this.closeAudioContext();
+    if (!this.peer) {
+      void this.transport
+        .endCall(response.callId, "media_failed")
+        .catch(() => undefined);
+      this.fail({
+        kind: "connection_failed",
+        message: "The call couldn't be set up. Try again.",
+      });
+      return;
+    }
 
     try {
       await this.peer?.setRemoteDescription({
@@ -463,6 +610,140 @@ export class AgentCallController {
     }
     this.scheduleLimit(attempt, response.executeUntil);
   };
+
+  /** Gemini: the checked offer, capture, playback, then the socket. */
+  private async startStream(attempt: number, callId: string, raw: unknown) {
+    const abandon = (message: string) => {
+      void this.transport
+        .endCall(callId, "media_failed")
+        .catch(() => undefined);
+      this.fail({ kind: "connection_failed", message });
+    };
+    const host = await this.transport.getStreamHost();
+    if (attempt !== this.attempt) {
+      return;
+    }
+    const parse = (value: unknown): VoiceStreamOffer =>
+      parseVoiceStreamOffer(value, {
+        callId,
+        apiHosts: host ? [host] : [],
+      });
+    let offer: VoiceStreamOffer;
+    try {
+      offer = parse(raw);
+    } catch {
+      abandon(
+        "The call's audio link didn't look right, so it wasn't opened. Try again.",
+      );
+      return;
+    }
+    const context = this.audioContext ?? this.transport.createAudioContext();
+    this.audioContext = context;
+    if (!context || !this.stream) {
+      abandon("This version of the app can't play Gemini audio.");
+      return;
+    }
+    void context.resume().catch(() => undefined);
+    const playback = new VoiceStreamPlayback({
+      context,
+      audioElement: this.audio,
+    });
+    this.playback = playback;
+    try {
+      const [capture] = await Promise.all([
+        startVoiceStreamCapture({
+          context,
+          stream: this.stream,
+          onFrame: (pcm) => this.streamSession?.sendAudio(pcm),
+        }),
+        playback.attach(),
+      ]);
+      if (attempt !== this.attempt) {
+        capture.stop();
+        return;
+      }
+      this.capture = capture;
+    } catch {
+      if (attempt === this.attempt) {
+        abandon("The microphone couldn't start for this call. Try again.");
+      }
+      return;
+    }
+    const session = new VoiceStreamSession({
+      offer,
+      refreshOffer: async () =>
+        parse(await this.transport.getStreamToken(callId)),
+      isCallEnded: async () => {
+        const view = await this.transport.getCall(callId);
+        return (
+          Boolean(view) &&
+          typeof view === "object" &&
+          (view as { state?: unknown }).state === "ended"
+        );
+      },
+      onAudio: (pcm) => {
+        playback.enqueue(pcm);
+      },
+      onInterrupted: () => playback.flush(),
+      onEvent: (event) => this.onStreamEvent(attempt, event),
+    });
+    this.streamSession = session;
+    session.setMuted(this.state.muted);
+    await session.start();
+    this.scheduleLimit(attempt, this.state.executeUntil);
+  }
+
+  private onStreamEvent(attempt: number, event: VoiceStreamSessionEvent) {
+    if (attempt !== this.attempt) {
+      return;
+    }
+    switch (event.type) {
+      case "started":
+        if (this.state.phase === "connecting") {
+          if (this.connectTimer) {
+            clearTimeout(this.connectTimer);
+            this.timers.delete(this.connectTimer);
+            this.connectTimer = null;
+          }
+          this.set({ phase: "live", connectedAt: this.transport.now() });
+        }
+        return;
+      case "reconnecting":
+        this.set({ reconnecting: true });
+        return;
+      case "resumed":
+        this.set({ reconnecting: false });
+        return;
+      case "first_audio":
+      case "input_transcript":
+      case "output_transcript":
+        // Captions come from the feed, as on GPT-Live.
+        return;
+      case "ended":
+        if (this.state.phase === "connecting") {
+          if (this.state.callId && event.reason !== "replaced") {
+            void this.transport
+              .endCall(this.state.callId, "media_failed")
+              .catch(() => undefined);
+          }
+          this.fail({
+            kind: "connection_failed",
+            message:
+              "Gemini audio couldn't connect. A firewall or VPN may be blocking calls.",
+          });
+          return;
+        }
+        if (event.reason === "replaced") {
+          // Another device took the call: leave it running there.
+          void this.finish("remote", { hangUp: false });
+          return;
+        }
+        void this.finish(
+          event.reason === "closed" ? "remote" : "connection_lost",
+        );
+        return;
+    }
+  }
 
   /**
    * Refuses the call while a huddle owns the mic, and fails closed when the
@@ -647,6 +928,8 @@ export class AgentCallController {
     for (const track of tracks) {
       track.enabled = !muted;
     }
+    // Gemini: `audio_stream_end`, then no audio until unmuted.
+    this.streamSession?.setMuted(muted);
     this.set({ muted });
   };
 
@@ -712,7 +995,10 @@ export class AgentCallController {
     this.set(IDLE);
   };
 
-  private async finish(reason: AgentCallEndReason) {
+  private async finish(
+    reason: AgentCallEndReason,
+    options?: { hangUp?: boolean },
+  ) {
     if (!this.isBusy) {
       return;
     }
@@ -723,10 +1009,11 @@ export class AgentCallController {
     this.releaseMedia();
     this.set({
       phase: "ending",
+      reconnecting: false,
       endReason: reason,
       endedAt: this.transport.now(),
     });
-    if (callId) {
+    if (callId && options?.hangUp !== false) {
       await this.transport.endCall(callId, reason).catch(() => undefined);
     }
     if (attempt !== this.attempt) {
@@ -746,7 +1033,10 @@ export class AgentCallController {
     }, ENDED_DISMISS_MS);
   }
 
-  private fail(error: { kind: AgentCallClientErrorKind; message: string }) {
+  private fail(
+    error: { kind: AgentCallClientErrorKind; message: string },
+    retryWith: VoiceProviderId | null = null,
+  ) {
     this.attempt++;
     this.feedToken++;
     this.clearTimers();
@@ -754,6 +1044,8 @@ export class AgentCallController {
     this.set({
       phase: "error",
       error,
+      retryWith,
+      reconnecting: false,
       endedAt: this.transport.now(),
     });
   }
@@ -780,11 +1072,37 @@ export class AgentCallController {
     }
   }
 
+  private closeAudioContext() {
+    const context = this.audioContext;
+    this.audioContext = null;
+    if (context && context.state !== "closed") {
+      void context.close().catch(() => undefined);
+    }
+  }
+
   private releaseMedia() {
+    this.streamSession?.close();
+    this.streamSession = null;
+    this.capture?.stop();
+    this.capture = null;
+    this.playback?.close();
+    this.playback = null;
+    this.closeAudioContext();
     if (this.stream) {
       stopTracks(this.stream);
     }
     this.stream = null;
+    this.releasePeer();
+    if (this.audio) {
+      this.audio.pause();
+      this.audio.srcObject = null;
+      this.audio.remove();
+      this.audio = null;
+    }
+  }
+
+  /** The WebRTC side only (a Gemini call keeps the mic and audio element). */
+  private releasePeer() {
     if (this.channel) {
       this.channel.onmessage = null;
       this.channel.onclose = null;
@@ -804,12 +1122,6 @@ export class AgentCallController {
         // Already closed.
       }
       this.peer = null;
-    }
-    if (this.audio) {
-      this.audio.pause();
-      this.audio.srcObject = null;
-      this.audio.remove();
-      this.audio = null;
     }
   }
 }

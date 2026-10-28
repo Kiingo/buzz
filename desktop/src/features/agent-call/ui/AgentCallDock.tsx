@@ -27,6 +27,7 @@ import {
   safeHttpsUrl,
   visibleAsks,
 } from "../lib/agentCallFeed";
+import { voiceProviderLine } from "../lib/voice-stream";
 import {
   formatCallDuration,
   useAgentCall,
@@ -60,9 +61,35 @@ export function AgentCallDock() {
     >
       <CallHeader call={call} />
       {call.phase === "error" ? (
-        <p className="px-3 pb-3 text-sm text-muted-foreground" role="alert">
-          {call.error?.message ?? "The call couldn't start."}
-        </p>
+        <div className="grid gap-2 px-3 pb-3">
+          <p className="text-sm text-muted-foreground" role="alert">
+            {call.error?.message ?? "The call couldn't start."}
+          </p>
+          {call.retryWith && call.agentPubkey && call.channelId ? (
+            <Button
+              className="w-fit"
+              onClick={() => {
+                const { agentPubkey, channelId, agentName, retryWith } = call;
+                if (!agentPubkey || !channelId) return;
+                agentCallController.dismiss();
+                void agentCallController.start({
+                  agentPubkey,
+                  channelId,
+                  agentName,
+                  provider: retryWith,
+                });
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <Phone />
+              {call.retryWith === "gemini"
+                ? "Call with Gemini"
+                : "Call with GPT-Live"}
+            </Button>
+          ) : null}
+        </div>
       ) : (
         <CallBody call={call} />
       )}
@@ -77,7 +104,9 @@ function statusLine(call: AgentCallState, elapsed: number): string {
     case "connecting":
       return "Connecting…";
     case "live":
-      return formatCallDuration(elapsed);
+      return call.reconnecting
+        ? `Reconnecting… · ${formatCallDuration(elapsed)}`
+        : formatCallDuration(elapsed);
     case "ending":
       return "Hanging up…";
     case "ended":
@@ -101,6 +130,11 @@ function CallHeader({ call }: { call: AgentCallState }) {
     call.phase === "requesting_mic" ||
     call.phase === "connecting" ||
     call.phase === "live";
+  // Quiet: only for Gemini or a fallback; a plain GPT-Live call says nothing.
+  const providerLine =
+    call.phase === "error" || call.phase === "ended"
+      ? null
+      : voiceProviderLine(call.provider);
   return (
     <div className="flex items-center gap-2 border-b border-border px-3 py-2">
       <Phone aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -111,6 +145,11 @@ function CallHeader({ call }: { call: AgentCallState }) {
         <p aria-live="polite" className="text-xs text-muted-foreground">
           {statusLine(call, elapsed)}
         </p>
+        {providerLine ? (
+          <p className="truncate text-[11px] text-muted-foreground">
+            {providerLine}
+          </p>
+        ) : null}
       </div>
       {busy ? (
         <>

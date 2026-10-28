@@ -11,7 +11,8 @@
 //!   the SHA-256 of the exact body bytes) signed by the signed-in user, with
 //!   `X-Buzz-Community`, so the key never reaches the webview;
 //! - only the call routes are reachable (start, view, feed long-poll, end,
-//!   stop, answers and the per-ask routes, preferences), nothing else; the
+//!   stop, answers and the per-ask routes, preferences, the voice provider
+//!   settings and a Gemini call's stream-token), nothing else; the
 //!   request URL is parsed once, its normalised path checked, and that same
 //!   URL is signed and sent;
 //! - answers are capped at 2 MiB (declared length first, then while read);
@@ -86,8 +87,19 @@ fn is_ask_id(value: &str) -> bool {
     true
 }
 
+/// `agentPubkey=<64 hex>` or `agentId=<uuid | default>`: the only query the
+/// settings read takes.
+fn is_settings_query(query: &str) -> bool {
+    match query.split_once('=') {
+        Some(("agentPubkey", key)) => key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()),
+        Some(("agentId", id)) => id == "default" || is_uuid(id),
+        _ => false,
+    }
+}
+
 /// The call route `path` (relative to the mount) if it is one this command
-/// may reach, else `None`. The query string is allowed only on the feed.
+/// may reach, else `None`. A query string is allowed only on the feed and
+/// the settings read.
 fn allowed_path(method: &str, path: &str) -> Option<String> {
     let (route, query) = match path.split_once('?') {
         Some((route, query)) => (route, Some(query)),
@@ -100,6 +112,11 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         ["calls"] => post,
         ["calls", "live"] => get,
         ["preferences"] => get || method == "PUT",
+        // Voice provider settings (voice-provider-neutral §9.1).
+        ["settings"] => get || method == "PUT",
+        ["settings", "agents", id] => method == "PUT" && (is_uuid(id) || *id == "default"),
+        // A fresh Gemini stream offer for a reconnect (§9.4).
+        ["calls", id, "stream-token"] => post && is_uuid(id),
         ["calls", id] => get && is_uuid(id),
         ["calls", id, "feed"] => get && is_uuid(id),
         ["calls", id, "end" | "stop" | "focus" | "text" | "caption-corrections"] => {
@@ -124,8 +141,32 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         {
             Some(format!("{route}?{query}"))
         }
+        Some(query) if get && parts.as_slice() == ["settings"] && is_settings_query(query) => {
+            Some(format!("{route}?{query}"))
+        }
         Some(_) => None,
     }
+}
+
+/// `host[:port]` of the call routes' origin: the only host a Gemini stream
+/// offer may send the webview's socket to (the socket itself carries only
+/// its one-use capability subprotocol, never a signature).
+pub(super) fn stream_host(origin: &str) -> Option<String> {
+    let url = url::Url::parse(origin).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
+}
+
+/// The API host a Gemini call's stream may go to (see [`stream_host`]).
+#[tauri::command]
+pub fn agent_voice_stream_host() -> Result<String, String> {
+    voice_origin(voice_url_override(), guest_route_url())
+        .as_deref()
+        .and_then(stream_host)
+        .ok_or_else(|| error(None, "voice_route_unavailable"))
 }
 
 /// `https://host` of the call routes: the override, else the guest route's
@@ -291,6 +332,26 @@ mod tests {
             );
         }
         assert!(allowed_path("PUT", "preferences").is_some());
+        // Voice provider settings and a Gemini stream token.
+        assert!(allowed_path("GET", "settings").is_some());
+        assert!(allowed_path("PUT", "settings").is_some());
+        let key = "a".repeat(64);
+        assert_eq!(
+            allowed_path("GET", &format!("settings?agentPubkey={key}")),
+            Some(format!("settings?agentPubkey={key}"))
+        );
+        assert!(allowed_path("GET", &format!("settings?agentId={CALL}")).is_some());
+        assert!(allowed_path("GET", "settings?agentId=default").is_some());
+        assert!(allowed_path("GET", "settings?agentPubkey=abc").is_none());
+        assert!(allowed_path("GET", &format!("settings?agentId={CALL}&x=1")).is_none());
+        assert!(allowed_path("PUT", &format!("settings?agentId={CALL}")).is_none());
+        assert!(allowed_path("PUT", &format!("settings/agents/{CALL}")).is_some());
+        assert!(allowed_path("PUT", "settings/agents/default").is_some());
+        assert!(allowed_path("PUT", "settings/agents/..").is_none());
+        assert!(allowed_path("GET", &format!("settings/agents/{CALL}")).is_none());
+        assert!(allowed_path("POST", &format!("calls/{CALL}/stream-token")).is_some());
+        assert!(allowed_path("GET", &format!("calls/{CALL}/stream-token")).is_none());
+        assert!(allowed_path("GET", &format!("calls/{CALL}/stream")).is_none());
         // Anything else, another method, a query off the feed, or traversal.
         assert!(allowed_path("GET", "calls").is_none());
         assert!(allowed_path("DELETE", &format!("calls/{CALL}")).is_none());
@@ -334,6 +395,19 @@ mod tests {
                 "https://api.example.com/api/buzz-voice/desktop/calls/{CALL}/feed?rev=a"
             ))
         );
+    }
+
+    #[test]
+    fn the_stream_host_is_the_call_routes_host() {
+        assert_eq!(
+            stream_host("https://API.example.com").as_deref(),
+            Some("api.example.com")
+        );
+        assert_eq!(
+            stream_host("http://127.0.0.1:3000").as_deref(),
+            Some("127.0.0.1:3000")
+        );
+        assert_eq!(stream_host("not a url"), None);
     }
 
     #[test]
