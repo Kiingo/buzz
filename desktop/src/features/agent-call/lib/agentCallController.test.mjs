@@ -368,7 +368,11 @@ test("a plain tap sends an offer and no provider; an explicit Gemini pick that f
 test("a refused explicit Gemini start offers GPT-Live", async () => {
   const h = harness({
     startCall: async () => {
-      throw new AgentCallApiError(409, "voice_provider_unavailable", "model_grant_missing");
+      throw new AgentCallApiError(
+        409,
+        "voice_provider_unavailable",
+        "model_grant_missing",
+      );
     },
   });
   // Pretend this app can stream, but never reach the stream itself.
@@ -381,6 +385,9 @@ test("a refused explicit Gemini start offers GPT-Live", async () => {
   const state = h.controller.getState();
   assert.equal(state.phase, "error");
   assert.equal(state.error?.kind, "provider_unavailable");
-  assert.equal(state.error?.message, "Gemini isn’t enabled for your account yet.");
+  assert.equal(
+    state.error?.message,
+    "Gemini isn’t enabled for your account yet.",
+  );
   assert.equal(state.retryWith, "gpt-live");
 });
