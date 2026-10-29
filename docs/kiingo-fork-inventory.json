@@ -1068,6 +1068,7 @@
       "paths": [
         "crates/buzz-acp/src/agent_guards.rs",
         "crates/buzz-acp/src/dm_addressing.rs",
+        "crates/buzz-acp/src/edit_routing.rs",
         "crates/buzz-acp/src/guest_route.rs",
         "crates/buzz-acp/src/guest_runtime.rs",
         "crates/buzz-acp/src/guest_runtime_tests.rs",
