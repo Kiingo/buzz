@@ -31,8 +31,7 @@ const BUILD_UNIX_TIME: &str = env!("BUZZ_DESKTOP_BUILD_UNIX_TIME");
 /// The updater's version comparator: true only for a release that passes
 /// both checks above.
 pub(crate) fn accept_update(current: semver::Version, release: RemoteRelease) -> bool {
-    let build_time = BUILD_UNIX_TIME.parse::<u64>().ok().filter(|time| *time > 0);
-    match update_refusal(&current, &release, build_time) {
+    match update_refusal(&current, &release, build_time()) {
         None => true,
         Some(reason) => {
             tracing::warn!(
@@ -47,26 +46,58 @@ pub(crate) fn accept_update(current: semver::Version, release: RemoteRelease) ->
     }
 }
 
+/// The same two checks on an `Update` the plugin produced, applied again by
+/// the app's own updater commands before they hand it to the webview,
+/// download it or install it, so no caller can skip the comparator.
+pub(crate) fn update_refusal_for(update: &tauri_plugin_updater::Update) -> Option<String> {
+    let current = match semver::Version::parse(&update.current_version) {
+        Ok(current) => current,
+        Err(error) => return Some(format!("running version is not semver: {error}")),
+    };
+    let offered = match semver::Version::parse(update.version.trim_start_matches('v')) {
+        Ok(offered) => offered,
+        Err(error) => return Some(format!("offered version is not semver: {error}")),
+    };
+    refusal(
+        &current,
+        &offered,
+        &[update.signature.as_str()],
+        build_time(),
+    )
+}
+
+fn build_time() -> Option<u64> {
+    BUILD_UNIX_TIME.parse::<u64>().ok().filter(|time| *time > 0)
+}
+
 fn update_refusal(
     current: &semver::Version,
     release: &RemoteRelease,
     build_time: Option<u64>,
 ) -> Option<String> {
-    if release.version <= *current {
-        return Some(format!(
-            "feed version {} is not newer than the running {current}",
-            release.version
-        ));
-    }
-    let Some(build_time) = build_time else {
-        return Some("this build has no compile time to compare signatures with".to_string());
-    };
     let signatures: Vec<&str> = match &release.data {
         RemoteReleaseInner::Dynamic(platform) => vec![platform.signature.as_str()],
         RemoteReleaseInner::Static { platforms } => platforms
             .values()
             .map(|platform| platform.signature.as_str())
             .collect(),
+    };
+    refusal(current, &release.version, &signatures, build_time)
+}
+
+fn refusal(
+    current: &semver::Version,
+    offered: &semver::Version,
+    signatures: &[&str],
+    build_time: Option<u64>,
+) -> Option<String> {
+    if offered <= current {
+        return Some(format!(
+            "feed version {offered} is not newer than the running {current}"
+        ));
+    }
+    let Some(build_time) = build_time else {
+        return Some("this build has no compile time to compare signatures with".to_string());
     };
     if signatures.is_empty() {
         return Some("feed lists no signed platform".to_string());
@@ -76,9 +107,8 @@ fn update_refusal(
             Some(signed) if signed > build_time => {}
             Some(signed) => {
                 return Some(format!(
-                    "archive for {} was signed at {signed}, not after this build ({build_time}); \
-                     an older release relabelled as newer",
-                    release.version
+                    "archive for {offered} was signed at {signed}, not after this build \
+                     ({build_time}); an older release relabelled as newer"
                 ))
             }
             None => return Some("a platform signature has no signed timestamp".to_string()),

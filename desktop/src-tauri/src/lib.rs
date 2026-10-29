@@ -255,6 +255,7 @@ pub fn run() {
         })
         .manage(build_app_state())
         .manage(ClipboardState::new())
+        .manage(commands::GuardedUpdates::default())
         .manage(PendingCommunityDeepLinks::default())
         .manage(PendingNavigationDeepLinks::default())
         .manage(PendingEntityDeepLinks::default())
@@ -937,6 +938,10 @@ pub fn run() {
             archive::sync::start_archive_sync,
             archive::sync::stop_archive_sync,
             is_auto_update_supported,
+            updater_check,
+            updater_download,
+            updater_install,
+            updater_close,
             set_window_vibrancy,
             #[cfg(target_os = "macos")]
             tray_menu::clear_tray_agent_activity,

@@ -7736,15 +7736,6 @@ async function handleSetChannelPurpose(
   });
 }
 
-type MockUpdaterChannel = {
-  onmessage?: (event: { event: "Finished" }) => void;
-};
-
-function notifyUpdaterFinished(payload: unknown) {
-  const channel = (payload as { onEvent?: MockUpdaterChannel } | null)?.onEvent;
-  channel?.onmessage?.({ event: "Finished" });
-}
-
 function handleUpdaterCheck(config: E2eConfig | undefined) {
   if (!config?.mock?.updateAvailable) {
     return null;
@@ -7753,27 +7744,20 @@ function handleUpdaterCheck(config: E2eConfig | undefined) {
   const version = config.mock.updateVersion ?? "0.3.18";
 
   return {
-    rid: 42,
+    id: 42,
     currentVersion: "0.3.17",
     version,
-    date: "2026-06-12T00:00:00Z",
-    body: `Mock update ${version}`,
-    rawJson: null,
   };
 }
 
-async function handleUpdaterDownload(
-  payload: unknown,
-  config: E2eConfig | undefined,
-) {
+async function handleUpdaterDownload(config: E2eConfig | undefined) {
   const delayMs = config?.mock?.updateDownloadDelayMs ?? 0;
 
   if (delayMs > 0) {
     await new Promise((resolve) => window.setTimeout(resolve, delayMs));
   }
 
-  notifyUpdaterFinished(payload);
-  return 43;
+  return null;
 }
 
 function handleUpdaterInstall() {
@@ -14799,12 +14783,14 @@ export function maybeInstallE2eTauriMocks() {
       case "plugin:window|set_badge_count":
       case "plugin:window|set_badge_label":
         return null;
-      case "plugin:updater|check":
+      case "updater_check":
         return handleUpdaterCheck(activeConfig);
-      case "plugin:updater|download":
-        return handleUpdaterDownload(payload, activeConfig);
-      case "plugin:updater|install":
+      case "updater_download":
+        return handleUpdaterDownload(activeConfig);
+      case "updater_install":
         return handleUpdaterInstall();
+      case "updater_close":
+        return null;
       case "is_auto_update_supported":
         // Default true so all existing tests continue to use the auto-update
         // path. Set mock.autoUpdateSupported: false to simulate a .deb install.

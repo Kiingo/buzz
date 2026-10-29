@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { isAutoUpdateSupported } from "@/shared/api/tauri";
+import { checkForGuardedUpdate, type GuardedUpdate } from "./guardedUpdater";
 import { freshestDownloadedUpdate } from "./updaterFreshness";
 
 export type UpdateStatus =
@@ -55,7 +55,7 @@ function initialUpdateStatus(): UpdateStatus {
 export function useUpdater() {
   const [status, setStatusState] = useState<UpdateStatus>(initialUpdateStatus);
   const statusRef = useRef<UpdateStatus>(initialUpdateStatus());
-  const updateRef = useRef<Update | null>(null);
+  const updateRef = useRef<GuardedUpdate | null>(null);
   const checkInFlightRef = useRef(false);
   const downloadInFlightRef = useRef(false);
   const installInFlightRef = useRef(false);
@@ -114,7 +114,7 @@ export function useUpdater() {
       // A parked download can be superseded by newer releases; install the
       // feed's newest instead of a stale download.
       const update = await freshestDownloadedUpdate(parked, {
-        check: () => check({ headers: { "Cache-Control": "no-cache" } }),
+        check: checkForGuardedUpdate,
         onDownloading: () => setStatus({ state: "downloading" }),
       });
       updateRef.current = update;
@@ -153,9 +153,7 @@ export function useUpdater() {
           setStatus({ state: "checking" });
         }
 
-        const update = await check({
-          headers: { "Cache-Control": "no-cache" },
-        });
+        const update = await checkForGuardedUpdate();
         const shouldShowQuietResult =
           !background || manualResultRequestedRef.current;
 

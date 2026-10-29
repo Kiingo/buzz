@@ -715,7 +715,7 @@ test("shows a sidebar update card when an update is ready", async ({
             }
           ).__BUZZ_E2E_COMMANDS__ ?? [];
         return (
-          commands.includes("plugin:updater|install") ||
+          commands.includes("updater_install") ||
           commands.includes("plugin:process|restart")
         );
       }),
@@ -746,8 +746,8 @@ test("shows a sidebar update card when an update is ready", async ({
     )
     .toEqual(
       expect.arrayContaining([
-        "plugin:updater|download",
-        "plugin:updater|install",
+        "updater_download",
+        "updater_install",
         "plugin:process|restart",
       ]),
     );
@@ -760,10 +760,10 @@ test("shows a sidebar update card when an update is ready", async ({
         }
       ).__BUZZ_E2E_COMMANDS__ ?? [],
   );
-  expect(commands.indexOf("plugin:updater|download")).toBeLessThan(
-    commands.indexOf("plugin:updater|install"),
+  expect(commands.indexOf("updater_download")).toBeLessThan(
+    commands.indexOf("updater_install"),
   );
-  expect(commands.indexOf("plugin:updater|install")).toBeLessThan(
+  expect(commands.indexOf("updater_install")).toBeLessThan(
     commands.indexOf("plugin:process|restart"),
   );
 });
@@ -875,6 +875,6 @@ test("shows manual-required update card and never auto-downloads on non-AppImage
         }
       ).__BUZZ_E2E_COMMANDS__ ?? [],
   );
-  expect(commands).not.toContain("plugin:updater|download");
-  expect(commands).not.toContain("plugin:updater|install");
+  expect(commands).not.toContain("updater_download");
+  expect(commands).not.toContain("updater_install");
 });
