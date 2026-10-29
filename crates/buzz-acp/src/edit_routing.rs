@@ -46,6 +46,68 @@ where
     QueryFut: std::future::Future<Output = Result<serde_json::Value, RelayError>>,
 {
     let target_event_id = edit_target_id(event)?;
+    let original = fetch_original_with(event, channel_id, query).await?;
+    Some(ResolvedEdit {
+        target_event_id,
+        target_thread_tags: parse_thread_tags(&original),
+    })
+}
+
+/// What an edit's original message is, for the trust boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EditOrigin {
+    /// Not an edit.
+    NotEdit,
+    /// The original was fetched, verified, and is an ordinary message.
+    Plain,
+    /// The original is a quiet marker or a relayed person post: words
+    /// relayed for someone else, so its edit is never a prompt from the
+    /// signer (79 M-1, 2026-10-28).
+    Marker,
+    /// The original could not be fetched and verified.
+    Unknown,
+}
+
+/// Classify the original of `event` if it is an edit (one bounded lookup).
+pub(crate) async fn edit_origin(event: &Event, channel_id: Uuid, rest: &RestClient) -> EditOrigin {
+    edit_origin_with(event, channel_id, |filters| async move {
+        rest.query(&filters).await
+    })
+    .await
+}
+
+pub(crate) async fn edit_origin_with<Query, QueryFut>(
+    event: &Event,
+    channel_id: Uuid,
+    query: Query,
+) -> EditOrigin
+where
+    Query: FnOnce(Vec<Filter>) -> QueryFut,
+    QueryFut: std::future::Future<Output = Result<serde_json::Value, RelayError>>,
+{
+    if edit_target_id(event).is_none() {
+        return EditOrigin::NotEdit;
+    }
+    match fetch_original_with(event, channel_id, query).await {
+        Some(original) if crate::agent_dm_markers::is_quiet_agent_dm_marker_event(&original) => {
+            EditOrigin::Marker
+        }
+        Some(_) => EditOrigin::Plain,
+        None => EditOrigin::Unknown,
+    }
+}
+
+/// The verified original message an edit targets, or `None`.
+async fn fetch_original_with<Query, QueryFut>(
+    event: &Event,
+    channel_id: Uuid,
+    query: Query,
+) -> Option<Event>
+where
+    Query: FnOnce(Vec<Filter>) -> QueryFut,
+    QueryFut: std::future::Future<Output = Result<serde_json::Value, RelayError>>,
+{
+    let target_event_id = edit_target_id(event)?;
     let target_id = EventId::from_hex(&target_event_id).ok()?;
     let channel = channel_id.to_string();
     // Kinds and channel are explicit: the relay's read gate requires scoped
@@ -76,12 +138,7 @@ where
         return None;
     };
     match serde_json::from_value::<Event>(raw.clone()) {
-        Ok(original) if original.id == target_id && original.verify().is_ok() => {
-            Some(ResolvedEdit {
-                target_event_id,
-                target_thread_tags: parse_thread_tags(&original),
-            })
-        }
+        Ok(original) if original.id == target_id && original.verify().is_ok() => Some(original),
         Ok(_) => {
             tracing::warn!(edit_event_id = %event.id, target_event_id, "edit routing: original event failed id/signature verification");
             None
@@ -167,6 +224,47 @@ mod tests {
             )
             .await;
         assert!(resolved.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_edit_of_a_relayed_post_or_marker_is_a_marker_edit() {
+        let keys = nostr::Keys::generate();
+        let relayed = nostr::EventBuilder::new(
+            nostr::Kind::Custom(buzz_core::kind::KIND_STREAM_MESSAGE as u16),
+            "relayed words",
+        )
+        .tags([
+            nostr::Tag::parse(["buzz-mirror", "tasks", "t1", "1"]).unwrap(),
+            nostr::Tag::parse(["buzz-mirror-author", "requester", "", ""]).unwrap(),
+        ])
+        .sign_with_keys(&keys)
+        .unwrap();
+        let edit = edit_event(&relayed.id.to_hex(), &[]);
+        let returned = relayed.clone();
+        let origin = edit_origin_with(
+            &edit,
+            Uuid::new_v4(),
+            |_| async move { Ok(json!([returned])) },
+        )
+        .await;
+        assert_eq!(origin, EditOrigin::Marker);
+
+        let plain = message(None);
+        let edit = edit_event(&plain.id.to_hex(), &[]);
+        let origin =
+            edit_origin_with(&edit, Uuid::new_v4(), |_| async move { Ok(json!([plain])) }).await;
+        assert_eq!(origin, EditOrigin::Plain);
+
+        let edit = edit_event(&"ab".repeat(32), &[]);
+        let origin =
+            edit_origin_with(&edit, Uuid::new_v4(), |_| async move { Ok(json!([])) }).await;
+        assert_eq!(origin, EditOrigin::Unknown);
+
+        let origin = edit_origin_with(&message(None), Uuid::new_v4(), |_| async {
+            panic!("ordinary events must not query the relay")
+        })
+        .await;
+        assert_eq!(origin, EditOrigin::NotEdit);
     }
 
     #[tokio::test]

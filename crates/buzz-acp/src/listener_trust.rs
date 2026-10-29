@@ -45,9 +45,6 @@ pub(crate) struct LocalAdmission {
     pub(crate) lane: TrustLane,
     /// A structured wake: no lifecycle reactions, never steered.
     pub(crate) is_invocation: bool,
-    /// A relayed person post: it queues its own turn and never steers or
-    /// interrupts a running one.
-    pub(crate) never_steers: bool,
 }
 
 fn is_invocation_event(event: &nostr::Event) -> bool {
@@ -114,6 +111,12 @@ pub(crate) fn non_prompt_event(event: &nostr::Event) -> Option<&'static str> {
         return Some("quiet agent DM marker");
     }
     None
+}
+
+/// Whether an event may go on under `decision`: a relayed person post only
+/// to the hosted guest route, never to a local turn (79 M-2).
+pub(crate) fn relayed_post_admissible(relayed: bool, decision: &GateDecision) -> bool {
+    !relayed || matches!(decision, GateDecision::Route(_))
 }
 
 /// Whether `event` is a relayed person post (see [`non_prompt_event`]).
@@ -237,6 +240,38 @@ pub(crate) async fn admit(
         );
         return None;
     }
+    // An edit takes its trust from what it edits (79 M-1): an edit of a
+    // relayed person post or a quiet marker is never a prompt from its
+    // signer, who may be the owner's own agent. Fail closed when the
+    // original cannot be fetched and verified, except for the owner (who
+    // never signs relayed words).
+    if buzz_event.event.kind.as_u16() as u32 == buzz_core::kind::KIND_STREAM_MESSAGE_EDIT {
+        let origin = crate::edit_routing::edit_origin(
+            &buzz_event.event,
+            buzz_event.channel_id,
+            &ctx.rest_client,
+        )
+        .await;
+        let from_owner = env
+            .owner_cache
+            .get()
+            .is_some_and(|owner| owner.eq_ignore_ascii_case(&buzz_event.event.pubkey.to_hex()));
+        let drop = match origin {
+            crate::edit_routing::EditOrigin::Marker => true,
+            crate::edit_routing::EditOrigin::Unknown => !from_owner,
+            crate::edit_routing::EditOrigin::Plain | crate::edit_routing::EditOrigin::NotEdit => {
+                false
+            }
+        };
+        if drop {
+            tracing::info!(
+                channel_id = %buzz_event.channel_id,
+                origin = ?origin,
+                "edit of a relayed post, a quiet marker or an unverifiable original — dropping"
+            );
+            return None;
+        }
+    }
     let screen = gate
         .screen_listener_event(
             buzz_event,
@@ -271,6 +306,18 @@ pub(crate) async fn admit(
             trust::decide(mode, &config.respond_to, tier, allowed)
         }
     };
+    // A relayed person post only ever reaches the hosted guest route (79
+    // M-2): a local turn (legacy local guest mode, a structured wake) would
+    // see its tags and slash text raw, share a lane with the signer's own
+    // traffic, and miss the Kiingo fan-out check.
+    if !relayed_post_admissible(relayed, &decision) {
+        tracing::info!(
+            channel_id = %screen.event().channel_id,
+            raw_author = %screen.event().event.pubkey.to_hex(),
+            "relayed person post outside the hosted guest route — dropping"
+        );
+        return None;
+    }
     if decision == GateDecision::Drop {
         // INFO, not debug: under owner-only fleets a dropped event is the
         // whole story of "the agent never answered".
@@ -376,7 +423,6 @@ pub(crate) async fn admit(
                 ingress,
                 lane: tier.lane(),
                 is_invocation,
-                never_steers: relayed,
             })
         }
     }
@@ -704,6 +750,19 @@ mod tests {
                 .sign_with_keys(&agent)
                 .unwrap()
         };
+        let guest = trust::TrustTier::Guest {
+            requester: agent_hex.clone(),
+        };
+        assert!(relayed_post_admissible(
+            true,
+            &GateDecision::Route(guest.clone())
+        ));
+        assert!(!relayed_post_admissible(
+            true,
+            &GateDecision::Local(guest.clone())
+        ));
+        assert!(!relayed_post_admissible(true, &GateDecision::Drop));
+        assert!(relayed_post_admissible(false, &GateDecision::Local(guest)));
         assert_eq!(non_prompt_event(&relayed(9)), None);
         assert!(is_relayed_person_post(&relayed(9)));
         assert_eq!(

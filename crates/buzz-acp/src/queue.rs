@@ -1667,8 +1667,22 @@ pub(crate) fn format_event_block_for_owner(
         },
     );
 
-    // Always include tags — they carry structural information.
-    let tags_json: Vec<&[String]> = be.event.tags.iter().map(|t| t.as_slice()).collect();
+    // Always include tags — they carry structural information. A relayed
+    // person post shows only its structural tags (room, thread, mentions):
+    // anything else on it is the relaying key's, outside the untrusted
+    // wrapper (79 LOW-2).
+    let relayed = crate::listener_trust::is_relayed_person_post(&be.event);
+    let tags_json: Vec<&[String]> = be
+        .event
+        .tags
+        .iter()
+        .map(|t| t.as_slice())
+        .filter(|t| {
+            !relayed
+                || t.first()
+                    .is_some_and(|name| matches!(name.as_str(), "h" | "e" | "p"))
+        })
+        .collect();
     if let Ok(tags_str) = serde_json::to_string(&tags_json) {
         block.push_str(&format!("\nTags: {tags_str}"));
     }

@@ -290,7 +290,7 @@ fn is_git_crud(c: char) -> bool {
 /// `DerivedGeneralCategory.txt` (17.0.0) and independently cross-checked against
 /// Python's `unicodedata` (16.0.0); both yield exactly these 21 ranges. Inlined
 /// rather than taking a Unicode-tables dependency for one predicate.
-fn is_unicode_format(c: char) -> bool {
+pub(crate) fn is_unicode_format(c: char) -> bool {
     matches!(c,
         '\u{00AD}'
         | '\u{0600}'..='\u{0605}'

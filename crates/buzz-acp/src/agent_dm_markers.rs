@@ -59,6 +59,10 @@ pub(crate) struct RelayedPersonMirror {
     pub(crate) claimed_author: Option<String>,
 }
 
+/// The longest fourth element a relayed post's `buzz-mirror-author` tag may
+/// carry (Kiingo writes it empty); anything longer is not a relayed post.
+const RELAYED_AUTHOR_NOTE_MAX_CHARS: usize = 64;
+
 /// Kiingo card tags (call record, council result) that never ride a relayed
 /// person post (Kiingo `buzz-mirror/markers.ts`).
 const KIINGO_CARD_TAGS: [&str; 2] = ["buzz-call", "buzz-council"];
@@ -114,6 +118,7 @@ pub(crate) fn relayed_person_mirror(event: &nostr::Event) -> Option<RelayedPerso
         || !original_at.bytes().all(|b| b.is_ascii_digit())
         || author.len() != 4
         || author[1] != "requester"
+        || author[3].chars().count() > RELAYED_AUTHOR_NOTE_MAX_CHARS
     {
         return None;
     }

@@ -3714,6 +3714,25 @@ async fn run_harness(
                                 tracing::debug!(channel_id = %buzz_event.channel_id, "dropping {reason}");
                                 continue;
                             }
+                            // Relayed text is never a control command, whoever
+                            // signed it (79 LOW-1): checked before !shutdown,
+                            // !cancel and !rotate read the signer as the owner.
+                            if listener_trust::is_relayed_person_post(&buzz_event.event)
+                                && ["!shutdown", "!cancel", "!rotate"].iter().any(|command| {
+                                    is_owner_control_command(
+                                        &buzz_event.event,
+                                        kind_u32,
+                                        command,
+                                        &pubkey_hex,
+                                    )
+                                })
+                            {
+                                tracing::debug!(
+                                    channel_id = %buzz_event.channel_id,
+                                    "relayed person post carrying a control command — dropping"
+                                );
+                                continue;
+                            }
 
                             // Check: kind:9, content "!shutdown", from owner, mentions THIS agent.
                             let is_shutdown = is_owner_control_command(
@@ -3877,7 +3896,6 @@ async fn run_harness(
                                 ingress,
                                 lane,
                                 is_invocation,
-                                never_steers,
                             }) = listener_trust::admit(
                                 &mut author_gate_ctx,
                                 buzz_event,
@@ -3928,17 +3946,14 @@ async fn run_harness(
                                 // Event is already queued. The authorized ingress
                                 // retains its verified author, resolved scope, and
                                 // event data through the optional steer/interrupt
-                                // decision. A relayed person post never steers:
-                                // it waits for its own turn.
-                                if !never_steers {
-                                    queued.steer_or_interrupt(
-                                        config.multiple_event_handling,
-                                        owner_cache.get(),
-                                        &mut pool,
-                                        &mut queue,
-                                        &steer_ack_tx,
-                                    );
-                                }
+                                // decision.
+                                queued.steer_or_interrupt(
+                                    config.multiple_event_handling,
+                                    owner_cache.get(),
+                                    &mut pool,
+                                    &mut queue,
+                                    &steer_ack_tx,
+                                );
                             }
                             if pool_ready {
                                 for (scope, thread_tags) in

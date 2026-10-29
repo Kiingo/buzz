@@ -100,11 +100,22 @@ indistinguishable from a message the requester signed:
     these into linked rooms for people who wrote in the Kiingo app
     (conversations-unified §8.4). It may start a turn, but only as a guest
     crossing keyed to its signer, never as owner or sibling input whoever
-    signed it. The claimed author is a label only, all agent-traffic guards
-    apply, the text is wrapped as untrusted, and it never steers, interrupts
-    or runs a control command. The hosted guest route treats it as tier 0.
-    Kind 40002 stays the quiet marker everywhere, and a relayed post still
-    never enters another turn's context.
+    signed it, and only on the hosted guest route: a local turn (legacy local
+    guest mode, a structured wake) drops it. The claimed author is a label
+    only (sanitized and bounded in the prompt marker; the fourth author
+    element is at most 64 characters). It is human traffic for the guards,
+    deduplicated per signer, claimed author and event. The text is wrapped
+    as untrusted, only its `h`, `e` and `p` tags are shown, and it never
+    steers, interrupts or runs a control command (`!shutdown`, `!cancel`,
+    `!rotate` are dropped before the owner checks). The hosted guest route
+    treats it as tier 0. Kind 40002 stays the quiet marker everywhere, and a
+    relayed post still never enters another turn's context.
+  - An edit (kind 40003) takes its trust from the message it edits: an edit
+    whose original is a mirror (a relayed post included) or any other quiet
+    marker is dropped, and so is an edit whose original cannot be fetched
+    and verified, unless the owner signed it. Kiingo puts the same
+    `buzz-mirror` and `buzz-mirror-author` tags on its edits of relayed
+    posts, so those edits are quiet markers too.
     So the agent's own replies homed on another surface (agent-role mirrors,
     call cards) are not in its context either; its ordinary kind 9 replies
     are.

@@ -431,22 +431,33 @@ impl GuestRuntime {
     /// Run the loop and amplification guards. Owner events always proceed.
     pub(crate) fn check_guards(&self, input: &GuardInput<'_>) -> GuardVerdict {
         let author = input.event.pubkey.to_hex();
+        let relayed = crate::agent_dm_markers::relayed_person_mirror(input.event);
         let (requester, author_is_agent) = match input.tier {
             TrustTier::Owner => {
                 return GuardVerdict::Proceed { request_key: None };
             }
             TrustTier::Sibling => (author.clone(), true),
-            TrustTier::Guest { requester } => (
-                requester.clone(),
-                // A relayed person post is agent traffic: every loop guard
-                // (echo, duplicate, root budget, pair limit) applies.
-                *requester != author
-                    || crate::agent_dm_markers::relayed_person_mirror(input.event).is_some(),
-            ),
+            // A relayed person post is a person's words (Kiingo relays only
+            // text a person typed, R1), relayed for many people by one key:
+            // the agent-loop guards (echo, root budget, pair limit) would
+            // misfire on a busy thread, so it is human traffic (79 LOW-7).
+            TrustTier::Guest { requester } => {
+                (requester.clone(), *requester != author && relayed.is_none())
+            }
             TrustTier::OtherOwnerAgent { owner, .. } => (owner.clone(), true),
         };
         let now = Instant::now();
-        let key = request_key(&input.event.content, &requester, &self.agent_pubkey);
+        // A relayed post dedupes per signer, claimed author and event: two
+        // people relayed by one key never collide.
+        let dedupe_requester = match &relayed {
+            Some(post) => format!(
+                "relayed:{author}:{}:{}",
+                post.claimed_author.as_deref().unwrap_or("anon"),
+                input.event.id.to_hex()
+            ),
+            None => requester.clone(),
+        };
+        let key = request_key(&input.event.content, &dedupe_requester, &self.agent_pubkey);
         // Top-level posts share one key per channel, so a loop of top-level
         // posts is limited like a loop inside one thread.
         let thread = parse_thread_tags(input.event)
@@ -458,7 +469,7 @@ impl GuestRuntime {
                 Err("echo")
             } else if author_is_agent && guards.pending_reference(&key, now).is_some() {
                 Err("approval_pending")
-            } else if author_is_agent && guards.is_duplicate(&key, now) {
+            } else if (author_is_agent || relayed.is_some()) && guards.is_duplicate(&key, now) {
                 // People re-asking are deduplicated server-side, which can
                 // answer "already asked"; a silent local drop would not.
                 Err("duplicate")
@@ -618,9 +629,14 @@ impl GuestRuntime {
     ) {
         let author = event.pubkey.to_hex();
         let author_profile = self.profiles.lookup(&author, &self.rest).await;
-        let author_is_agent = author_profile.is_agent()
-            || crate::agent_dm_markers::relayed_person_mirror(&event).is_some()
-            || !matches!(tier, TrustTier::Guest { ref requester } if *requester == author);
+        // A relayed person post is human traffic (see `check_guards`): the
+        // signer's own profile says nothing about the words.
+        let author_is_agent = if crate::agent_dm_markers::relayed_person_mirror(&event).is_some() {
+            false
+        } else {
+            author_profile.is_agent()
+                || !matches!(tier, TrustTier::Guest { ref requester } if *requester == author)
+        };
         let chain = provenance::check_chain(&event, &self.rest).await;
         if let ChainStatus::TooDeep { hop } = chain.status {
             self.hop_limit_notice(&event, channel_id, &chain.authors, hop)
