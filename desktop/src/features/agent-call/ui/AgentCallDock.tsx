@@ -146,7 +146,7 @@ function CallHeader({ call }: { call: AgentCallState }) {
           {statusLine(call, elapsed)}
         </p>
         {providerLine ? (
-          <p className="truncate text-[11px] text-muted-foreground">
+          <p className="truncate text-2xs text-muted-foreground">
             {providerLine}
           </p>
         ) : null}
