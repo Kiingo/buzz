@@ -316,3 +316,23 @@ test("-32603 does not affect -32001/-32002 classification (regression)", () => {
     copy: MODEL_NOT_FOUND_COPY,
   });
 });
+
+test("owner-proof refusal from a remote deploy → plain denied copy", () => {
+  const required = friendlyAgentLastError(
+    "Kiingo Compute could not complete this request. (buzz_hosted_owner_proof_required)",
+  );
+  assert.deepEqual(required, {
+    severity: "denied",
+    copy: "Buzz couldn't confirm this change came from you. Update Buzz and try again.",
+  });
+  const invalid = friendlyAgentLastError(
+    "Kiingo could not verify the request. (buzz_hosted_owner_proof_invalid)",
+  );
+  assert.equal(invalid?.severity, "denied");
+  assert.match(invalid?.copy ?? "", /clock/);
+  // Similar-looking codes are not owner-proof refusals.
+  assert.deepEqual(
+    friendlyAgentLastError("x (buzz_hosted_owner_proof_requiredness)"),
+    { severity: "generic", copy: "x (buzz_hosted_owner_proof_requiredness)" },
+  );
+});

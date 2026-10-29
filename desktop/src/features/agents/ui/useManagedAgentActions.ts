@@ -39,6 +39,7 @@ import {
   buildInstanceInputForDefinition,
   resolveStartRuntimeForDefinition,
 } from "../lib/instanceInputForDefinition";
+import { friendlyProviderDeployError } from "../lib/providerOwnerProofFailure";
 
 export function useManagedAgentActions() {
   const queryClient = useQueryClient();
@@ -187,7 +188,9 @@ export function useManagedAgentActions() {
     } catch (error) {
       if (isRelayRemovedError(error)) return;
       setActionErrorMessage(
-        error instanceof Error ? error.message : "Failed to start agent.",
+        error instanceof Error
+          ? friendlyProviderDeployError(error.message)
+          : "Failed to start agent.",
       );
     }
   }
@@ -212,7 +215,9 @@ export function useManagedAgentActions() {
     } catch (error) {
       if (isRelayRemovedError(error)) return;
       setActionErrorMessage(
-        error instanceof Error ? error.message : "Failed to restart agent.",
+        error instanceof Error
+          ? friendlyProviderDeployError(error.message)
+          : "Failed to restart agent.",
       );
     } finally {
       setRestartingAgentPubkey(null);
@@ -250,7 +255,7 @@ export function useManagedAgentActions() {
       const notices = [...warnings];
 
       if (created.spawnError && !isRelayRemovedError(created.spawnError)) {
-        setActionErrorMessage(created.spawnError);
+        setActionErrorMessage(friendlyProviderDeployError(created.spawnError));
       }
 
       if (created.profileSyncError) {
@@ -265,7 +270,9 @@ export function useManagedAgentActions() {
     } catch (error) {
       if (isRelayRemovedError(error)) return;
       setActionErrorMessage(
-        error instanceof Error ? error.message : "Failed to start agent.",
+        error instanceof Error
+          ? friendlyProviderDeployError(error.message)
+          : "Failed to start agent.",
       );
     } finally {
       setPersonaStartPending(persona.id, false);

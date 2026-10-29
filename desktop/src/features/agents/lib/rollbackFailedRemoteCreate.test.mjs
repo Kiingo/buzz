@@ -138,3 +138,14 @@ test("surfaces without a retry path point at Agents instead", () => {
     /Delete Fizz from Agents before trying again\.$/,
   );
 });
+
+test("an owner-proof refusal is said in plain words", () => {
+  assert.equal(
+    failedRemoteCreateMessage(
+      "Fizz",
+      "Kiingo Compute could not complete this request. (buzz_hosted_owner_proof_required)",
+      { clean: true, leftovers: [], remaining: null },
+    ),
+    "Fizz couldn't start: Buzz couldn't confirm this change came from you. Update Buzz and try again. Nothing was kept, so you can fix this and try again.",
+  );
+});

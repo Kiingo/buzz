@@ -6,8 +6,8 @@ use crate::{
     app_state::AppState,
     managed_agents::{
         discover_provider_candidates, load_managed_agents, provider_deploy_reporting,
-        resolve_provider_binary, save_managed_agents, BackendKind, ProviderDeployFailure,
-        REPLAY_FLOOR_ENV_VAR,
+        resolve_provider_binary, save_managed_agents, BackendKind, DeployOwner,
+        ProviderDeployFailure, REPLAY_FLOOR_ENV_VAR,
     },
     util::now_iso,
 };
@@ -164,14 +164,22 @@ pub(crate) async fn deploy_to_provider_reporting<R: tauri::Runtime>(
     // rebuild cannot restore it — inject it into the payload actually invoked.
     apply_replay_floor(&mut agent_json, replay_floor_unix);
 
+    // The owner signs a proof over the provider-prepared body. Without
+    // signable keys the owner-proven deploy fails closed; only a provider
+    // without `deploy_prepare` deploys unsigned, as before.
+    let owner = deploy_owner(state.signing_keys(), &agent_json, &provider_id);
+
     let deployed_agent_json = agent_json.clone();
     let config_clone = config.clone();
+    let agent_pubkey = pubkey.to_string();
     let deploy_result = tokio::task::spawn_blocking(move || {
         provider_deploy_reporting(
             &bin_path,
             &agent_json,
             &config_clone,
             owns_execution_profile,
+            &agent_pubkey,
+            owner,
         )
     })
     .await
@@ -198,6 +206,28 @@ pub(crate) async fn deploy_to_provider_reporting<R: tauri::Runtime>(
     result.map_err(|message| ProviderDeployFailure {
         message,
         remote_absent,
+    })
+}
+
+/// Who signs this deploy's owner proof. The keys must be the owner the
+/// payload names (`launch.owner_pubkey`), or the provision would be refused:
+/// an identity switch since the payload was built fails closed here.
+fn deploy_owner(
+    signing_keys: Result<nostr::Keys, String>,
+    agent_json: &serde_json::Value,
+    provider_id: &str,
+) -> Result<DeployOwner, String> {
+    let keys = signing_keys?;
+    let payload_owner = agent_json
+        .get("launch")
+        .and_then(|launch| launch.get("owner_pubkey"))
+        .and_then(serde_json::Value::as_str);
+    if payload_owner.is_some_and(|owner| owner != keys.public_key().to_hex()) {
+        return Err("your identity changed while this agent was being deployed".to_string());
+    }
+    Ok(DeployOwner {
+        keys,
+        provider_id: provider_id.to_string(),
     })
 }
 
@@ -413,6 +443,39 @@ mod tests {
         )
         .unwrap();
         assert_payload_scope(&serde_json::json!({}), None, None).unwrap();
+    }
+
+    // ── deploy_owner: who signs the owner proof ──────────────────────────────
+
+    #[test]
+    fn deploy_owner_signs_as_the_payload_owner_only() {
+        let keys = nostr::Keys::generate();
+        let owner_hex = keys.public_key().to_hex();
+        let owner = deploy_owner(
+            Ok(keys.clone()),
+            &scoped_payload("wss://tenant-a.example", &owner_hex),
+            "kiingo",
+        )
+        .unwrap();
+        assert_eq!(owner.keys.public_key(), keys.public_key());
+        assert_eq!(owner.provider_id, "kiingo");
+
+        let switched = deploy_owner(
+            Ok(nostr::Keys::generate()),
+            &scoped_payload("wss://tenant-a.example", &owner_hex),
+            "kiingo",
+        );
+        assert!(switched.is_err(), "a different identity must not sign");
+
+        let locked = deploy_owner(
+            Err("identity is in recovery mode".to_string()),
+            &scoped_payload("wss://tenant-a.example", &owner_hex),
+            "kiingo",
+        );
+        assert_eq!(
+            locked.err().as_deref(),
+            Some("identity is in recovery mode")
+        );
     }
 
     // ── apply_replay_floor: publish-first floor threading into the payload ──

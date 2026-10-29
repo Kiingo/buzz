@@ -747,6 +747,7 @@ fn deploy_failure_provider(directory: &Path, deploy_response: &str) -> PathBuf {
 case "$request" in
   *\"op\":\"info\"*) printf '%s\n' '{{"ok":true,"name":"test","version":"2.0.0","protocol_version":2,"description":"test provider","config_schema":{{}},"capabilities":{{"lifecycle_operations":["delete"]}}}}' ;;
   *\"op\":\"deploy\"*) printf '%s\n' '{deploy_response}' ;;
+  *) printf '%s\n' '{{"ok":false,"error":"operation_unsupported"}}' ;;
 esac"#
     );
     write_test_provider(&provider, &body);
@@ -766,6 +767,8 @@ fn provider_deploy_reporting_keeps_only_an_explicit_absent_remote_state() {
         &serde_json::json!({}),
         &serde_json::json!({}),
         false,
+        "",
+        Err("no owner keys".to_string()),
     )
     .unwrap_err();
     assert_eq!(
@@ -799,6 +802,8 @@ fn provider_deploy_reporting_keeps_only_an_explicit_absent_remote_state() {
             &serde_json::json!({}),
             &serde_json::json!({}),
             false,
+            "",
+            Err("no owner keys".to_string()),
         )
         .unwrap_err();
         assert!(!failure.remote_absent, "{response}");
@@ -818,10 +823,330 @@ fn provider_deploy_reporting_redacts_secrets_from_failure_text() {
         &serde_json::json!({"private_key_nsec": "nsec1must-not-cross"}),
         &serde_json::json!({}),
         false,
+        "",
+        Err("no owner keys".to_string()),
     )
     .unwrap_err();
     assert!(
         !failure.message.contains("nsec1must-not-cross"),
         "{failure:?}"
+    );
+}
+
+// ── Owner-proven deploy: deploy_prepare → owner proof → deploy_submit ───────
+
+#[cfg(unix)]
+const PROVEN_INFO: &str = r#"{"ok":true,"name":"test","version":"2.1.0","protocol_version":2,"description":"test provider","config_schema":{},"capabilities":{"lifecycle_operations":["delete","preflight"]}}"#;
+
+/// A v2 provider that prepares a body for `body_agent` from
+/// [`proven_agent`] and [`proven_config`], hashing it the way the server does
+/// (its keys are written already sorted), and logs every request it receives.
+#[cfg(unix)]
+fn owner_proof_provider(
+    directory: &Path,
+    body_agent: &str,
+    prepare_failure: Option<&str>,
+) -> PathBuf {
+    let provider = directory.join("provider");
+    let prepare = match prepare_failure {
+        Some(failure) => format!("printf '%s\\n' '{failure}'"),
+        None => r#"rid=$(printf '%s' "$request" | sed -n 's/.*"request_id":"\([0-9a-f-]*\)".*/\1/p')
+    body='BODY'
+    if command -v sha256sum >/dev/null 2>&1; then hash=$(printf '%s' "$body" | sha256sum | cut -d' ' -f1); else hash=$(printf '%s' "$body" | shasum -a 256 | cut -d' ' -f1); fi
+    printf '%s\n' '{"ok":true,"request_id":"'"$rid"'","prepared_body":'"$body"',"payload_sha256":"'"$hash"'","agent_public_key":"AGENT","community_id":"chat.example.com"}'"#
+            .replace(
+                "BODY",
+                // Sorted keys (serde_json's map is ordered), so the shell's
+                // hash of this text is the canonical hash.
+                &serde_json::to_string(&proven_body(body_agent, "RID"))
+                    .unwrap()
+                    .replace("RID", r#"'"$rid"'"#),
+            )
+            .replace("AGENT", body_agent),
+    };
+    let body = r#"read request
+printf '%s\n' "$request" >> 'LOG'
+case "$request" in
+  *\"op\":\"info\"*) printf '%s\n' 'INFO' ;;
+  *\"op\":\"deploy_prepare\"*)
+    PREPARE ;;
+  *\"op\":\"deploy_submit\"*) printf '%s\n' '{"ok":true,"agent_id":"remote-proven","state":"running"}' ;;
+  *\"op\":\"deploy\"*) printf '%s\n' '{"ok":true,"agent_id":"unsigned"}' ;;
+esac"#
+        .replace("INFO", PROVEN_INFO)
+        .replace("PREPARE", &prepare)
+        .replace("LOG", &directory.join("requests").display().to_string());
+    write_test_provider(&provider, &body);
+    provider
+}
+
+/// The provision body a provider prepares for [`proven_agent`] and
+/// [`proven_config`], in the full allowed shape.
+#[cfg(unix)]
+fn proven_body(agent_public_key: &str, request_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "contract_version": 1,
+        "request_id": request_id,
+        "idempotency_key": "idem-1",
+        "community_id": "chat.example.com",
+        "relay_url": "wss://chat.example.com",
+        "agent_public_key": agent_public_key,
+        "display_name": "Agent",
+        "provider_config": {"harness": "codex"},
+        "owner_attestation": "[]",
+        "identity_envelope": {
+            "version": 2, "algorithm": "x25519-chacha20poly1305", "key_id": "k1",
+            "ephemeral_public_key": "ZXBo", "nonce": "bm9uY2U=", "ciphertext": "Y2lwaGVy",
+            "associated_data_sha256": "0".repeat(64),
+        },
+        "execution_profile": {
+            "version": 1, "execution_location": "kiingo-compute",
+            "execution": {
+                "version": 2,
+                "harness": {"mode": "specific", "id": "codex"},
+                "model": {"mode": "auto"},
+                "reasoning": {"mode": "auto"},
+                "service_tier": {"mode": "auto"},
+            },
+            "capability_catalog_version": "2026-10-01", "profile_revision": 1,
+        },
+        "agent_instructions": {"version": 1, "profile_revision": 1, "system_prompt": "Be brief."},
+        "response_policy": {"version": 1, "respond_to": "owner-only", "respond_to_allowlist": []},
+        "capability_policy": {
+            "version": 1, "assigned_tools": [], "assigned_skills": [],
+            "managed_compute_capabilities": [],
+        },
+    })
+}
+
+#[cfg(unix)]
+fn proven_agent() -> serde_json::Value {
+    serde_json::json!({"name": "Agent", "system_prompt": "Be brief."})
+}
+
+#[cfg(unix)]
+fn proven_config() -> serde_json::Value {
+    serde_json::json!({"harness": "codex"})
+}
+
+#[cfg(unix)]
+fn logged_requests(directory: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(directory.join("requests"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[cfg(unix)]
+fn test_owner(keys: &nostr::Keys) -> Result<crate::managed_agents::DeployOwner, String> {
+    Ok(crate::managed_agents::DeployOwner {
+        keys: keys.clone(),
+        provider_id: "kiingo".to_string(),
+    })
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_deploy_submits_the_prepared_body_with_a_signed_owner_proof() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = "c".repeat(64);
+    let provider = owner_proof_provider(directory.path(), &agent, None);
+    let keys = nostr::Keys::generate();
+    let agent_id = provider_deploy_reporting(
+        &provider,
+        &proven_agent(),
+        &proven_config(),
+        false,
+        &agent,
+        test_owner(&keys),
+    )
+    .expect("owner-proven deploy");
+    assert_eq!(agent_id, "remote-proven");
+
+    let requests = logged_requests(directory.path());
+    let ops: Vec<_> = requests.iter().map(|r| r["op"].clone()).collect();
+    assert_eq!(
+        ops,
+        vec!["info", "deploy_prepare", "deploy_submit"],
+        "no unsigned deploy"
+    );
+    let (prepare, submit) = (&requests[1], &requests[2]);
+    assert_eq!(prepare["agent"], proven_agent());
+    assert_eq!(prepare["provider_config"], proven_config());
+    let request_id = prepare["request_id"].as_str().unwrap();
+
+    let mut keys_sent: Vec<_> = submit.as_object().unwrap().keys().cloned().collect();
+    keys_sent.sort();
+    assert_eq!(
+        keys_sent,
+        ["op", "owner_proof", "prepared_body", "request_id"]
+    );
+    assert_eq!(submit["request_id"], request_id);
+    assert_eq!(
+        submit["prepared_body"],
+        proven_body(&agent, request_id),
+        "the prepared body goes back unchanged"
+    );
+
+    let proof: nostr::Event = serde_json::from_value(submit["owner_proof"].clone()).unwrap();
+    assert!(proof.verify().is_ok());
+    assert_eq!(proof.pubkey, keys.public_key(), "signed by the owner");
+    assert_eq!(proof.kind.as_u16(), 27_236);
+    assert_eq!(proof.content, "buzz-provider-owner-v1");
+    let tag = |name: &str| {
+        proof
+            .tags
+            .iter()
+            .map(|tag| tag.as_slice())
+            .find(|tag| tag.first().map(String::as_str) == Some(name))
+            .map(|tag| tag[1].clone())
+    };
+    assert_eq!(proof.tags.len(), 7);
+    assert_eq!(tag("action").as_deref(), Some("provision"));
+    assert_eq!(tag("provider").as_deref(), Some("kiingo"));
+    assert_eq!(tag("request").as_deref(), Some(request_id));
+    assert_eq!(tag("agent").as_deref(), Some(agent.as_str()));
+    assert_eq!(tag("community").as_deref(), Some("chat.example.com"));
+    assert_eq!(tag("payload").map(|hash| hash.len()), Some(64));
+    assert_eq!(
+        tag("expires"),
+        Some((proof.created_at.as_secs() + 300).to_string())
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_deploy_without_owner_keys_fails_closed_before_submitting() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = "c".repeat(64);
+    let provider = owner_proof_provider(directory.path(), &agent, None);
+    let failure = provider_deploy_reporting(
+        &provider,
+        &proven_agent(),
+        &proven_config(),
+        false,
+        &agent,
+        Err("identity is in recovery mode".to_string()),
+    )
+    .unwrap_err();
+    assert!(failure.message.contains("couldn't sign"), "{failure:?}");
+    assert!(!failure.remote_absent);
+    let ops: Vec<_> = logged_requests(directory.path())
+        .iter()
+        .map(|r| r["op"].clone())
+        .collect();
+    assert_eq!(
+        ops,
+        vec!["info", "deploy_prepare"],
+        "nothing submitted or deployed unsigned"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_deploy_refuses_a_body_prepared_for_another_agent() {
+    let directory = tempfile::tempdir().unwrap();
+    let provider = owner_proof_provider(directory.path(), &"d".repeat(64), None);
+    let failure = provider_deploy_reporting(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        false,
+        &"c".repeat(64),
+        test_owner(&nostr::Keys::generate()),
+    )
+    .unwrap_err();
+    assert!(failure.message.contains("different agent"), "{failure:?}");
+    assert_eq!(
+        logged_requests(directory.path()).len(),
+        2,
+        "nothing submitted"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_deploy_prepare_failure_is_the_deploy_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let provider = owner_proof_provider(
+        directory.path(),
+        "",
+        Some(r#"{"ok":false,"error":"subscription missing","remote_state":"absent"}"#),
+    );
+    let failure = provider_deploy_reporting(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        false,
+        &"c".repeat(64),
+        test_owner(&nostr::Keys::generate()),
+    )
+    .unwrap_err();
+    assert_eq!(
+        failure,
+        ProviderDeployFailure {
+            message: "subscription missing".to_string(),
+            remote_absent: true,
+        }
+    );
+    assert_eq!(
+        logged_requests(directory.path()).len(),
+        2,
+        "no fallback deploy"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_without_deploy_prepare_gets_the_single_deploy() {
+    let directory = tempfile::tempdir().unwrap();
+    let provider = owner_proof_provider(
+        directory.path(),
+        "",
+        Some(r#"{"ok":false,"error":"operation_unsupported"}"#),
+    );
+    let agent_id = provider_deploy_reporting(
+        &provider,
+        &serde_json::json!({}),
+        &serde_json::json!({}),
+        false,
+        &"c".repeat(64),
+        test_owner(&nostr::Keys::generate()),
+    )
+    .expect("fallback deploy");
+    assert_eq!(agent_id, "unsigned");
+    let ops: Vec<_> = logged_requests(directory.path())
+        .iter()
+        .map(|r| r["op"].clone())
+        .collect();
+    assert_eq!(ops, vec!["info", "deploy_prepare", "deploy"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_deploy_refuses_to_sign_instructions_the_desktop_did_not_send() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = "c".repeat(64);
+    let provider = owner_proof_provider(directory.path(), &agent, None);
+    let mut asked = proven_agent();
+    asked["system_prompt"] = "Only answer the owner.".into();
+    let failure = provider_deploy_reporting(
+        &provider,
+        &asked,
+        &proven_config(),
+        false,
+        &agent,
+        test_owner(&nostr::Keys::generate()),
+    )
+    .unwrap_err();
+    assert!(
+        failure.message.contains("different instructions"),
+        "{failure:?}"
+    );
+    assert_eq!(
+        logged_requests(directory.path()).len(),
+        2,
+        "nothing signed or submitted"
     );
 }

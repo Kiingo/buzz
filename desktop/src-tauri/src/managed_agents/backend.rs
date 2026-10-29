@@ -185,7 +185,23 @@ pub(crate) fn invoke_provider_allow_failure(
     request: &serde_json::Value,
     timeout: Duration,
 ) -> Result<serde_json::Value, String> {
-    let env_secrets = env_secrets_from_request(request);
+    invoke_provider_allow_failure_redacting(
+        binary,
+        request,
+        timeout,
+        &env_secrets_from_request(request),
+    )
+}
+
+/// [`invoke_provider_allow_failure`] redacting caller-chosen secrets, for a
+/// request that no longer carries the agent payload they came from (such as
+/// `deploy_submit`, which carries only the provider-prepared body).
+pub(super) fn invoke_provider_allow_failure_redacting(
+    binary: &Path,
+    request: &serde_json::Value,
+    timeout: Duration,
+    env_secrets: &[String],
+) -> Result<serde_json::Value, String> {
     let env_secret_refs: Vec<&str> = env_secrets.iter().map(String::as_str).collect();
     let request_bytes = format!(
         "{}\n",
@@ -544,7 +560,7 @@ pub(crate) fn redact_secrets_with(s: &str, extras: &[&str]) -> String {
 /// Collect string values from every environment map a deploy request can
 /// carry. Providers may echo any of these values in diagnostics, including
 /// definition/baked values that exist only in the resolved launch block.
-fn env_secrets_from_request(request: &serde_json::Value) -> Vec<String> {
+pub(super) fn env_secrets_from_request(request: &serde_json::Value) -> Vec<String> {
     let agent = request.get("agent");
     let maps = [
         agent.and_then(|value| value.get("env_vars")),
@@ -670,7 +686,8 @@ pub fn probe_provider_info(binary: &Path) -> Result<serde_json::Value, String> {
     Ok(info)
 }
 
-/// [`provider_deploy_reporting`] with a plain error message.
+/// [`provider_deploy_reporting`] with a plain error message, for an agent
+/// with no owner keys (enough for providers without `deploy_prepare`).
 #[cfg(test)]
 pub fn provider_deploy(
     binary: &Path,
@@ -683,6 +700,8 @@ pub fn provider_deploy(
         agent,
         provider_config,
         expected_owns_execution_profile,
+        "",
+        Err("no owner keys in this test".to_string()),
     )
     .map_err(|failure| failure.message)
 }
@@ -707,13 +726,21 @@ impl From<String> for ProviderDeployFailure {
 }
 
 /// Deploy through one immutable staged copy: negotiate the protocol before
-/// the secret-bearing request, then invoke deploy on those exact same bytes.
+/// the secret-bearing request, then deploy on those exact same bytes.
 /// A failure keeps the provider's statement about remote state.
+///
+/// Protocol v2 providers are first asked to `deploy_prepare`, so the owner
+/// can sign the exact body (see `provider_deploy_proof`); `owner` is who
+/// signs, or why nobody can, and `agent_pubkey` is the agent the body must be
+/// for. A provider without `deploy_prepare`, and every v1 provider, gets the
+/// single `deploy`.
 pub fn provider_deploy_reporting(
     binary: &Path,
     agent: &serde_json::Value,
     provider_config: &serde_json::Value,
     expected_owns_execution_profile: bool,
+    agent_pubkey: &str,
+    owner: Result<super::DeployOwner, String>,
 ) -> Result<String, ProviderDeployFailure> {
     let (_directory, staged, _digest, _execution_guard) = stage_provider(binary)?;
     let info_request = serde_json::json!({
@@ -721,8 +748,20 @@ pub fn provider_deploy_reporting(
         "request_id": uuid::Uuid::new_v4().to_string(),
     });
     let info = invoke_provider(&staged, &info_request, Duration::from_secs(10))?;
-    validate_provider_info(&info)?;
+    let protocol = validate_provider_info(&info)?;
     validate_execution_profile_ownership(&info, expected_owns_execution_profile)?;
+
+    if protocol.version == PROVIDER_PROTOCOL_V2 {
+        if let Some(response) = super::provider_deploy_proof::deploy_with_owner_proof(
+            &staged,
+            agent,
+            provider_config,
+            agent_pubkey,
+            owner.as_ref().map_err(String::as_str),
+        )? {
+            return deployed_agent_id(&response);
+        }
+    }
 
     let request = serde_json::json!({
         "op": "deploy",
@@ -731,6 +770,12 @@ pub fn provider_deploy_reporting(
         "provider_config": provider_config,
     });
     let resp = invoke_provider_allow_failure(&staged, &request, Duration::from_secs(600))?;
+    deployed_agent_id(&resp)
+}
+
+/// Read a `deploy`-shaped response: the agent id, or the provider's failure
+/// with its statement about remote state.
+fn deployed_agent_id(resp: &serde_json::Value) -> Result<String, ProviderDeployFailure> {
     if resp.get("ok").and_then(|v| v.as_bool()) == Some(false) {
         return Err(ProviderDeployFailure {
             message: resp["error"]

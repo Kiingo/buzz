@@ -33,6 +33,7 @@ mod personas;
 #[cfg(windows)]
 mod process_lifecycle;
 pub(crate) mod provider_delete;
+mod provider_deploy_proof;
 mod provider_execution_profile;
 pub(crate) mod provider_preflight;
 pub(crate) mod readiness;
@@ -99,6 +100,7 @@ pub use parallelism::{acp_agents_value, effective_parallelism, harness_max_paral
 pub use personas::*;
 #[cfg(windows)]
 pub use process_lifecycle::*;
+pub use provider_deploy_proof::DeployOwner;
 pub use provider_execution_profile::repair_provider_owned_record;
 pub(crate) use readiness::{
     agent_readiness, resolve_effective_agent_env, resolve_effective_harness_descriptor,

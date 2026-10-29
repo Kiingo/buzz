@@ -56,6 +56,49 @@ value, a missing field, a timeout, a crash or a local failure before the
 provider answers all leave remote state **unknown**. Only the exact string
 `"absent"` counts.
 
+## Owner-proven deploy: `deploy_prepare` and `deploy_submit`
+
+A remote service may accept a deploy as the owner's only with a fresh owner
+proof bound to the exact body it receives. The provider cannot sign for the
+owner, so for a protocol v2 provider the desktop deploys in two invocations of
+the same staged copy instead of one `deploy`:
+
+1. `{op: "deploy_prepare", request_id, agent, provider_config}`, with the same
+   `agent` and `provider_config` that `deploy` would carry. The provider builds
+   the body it would send, sends nothing, and answers
+   `{ok: true, request_id, prepared_body, payload_sha256, agent_public_key, community_id}`.
+   The desktop requires the echoed `request_id` (also in `prepared_body`), an
+   `agent_public_key` equal to the agent being deployed (also in
+   `prepared_body`), a `community_id` equal to `prepared_body.community_id`,
+   and a lowercase hex `payload_sha256` equal to its own SHA-256 of the
+   canonical JSON of `prepared_body` (keys sorted recursively, arrays in order,
+   compact, as `JSON.stringify` writes it). Only safe integers (at most
+   2^53 - 1 in magnitude) may appear as numbers, so both sides hash the same
+   text. The body must have exactly the known provision shape (contract
+   version 1): any key the desktop does not know, at any level, is refused,
+   and `capability_policy` must grant no tools, skills or compute
+   capabilities, so the owner never signs a grant the desktop did not ask
+   for. The body must also say what the desktop asked for: `provider_config`
+   equal to the one sent, `execution_profile.execution.harness.id` equal to
+   its `harness`, `agent_instructions.system_prompt` equal to the agent's
+   trimmed prompt (null when blank), `response_policy.respond_to` and
+   `respond_to_allowlist` equal to the agent's, and `display_name` equal to
+   its name. Any mismatch fails closed.
+2. The owner signs a kind 27236 proof with content `buzz-provider-owner-v1`
+   and exactly the tags `action=provision`, `provider`, `request`, `agent`,
+   `community`, `payload` (the hash the desktop computed) and `expires` (five
+   minutes after `created_at`). The owner's key never leaves the desktop.
+3. `{op: "deploy_submit", request_id, prepared_body, owner_proof}`, with the
+   body unchanged. The response has the `deploy` shape, including
+   `remote_state: "absent"` on failure.
+
+The proof is single-use: a retry runs both steps again. A prepare failure is the
+deploy failure, except `{ok: false, error: "operation_unsupported"}`, which
+means the provider predates this; the desktop then sends the single `deploy`.
+Protocol v1 providers always get the single `deploy`. When the owner's keys
+cannot sign, the owner-proven deploy fails closed; it never falls back to an
+unsigned `deploy`.
+
 ## Rolling back a failed create
 
 When a provider-backed create does not start, the desktop undoes it instead of

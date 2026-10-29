@@ -28,6 +28,8 @@
  *    lastError, so generic harness exits still surface their text instead of
  *    being swallowed.
  */
+import { describeOwnerProofFailure } from "./providerOwnerProofFailure";
+
 export type FriendlyAgentLastError =
   | { severity: "denied"; copy: string }
   | { severity: "generic"; copy: string };
@@ -112,6 +114,10 @@ export function friendlyAgentLastError(
   ) {
     return { severity: "denied", copy: RELAY_MESH_DENIED_COPY };
   }
+
+  // A remote deploy the server would not accept as the owner's.
+  const ownerProof = describeOwnerProofFailure(trimmed);
+  if (ownerProof) return { severity: "denied", copy: ownerProof };
 
   return { severity: "generic", copy: trimmed };
 }

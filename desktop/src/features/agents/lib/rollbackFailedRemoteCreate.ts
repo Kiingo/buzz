@@ -1,6 +1,7 @@
 import { describeAttachFailure } from "@/features/hosted-owner-relink/lib/attach";
 
 import type { ProviderCreateRollback } from "./providerCreateApi";
+import { friendlyProviderDeployError } from "./providerOwnerProofFailure";
 
 /**
  * Undo a remote-backend agent create that did not start, so a failed create
@@ -89,7 +90,9 @@ export function failedRemoteCreateMessage(
   rollback: RollbackResult,
   options: { submitLabel?: string; retriesCleanup?: boolean } = {},
 ): string {
-  const reason = describeAttachFailure(startError) ?? startError;
+  const reason =
+    describeAttachFailure(startError) ??
+    friendlyProviderDeployError(startError);
   const base = `${agentName} couldn't start: ${reason}`;
   if (rollback.clean) {
     return `${base} Nothing was kept, so you can fix this and try again.`;
