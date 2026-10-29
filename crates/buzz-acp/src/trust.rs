@@ -342,11 +342,22 @@ pub(crate) fn relayed_label(value: &str) -> String {
         })
         .collect();
     let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    let bounded: String = collapsed.chars().take(RELAYED_LABEL_MAX_CHARS).collect();
-    crate::prompt_framing::escape_semantic_text(&bounded)
-        .replace('[', "&#91;")
-        .replace(']', "&#93;")
-        .replace(';', "&#59;")
+    // One pass, so no escape re-escapes another's `&` or `;` (79 SHOULD-2):
+    // the section delimiters (as escape_semantic_text) and the marker's own
+    // `[`, `]` and `;`.
+    let mut escaped = String::with_capacity(collapsed.len());
+    for c in collapsed.chars().take(RELAYED_LABEL_MAX_CHARS) {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '[' => escaped.push_str("&#91;"),
+            ']' => escaped.push_str("&#93;"),
+            ';' => escaped.push_str("&#59;"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }
 
 /// Prompt marker for a relayed person post: words someone wrote on another

@@ -45,6 +45,45 @@ pub(crate) struct LocalAdmission {
     pub(crate) lane: TrustLane,
     /// A structured wake: no lifecycle reactions, never steered.
     pub(crate) is_invocation: bool,
+    /// An edit's original-message routing, from the lookup that screened it.
+    pub(crate) edit: Option<crate::queue::ResolvedEdit>,
+}
+
+/// The trust screen of an edit (79 M-1): an edit takes its trust from what
+/// it edits. An edit of a relayed person post or a quiet marker is never a
+/// prompt from its signer, who may be the owner's own agent; when the
+/// original cannot be fetched and verified it is dropped, except for the
+/// owner's (who never signs relayed words). Run only after the author screen
+/// and the rule match (79 LOW-1), so unwanted edits cost no lookup. `None`
+/// drops the event; `Some` carries the original's routing (one fetch).
+async fn screen_edit(
+    event: &nostr::Event,
+    channel_id: uuid::Uuid,
+    env: &TrustEnv<'_>,
+) -> Option<Option<crate::queue::ResolvedEdit>> {
+    if event.kind.as_u16() as u32 != buzz_core::kind::KIND_STREAM_MESSAGE_EDIT {
+        return Some(None);
+    }
+    let (origin, resolved) =
+        crate::edit_routing::classify_edit(event, channel_id, &env.ctx.rest_client).await;
+    let from_owner = env
+        .owner_cache
+        .get()
+        .is_some_and(|owner| owner.eq_ignore_ascii_case(&event.pubkey.to_hex()));
+    let drop = match origin {
+        crate::edit_routing::EditOrigin::Marker => true,
+        crate::edit_routing::EditOrigin::Unknown => !from_owner,
+        crate::edit_routing::EditOrigin::Plain | crate::edit_routing::EditOrigin::NotEdit => false,
+    };
+    if drop {
+        tracing::info!(
+            channel_id = %channel_id,
+            origin = ?origin,
+            "edit of a relayed post, a quiet marker or an unverifiable original — dropping"
+        );
+        return None;
+    }
+    Some(resolved)
 }
 
 fn is_invocation_event(event: &nostr::Event) -> bool {
@@ -240,38 +279,6 @@ pub(crate) async fn admit(
         );
         return None;
     }
-    // An edit takes its trust from what it edits (79 M-1): an edit of a
-    // relayed person post or a quiet marker is never a prompt from its
-    // signer, who may be the owner's own agent. Fail closed when the
-    // original cannot be fetched and verified, except for the owner (who
-    // never signs relayed words).
-    if buzz_event.event.kind.as_u16() as u32 == buzz_core::kind::KIND_STREAM_MESSAGE_EDIT {
-        let origin = crate::edit_routing::edit_origin(
-            &buzz_event.event,
-            buzz_event.channel_id,
-            &ctx.rest_client,
-        )
-        .await;
-        let from_owner = env
-            .owner_cache
-            .get()
-            .is_some_and(|owner| owner.eq_ignore_ascii_case(&buzz_event.event.pubkey.to_hex()));
-        let drop = match origin {
-            crate::edit_routing::EditOrigin::Marker => true,
-            crate::edit_routing::EditOrigin::Unknown => !from_owner,
-            crate::edit_routing::EditOrigin::Plain | crate::edit_routing::EditOrigin::NotEdit => {
-                false
-            }
-        };
-        if drop {
-            tracing::info!(
-                channel_id = %buzz_event.channel_id,
-                origin = ?origin,
-                "edit of a relayed post, a quiet marker or an unverifiable original — dropping"
-            );
-            return None;
-        }
-    }
     let screen = gate
         .screen_listener_event(
             buzz_event,
@@ -386,6 +393,7 @@ pub(crate) async fn admit(
         GateDecision::Route(tier) => {
             let buzz_event = screen.into_event();
             filter::match_event(&buzz_event.event, channel_id, rules, env.agent_pubkey_hex).await?;
+            screen_edit(&buzz_event.event, channel_id, env).await?;
             let request_key = guard(env.guest_runtime, &buzz_event.event, channel_id, &tier)?;
             let channel_name = ctx
                 .channel_info
@@ -412,6 +420,7 @@ pub(crate) async fn admit(
                 tracing::debug!("authorized event matched no rule — dropping");
                 return None;
             };
+            let edit = screen_edit(&ingress.buzz_event.event, channel_id, env).await?;
             // Agent guards also apply to sibling (local) turns.
             guard(
                 env.guest_runtime,
@@ -423,6 +432,7 @@ pub(crate) async fn admit(
                 ingress,
                 lane: tier.lane(),
                 is_invocation,
+                edit,
             })
         }
     }

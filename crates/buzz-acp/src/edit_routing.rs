@@ -20,7 +20,8 @@ use crate::relay::{RelayError, RestClient};
 /// admission lookups on the listener loop (see `check_sibling_via_profile`).
 const EDIT_ORIGINAL_FETCH_TIMEOUT: Duration = Duration::from_millis(2_000);
 
-/// Resolve the original message targeted by `event` if it is an edit.
+/// Resolve the original message targeted by `event` if it is an edit (the
+/// routing half of [`classify_edit`], for paths with no trust screen).
 ///
 /// Returns `None` for ordinary events and whenever the original cannot be
 /// fetched and verified; callers then route to the edit target id, never the
@@ -45,12 +46,7 @@ where
     Query: FnOnce(Vec<Filter>) -> QueryFut,
     QueryFut: std::future::Future<Output = Result<serde_json::Value, RelayError>>,
 {
-    let target_event_id = edit_target_id(event)?;
-    let original = fetch_original_with(event, channel_id, query).await?;
-    Some(ResolvedEdit {
-        target_event_id,
-        target_thread_tags: parse_thread_tags(&original),
-    })
+    classify_edit_with(event, channel_id, query).await.1
 }
 
 /// What an edit's original message is, for the trust boundary.
@@ -68,14 +64,8 @@ pub(crate) enum EditOrigin {
     Unknown,
 }
 
-/// Classify the original of `event` if it is an edit (one bounded lookup).
-pub(crate) async fn edit_origin(event: &Event, channel_id: Uuid, rest: &RestClient) -> EditOrigin {
-    edit_origin_with(event, channel_id, |filters| async move {
-        rest.query(&filters).await
-    })
-    .await
-}
-
+/// The trust half of [`classify_edit_with`].
+#[cfg(test)]
 pub(crate) async fn edit_origin_with<Query, QueryFut>(
     event: &Event,
     channel_id: Uuid,
@@ -85,15 +75,52 @@ where
     Query: FnOnce(Vec<Filter>) -> QueryFut,
     QueryFut: std::future::Future<Output = Result<serde_json::Value, RelayError>>,
 {
-    if edit_target_id(event).is_none() {
-        return EditOrigin::NotEdit;
-    }
+    classify_edit_with(event, channel_id, query).await.0
+}
+
+/// Classify and route `event` if it is an edit, with one bounded lookup of
+/// its original: what the original is (for the trust boundary) and its
+/// routing (for scope, replies and notices). One fetch serves both (79
+/// LOW-1); ordinary events make no lookup.
+pub(crate) async fn classify_edit(
+    event: &Event,
+    channel_id: Uuid,
+    rest: &RestClient,
+) -> (EditOrigin, Option<ResolvedEdit>) {
+    classify_edit_with(event, channel_id, |filters| async move {
+        rest.query(&filters).await
+    })
+    .await
+}
+
+pub(crate) async fn classify_edit_with<Query, QueryFut>(
+    event: &Event,
+    channel_id: Uuid,
+    query: Query,
+) -> (EditOrigin, Option<ResolvedEdit>)
+where
+    Query: FnOnce(Vec<Filter>) -> QueryFut,
+    QueryFut: std::future::Future<Output = Result<serde_json::Value, RelayError>>,
+{
+    let Some(target_event_id) = edit_target_id(event) else {
+        return (EditOrigin::NotEdit, None);
+    };
     match fetch_original_with(event, channel_id, query).await {
-        Some(original) if crate::agent_dm_markers::is_quiet_agent_dm_marker_event(&original) => {
-            EditOrigin::Marker
+        Some(original) => {
+            let origin = if crate::agent_dm_markers::is_quiet_agent_dm_marker_event(&original) {
+                EditOrigin::Marker
+            } else {
+                EditOrigin::Plain
+            };
+            (
+                origin,
+                Some(ResolvedEdit {
+                    target_event_id,
+                    target_thread_tags: parse_thread_tags(&original),
+                }),
+            )
         }
-        Some(_) => EditOrigin::Plain,
-        None => EditOrigin::Unknown,
+        None => (EditOrigin::Unknown, None),
     }
 }
 

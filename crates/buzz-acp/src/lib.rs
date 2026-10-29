@@ -832,7 +832,7 @@ struct NormalListenerIngress {
     effective_author: String,
     prompt_tag: String,
     /// Original-message routing for an admitted edit; see
-    /// [`NormalListenerIngress::resolve_edit_routing`].
+    /// [`NormalListenerIngress::with_edit_routing`].
     edit: Option<queue::ResolvedEdit>,
 }
 
@@ -941,18 +941,15 @@ impl QueuedNormalListenerEvent {
 }
 
 impl NormalListenerIngress {
-    /// Resolve an admitted edit's original message once, before its session
-    /// scope is derived, so scope, reactions, prompt, typing, steering, and
-    /// failure notices all share one routing authority. The lookup is bounded
-    /// and only runs for kind:40003 events that already matched a rule (by
+    /// An admitted edit's original-message routing, resolved once at
+    /// admission (the same bounded lookup that screened the edit's trust,
+    /// [`edit_routing::classify_edit`]), before its session scope is derived,
+    /// so scope, reactions, prompt, typing, steering, and failure notices all
+    /// share one routing authority. The lookup only runs for kind:40003
+    /// events that already passed the author screen and matched a rule (by
     /// default: edits that newly mention this agent).
-    async fn resolve_edit_routing(mut self, rest_client: &relay::RestClient) -> Self {
-        self.edit = edit_routing::resolve_edit(
-            &self.buzz_event.event,
-            self.buzz_event.channel_id,
-            rest_client,
-        )
-        .await;
+    fn with_edit_routing(mut self, edit: Option<queue::ResolvedEdit>) -> Self {
+        self.edit = edit;
         self
     }
 
@@ -3896,6 +3893,7 @@ async fn run_harness(
                                 ingress,
                                 lane,
                                 is_invocation,
+                                edit,
                             }) = listener_trust::admit(
                                 &mut author_gate_ctx,
                                 buzz_event,
@@ -3907,7 +3905,7 @@ async fn run_harness(
                             else {
                                 continue;
                             };
-                            let ingress = ingress.resolve_edit_routing(&ctx.rest_client).await;
+                            let ingress = ingress.with_edit_routing(edit);
                             // Derive the session scope once, at admission, from
                             // the operator policy, DM status, and NIP-10 thread
                             // tags. Under the default `channel` policy this is
