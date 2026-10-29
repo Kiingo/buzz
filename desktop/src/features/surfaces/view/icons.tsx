@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 568e78caaf0a85a2acc80a0a93b78d1ff84bdef1; do not edit here.
+// Generated from the Kiingo surface renderer packages at cec9eff8903c0d5f3d7dd58145c4f4dfdf28fb98; do not edit here.
 import {
   AppWindow,
   Archive,
