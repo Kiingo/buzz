@@ -12,8 +12,16 @@
 //! are dropped too. The agent's own CLI read tools are a separate path: they
 //! use `buzz_core::agent_dm_marker::is_requester_mirror`, which drops
 //! requester mirrors but keeps agent-role ones.
+//!
+//! One exception wakes a turn: a [relayed person post](relayed_person_mirror),
+//! a plain kind:9 that Kiingo posts into a linked room for a person who wrote
+//! in the Kiingo app (conversations-unified §8.4). It is input from someone
+//! who is not the owner, never owner-trusted whoever signed it: the listener
+//! admits it only as a guest crossing keyed to its signer, its text is wrapped
+//! as untrusted, and the claimed author is shown as a claim only. Kind 40002
+//! stays the quiet marker in every room.
 
-use buzz_core::agent_dm_marker::is_quiet_marker_tag_name;
+use buzz_core::agent_dm_marker::{is_quiet_marker_tag_name, MIRROR_AUTHOR_TAG, MIRROR_TAG};
 
 /// Whether a relay event (as JSON) is a quiet agent DM marker.
 pub(crate) fn is_quiet_agent_dm_marker(event: &serde_json::Value) -> bool {
@@ -40,9 +48,91 @@ pub(crate) fn is_quiet_agent_dm_marker_event(event: &nostr::Event) -> bool {
     })
 }
 
+/// A Kiingo-relayed person post: the words someone wrote in the Kiingo app,
+/// relayed into a linked room by a Kiingo key. Nothing here is verified: the
+/// claimed author is what the signer says, so it is a label, never authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RelayedPersonMirror {
+    /// The surface the person wrote on (`tasks`, `companion`, ...).
+    pub(crate) surface: String,
+    /// The pubkey the signer says wrote it (64-hex, not the signer), if any.
+    pub(crate) claimed_author: Option<String>,
+}
+
+/// Kiingo card tags (call record, council result) that never ride a relayed
+/// person post (Kiingo `buzz-mirror/markers.ts`).
+const KIINGO_CARD_TAGS: [&str; 2] = ["buzz-call", "buzz-council"];
+
+fn valid_surface(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(|first| first.is_ascii_lowercase())
+        && value.len() <= 32
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+fn is_hex64(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// The relayed person post an event is, if it is exactly one: kind:9, one
+/// well-formed `buzz-mirror` tag, one well-formed requester-role
+/// `buzz-mirror-author` tag whose pubkey (if any) is not the signer, and no
+/// other quiet marker tag. Anything else carrying a marker tag (any 40002, an
+/// agent-role mirror, a malformed or repeated tag, a session divider) stays a
+/// quiet marker and never wakes a turn.
+pub(crate) fn relayed_person_mirror(event: &nostr::Event) -> Option<RelayedPersonMirror> {
+    if event.kind.as_u16() as u32 != buzz_core::kind::KIND_STREAM_MESSAGE {
+        return None;
+    }
+    let mut mirror: Option<&[String]> = None;
+    let mut author: Option<&[String]> = None;
+    for tag in event.tags.iter() {
+        let parts = tag.as_slice();
+        let Some(name) = parts.first() else { continue };
+        match name.as_str() {
+            MIRROR_TAG if mirror.is_none() => mirror = Some(parts),
+            MIRROR_AUTHOR_TAG if author.is_none() => author = Some(parts),
+            // Any other marker (a repeated mirror tag, a session divider, a
+            // Kiingo call or council card) keeps it quiet.
+            other if is_quiet_marker_tag_name(other) || KIINGO_CARD_TAGS.contains(&other) => {
+                return None
+            }
+            _ => {}
+        }
+    }
+    let (mirror, author) = (mirror?, author?);
+    let original_at = mirror.get(3)?;
+    if mirror.len() != 4
+        || !valid_surface(&mirror[1])
+        || mirror[2].is_empty()
+        || mirror[2].chars().count() > 256
+        || original_at.is_empty()
+        || original_at.len() > 12
+        || !original_at.bytes().all(|b| b.is_ascii_digit())
+        || author.len() != 4
+        || author[1] != "requester"
+    {
+        return None;
+    }
+    let claimed = author[2].as_str();
+    let signer = event.pubkey.to_hex();
+    let claimed_author = match claimed {
+        "" => None,
+        key if is_hex64(key) && key != signer => Some(key.to_string()),
+        _ => return None,
+    };
+    Some(RelayedPersonMirror {
+        surface: mirror[1].clone(),
+        claimed_author,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_quiet_agent_dm_marker, is_quiet_agent_dm_marker_event};
+    use super::{is_quiet_agent_dm_marker, is_quiet_agent_dm_marker_event, relayed_person_mirror};
     use nostr::{EventBuilder, Keys, Kind, Tag};
     use serde_json::json;
 
@@ -200,5 +290,59 @@ mod tests {
             &[&["h", "c"], &["t", "buzz-mirror"]],
             &requester
         )));
+    }
+
+    #[test]
+    fn only_a_well_formed_kind_9_requester_mirror_is_a_relayed_person_post() {
+        let signer = Keys::generate();
+        let person = Keys::generate().public_key().to_hex();
+        let author: &[&str] = &["buzz-mirror-author", "requester", &person, ""];
+        let mirror: &[&str] = &["buzz-mirror", "tasks", "m1", "1700000000"];
+        let relayed = relayed_person_mirror(&signed(9, &[&["h", "c"], mirror, author], &signer))
+            .expect("relayed person post");
+        assert_eq!(relayed.surface, "tasks");
+        assert_eq!(relayed.claimed_author.as_deref(), Some(person.as_str()));
+        // No claimed author is still a relayed post (shown as the signer's).
+        let anonymous: &[&str] = &["buzz-mirror-author", "requester", "", ""];
+        assert_eq!(
+            relayed_person_mirror(&signed(9, &[&["h", "c"], mirror, anonymous], &signer))
+                .and_then(|r| r.claimed_author),
+            None
+        );
+        let signer_hex = signer.public_key().to_hex();
+        let self_claim: &[&str] = &["buzz-mirror-author", "requester", &signer_hex, ""];
+        let agent_role: &[&str] = &["buzz-mirror-author", "agent", "", ""];
+        let short: &[&str] = &["buzz-mirror-author", "requester", &person];
+        let bad_surface: &[&str] = &["buzz-mirror", "Tasks", "m1", "1"];
+        let bad_time: &[&str] = &["buzz-mirror", "tasks", "m1", "x"];
+        for tags in [
+            // Kind 40002 stays the quiet marker.
+            (40002u16, vec![&["h", "c"][..], mirror, author]),
+            (9, vec![&["h", "c"][..], mirror]),
+            (9, vec![&["h", "c"][..], author]),
+            (9, vec![&["h", "c"][..], mirror, agent_role]),
+            (9, vec![&["h", "c"][..], mirror, self_claim]),
+            (9, vec![&["h", "c"][..], mirror, short]),
+            (9, vec![&["h", "c"][..], bad_surface, author]),
+            (9, vec![&["h", "c"][..], bad_time, author]),
+            (9, vec![&["h", "c"][..], mirror, author, author]),
+            (9, vec![&["h", "c"][..], mirror, mirror, author]),
+            (
+                9,
+                vec![
+                    &["h", "c"][..],
+                    mirror,
+                    author,
+                    &["buzz-session", "new", ""],
+                ],
+            ),
+        ] {
+            let (kind, tags) = tags;
+            assert_eq!(
+                relayed_person_mirror(&signed(kind, &tags, &signer)),
+                None,
+                "{kind} {tags:?}"
+            );
+        }
     }
 }

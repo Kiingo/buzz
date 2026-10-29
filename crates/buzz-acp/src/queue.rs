@@ -1660,7 +1660,11 @@ pub(crate) fn format_event_block_for_owner(
             Some(label) => format!("{label} (npub: {npub}, hex: {hex})"),
             None => format!("{npub} (hex: {hex})"),
         },
-        be.event.content,
+        if crate::listener_trust::is_relayed_person_post(&be.event) {
+            std::borrow::Cow::Owned(crate::trust::wrap_untrusted_relayed(&be.event.content))
+        } else {
+            std::borrow::Cow::Borrowed(be.event.content.as_str())
+        },
     );
 
     // Always include tags — they carry structural information.

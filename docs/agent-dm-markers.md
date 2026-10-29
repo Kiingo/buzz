@@ -94,6 +94,17 @@ indistinguishable from a message the requester signed:
   - The harness (`buzz-acp`) drops every mirror, either role: an event
     carrying `buzz-mirror` or `buzz-mirror-author` (any kind, any signer)
     never starts or steers a turn and never enters its DM or thread context.
+    One exception: a relayed person post, a kind:9 with exactly one valid
+    `buzz-mirror` tag and one requester-role `buzz-mirror-author` tag whose
+    pubkey is empty or not the signer's, and no other marker tag. Kiingo posts
+    these into linked rooms for people who wrote in the Kiingo app
+    (conversations-unified §8.4). It may start a turn, but only as a guest
+    crossing keyed to its signer, never as owner or sibling input whoever
+    signed it. The claimed author is a label only, all agent-traffic guards
+    apply, the text is wrapped as untrusted, and it never steers, interrupts
+    or runs a control command. The hosted guest route treats it as tier 0.
+    Kind 40002 stays the quiet marker everywhere, and a relayed post still
+    never enters another turn's context.
     So the agent's own replies homed on another surface (agent-role mirrors,
     call cards) are not in its context either; its ordinary kind 9 replies
     are.

@@ -3877,6 +3877,7 @@ async fn run_harness(
                                 ingress,
                                 lane,
                                 is_invocation,
+                                never_steers,
                             }) = listener_trust::admit(
                                 &mut author_gate_ctx,
                                 buzz_event,
@@ -3927,14 +3928,17 @@ async fn run_harness(
                                 // Event is already queued. The authorized ingress
                                 // retains its verified author, resolved scope, and
                                 // event data through the optional steer/interrupt
-                                // decision.
-                                queued.steer_or_interrupt(
-                                    config.multiple_event_handling,
-                                    owner_cache.get(),
-                                    &mut pool,
-                                    &mut queue,
-                                    &steer_ack_tx,
-                                );
+                                // decision. A relayed person post never steers:
+                                // it waits for its own turn.
+                                if !never_steers {
+                                    queued.steer_or_interrupt(
+                                        config.multiple_event_handling,
+                                        owner_cache.get(),
+                                        &mut pool,
+                                        &mut queue,
+                                        &steer_ack_tx,
+                                    );
+                                }
                             }
                             if pool_ready {
                                 for (scope, thread_tags) in

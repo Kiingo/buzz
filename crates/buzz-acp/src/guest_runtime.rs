@@ -390,6 +390,12 @@ impl GuestRuntime {
     /// owner-or-sibling verdict (true for the owner too).
     pub(crate) async fn classify(&self, event: &Event, is_owner_or_sibling: bool) -> TrustTier {
         let author = event.pubkey.to_hex();
+        if crate::agent_dm_markers::relayed_person_mirror(event).is_some() {
+            // Words relayed for someone else: never owner or sibling input,
+            // whoever signed them, and the claimed author grants nothing. One
+            // guest lane per relaying key.
+            return TrustTier::Guest { requester: author };
+        }
         let owner = self.owner_pubkey.as_deref();
         let is_owner = owner.is_some_and(|o| o.eq_ignore_ascii_case(&author));
         let guest_tag = agent_relay::guest_requester(event);
@@ -430,7 +436,13 @@ impl GuestRuntime {
                 return GuardVerdict::Proceed { request_key: None };
             }
             TrustTier::Sibling => (author.clone(), true),
-            TrustTier::Guest { requester } => (requester.clone(), *requester != author),
+            TrustTier::Guest { requester } => (
+                requester.clone(),
+                // A relayed person post is agent traffic: every loop guard
+                // (echo, duplicate, root budget, pair limit) applies.
+                *requester != author
+                    || crate::agent_dm_markers::relayed_person_mirror(input.event).is_some(),
+            ),
             TrustTier::OtherOwnerAgent { owner, .. } => (owner.clone(), true),
         };
         let now = Instant::now();
@@ -607,6 +619,7 @@ impl GuestRuntime {
         let author = event.pubkey.to_hex();
         let author_profile = self.profiles.lookup(&author, &self.rest).await;
         let author_is_agent = author_profile.is_agent()
+            || crate::agent_dm_markers::relayed_person_mirror(&event).is_some()
             || !matches!(tier, TrustTier::Guest { ref requester } if *requester == author);
         let chain = provenance::check_chain(&event, &self.rest).await;
         if let ChainStatus::TooDeep { hop } = chain.status {

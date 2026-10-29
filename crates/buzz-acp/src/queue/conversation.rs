@@ -101,6 +101,21 @@ pub(super) fn owner_mark(
     owner_pubkey: Option<&str>,
     profile_lookup: Option<&PromptProfileLookup>,
 ) -> String {
+    let label = |pk: &str| {
+        resolve_prompt_label(pk, profile_lookup).unwrap_or_else(|| pk.chars().take(12).collect())
+    };
+    // Checked first: a relayed person post is never owner input, even when
+    // its signer is the owner or one of the owner's agents.
+    if let Some(relayed) = crate::agent_dm_markers::relayed_person_mirror(&be.event) {
+        return format!(
+            " {}",
+            crate::trust::relayed_post_marker(
+                relayed.claimed_author.as_deref().map(label).as_deref(),
+                &relayed.surface,
+                &label(author_hex),
+            )
+        );
+    }
     if owner_pubkey.is_some_and(|owner| owner.eq_ignore_ascii_case(author_hex)) {
         return " [your owner]".to_string();
     }

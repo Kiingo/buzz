@@ -45,6 +45,9 @@ pub(crate) struct LocalAdmission {
     pub(crate) lane: TrustLane,
     /// A structured wake: no lifecycle reactions, never steered.
     pub(crate) is_invocation: bool,
+    /// A relayed person post: it queues its own turn and never steers or
+    /// interrupts a running one.
+    pub(crate) never_steers: bool,
 }
 
 fn is_invocation_event(event: &nostr::Event) -> bool {
@@ -95,14 +98,27 @@ pub(crate) fn is_call_line_event(event: &nostr::Event) -> bool {
 /// session divider, question state; `docs/agent-dm-markers.md`). Neither is
 /// ever a prompt, so neither may start or steer a turn. `None` for anything
 /// else.
+///
+/// A relayed person post ([`crate::agent_dm_markers::relayed_person_mirror`])
+/// is not dropped here: it may start a turn, but only as a guest crossing
+/// (`GuestRuntime::classify`), never steering, cancelling or controlling
+/// (`admit`), with all agent-traffic guards (`check_guards`) and its text
+/// wrapped as untrusted in the prompt (`queue::format_event_block_for_owner`).
 pub(crate) fn non_prompt_event(event: &nostr::Event) -> Option<&'static str> {
     if is_call_line_event(event) {
         return Some("call transcript line");
     }
-    if crate::agent_dm_markers::is_quiet_agent_dm_marker_event(event) {
+    if crate::agent_dm_markers::is_quiet_agent_dm_marker_event(event)
+        && crate::agent_dm_markers::relayed_person_mirror(event).is_none()
+    {
         return Some("quiet agent DM marker");
     }
     None
+}
+
+/// Whether `event` is a relayed person post (see [`non_prompt_event`]).
+pub(crate) fn is_relayed_person_post(event: &nostr::Event) -> bool {
+    crate::agent_dm_markers::relayed_person_mirror(event).is_some()
 }
 
 /// A non-owner channel stream message that `p`-tags (mentions) someone but
@@ -212,6 +228,15 @@ pub(crate) async fn admit(
     let config = env.config;
     let ctx = env.ctx;
     let is_invocation = is_invocation_event(&buzz_event.event);
+    let relayed = is_relayed_person_post(&buzz_event.event);
+    if relayed && is_cancel {
+        // Relayed text is never a control command, whoever signed it.
+        tracing::debug!(
+            channel_id = %buzz_event.channel_id,
+            "relayed person post carrying a control command — dropping"
+        );
+        return None;
+    }
     let screen = gate
         .screen_listener_event(
             buzz_event,
@@ -351,6 +376,7 @@ pub(crate) async fn admit(
                 ingress,
                 lane: tier.lane(),
                 is_invocation,
+                never_steers: relayed,
             })
         }
     }
@@ -654,5 +680,35 @@ mod tests {
             Some(vec![CALL_LINE_TAG, "call-1", "human"]),
         );
         assert_eq!(non_prompt_event(&line), Some("call transcript line"));
+
+        // A relayed person post (kind 9, both mirror tags, requester role) is
+        // the one marker-tagged event that reaches the trust gate; the same
+        // tags on 40002 stay quiet.
+        let relayed = |kind: u16| {
+            let mut tags = vec![
+                Tag::parse(["h", "c"]).unwrap(),
+                Tag::parse(["p", agent_hex.as_str()]).unwrap(),
+            ];
+            tags.push(Tag::parse(["buzz-mirror", "tasks", "t1", "1"]).unwrap());
+            tags.push(
+                Tag::parse([
+                    "buzz-mirror-author",
+                    "requester",
+                    requester_hex.as_str(),
+                    "",
+                ])
+                .unwrap(),
+            );
+            EventBuilder::new(Kind::Custom(kind), "please do it")
+                .tags(tags)
+                .sign_with_keys(&agent)
+                .unwrap()
+        };
+        assert_eq!(non_prompt_event(&relayed(9)), None);
+        assert!(is_relayed_person_post(&relayed(9)));
+        assert_eq!(
+            non_prompt_event(&relayed(40002)),
+            Some("quiet agent DM marker")
+        );
     }
 }
