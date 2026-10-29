@@ -921,7 +921,11 @@ fn proven_body(agent_public_key: &str, request_id: &str) -> serde_json::Value {
 
 #[cfg(unix)]
 fn proven_agent() -> serde_json::Value {
-    serde_json::json!({"name": "Agent", "system_prompt": "Be brief."})
+    serde_json::json!({
+        "name": "Agent",
+        "relay_url": "wss://chat.example.com",
+        "system_prompt": "Be brief.",
+    })
 }
 
 #[cfg(unix)]

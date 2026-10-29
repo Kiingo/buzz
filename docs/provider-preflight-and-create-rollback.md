@@ -79,8 +79,11 @@ the same staged copy instead of one `deploy`:
    and `capability_policy` must grant no tools, skills or compute
    capabilities, so the owner never signs a grant the desktop did not ask
    for. The body must also say what the desktop asked for: `provider_config`
-   equal to the one sent, `execution_profile.execution.harness.id` equal to
-   its `harness`, `agent_instructions.system_prompt` equal to the agent's
+   equal to the one sent (which must name a `harness`),
+   `execution_profile.execution.harness.id` equal to that `harness`,
+   `community_id` and `relay_url` equal to the host and `wss://host[:port]`
+   of the agent's own relay, `kiingo_agent_id` equal to the agent's attach
+   target (absent when it has none), `agent_instructions.system_prompt` equal to the agent's
    trimmed prompt (null when blank), `response_policy.respond_to` and
    `respond_to_allowlist` equal to the agent's, and `display_name` equal to
    its name. Any mismatch fails closed.

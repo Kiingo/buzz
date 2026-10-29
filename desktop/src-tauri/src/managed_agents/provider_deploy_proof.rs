@@ -326,7 +326,8 @@ fn check_shape(value: &serde_json::Value, shape: &Shape, path: &str) -> Result<(
 /// [`PREPARED_BODY`] at any level, and no capability grants), and must carry,
 /// unchanged, the provider configuration the desktop sent (from which the
 /// provider derives `execution_profile`, so its harness must match), the
-/// agent's instructions, who the agent answers, and its name.
+/// agent's instructions, who the agent answers, its name, the community and
+/// relay of the desktop's own agent record, and the agent it attaches to.
 fn validate_prepared_intent(
     prepared_body: &serde_json::Value,
     agent: &serde_json::Value,
@@ -344,17 +345,40 @@ fn validate_prepared_intent(
     if prepared_body.get("provider_config") != Some(provider_config) {
         return refuse("provider settings");
     }
-    if let Some(harness) = provider_config
+    let harness = provider_config
         .get("harness")
-        .and_then(serde_json::Value::as_str)
-    {
-        if prepared_body
+        .and_then(serde_json::Value::as_str);
+    if harness.is_none()
+        || prepared_body
             .pointer("/execution_profile/execution/harness/id")
             .and_then(serde_json::Value::as_str)
-            != Some(harness)
-        {
-            return refuse("execution settings");
-        }
+            != harness
+    {
+        return refuse("execution settings");
+    }
+    let (community_id, relay_url) = expected_community(agent)?;
+    if prepared_body
+        .get("community_id")
+        .and_then(serde_json::Value::as_str)
+        != Some(community_id.as_str())
+        || prepared_body
+            .get("relay_url")
+            .and_then(serde_json::Value::as_str)
+            != Some(relay_url.as_str())
+    {
+        return refuse("community");
+    }
+    let kiingo_agent_id = match agent.get("kiingo_agent_id") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(id)) => Some(id.to_ascii_lowercase()),
+        Some(_) => return refuse("agent to attach"),
+    };
+    if prepared_body
+        .get("kiingo_agent_id")
+        .and_then(serde_json::Value::as_str)
+        != kiingo_agent_id.as_deref()
+    {
+        return refuse("agent to attach");
     }
     let prompt = agent
         .get("system_prompt")
@@ -392,6 +416,29 @@ fn validate_prepared_intent(
         }
     }
     Ok(())
+}
+
+/// The community and normalized relay the desktop's own agent payload names,
+/// as the provision carries them: the relay host, and `wss://host[:port]`.
+fn expected_community(agent: &serde_json::Value) -> Result<(String, String), String> {
+    let invalid = || "the agent has no valid community relay to deploy to".to_string();
+    let relay = agent
+        .get("relay_url")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(invalid)?;
+    let parsed = url::Url::parse(relay).map_err(|_| invalid())?;
+    let host = parsed
+        .host_str()
+        .filter(|host| !host.is_empty())
+        .ok_or_else(invalid)?;
+    if parsed.scheme() != "wss" || !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(invalid());
+    }
+    let relay_url = match parsed.port() {
+        Some(port) => format!("wss://{host}:{port}"),
+        None => format!("wss://{host}"),
+    };
+    Ok((host.to_string(), relay_url))
 }
 
 fn build_deploy_owner_proof_at(

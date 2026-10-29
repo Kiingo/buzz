@@ -183,6 +183,7 @@ fn owner_proof_has_exactly_the_provision_tags_and_content() {
 fn intent_agent() -> serde_json::Value {
     serde_json::json!({
         "name": "Fizz",
+        "relay_url": "wss://chat.example.com/",
         "system_prompt": "  Be brief.  ",
         "respond_to": "allowlist",
         "respond_to_allowlist": ["b".repeat(64)],
@@ -241,7 +242,9 @@ fn prepared_body_outside_the_closed_shape_is_refused() {
     check(&intent_body()).unwrap();
     let mut attach = intent_body();
     attach["kiingo_agent_id"] = "11111111-2222-4333-8444-555555555555".into();
-    check(&attach).unwrap();
+    let mut attaching_agent = intent_agent();
+    attaching_agent["kiingo_agent_id"] = "11111111-2222-4333-8444-555555555555".into();
+    validate_prepared_intent(&attach, &attaching_agent, &intent_config()).unwrap();
 
     let edited = |edit: &dyn Fn(&mut serde_json::Value)| {
         let mut body = intent_body();
@@ -378,4 +381,73 @@ fn the_signed_hash_is_the_desktops_own() {
     let response = prepared(body(), BODY_SHA256);
     let scope = validate_prepare_response(&response, REQUEST, &agent_key()).unwrap();
     assert_eq!(scope.payload_sha256, canonical_sha256_hex(&body()).unwrap());
+}
+
+#[test]
+fn prepared_body_is_bound_to_the_desktops_community_relay_and_attach() {
+    let check = |body: &serde_json::Value, agent: &serde_json::Value| {
+        validate_prepared_intent(body, agent, &intent_config())
+    };
+    let with = |pointer: &str, value: serde_json::Value| {
+        let mut body = intent_body();
+        *body.pointer_mut(pointer).unwrap() = value;
+        body
+    };
+    // A community or relay the desktop did not name is refused, even one the
+    // owner also belongs to.
+    for body in [
+        with("/community_id", "other.example.com".into()),
+        with("/relay_url", "wss://other.example.com".into()),
+        with("/relay_url", "wss://chat.example.com:8443".into()),
+    ] {
+        assert!(check(&body, &intent_agent()).is_err(), "{body}");
+    }
+    // The relay's port is part of the normalized relay.
+    let mut ported_agent = intent_agent();
+    ported_agent["relay_url"] = "wss://chat.example.com:8443".into();
+    check(
+        &with("/relay_url", "wss://chat.example.com:8443".into()),
+        &ported_agent,
+    )
+    .unwrap();
+    // A non-wss or missing agent relay cannot be deployed to at all.
+    for relay in [
+        serde_json::json!("ws://chat.example.com"),
+        serde_json::Value::Null,
+    ] {
+        let mut agent = intent_agent();
+        agent["relay_url"] = relay;
+        assert!(check(&intent_body(), &agent).is_err());
+    }
+
+    // The attach target is the desktop's (case-folded like the provider's),
+    // or none at all.
+    let attach_id = "11111111-2222-4333-8444-555555555555";
+    let mut attaching_agent = intent_agent();
+    attaching_agent["kiingo_agent_id"] = attach_id.to_uppercase().into();
+    let mut attach = intent_body();
+    attach["kiingo_agent_id"] = attach_id.into();
+    check(&attach, &attaching_agent).unwrap();
+    assert!(
+        check(&attach, &intent_agent()).is_err(),
+        "attach the desktop did not ask for"
+    );
+    assert!(
+        check(&intent_body(), &attaching_agent).is_err(),
+        "attach the provider dropped"
+    );
+    let mut other = intent_body();
+    other["kiingo_agent_id"] = "99999999-2222-4333-8444-555555555555".into();
+    assert!(
+        check(&other, &attaching_agent).is_err(),
+        "different attach target"
+    );
+}
+
+#[test]
+fn provider_config_without_a_harness_is_refused() {
+    let config = serde_json::json!({"model_mode": "auto"});
+    let mut body = intent_body();
+    body["provider_config"] = config.clone();
+    assert!(validate_prepared_intent(&body, &intent_agent(), &config).is_err());
 }
