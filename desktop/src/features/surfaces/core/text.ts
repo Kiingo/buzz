@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at d5090421e1194836177b7c492a84f74342e017c6; do not edit here.
+// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
 import { asNumber } from "./json";
 
 // Agent text is plain text: control characters, format characters
@@ -450,4 +450,17 @@ export const sentence = (text: string): string => {
   }
   const out = text.charAt(0).toUpperCase() + text.slice(1);
   return /[\p{L}\p{N}]$/u.test(out) ? `${out}.` : out;
+};
+
+/**
+ * Whether a heading or field label only repeats the surface's own title,
+ * which the card header already shows: renderers skip that heading and
+ * keep that label for screen readers only (Ross 2026-10-27, document_draft).
+ */
+export const repeatsSurfaceTitle = (
+  title: string | undefined,
+  text: string | undefined,
+): boolean => {
+  const own = comparableText(title ?? "").trim();
+  return own !== "" && comparableText(text ?? "").trim() === own;
 };

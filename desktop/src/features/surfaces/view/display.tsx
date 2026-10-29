@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at d5090421e1194836177b7c492a84f74342e017c6; do not edit here.
+// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ownEntry,
@@ -18,6 +18,7 @@ import {
   plainId,
   plainText,
   proxiedMediaUrl,
+  repeatsSurfaceTitle,
   resolveProp,
   urlHost,
   type EntityKey,
@@ -80,6 +81,10 @@ export const TextView = ({ component, scope }: NodeProps) => {
     ),
   );
   if (variant === "h1" || variant === "h2" || variant === "h3") {
+    // The card header already shows the title.
+    if (repeatsSurfaceTitle(context.surface.title, text)) {
+      return null;
+    }
     const Tag = variant === "h1" ? "h2" : variant === "h2" ? "h3" : "h4";
     return (
       <Tag className={className} style={style}>
@@ -977,122 +982,6 @@ export const LinkPreviewView = ({ component, scope }: NodeProps) => {
     </button>
   ) : (
     <div className={classes}>{body}</div>
-  );
-};
-
-/**
- * Pins drawn on a plain plot (no map tiles are fetched: nothing loads from
- * outside the app), with the list of places and "Open in Maps".
- */
-export const MapView = ({ component, scope }: NodeProps) => {
-  const context = useNodeContext();
-  let raw = context.list(component, "pins", scope);
-  const single = context.value(component, "pins", scope);
-  if (raw.length === 0 && isObject(single)) {
-    raw = [single];
-  }
-  const pins = raw
-    .slice(0, 50)
-    .map((item) => {
-      const record = isObject(item) ? item : {};
-      const lat = asNumber(record.lat);
-      const lng = asNumber(record.lng);
-      if (
-        lat === undefined ||
-        lng === undefined ||
-        Math.abs(lat) > 90 ||
-        Math.abs(lng) > 180
-      ) {
-        return undefined;
-      }
-      return { lat, lng, label: plainText(record.label, 80) ?? "" };
-    })
-    .filter((pin): pin is { lat: number; lng: number; label: string } =>
-      Boolean(pin),
-    );
-  if (pins.length === 0) {
-    return null;
-  }
-  const lats = pins.map((pin) => pin.lat);
-  const lngs = pins.map((pin) => pin.lng);
-  const pad = 0.15;
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-  const spanLat = Math.max(maxLat - minLat, 0.01);
-  const spanLng = Math.max(maxLng - minLng, 0.01);
-  const x = (lng: number) =>
-    20 + ((lng - minLng) / spanLng) * 260 * (1 - pad) + 260 * (pad / 2);
-  const y = (lat: number) =>
-    20 + ((maxLat - lat) / spanLat) * 120 * (1 - pad) + 120 * (pad / 2);
-  const route = context.flag(component, "route", scope) && pins.length > 1;
-  // Outside pins (79 W6): their labels are quoted and nothing links out.
-  const outside = context.isUntrusted(component, "pins", scope);
-  const first = pins[0]!;
-  const mapsLink = `https://maps.apple.com/?ll=${first.lat},${first.lng}&q=${encodeURIComponent(first.label || "Pin")}`;
-  return (
-    <figure className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
-      <svg
-        viewBox="0 0 300 160"
-        className="h-40 w-full rounded-md bg-muted"
-        role="img"
-        aria-label={`Map: ${pins
-          .map((pin) => pin.label)
-          .filter(Boolean)
-          .join(", ")}`}
-      >
-        {route ? (
-          <polyline
-            points={pins.map((pin) => `${x(pin.lng)},${y(pin.lat)}`).join(" ")}
-            fill="none"
-            strokeWidth="3"
-            stroke="currentColor"
-            className="text-primary"
-          />
-        ) : null}
-        {pins.map((pin, index) => (
-          <circle
-            key={index}
-            cx={x(pin.lng)}
-            cy={y(pin.lat)}
-            r="5"
-            fill="currentColor"
-            className="text-destructive"
-          />
-        ))}
-      </svg>
-      <figcaption className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        {outside ? (
-          <QuotedText
-            text={pins
-              .map(
-                (pin) =>
-                  pin.label || `${pin.lat.toFixed(3)}, ${pin.lng.toFixed(3)}`,
-              )
-              .join(" · ")}
-          />
-        ) : (
-          <span>
-            {pins
-              .map(
-                (pin) =>
-                  pin.label || `${pin.lat.toFixed(3)}, ${pin.lng.toFixed(3)}`,
-              )
-              .join(" · ")}
-          </span>
-        )}
-        {outside ? null : (
-          <button
-            type="button"
-            className="text-primary hover:underline"
-            onClick={() => context.openLink(mapsLink)}
-          >
-            Open in Maps
-          </button>
-        )}
-      </figcaption>
-    </figure>
   );
 };
 

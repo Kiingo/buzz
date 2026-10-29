@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at d5090421e1194836177b7c492a84f74342e017c6; do not edit here.
+// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
 import {
   asBool,
   asInt,
@@ -103,6 +103,7 @@ export const COMPONENT_TYPES = [
   "EntityPicker",
   "Reorder",
   "TimeSlotPicker",
+  "LocationPicker",
   // 4.4 Actions
   "Button",
   "ActionBar",
@@ -130,6 +131,7 @@ export const INPUT_TYPES = new Set<ComponentType>([
   "EntityPicker",
   "Reorder",
   "TimeSlotPicker",
+  "LocationPicker",
 ]);
 
 export const isKnownType = (type: string): type is ComponentType =>

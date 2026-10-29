@@ -1,11 +1,13 @@
-// Generated from the Kiingo surface renderer packages at d5090421e1194836177b7c492a84f74342e017c6; do not edit here.
+// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
 import { Fragment, type ReactNode } from "react";
 import {
   parseMarkdown,
   type MarkdownBudget,
+  type MdAlign,
   type MdBlock,
   type MdInline,
 } from "../core";
+import { cn } from "./cn";
 
 /**
  * The safe Markdown subset (§3) drawn with the app's own elements from the
@@ -81,8 +83,57 @@ const renderBlock = (
       );
     case "rule":
       return <hr className="border-border" />;
+    case "table":
+      return (
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="w-full border-collapse text-sm">
+            <thead className="bg-muted/50">
+              <tr>
+                {block.header.map((cell, index) => (
+                  <th
+                    key={index}
+                    className={cn(
+                      "border-b border-border px-2 py-1.5 font-medium",
+                      alignClass(block.align[index] ?? null),
+                    )}
+                  >
+                    {renderInline(cell, onLink)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, rowIndex) => (
+                <tr
+                  key={rowIndex}
+                  className="border-b border-border last:border-b-0"
+                >
+                  {row.map((cell, index) => (
+                    <td
+                      key={index}
+                      className={cn(
+                        "px-2 py-1.5 align-top",
+                        alignClass(block.align[index] ?? null),
+                      )}
+                    >
+                      {renderInline(cell, onLink)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
   }
 };
+
+const alignClass = (align: MdAlign): string =>
+  align === "center"
+    ? "text-center"
+    : align === "right"
+      ? "text-right"
+      : "text-left";
 
 const renderInline = (
   nodes: MdInline[],

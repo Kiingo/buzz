@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at d5090421e1194836177b7c492a84f74342e017c6; do not edit here.
+// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   appendPointer,
@@ -33,14 +33,19 @@ import { aria, validZone, type FieldProps } from "./field";
 // recipients, files, Kiingo objects, reordering and time slots.
 
 /**
- * The body editor: Markdown on the wire (`{format: "markdown", text}`), with
- * Bold, Italic, List, Link and Quote and a preview. Opening it changes
+ * The body editor: Markdown on the wire (`{format: "markdown", text}`),
+ * shown rendered (headings, lists, GFM tables) until the user picks Edit,
+ * with Bold, Italic, List, Link and Quote while editing. Opening it changes
  * nothing; only the user's own edits are saved.
  */
 export const RichTextInput = (props: FieldProps) => {
   const context = useNodeContext();
   const area = useRef<HTMLTextAreaElement | null>(null);
-  const [preview, setPreview] = useState(false);
+  // Rendered Markdown first: Preview is the default whenever there is text,
+  // and Edit is the toggle (an empty body opens straight in the editor).
+  const [preview, setPreview] = useState(
+    () => richTextOf(context.read(props.pointer)).trim() !== "",
+  );
   const [linking, setLinking] = useState<string | undefined>(undefined);
   const linkField = useRef<HTMLInputElement | null>(null);
   const linkOpen = linking !== undefined;

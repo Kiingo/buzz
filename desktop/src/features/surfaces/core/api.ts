@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at d5090421e1194836177b7c492a84f74342e017c6; do not edit here.
+// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
 import { asInt, asString, field, isObject, type JsonValue } from "./json";
 import {
   decodeSurface,
@@ -457,7 +457,18 @@ export class SurfaceApiError extends Error {
   }
 }
 
-const segment = (value: string) => encodeURIComponent(value);
+/**
+ * One path segment. encodeURIComponent leaves "." and ".." as they are, and
+ * the URL parser resolves them, so an agent-chosen id like ".." would reach
+ * another route with the host's credentials. Those and the empty id are
+ * refused (79 L4); the methods below reject, never throw synchronously.
+ */
+const segment = (value: string) => {
+  if (value === "" || value === "." || value === "..") {
+    throw new Error("surface_path_segment_invalid");
+  }
+  return encodeURIComponent(value);
+};
 const base = (id: string) => `/ui/surfaces/${segment(id)}`;
 
 /** The routes over a host's HTTP sender. Unexpected answers throw (the controller treats them as unreachable). */
@@ -473,8 +484,8 @@ export const createSurfaceApi = (send: HttpSend): SurfaceApi => {
     }
     return value;
   };
-  const read = (id: string) =>
-    answer({ method: "GET", path: base(id) }, surfaceResult);
+  const read = async (id: string) =>
+    await answer({ method: "GET", path: base(id) }, surfaceResult);
   return {
     surface: read,
     surfaces: (conversationId, limit, before) =>
@@ -505,8 +516,8 @@ export const createSurfaceApi = (send: HttpSend): SurfaceApi => {
       }
       return value;
     },
-    tap: (id, actionId, revision, client, extra) =>
-      answer(
+    tap: async (id, actionId, revision, client, extra) =>
+      await answer(
         {
           method: "POST",
           path: `${base(id)}/actions/${segment(actionId)}`,
@@ -515,9 +526,9 @@ export const createSurfaceApi = (send: HttpSend): SurfaceApi => {
         },
         (status, body) => tapResult(status, body, id, actionId, revision),
       ),
-    confirm: (id, actionId, revision, nonce, client, extra) => {
+    confirm: async (id, actionId, revision, nonce, client, extra) => {
       const key = idempotencyKey(id, actionId, revision);
-      return answer(
+      return await answer(
         {
           method: "POST",
           path: `${base(id)}/actions/${segment(actionId)}/confirm`,
@@ -533,8 +544,8 @@ export const createSurfaceApi = (send: HttpSend): SurfaceApi => {
         (status, body) => tapResult(status, body, id, actionId, revision),
       );
     },
-    dismiss: (id, revision, client) =>
-      answer(
+    dismiss: async (id, revision, client) =>
+      await answer(
         {
           method: "POST",
           path: `${base(id)}/dismiss`,

@@ -1,8 +1,8 @@
-// Generated from the Kiingo surface renderer packages at d5090421e1194836177b7c492a84f74342e017c6; do not edit here.
+// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
 import { openableUrl } from "./text";
 
 // The safe Markdown subset surfaces carry (§3: emphasis, lists, links, code,
-// quotes; no raw HTML). Parsed to a small tree that each renderer draws with
+// quotes, GFM tables; no raw HTML). Parsed to a small tree that each renderer draws with
 // its own elements, so nothing is ever injected as markup. Raw HTML stays
 // literal text; links open only https and Kiingo deep links (R10), anything
 // else is shown as its text. Bare URLs are not auto-linked.
@@ -22,7 +22,21 @@ export type MdBlock =
   | { kind: "list"; ordered: boolean; start: number; items: MdBlock[][] }
   | { kind: "quote"; children: MdBlock[] }
   | { kind: "code"; language?: string; text: string }
-  | { kind: "rule" };
+  | { kind: "rule" }
+  | {
+      kind: "table";
+      /** One per column; null is the default (left in most renderers). */
+      align: MdAlign[];
+      header: MdInline[][];
+      /** Every row has exactly `header.length` cells. */
+      rows: MdInline[][][];
+    };
+
+export type MdAlign = "left" | "center" | "right" | null;
+
+/** GFM table bounds (79 W5/S2): wider or longer input is not a table. */
+export const MD_TABLE_MAX_COLUMNS = 20;
+export const MD_TABLE_MAX_ROWS = 300;
 
 const MAX_INPUT = 100_000;
 const MAX_NESTING = 6;
@@ -285,6 +299,114 @@ const isRule = (line: string): boolean => {
   return count >= 3;
 };
 
+/**
+ * The cells of a GFM table row: outer pipes off, split on unescaped pipes
+ * (an escaped `\\|` stays in the cell for parseInline to unescape). One
+ * linear pass; undefined past MD_TABLE_MAX_COLUMNS.
+ */
+const splitTableRow = (line: string): string[] | undefined => {
+  let row = line.trim();
+  if (row.startsWith("|")) {
+    row = row.slice(1);
+  }
+  if (row.endsWith("|") && !row.endsWith("\\|")) {
+    row = row.slice(0, -1);
+  }
+  const cells: string[] = [];
+  let cell = "";
+  for (let i = 0; i < row.length; i += 1) {
+    const char = row[i]!;
+    if (char === "\\" && row[i + 1] === "|") {
+      cell += "\\|";
+      i += 1;
+      continue;
+    }
+    if (char === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      if (cells.length > MD_TABLE_MAX_COLUMNS) {
+        return undefined;
+      }
+      continue;
+    }
+    cell += char;
+  }
+  cells.push(cell.trim());
+  return cells.length > MD_TABLE_MAX_COLUMNS ? undefined : cells;
+};
+
+const DELIMITER_CELL = /^:?-+:?$/u;
+
+/** "| :--- | ---: |" as column alignments, else undefined. */
+const readTableDelimiter = (line: string): MdAlign[] | undefined => {
+  if (
+    !line.includes("-") ||
+    !line.includes("|") ||
+    unindent(line) === undefined
+  ) {
+    return undefined;
+  }
+  const cells = splitTableRow(line);
+  if (!cells?.length || !cells.every((cell) => DELIMITER_CELL.test(cell))) {
+    return undefined;
+  }
+  return cells.map((cell) =>
+    cell.startsWith(":") && cell.endsWith(":")
+      ? "center"
+      : cell.endsWith(":")
+        ? "right"
+        : cell.startsWith(":")
+          ? "left"
+          : null,
+  );
+};
+
+/**
+ * A GFM table at `lines[at]`: a header row with a pipe, then a delimiter row
+ * with the same number of cells. Body rows run to the first blank or
+ * pipe-less line, at most MD_TABLE_MAX_ROWS; each is padded or cut to the
+ * header's width.
+ */
+const readTable = (
+  lines: readonly string[],
+  at: number,
+): { block: MdBlock; next: number } | undefined => {
+  const headerLine = lines[at]!;
+  const delimiterLine = lines[at + 1];
+  if (
+    delimiterLine === undefined ||
+    !headerLine.includes("|") ||
+    unindent(headerLine) === undefined
+  ) {
+    return undefined;
+  }
+  const header = splitTableRow(headerLine);
+  const align = readTableDelimiter(delimiterLine);
+  if (!header || !align || align.length !== header.length) {
+    return undefined;
+  }
+  const width = header.length;
+  const fit = (cells: string[]): MdInline[][] =>
+    Array.from({ length: width }, (_, index) =>
+      parseInline(cells[index] ?? "", 1),
+    );
+  const rows: MdInline[][][] = [];
+  let i = at + 2;
+  while (
+    i < lines.length &&
+    rows.length < MD_TABLE_MAX_ROWS &&
+    lines[i]!.trim() !== "" &&
+    lines[i]!.includes("|")
+  ) {
+    rows.push(fit(splitTableRow(lines[i]!) ?? [lines[i]!.trim()]));
+    i += 1;
+  }
+  return {
+    block: { kind: "table", align, header: fit(header), rows },
+    next: i,
+  };
+};
+
 const parseBlocks = (input: string, depth = 0): MdBlock[] => {
   // Every line break counts as one (79 W6 parity #1), as in cleanText.
   const text = (input ?? "")
@@ -356,6 +478,14 @@ const parseBlocks = (input: string, depth = 0): MdBlock[] => {
         kind: "quote",
         children: parseBlocks(quoted.join("\n"), depth + 1),
       });
+      continue;
+    }
+    // A table may interrupt a paragraph (GFM).
+    const table = line.includes("|") ? readTable(lines, i) : undefined;
+    if (table) {
+      flushParagraph();
+      blocks.push(table.block);
+      i = table.next;
       continue;
     }
     const item = LIST_ITEM.exec(line);
