@@ -1272,6 +1272,16 @@
     {
       "classification": "retain-generic",
       "owner": "Buzz desktop maintainers",
+      "purpose": "Monotonic update floor (79 SHOULD-BUZZ-FEED-ROLLBACK): latest.json is unsigned, so the updater's version comparator installs only a strictly newer version whose every platform signature carries a minisign trusted-comment timestamp later than this build's compile time. A feed that relabels an older validly signed archive as a newer version is refused.",
+      "upstreamStatus": "Generic updater hardening; candidate for upstream.",
+      "removalCondition": "Remove when block/buzz signs its update feed or refuses archives signed before the running build.",
+      "paths": [
+        "desktop/src-tauri/src/updater_guard.rs"
+      ]
+    },
+    {
+      "classification": "retain-generic",
+      "owner": "Buzz desktop maintainers",
       "purpose": "Discover registered Visual C++ installations instead of assuming a Visual Studio release-year directory, while preserving installed MSVC, default toolset, Windows SDK and CMake identity in the native desktop cache fingerprint.",
       "upstreamStatus": "Generic Windows build-cache portability fix; candidate for upstream.",
       "removalCondition": "Remove when block/buzz discovers registered Visual C++ installations for its native desktop cache identity.",

@@ -56,6 +56,8 @@ mod terminal_transport;
 #[cfg(target_os = "macos")]
 mod tray_menu;
 mod unread_catch_up;
+#[cfg_attr(not(buzz_updater_enabled), allow(dead_code))]
+mod updater_guard;
 mod util;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
@@ -231,11 +233,17 @@ pub fn run() {
     let builder = ptt_shortcut::install(builder);
 
     // Register the updater only in configured release builds; omit it locally.
+    // The comparator installs only strictly newer releases whose archives were
+    // signed after this build (79 SHOULD-BUZZ-FEED-ROLLBACK).
     #[cfg(buzz_updater_enabled)]
     let builder = if cfg!(debug_assertions) {
         builder
     } else {
-        builder.plugin(tauri_plugin_updater::Builder::new().build())
+        builder.plugin(
+            tauri_plugin_updater::Builder::new()
+                .default_version_comparator(updater_guard::accept_update)
+                .build(),
+        )
     };
     let app = app_menu::install(builder)
         .register_asynchronous_uri_scheme_protocol("buzz-media", |ctx, request, responder| {

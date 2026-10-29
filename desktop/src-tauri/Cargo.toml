@@ -84,6 +84,10 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
+# Same versions tauri-plugin-updater uses: the update comparator reads its
+# semver::Version and the signed minisign trusted comment (updater_guard.rs).
+semver = "1"
+minisign-verify = "0.2"
 tauri-plugin-process = "2"
 infer = "0.19"
 hex = "0.4"

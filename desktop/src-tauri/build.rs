@@ -145,6 +145,16 @@ fn main() {
         println!("cargo:rustc-cfg=buzz_updater_enabled");
     }
 
+    // Compile time, the floor for the signed timestamp of any update this
+    // build installs (src/updater_guard.rs). Re-run per release revision so a
+    // reused target directory cannot carry an older floor forward.
+    println!("cargo:rerun-if-env-changed=BUZZ_REVISION");
+    let build_unix_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    println!("cargo:rustc-env=BUZZ_DESKTOP_BUILD_UNIX_TIME={build_unix_time}");
+
     // Cargo test executables get no embedded Windows manifest (tauri_build
     // attaches one to bin targets only), so the loader binds comctl32 v5, which
     // lacks TaskDialogIndirect (statically imported via tauri-plugin-dialog/rfd)
