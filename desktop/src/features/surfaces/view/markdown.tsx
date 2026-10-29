@@ -1,5 +1,5 @@
-// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
-import { Fragment, type ReactNode } from "react";
+// Generated from the Kiingo surface renderer packages at 568e78caaf0a85a2acc80a0a93b78d1ff84bdef1; do not edit here.
+import { createContext, Fragment, useContext, type ReactNode } from "react";
 import {
   parseMarkdown,
   type MarkdownBudget,
@@ -8,6 +8,31 @@ import {
   type MdInline,
 } from "../core";
 import { cn } from "./cn";
+import { CopyButton } from "./copy";
+
+/** Whether code fences get a Copy control (Markdown's `copyable`, default on). */
+const CodeCopy = createContext(true);
+
+const CodeFence = ({ text }: { text: string }) => {
+  const copyable = useContext(CodeCopy);
+  return (
+    <div className="overflow-hidden rounded-md bg-muted">
+      {copyable ? (
+        <div className="flex justify-end px-2 pt-1">
+          <CopyButton text={text} what="code" />
+        </div>
+      ) : null}
+      <pre
+        className={cn(
+          "overflow-x-auto px-3 font-mono text-xs",
+          copyable ? "pb-2" : "py-2",
+        )}
+      >
+        <code>{text}</code>
+      </pre>
+    </div>
+  );
+};
 
 /**
  * The safe Markdown subset (§3) drawn with the app's own elements from the
@@ -19,15 +44,20 @@ export const MarkdownText = ({
   text,
   onLink,
   budget,
+  copyCode = true,
 }: {
   text: string;
   onLink: (url: string) => void;
   /** The surface's Markdown allowance for this render (79 S2). */
   budget?: MarkdownBudget;
+  /** A Copy control on each code fence (default on). */
+  copyCode?: boolean;
 }) => (
-  <div className="space-y-2 break-words text-sm leading-relaxed">
-    {renderBlocks(parseMarkdown(text, budget), onLink)}
-  </div>
+  <CodeCopy.Provider value={copyCode}>
+    <div className="space-y-2 break-words text-sm leading-relaxed">
+      {renderBlocks(parseMarkdown(text, budget), onLink)}
+    </div>
+  </CodeCopy.Provider>
 );
 
 const renderBlocks = (
@@ -76,11 +106,7 @@ const renderBlock = (
         </blockquote>
       );
     case "code":
-      return (
-        <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs">
-          <code>{block.text}</code>
-        </pre>
-      );
+      return <CodeFence text={block.text} />;
     case "rule":
       return <hr className="border-border" />;
     case "table":

@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
+// Generated from the Kiingo surface renderer packages at 568e78caaf0a85a2acc80a0a93b78d1ff84bdef1; do not edit here.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   appendPointer,
@@ -26,6 +26,7 @@ import { useNodeContext } from "./context";
 import { EntityChip, FileRow } from "./display";
 import { ENTITY_NOUNS, Glyphs } from "./icons";
 import { MarkdownText } from "./markdown";
+import { CopyButton } from "./copy";
 import { fieldClass, QuoteBox, SurfaceButton } from "./ui";
 import { aria, validZone, type FieldProps } from "./field";
 
@@ -155,6 +156,14 @@ export const RichTextInput = (props: FieldProps) => {
         {tool("Link", () => setLinking("https://"), "Link")}
         {tool("Quote", () => prefixLine("> "), "❝")}
         <span className="flex-1" />
+        {props.component.props.copyable === false ? null : (
+          <CopyButton
+            text={text}
+            what={props.label}
+            compact
+            className="px-1.5"
+          />
+        )}
         <button
           type="button"
           aria-pressed={preview}

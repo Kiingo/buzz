@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
+// Generated from the Kiingo surface renderer packages at 568e78caaf0a85a2acc80a0a93b78d1ff84bdef1; do not edit here.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ownEntry,
@@ -25,6 +25,7 @@ import {
   type EntityType,
   type JsonValue,
 } from "../core";
+import { CopyButton } from "./copy";
 import { cn } from "./cn";
 import { useNodeContext, type NodeProps } from "./context";
 import { catalogIcon, ENTITY_ICONS, ENTITY_NOUNS, Glyphs } from "./icons";
@@ -113,6 +114,7 @@ export const MarkdownView = ({ component, scope }: NodeProps) => {
       text={text}
       onLink={context.openLink}
       budget={context.markdown}
+      copyCode={component.props.copyable !== false}
     />
   );
 };
@@ -331,6 +333,7 @@ export const KeyValueView = ({ component, scope }: NodeProps) => {
     );
     return <QuoteBox text={lines.join("\n")} />;
   }
+  const copyValues = component.props.copyable !== false;
   const nameOf = (item: JsonValue) =>
     (isObject(item) ? context.textOf(item.name, scope, 80) : undefined) ?? "";
   const rawValue = (item: JsonValue) =>
@@ -352,8 +355,11 @@ export const KeyValueView = ({ component, scope }: NodeProps) => {
         {items.map((item, index) => (
           <div key={index}>
             <dt className="text-xs text-muted-foreground">{nameOf(item)}</dt>
-            <dd className="whitespace-pre-wrap break-words text-sm">
-              {valueText(item)}
+            <dd className="flex items-start gap-1.5 whitespace-pre-wrap break-words text-sm">
+              <span className="min-w-0 flex-1">{valueText(item)}</span>
+              {copyValues ? (
+                <CopyButton text={rawValue(item)} what={nameOf(item)} compact />
+              ) : null}
             </dd>
           </div>
         ))}
@@ -365,8 +371,11 @@ export const KeyValueView = ({ component, scope }: NodeProps) => {
       {items.map((item, index) => (
         <div key={index} className="contents">
           <dt className="text-sm text-muted-foreground">{nameOf(item)}</dt>
-          <dd className="whitespace-pre-wrap break-words text-sm">
-            {valueText(item)}
+          <dd className="flex items-start gap-1.5 whitespace-pre-wrap break-words text-sm">
+            <span className="min-w-0 flex-1">{valueText(item)}</span>
+            {copyValues ? (
+              <CopyButton text={rawValue(item)} what={nameOf(item)} compact />
+            ) : null}
           </dd>
         </div>
       ))}
@@ -582,25 +591,16 @@ export const CodeView = ({ component, scope }: NodeProps) => {
   const context = useNodeContext();
   const code = context.text(component, "code", scope, 50_000) ?? "";
   const language = context.text(component, "language", scope, 20);
-  const [copied, setCopied] = useState(false);
   if (context.isUntrusted(component, "code", scope)) {
-    return <QuoteBox text={code} />;
+    return <QuoteBox text={code} copy={component.props.copyable !== false} />;
   }
   return (
     <div className="overflow-hidden rounded-md border border-border bg-muted">
       <div className="flex items-center justify-between border-b border-border px-3 py-1 text-2xs text-muted-foreground">
         <span>{language ?? "Code"}</span>
-        <button
-          type="button"
-          className="hover:text-foreground"
-          onClick={() => {
-            void navigator.clipboard
-              ?.writeText(code)
-              .then(() => setCopied(true));
-          }}
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
+        {component.props.copyable === false ? null : (
+          <CopyButton text={code} what="code" />
+        )}
       </div>
       <pre
         className={cn(
@@ -636,9 +636,16 @@ export const DiffView = ({ component, scope }: NodeProps) => {
     () => diffText(before, after, granularity, compared ? undefined : 0),
     [before, after, granularity, compared],
   );
+  const copyAfter =
+    component.props.copyable === false ? null : (
+      <div className="flex justify-end">
+        <CopyButton text={after} what="new text" />
+      </div>
+    );
   if (context.string(component, "mode") === "sideBySide") {
     return (
       <div className="@container">
+        {copyAfter}
         <div className="grid grid-cols-1 gap-3 @md:grid-cols-2">
           {[
             ["Before", before],
@@ -654,26 +661,32 @@ export const DiffView = ({ component, scope }: NodeProps) => {
     );
   }
   return (
-    <p className="whitespace-pre-wrap break-words text-sm">
-      {parts.map((part, index) =>
-        part.kind === "added" ? (
-          <ins key={index} className="bg-emerald-50 text-emerald-700 underline">
-            <span className="sr-only">added </span>
-            {part.text}
-          </ins>
-        ) : part.kind === "removed" ? (
-          <del
-            key={index}
-            className="bg-destructive/10 text-destructive line-through"
-          >
-            <span className="sr-only">removed </span>
-            {part.text}
-          </del>
-        ) : (
-          <span key={index}>{part.text}</span>
-        ),
-      )}
-    </p>
+    <div className="flex flex-col gap-1">
+      {copyAfter}
+      <p className="whitespace-pre-wrap break-words text-sm">
+        {parts.map((part, index) =>
+          part.kind === "added" ? (
+            <ins
+              key={index}
+              className="bg-emerald-50 text-emerald-700 underline"
+            >
+              <span className="sr-only">added </span>
+              {part.text}
+            </ins>
+          ) : part.kind === "removed" ? (
+            <del
+              key={index}
+              className="bg-destructive/10 text-destructive line-through"
+            >
+              <span className="sr-only">removed </span>
+              {part.text}
+            </del>
+          ) : (
+            <span key={index}>{part.text}</span>
+          ),
+        )}
+      </p>
+    </div>
   );
 };
 
@@ -718,7 +731,13 @@ export const QuoteView = ({ component, scope }: NodeProps) => {
       </button>
     );
   }
-  return <QuoteBox text={text} source={source} />;
+  return (
+    <QuoteBox
+      text={text}
+      source={source}
+      copy={component.props.copyable !== false}
+    />
+  );
 };
 
 /**

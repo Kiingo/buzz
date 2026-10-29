@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
+// Generated from the Kiingo surface renderer packages at 568e78caaf0a85a2acc80a0a93b78d1ff84bdef1; do not edit here.
 import { useState } from "react";
 import {
   ownEntry,
@@ -18,6 +18,7 @@ import {
   type Pointer,
   type SurfaceComponent,
 } from "../core";
+import { WithCopy } from "./copy";
 import { cn } from "./cn";
 import { useNodeContext, type NodeContext, type NodeProps } from "./context";
 import { Glyphs } from "./icons";
@@ -32,6 +33,7 @@ import {
   TimeSlotInput,
 } from "./pickers";
 import { LocationInput } from "./places";
+import { AddressInput, ColorInput, NumberInput } from "./typed";
 
 // §4.3 Inputs. Each binds `value` to a path; edits go to the controller
 // (saved 600 ms after the last change). A field that asks for a secret is
@@ -122,6 +124,8 @@ const GROUPED = new Set<string>([
   "Reorder",
   "TimeSlotPicker",
   "Stepper",
+  "AddressField",
+  "ColorPicker",
 ]);
 
 const Field = ({ type, ...props }: FieldProps & { type: ComponentType }) => {
@@ -158,6 +162,12 @@ const Field = ({ type, ...props }: FieldProps & { type: ComponentType }) => {
       return <TimeSlotInput {...props} />;
     case "LocationPicker":
       return <LocationInput {...props} />;
+    case "NumberField":
+      return <NumberInput {...props} />;
+    case "AddressField":
+      return <AddressInput {...props} />;
+    case "ColorPicker":
+      return <ColorInput {...props} />;
     default:
       return null;
   }
@@ -179,25 +189,40 @@ const TextInput = (props: FieldProps) => {
   const value = context.read(props.pointer);
   const maxLength = asInt(props.component.props.maxLength);
   const [numberDraft, setNumberDraft] = useState<string | undefined>(undefined);
+  const shownText =
+    typeof value === "string"
+      ? value
+      : typeof value === "number"
+        ? formatPlainNumber(value)
+        : value === undefined || value === null
+          ? ""
+          : cellText(value);
   if (kind === "long") {
     return (
-      <textarea
-        id={props.id}
-        rows={4}
-        value={
-          typeof value === "string"
-            ? value
-            : value === undefined || value === null
-              ? ""
-              : cellText(value)
-        }
-        placeholder={props.placeholder}
-        disabled={props.disabled}
-        maxLength={maxLength}
-        onChange={(event) => context.edit(props.pointer, event.target.value)}
-        className={cn(fieldClass, "min-h-[5rem] resize-y")}
-        {...aria(props)}
-      />
+      <WithCopy
+        text={shownText}
+        what={props.label}
+        copyable={props.component.props.copyable !== false}
+        top
+      >
+        <textarea
+          id={props.id}
+          rows={4}
+          value={
+            typeof value === "string"
+              ? value
+              : value === undefined || value === null
+                ? ""
+                : cellText(value)
+          }
+          placeholder={props.placeholder}
+          disabled={props.disabled}
+          maxLength={maxLength}
+          onChange={(event) => context.edit(props.pointer, event.target.value)}
+          className={cn(fieldClass, "min-h-[5rem] resize-y")}
+          {...aria(props)}
+        />
+      </WithCopy>
     );
   }
   if (kind === "number") {
@@ -209,56 +234,69 @@ const TextInput = (props: FieldProps) => {
           ? value
           : "");
     return (
-      <input
-        id={props.id}
-        type="text"
-        inputMode="decimal"
-        value={shown}
-        placeholder={props.placeholder}
-        disabled={props.disabled}
-        onChange={(event) => {
-          const text = event.target.value;
-          setNumberDraft(text);
-          const trimmed = text.trim().replace(/,/gu, "");
-          if (trimmed === "") {
-            context.edit(props.pointer, undefined);
-          } else if (Number.isFinite(Number(trimmed))) {
-            context.edit(props.pointer, Number(trimmed));
-          }
-        }}
-        onBlur={() => setNumberDraft(undefined)}
-        className={fieldClass}
-        {...aria(props)}
-      />
+      <WithCopy
+        text={shown}
+        what={props.label}
+        copyable={props.component.props.copyable !== false}
+      >
+        <input
+          id={props.id}
+          type="text"
+          inputMode="decimal"
+          value={shown}
+          placeholder={props.placeholder}
+          disabled={props.disabled}
+          onChange={(event) => {
+            const text = event.target.value;
+            setNumberDraft(text);
+            const trimmed = text.trim().replace(/,/gu, "");
+            if (trimmed === "") {
+              context.edit(props.pointer, undefined);
+            } else if (Number.isFinite(Number(trimmed))) {
+              context.edit(props.pointer, Number(trimmed));
+            }
+          }}
+          onBlur={() => setNumberDraft(undefined)}
+          className={fieldClass}
+          {...aria(props)}
+        />
+      </WithCopy>
     );
   }
   return (
-    <input
-      id={props.id}
-      type={ownEntry(TEXT_TYPES, kind) ?? "text"}
-      value={
-        typeof value === "string"
-          ? value
-          : typeof value === "number"
-            ? formatPlainNumber(value)
-            : ""
-      }
-      placeholder={props.placeholder}
-      disabled={props.disabled}
-      maxLength={maxLength}
-      autoComplete="off"
-      autoCapitalize={kind === "email" || kind === "url" ? "none" : undefined}
-      spellCheck={
-        kind === "email" || kind === "url" || kind === "phone"
-          ? false
-          : undefined
-      }
-      onChange={(event) => context.edit(props.pointer, event.target.value)}
-      className={fieldClass}
-      {...aria(props)}
-    />
+    <WithCopy
+      text={shownText}
+      what={props.label}
+      copyable={props.component.props.copyable !== false}
+    >
+      <input
+        id={props.id}
+        type={ownEntry(TEXT_TYPES, kind) ?? "text"}
+        value={
+          typeof value === "string"
+            ? value
+            : typeof value === "number"
+              ? formatPlainNumber(value)
+              : ""
+        }
+        placeholder={props.placeholder}
+        disabled={props.disabled}
+        maxLength={maxLength}
+        autoComplete="off"
+        autoCapitalize={kind === "email" || kind === "url" ? "none" : undefined}
+        spellCheck={
+          kind === "email" || kind === "url" || kind === "phone"
+            ? false
+            : undefined
+        }
+        onChange={(event) => context.edit(props.pointer, event.target.value)}
+        className={fieldClass}
+        {...aria(props)}
+      />
+    </WithCopy>
   );
 };
+
 // --- Choices --------------------------------------------------------------------
 
 type Option = {

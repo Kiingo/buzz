@@ -1,9 +1,10 @@
-// Generated from the Kiingo surface renderer packages at ecd20c86500467b7da9e4b33426b9a9ba379b523; do not edit here.
+// Generated from the Kiingo surface renderer packages at 568e78caaf0a85a2acc80a0a93b78d1ff84bdef1; do not edit here.
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { ownEntry } from "../core";
 import { cn } from "./cn";
+import { CopyButton } from "./copy";
 import { Glyphs } from "./icons";
 
 // The app's own controls for surfaces. Colours come from the app's theme
@@ -252,18 +253,22 @@ export const SurfaceMenu = ({
 export const QuoteBox = ({
   text,
   source,
+  copy = false,
 }: {
   text: string;
   source?: string;
+  /** A Copy control for the quoted words (Quote, outside Code). */
+  copy?: boolean;
 }) => (
   <figure className="flex gap-2">
     <span
       aria-hidden
       className="w-[3px] shrink-0 rounded bg-muted-foreground/40"
     />
-    <div className="min-w-0">
-      <figcaption className="text-xs text-muted-foreground">
-        {source ? `Quoted from ${source}` : "Quoted"}
+    <div className="min-w-0 flex-1">
+      <figcaption className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>{source ? `Quoted from ${source}` : "Quoted"}</span>
+        {copy ? <CopyButton text={text} what="quote" /> : null}
       </figcaption>
       <blockquote className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
         {text}
