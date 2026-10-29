@@ -1276,9 +1276,11 @@
       "upstreamStatus": "Generic updater hardening; candidate for upstream.",
       "removalCondition": "Remove when block/buzz signs its update feed or refuses archives signed before the running build, and its webview cannot pass allowDowngrades to the updater.",
       "paths": [
+        "desktop/src-tauri/capabilities/default.json",
         "desktop/src-tauri/src/commands/guarded_updater.rs",
         "desktop/src-tauri/src/updater_guard.rs",
-        "desktop/src/features/settings/hooks/guardedUpdater.ts"
+        "desktop/src/features/settings/hooks/guardedUpdater.ts",
+        "desktop/tests/e2e/sidebar.spec.ts"
       ]
     },
     {
