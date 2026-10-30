@@ -63,12 +63,21 @@ String suggestionQuestion(GuestSuggestion suggestion) {
       : (sources.isNotEmpty ? sources : 'these questions');
   final scope = suggestion.proposedScope == GrantScope.always
       ? 'Always allow'
-      : '${scopeLabel(suggestion.proposedScope)}:';
+      : '${scopeLabel(suggestion.proposedScope, days: suggestion.days)}:';
   return '$scope $who on $topic?';
 }
 
-/// "You approved 3 similar requests."
+/// "Ada proposed this. Nothing is shared until you allow it." for an
+/// agent-proposed grant; "You approved 3 similar requests." for a learned one.
 String suggestionDetail(GuestSuggestion suggestion) {
+  if (suggestion.agentProposed) {
+    final who =
+        suggestion.proposedByAgentName ??
+        (suggestion.proposedVia == 'mcp_client'
+            ? 'Your MCP client'
+            : 'Your agent');
+    return '$who proposed this. Nothing is shared until you allow it.';
+  }
   final count = suggestion.approvalsCount;
   return 'You approved $count similar ${count == 1 ? 'request' : 'requests'}.';
 }

@@ -165,6 +165,10 @@ class GuestSuggestion {
     this.dataSources = const [],
     this.approvalsCount = 0,
     this.proposedScope = GrantScope.once,
+    this.agentProposed = false,
+    this.days,
+    this.proposedVia,
+    this.proposedByAgentName,
   });
 
   final String suggestionId;
@@ -174,6 +178,19 @@ class GuestSuggestion {
   final List<String> dataSources;
   final int approvalsCount;
   final GrantScope proposedScope;
+
+  /// An agent or your MCP client asked for this grant (Kiingo 79 ruling 5);
+  /// otherwise it is learned from what you keep approving.
+  final bool agentProposed;
+
+  /// Days for a `person_days` proposal.
+  final int? days;
+
+  /// `agent_run` or `mcp_client` (proposals only).
+  final String? proposedVia;
+
+  /// The proposing agent's name (proposals only).
+  final String? proposedByAgentName;
 }
 
 class GuestDigestRequester {
@@ -422,6 +439,10 @@ List<GuestSuggestion> parseSuggestionList(Object? value) => [
         dataSources: _strings(raw['data_sources']),
         approvalsCount: _int(raw['approvals_count']) ?? 0,
         proposedScope: _scope(raw['proposed_scope']),
+        agentProposed: raw['source'] == 'agent_proposed',
+        days: _int(raw['days']),
+        proposedVia: _str(_obj(raw['proposed_by'])['via']),
+        proposedByAgentName: _str(_obj(raw['proposed_by'])['agent_name']),
       ),
 ];
 

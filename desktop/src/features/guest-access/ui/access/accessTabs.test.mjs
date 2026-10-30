@@ -4,13 +4,21 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { parseAccessLog, parseDigest, parseGrantList } from "../../lib/wire.ts";
+import {
+  parseAccessLog,
+  parseDigest,
+  parseGrantList,
+  parseSuggestionList,
+} from "../../lib/wire.ts";
 import { parseEndpointStatusPayload } from "../../useGuestAccessPipeline.ts";
 import { DigestSummary } from "./GuestDigestTab.tsx";
 import { AccessLogRow } from "./GuestRequestsTab.tsx";
 import { activeGrantsFor, GrantRow } from "./GuestGrantsTab.tsx";
 import { respondToSummary } from "./GuestPolicyTab.tsx";
-import { suggestionQuestion } from "./GuestSuggestionsTab.tsx";
+import {
+  suggestionDetail,
+  suggestionQuestion,
+} from "./GuestSuggestionsTab.tsx";
 
 const NOW = Date.parse("2026-10-10T12:00:00.000Z");
 
@@ -117,9 +125,58 @@ test("learned-grant suggestions read as a question", () => {
       dataSources: [],
       approvalsCount: 5,
       proposedScope: "always",
+      source: "learned",
+      days: null,
+      proposedBy: null,
     }),
     "Always allow Jess on pipeline?",
   );
+});
+
+test("an agent-proposed grant says who proposed it, not an approval count", () => {
+  const [proposal] = parseSuggestionList({
+    items: [
+      {
+        suggestion_id: "p1",
+        source: "agent_proposed",
+        grantee: { display_name: "Jess" },
+        question_kind: null,
+        data_sources: ["crm"],
+        approvals_count: 0,
+        proposed_scope: "person_days",
+        days: 14,
+        proposed_by: { via: "agent_run", agent_name: "Ada" },
+      },
+    ],
+  });
+  assert.equal(
+    suggestionDetail(proposal),
+    "Ada proposed this. Nothing is shared until you allow it.",
+  );
+  assert.match(
+    suggestionQuestion(proposal),
+    /^This person for 14 days: Jess on /,
+  );
+  const [fromClient] = parseSuggestionList({
+    items: [
+      {
+        suggestion_id: "p2",
+        source: "agent_proposed",
+        proposed_scope: "once",
+        proposed_by: { via: "mcp_client", agent_name: null },
+      },
+    ],
+  });
+  assert.equal(
+    suggestionDetail(fromClient),
+    "Your MCP client proposed this. Nothing is shared until you allow it.",
+  );
+  const [learned] = parseSuggestionList({
+    items: [
+      { suggestion_id: "s1", approvals_count: 1, proposed_scope: "always" },
+    ],
+  });
+  assert.equal(suggestionDetail(learned), "You approved 1 similar request.");
 });
 
 test("policy copy explains the hosted route per access mode", () => {

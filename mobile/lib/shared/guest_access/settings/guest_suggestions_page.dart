@@ -28,8 +28,8 @@ class GuestSuggestionsPage extends ConsumerWidget {
     return GuestOwnerPageScaffold(
       title: 'Suggestions',
       intro:
-          'Based on what you keep approving. Allowing creates a grant you can '
-          'revoke any time.',
+          'Proposed by your agents, or based on what you keep approving. '
+          'Allowing creates a grant you can revoke any time.',
       children: [
         GuestOwnerListState<List<GuestSuggestion>>(
           value: suggestions,

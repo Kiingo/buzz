@@ -16,8 +16,25 @@ export function suggestionQuestion(suggestion: GuestSuggestion): string {
   const scope =
     suggestion.proposedScope === "always"
       ? "Always allow"
-      : `${scopeLabel(suggestion.proposedScope)}:`;
+      : `${scopeLabel(suggestion.proposedScope, suggestion.days)}:`;
   return `${scope} ${who} on ${topic}?`;
+}
+
+/**
+ * The line under the question: who proposed it (an agent or your MCP client,
+ * Kiingo 79 ruling 5), or how many similar requests you approved.
+ */
+export function suggestionDetail(suggestion: GuestSuggestion): string {
+  if (suggestion.source === "agent_proposed") {
+    const who =
+      suggestion.proposedBy?.agentName ??
+      (suggestion.proposedBy?.via === "mcp_client"
+        ? "Your MCP client"
+        : "Your agent");
+    return `${who} proposed this. Nothing is shared until you allow it.`;
+  }
+  const count = suggestion.approvalsCount;
+  return `You approved ${count} similar ${count === 1 ? "request" : "requests"}.`;
 }
 
 export function GuestSuggestionsTab({
@@ -37,8 +54,8 @@ export function GuestSuggestionsTab({
   return (
     <div data-testid="guest-suggestions-tab">
       <p className="text-sm text-muted-foreground">
-        Based on what you keep approving. Accepting creates a grant you can
-        revoke any time.
+        Proposed by your agents, or based on what you keep approving. Accepting
+        creates a grant you can revoke any time.
       </p>
       <QueryState
         empty={rows.length === 0}
@@ -57,8 +74,7 @@ export function GuestSuggestionsTab({
               <div className="min-w-0">
                 <p className="font-medium">{suggestionQuestion(row)}</p>
                 <p className="text-xs text-muted-foreground">
-                  You approved {row.approvalsCount} similar{" "}
-                  {row.approvalsCount === 1 ? "request" : "requests"}.
+                  {suggestionDetail(row)}
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">

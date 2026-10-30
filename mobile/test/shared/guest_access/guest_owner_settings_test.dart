@@ -219,6 +219,42 @@ void main() {
       );
     });
 
+    test('an agent-proposed grant says who proposed it', () {
+      final proposals = parseSuggestionList({
+        'items': [
+          {
+            'suggestion_id': 'p-1',
+            'source': 'agent_proposed',
+            'grantee': {'display_name': 'Jess'},
+            'data_sources': ['crm'],
+            'approvals_count': 0,
+            'proposed_scope': 'person_days',
+            'days': 14,
+            'proposed_by': {'via': 'agent_run', 'agent_name': 'Ada'},
+          },
+          {
+            'suggestion_id': 'p-2',
+            'source': 'agent_proposed',
+            'proposed_scope': 'once',
+            'proposed_by': {'via': 'mcp_client', 'agent_name': null},
+          },
+        ],
+      });
+      expect(proposals.first.agentProposed, isTrue);
+      expect(
+        suggestionDetail(proposals.first),
+        'Ada proposed this. Nothing is shared until you allow it.',
+      );
+      expect(
+        suggestionQuestion(proposals.first),
+        startsWith('This person for 14 days: Jess on '),
+      );
+      expect(
+        suggestionDetail(proposals.last),
+        'Your MCP client proposed this. Nothing is shared until you allow it.',
+      );
+    });
+
     test('admin overview reads alerts and suspended requesters', () {
       final overview = parseAdminOverview({
         'alerts': [

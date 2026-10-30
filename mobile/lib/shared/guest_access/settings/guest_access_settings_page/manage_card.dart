@@ -69,7 +69,7 @@ class _ManageCard extends ConsumerWidget {
           key: const ValueKey('guest-access-suggestions'),
           icon: BuzzIcons.lightbulb,
           title: 'Suggestions',
-          subtitle: 'Grants based on what you keep approving',
+          subtitle: 'Grants your agents proposed or you keep approving',
           value: suggestions,
           trailing: chevron,
           onTap: () => _push(context, const GuestSuggestionsPage()),

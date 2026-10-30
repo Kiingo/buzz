@@ -167,6 +167,15 @@ export type GuestSuggestion = {
   dataSources: string[];
   approvalsCount: number;
   proposedScope: GrantScope;
+  /**
+   * `agent_proposed`: an agent or your MCP client asked for this grant
+   * (Kiingo 79 ruling 5); `learned`: from what you keep approving.
+   */
+  source: "learned" | "agent_proposed";
+  /** Days for a `person_days` proposal. */
+  days: number | null;
+  /** Who proposed it (proposals only). */
+  proposedBy: { via: string | null; agentName: string | null } | null;
 };
 
 export type GuestDigest = {
@@ -514,6 +523,18 @@ export function parseSuggestionList(value: unknown): GuestSuggestion[] {
         dataSources: strings(raw.data_sources),
         approvalsCount: num(raw.approvals_count) ?? 0,
         proposedScope: scope(raw.proposed_scope),
+        source:
+          raw.source === "agent_proposed"
+            ? ("agent_proposed" as const)
+            : ("learned" as const),
+        days: num(raw.days),
+        proposedBy:
+          raw.source === "agent_proposed"
+            ? {
+                via: str(obj(raw.proposed_by).via),
+                agentName: str(obj(raw.proposed_by).agent_name),
+              }
+            : null,
       },
     ];
   });
