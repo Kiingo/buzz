@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 31af16c4bf4bf2ccee353af7c8c836d4be5d621a; do not edit here.
+// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
 import type { ComponentType as ReactComponentType } from "react";
 import {
   childKey,
@@ -45,7 +45,7 @@ import { Glyphs } from "./icons";
 import { InputView } from "./inputs";
 import { MapView } from "./places";
 import { GaugeView, LiveLogView, SparklineView } from "./live";
-import { BoardView, DiagramView } from "./planning";
+import { BoardView, CalendarViewView, DiagramView } from "./planning";
 import {
   AccordionView,
   CardView,
@@ -109,6 +109,7 @@ const makeViews = (): Record<ComponentType, ReactComponentType<NodeProps>> => ({
   Map: MapView,
   Board: BoardView,
   Diagram: DiagramView,
+  CalendarView: CalendarViewView,
   Countdown: CountdownView,
   TextField: InputView,
   RichTextEditor: InputView,
@@ -126,6 +127,7 @@ const makeViews = (): Record<ComponentType, ReactComponentType<NodeProps>> => ({
   Reorder: InputView,
   TimeSlotPicker: InputView,
   LocationPicker: InputView,
+  DateRangePicker: InputView,
   NumberField: InputView,
   AddressField: InputView,
   ColorPicker: InputView,

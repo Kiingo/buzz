@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 31af16c4bf4bf2ccee353af7c8c836d4be5d621a; do not edit here.
+// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
 import { useState } from "react";
 import {
   ownEntry,
@@ -33,6 +33,7 @@ import {
   TimeSlotInput,
 } from "./pickers";
 import { LocationInput } from "./places";
+import { DateRangeInput } from "./planning";
 import { AddressInput, ColorInput, NumberInput } from "./typed";
 
 // §4.3 Inputs. Each binds `value` to a path; edits go to the controller
@@ -162,6 +163,8 @@ const Field = ({ type, ...props }: FieldProps & { type: ComponentType }) => {
       return <TimeSlotInput {...props} />;
     case "LocationPicker":
       return <LocationInput {...props} />;
+    case "DateRangePicker":
+      return <DateRangeInput {...props} />;
     case "NumberField":
       return <NumberInput {...props} />;
     case "AddressField":

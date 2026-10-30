@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 31af16c4bf4bf2ccee353af7c8c836d4be5d621a; do not edit here.
+// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
 import {
   asBool,
   asInt,
@@ -92,6 +92,7 @@ export const COMPONENT_TYPES = [
   "Sparkline",
   "Board",
   "Diagram",
+  "CalendarView",
   // 4.3 Inputs
   "TextField",
   "RichTextEditor",
@@ -112,6 +113,7 @@ export const COMPONENT_TYPES = [
   "NumberField",
   "AddressField",
   "ColorPicker",
+  "DateRangePicker",
   // 4.4 Actions
   "Button",
   "ActionBar",
@@ -143,6 +145,7 @@ export const INPUT_TYPES = new Set<ComponentType>([
   "NumberField",
   "AddressField",
   "ColorPicker",
+  "DateRangePicker",
 ]);
 
 export const isKnownType = (type: string): type is ComponentType =>
