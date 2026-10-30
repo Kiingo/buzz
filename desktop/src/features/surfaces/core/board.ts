@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at cec9eff8903c0d5f3d7dd58145c4f4dfdf28fb98; do not edit here.
+// Generated from the Kiingo surface renderer packages at ec8a842a062bf8f90327ca1b45c1fe31730d12f4; do not edit here.
 import { isObject, type JsonValue } from "./json";
 import { plainText } from "./text";
 
@@ -17,6 +17,11 @@ export type BoardColumn = {
 export type BoardCard = {
   /** Position in the bound array (what `selection` receives). */
   index: number;
+  /**
+   * Unique within the board: the card's id, or `#<index>` for a card with
+   * none or with an id an earlier card already has (79 DUP-CARD-IDS).
+   */
+  key: string;
   id?: string;
   title: string;
   subtitle?: string;
@@ -26,10 +31,22 @@ export type BoardCard = {
 };
 
 export type BoardLane = BoardColumn & {
+  /** The lane's first BOARD_LANE_MAX cards, in array order. */
   cards: BoardCard[];
-  /** Over its WIP limit. */
+  /** Cards in the lane past BOARD_LANE_MAX (counted, not drawn). */
+  more: number;
+  /** Over its WIP limit (counting every card in the lane). */
   over: boolean;
 };
+
+/**
+ * Drawn per lane (79 LOW: a card moved past array index 500 was hidden).
+ * The cap is per lane, so a moved card shows wherever it lands in the
+ * array; past it the lane says how many more. Swift: UiBoardModel.laneMax.
+ */
+export const BOARD_LANE_MAX = 100;
+/** Cards read at most (the surface data cap bounds the array anyway). */
+export const BOARD_SCAN_MAX = 5000;
 
 const TONES = new Set(["default", "muted", "success", "warning", "danger"]);
 const toneOf = (raw: unknown) =>
@@ -64,37 +81,60 @@ export const readBoardColumns = (raw: unknown[]): BoardColumn[] => {
 };
 
 /**
- * Cards by column, in array order. A card whose column isn't listed goes in
- * the first column, so nothing silently disappears.
+ * The column a card is in (79 COLUMN-TYPE-DRIFT): its `column` as plain text
+ * (a number reads as its digits) when that names a listed column, else the
+ * first column, so nothing silently disappears. Lanes, moves, the MCP App
+ * page and the fallback text all place cards by this, and so does Swift
+ * (UiBoardModel.column).
  */
+export const boardColumnOf = (
+  columns: BoardColumn[],
+  item: unknown,
+): string | undefined => {
+  if (columns.length === 0) {
+    return undefined;
+  }
+  const raw = isObject(item) ? plainText(item.column, 64) : undefined;
+  return raw !== undefined && columns.some((column) => column.id === raw)
+    ? raw
+    : columns[0]?.id;
+};
+
+/** Cards by column (boardColumnOf), in array order, BOARD_LANE_MAX each. */
 export const boardLanes = (
   columns: BoardColumn[],
   raw: unknown[],
-  max = 500,
+  laneMax = BOARD_LANE_MAX,
 ): BoardLane[] => {
-  const known = new Set(columns.map((column) => column.id));
+  const keys = new Set<string>();
   const lanes = columns.map((column) => ({
     ...column,
     cards: [] as BoardCard[],
+    more: 0,
     over: false,
   }));
-  raw.slice(0, max).forEach((item, index) => {
+  raw.slice(0, BOARD_SCAN_MAX).forEach((item, index) => {
     if (!isObject(item) || lanes.length === 0) {
       return;
     }
-    const column = plainText(item.column, 64) ?? "";
-    const lane =
-      lanes.find((entry) => entry.id === column) ??
-      (known.has(column) ? undefined : lanes[0]);
+    const column = boardColumnOf(columns, item);
+    const lane = lanes.find((entry) => entry.id === column);
     if (!lane) {
       return;
     }
     const id = plainText(item.id, 64);
+    const key = id !== undefined && !keys.has(id) ? id : `#${index}`;
+    keys.add(key);
+    if (lane.cards.length >= laneMax) {
+      lane.more += 1;
+      return;
+    }
     const subtitle = plainText(item.subtitle, 300);
     const badge = plainText(item.badge, 40);
     const tone = toneOf(item.tone);
     lane.cards.push({
       index,
+      key,
       title: plainText(item.title, 200) ?? "",
       column: lane.id,
       ...(id ? { id } : {}),
@@ -105,43 +145,54 @@ export const boardLanes = (
   });
   for (const lane of lanes) {
     lane.over =
-      lane.wipLimit !== undefined && lane.cards.length > lane.wipLimit;
+      lane.wipLimit !== undefined &&
+      lane.cards.length + lane.more > lane.wipLimit;
   }
   return lanes;
 };
 
-/** "3" or "3 / 2" with its limit. */
-export const laneCount = (lane: BoardLane): string =>
-  lane.wipLimit !== undefined
-    ? `${lane.cards.length} / ${lane.wipLimit}`
-    : String(lane.cards.length);
+/** "3" or "3 / 2" with its limit, counting every card in the lane. */
+export const laneCount = (lane: BoardLane): string => {
+  const total = lane.cards.length + lane.more;
+  return lane.wipLimit !== undefined
+    ? `${total} / ${lane.wipLimit}`
+    : String(total);
+};
+
+/** "12 more" under a lane past BOARD_LANE_MAX, else undefined. */
+export const laneMoreText = (lane: BoardLane): string | undefined =>
+  lane.more > 0 ? `${lane.more} more` : undefined;
 
 export type BoardMove = {
   cards: JsonValue[];
-  /** What `moved` receives. */
+  /** What `moved` receives; `from` and `to` are column ids (boardColumnOf). */
   moved: { cardId: string | null; index: number; from: string; to: string };
 };
 
 /**
- * Moves the card at array index `from` into column `to`, at `position`
- * among that column's other cards (clamped; default the end). Undefined when
- * nothing would change.
+ * Moves the card at array index `from` into listed column `to`, at
+ * `position` among that column's other cards (clamped; default the end).
+ * Cards are in the column boardColumnOf says. Undefined when nothing would
+ * change or `to` isn't listed.
  */
 export const moveBoardCard = (
+  columns: BoardColumn[],
   raw: JsonValue[],
   from: number,
   to: string,
   position?: number,
 ): BoardMove | undefined => {
   const card = raw[from];
-  if (!isObject(card)) {
+  if (!isObject(card) || !columns.some((column) => column.id === to)) {
     return undefined;
   }
-  const origin = typeof card.column === "string" ? card.column : "";
+  const origin = boardColumnOf(columns, card) ?? to;
   const rest = raw.filter((_, index) => index !== from);
   const inTarget = rest
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => isObject(item) && item.column === to);
+    .filter(
+      ({ item }) => isObject(item) && boardColumnOf(columns, item) === to,
+    );
   const at = Math.max(
     0,
     Math.min(position ?? inTarget.length, inTarget.length),

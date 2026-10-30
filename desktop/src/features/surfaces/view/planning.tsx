@@ -1,11 +1,13 @@
-// Generated from the Kiingo surface renderer packages at cec9eff8903c0d5f3d7dd58145c4f4dfdf28fb98; do not edit here.
+// Generated from the Kiingo surface renderer packages at ec8a842a062bf8f90327ca1b45c1fe31730d12f4; do not edit here.
 import { useState, type DragEvent } from "react";
 import {
   appendPointer,
   bindingOf,
+  BOARD_LANE_MAX,
   boardLanes,
   childKey,
   laneCount,
+  laneMoreText,
   moveBoardCard,
   readBoardColumns,
   type BoardCard,
@@ -24,17 +26,51 @@ const CARD_MIME = "application/x-kiingo-board-card";
 
 // --- Board -------------------------------------------------------------------
 
+/** The dragged card's index, only when it came from this board. */
+const dropIndex = (payload: string, source: string): number | undefined => {
+  try {
+    const parsed: unknown = JSON.parse(payload);
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      (parsed as { source?: unknown }).source === source
+    ) {
+      const index = (parsed as { index?: unknown }).index;
+      return typeof index === "number" && Number.isInteger(index) && index >= 0
+        ? index
+        : undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+};
+
 export const BoardView = ({ component, scope }: NodeProps) => {
   const context = useNodeContext();
   const columns = readBoardColumns(context.list(component, "columns", scope));
   const pointer = bindingOf(component.props.cards, scope);
   const read = pointer ? context.read(pointer) : undefined;
   const cards: JsonValue[] = Array.isArray(read) ? read : [];
+  // Drawn per lane (BOARD_LANE_MAX each), so a moved card shows wherever
+  // it lands; a smaller render budget shares out evenly across the lanes.
+  const full = boardLanes(columns, cards);
+  const wanted = full.reduce((sum, lane) => sum + lane.cards.length, 0);
   const granted = context.claimCells(
     `board:${childKey(component.id, scope)}`,
-    Math.min(cards.length, 500),
+    wanted,
   );
-  const lanes = boardLanes(columns, cards, granted);
+  const lanes =
+    granted >= wanted
+      ? full
+      : boardLanes(
+          columns,
+          cards,
+          Math.min(
+            BOARD_LANE_MAX,
+            Math.floor(granted / Math.max(1, columns.length)),
+          ),
+        );
   const empty = context.text(component, "emptyText", scope, 120);
   const outsideAll = pointer ? context.isUntrustedAt(pointer) : false;
   const canMove =
@@ -48,6 +84,9 @@ export const BoardView = ({ component, scope }: NodeProps) => {
   const selected = selectionPointer
     ? context.read(selectionPointer)
     : undefined;
+  // A drop names its board (surface, component, scope): a card dragged in
+  // from another board or surface is ignored (79 DROP-SOURCE-UNCHECKED).
+  const source = context.domId(component, scope, "-board");
   const [dragging, setDragging] = useState<number | undefined>(undefined);
   const [over, setOver] = useState<string | undefined>(undefined);
   const outside = (card: BoardCard) =>
@@ -56,7 +95,7 @@ export const BoardView = ({ component, scope }: NodeProps) => {
       ? context.isUntrustedAt(appendPointer(pointer, card.index))
       : false);
   const move = (from: number, to: string, position?: number) => {
-    const result = moveBoardCard(cards, from, to, position);
+    const result = moveBoardCard(columns, cards, from, to, position);
     if (!result || !pointer) {
       return;
     }
@@ -83,10 +122,9 @@ export const BoardView = ({ component, scope }: NodeProps) => {
   const drop = (event: DragEvent, lane: string, position?: number) => {
     event.preventDefault();
     setOver(undefined);
-    const raw = event.dataTransfer.getData(CARD_MIME);
-    const from = Number(raw);
+    const from = dropIndex(event.dataTransfer.getData(CARD_MIME), source);
     setDragging(undefined);
-    if (raw !== "" && Number.isInteger(from)) {
+    if (from !== undefined) {
       move(from, lane, position);
     }
   };
@@ -140,15 +178,15 @@ export const BoardView = ({ component, scope }: NodeProps) => {
                 )}
                 aria-label={
                   lane.wipLimit !== undefined
-                    ? `${lane.cards.length} cards, limit ${lane.wipLimit}${lane.over ? ", over the limit" : ""}`
-                    : `${lane.cards.length} cards`
+                    ? `${lane.cards.length + lane.more} cards, limit ${lane.wipLimit}${lane.over ? ", over the limit" : ""}`
+                    : `${lane.cards.length + lane.more} cards`
                 }
               >
                 {laneCount(lane)}
               </span>
             </header>
             <ul className="flex flex-col gap-1.5">
-              {lane.cards.length === 0 && empty ? (
+              {lane.cards.length + lane.more === 0 && empty ? (
                 <li className="px-1 text-xs text-muted-foreground">{empty}</li>
               ) : null}
               {lane.cards.map((card, position) => {
@@ -187,14 +225,14 @@ export const BoardView = ({ component, scope }: NodeProps) => {
                 );
                 return (
                   <li
-                    key={card.id ?? card.index}
+                    key={card.key}
                     draggable={canMove}
                     onDragStart={
                       canMove
                         ? (event) => {
                             event.dataTransfer.setData(
                               CARD_MIME,
-                              String(card.index),
+                              JSON.stringify({ source, index: card.index }),
                             );
                             event.dataTransfer.effectAllowed = "move";
                             setDragging(card.index);
@@ -255,11 +293,16 @@ export const BoardView = ({ component, scope }: NodeProps) => {
                   </li>
                 );
               })}
+              {laneMoreText(lane) ? (
+                <li className="px-1 text-xs text-muted-foreground">
+                  {laneMoreText(lane)}
+                </li>
+              ) : null}
             </ul>
           </section>
         ))}
       </div>
-      {granted < cards.length ? <TooLargeRow /> : null}
+      {granted < wanted ? <TooLargeRow /> : null}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at cec9eff8903c0d5f3d7dd58145c4f4dfdf28fb98; do not edit here.
+// Generated from the Kiingo surface renderer packages at ec8a842a062bf8f90327ca1b45c1fe31730d12f4; do not edit here.
 // Word- or line-level diff for the Diff component (§4.2): an LCS over
 // tokens, capped so huge inputs degrade to a whole replace instead of
 // hanging the page.
