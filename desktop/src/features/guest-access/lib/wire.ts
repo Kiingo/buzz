@@ -174,6 +174,14 @@ export type GuestSuggestion = {
   source: "learned" | "agent_proposed";
   /** Days for a `person_days` proposal. */
   days: number | null;
+  /** The thread a `thread` proposal covers (its root event id). */
+  threadRootEventId: string | null;
+  /**
+   * A `thread` proposal: the first question you were asked in that thread,
+   * so the row names which thread (Kiingo 39d8c72a15, `thread_question`).
+   * Null when none is on record or from an older server.
+   */
+  threadQuestion: string | null;
   /** Who proposed it (proposals only). */
   proposedBy: { via: string | null; agentName: string | null } | null;
 };
@@ -505,6 +513,23 @@ export function parseShareableList(value: unknown): GuestShareable[] {
   });
 }
 
+/**
+ * Someone else's words for one line of a row: no control or format
+ * characters (bidi overrides, zero-width marks), whitespace collapsed,
+ * capped. The server already does this; the row does not depend on it.
+ */
+function inertLine(value: unknown, max: number): string | null {
+  const text = str(value);
+  if (!text) return null;
+  const line = text
+    .replace(/[\p{Cc}\u2028\u2029]/gu, " ")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!line) return null;
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
 export function parseSuggestionList(value: unknown): GuestSuggestion[] {
   return items(value).flatMap((entry) => {
     const raw = obj(entry);
@@ -528,6 +553,8 @@ export function parseSuggestionList(value: unknown): GuestSuggestion[] {
             ? ("agent_proposed" as const)
             : ("learned" as const),
         days: num(raw.days),
+        threadRootEventId: str(raw.thread_root_event_id),
+        threadQuestion: inertLine(raw.thread_question, 160),
         proposedBy:
           raw.source === "agent_proposed"
             ? {

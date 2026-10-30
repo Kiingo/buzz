@@ -63,8 +63,25 @@ String suggestionQuestion(GuestSuggestion suggestion) {
       : (sources.isNotEmpty ? sources : 'these questions');
   final scope = suggestion.proposedScope == GrantScope.always
       ? 'Always allow'
-      : '${scopeLabel(suggestion.proposedScope, days: suggestion.days)}:';
+      : '${suggestionScopeLabel(suggestion)}:';
   return '$scope $who on $topic?';
+}
+
+/// The scope words for a suggestion row. A list has no "this thread", so a
+/// thread proposal names its thread by the first question you were asked in
+/// it (`thread_question`), else by a short root id (Kiingo 39d8c72a15).
+String suggestionScopeLabel(GuestSuggestion suggestion) {
+  if (suggestion.proposedScope != GrantScope.thread) {
+    return scopeLabel(suggestion.proposedScope, days: suggestion.days);
+  }
+  final question = suggestion.threadQuestion;
+  if (question != null) {
+    return 'In the thread where you were asked “$question”';
+  }
+  final root = suggestion.threadRootEventId;
+  return root != null
+      ? 'In one thread (${root.length > 8 ? root.substring(0, 8) : root}…)'
+      : 'In one thread';
 }
 
 /// "Ada proposed this. Nothing is shared until you allow it." for an

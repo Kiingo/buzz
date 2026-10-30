@@ -255,6 +255,50 @@ void main() {
       );
     });
 
+    test('a thread proposal names its thread by the first question', () {
+      final rows = parseSuggestionList({
+        'items': [
+          {
+            'suggestion_id': 't-1',
+            'source': 'agent_proposed',
+            'grantee': {'display_name': 'Jess'},
+            'data_sources': ['calendar_details'],
+            'proposed_scope': 'thread',
+            'thread_root_event_id': 'a' * 64,
+            'thread_question': 'When is \u202Ethe offsite?\u200B',
+          },
+          {
+            'suggestion_id': 't-2',
+            'source': 'agent_proposed',
+            'grantee': {'display_name': 'Jess'},
+            'proposed_scope': 'thread',
+            'thread_root_event_id': 'b' * 64,
+            'thread_question': null,
+          },
+          {
+            'suggestion_id': 't-3',
+            'source': 'agent_proposed',
+            'proposed_scope': 'thread',
+          },
+        ],
+      });
+      expect(rows[0].threadQuestion, 'When is the offsite?');
+      expect(
+        suggestionQuestion(rows[0]),
+        startsWith(
+          'In the thread where you were asked “When is the offsite?”: Jess on ',
+        ),
+      );
+      expect(
+        suggestionQuestion(rows[1]),
+        startsWith('In one thread (bbbbbbbb…): Jess on '),
+      );
+      expect(
+        suggestionQuestion(rows[2]),
+        startsWith('In one thread: this person on '),
+      );
+    });
+
     test('admin overview reads alerts and suspended requesters', () {
       final overview = parseAdminOverview({
         'alerts': [

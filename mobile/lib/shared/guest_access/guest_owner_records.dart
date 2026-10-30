@@ -167,6 +167,8 @@ class GuestSuggestion {
     this.proposedScope = GrantScope.once,
     this.agentProposed = false,
     this.days,
+    this.threadRootEventId,
+    this.threadQuestion,
     this.proposedVia,
     this.proposedByAgentName,
   });
@@ -185,6 +187,14 @@ class GuestSuggestion {
 
   /// Days for a `person_days` proposal.
   final int? days;
+
+  /// The thread a `thread` proposal covers (its root event id).
+  final String? threadRootEventId;
+
+  /// A `thread` proposal: the first question you were asked in that thread,
+  /// so the row names which thread (Kiingo 39d8c72a15, `thread_question`).
+  /// Null when none is on record or from an older server.
+  final String? threadQuestion;
 
   /// `agent_run` or `mcp_client` (proposals only).
   final String? proposedVia;
@@ -289,6 +299,28 @@ Map<String, Object?> _obj(Object? value) =>
 
 String? _str(Object? value) =>
     value is String && value.isNotEmpty ? value : null;
+
+final _controlChars = RegExp(r'[\p{Cc}\u2028\u2029]', unicode: true);
+final _formatChars = RegExp(r'\p{Cf}', unicode: true);
+final _spaces = RegExp(r'\s+', unicode: true);
+
+/// Someone else's words for one line of a row: no control or format
+/// characters (bidi overrides, zero-width marks), whitespace collapsed,
+/// capped. The server already does this; the row does not depend on it.
+String? _inertLine(Object? value, int max) {
+  final text = _str(value);
+  if (text == null) return null;
+  final line = text
+      .replaceAll(_controlChars, ' ')
+      .replaceAll(_formatChars, '')
+      .replaceAll(_spaces, ' ')
+      .trim();
+  if (line.isEmpty) return null;
+  final runes = line.runes.toList();
+  return runes.length > max
+      ? '${String.fromCharCodes(runes.take(max - 1))}…'
+      : line;
+}
 
 int? _int(Object? value) =>
     value is num && value.isFinite ? value.toInt() : null;
@@ -441,6 +473,8 @@ List<GuestSuggestion> parseSuggestionList(Object? value) => [
         proposedScope: _scope(raw['proposed_scope']),
         agentProposed: raw['source'] == 'agent_proposed',
         days: _int(raw['days']),
+        threadRootEventId: _str(raw['thread_root_event_id']),
+        threadQuestion: _inertLine(raw['thread_question'], 160),
         proposedVia: _str(_obj(raw['proposed_by'])['via']),
         proposedByAgentName: _str(_obj(raw['proposed_by'])['agent_name']),
       ),

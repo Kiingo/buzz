@@ -127,10 +127,54 @@ test("learned-grant suggestions read as a question", () => {
       proposedScope: "always",
       source: "learned",
       days: null,
+      threadRootEventId: null,
+      threadQuestion: null,
       proposedBy: null,
     }),
     "Always allow Jess on pipeline?",
   );
+});
+
+test("a thread proposal names its thread by the first question asked", () => {
+  const [named, unnamed, bare] = parseSuggestionList({
+    items: [
+      {
+        suggestion_id: "t1",
+        source: "agent_proposed",
+        grantee: { display_name: "Jess" },
+        data_sources: ["calendar_details"],
+        proposed_scope: "thread",
+        thread_root_event_id: "a".repeat(64),
+        thread_question: "When is \u202Ethe offsite?\u200B",
+        proposed_by: { via: "agent_run", agent_name: "Ada" },
+      },
+      {
+        suggestion_id: "t2",
+        source: "agent_proposed",
+        grantee: { display_name: "Jess" },
+        data_sources: ["calendar_details"],
+        proposed_scope: "thread",
+        thread_root_event_id: "b".repeat(64),
+        thread_question: null,
+      },
+      {
+        suggestion_id: "t3",
+        source: "agent_proposed",
+        proposed_scope: "thread",
+      },
+    ],
+  });
+  assert.equal(named.threadQuestion, "When is the offsite?");
+  assert.match(
+    suggestionQuestion(named),
+    /^In the thread where you were asked “When is the offsite\?”: Jess on /,
+  );
+  assert.match(
+    suggestionQuestion(unnamed),
+    /^In one thread \(bbbbbbbb…\): Jess/,
+  );
+  assert.match(suggestionQuestion(bare), /^In one thread: this person on /);
+  assert.doesNotMatch(suggestionQuestion(named), /For this thread/);
 });
 
 test("an agent-proposed grant says who proposed it, not an approval count", () => {

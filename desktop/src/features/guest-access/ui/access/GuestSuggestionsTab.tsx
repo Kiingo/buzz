@@ -16,8 +16,25 @@ export function suggestionQuestion(suggestion: GuestSuggestion): string {
   const scope =
     suggestion.proposedScope === "always"
       ? "Always allow"
-      : `${scopeLabel(suggestion.proposedScope, suggestion.days)}:`;
+      : `${suggestionScopeLabel(suggestion)}:`;
   return `${scope} ${who} on ${topic}?`;
+}
+
+/**
+ * The scope words for a suggestion row. A list has no "this thread", so a
+ * thread proposal names its thread by the first question you were asked in
+ * it (`thread_question`), else by a short root id (Kiingo 39d8c72a15).
+ */
+export function suggestionScopeLabel(suggestion: GuestSuggestion): string {
+  if (suggestion.proposedScope !== "thread") {
+    return scopeLabel(suggestion.proposedScope, suggestion.days);
+  }
+  if (suggestion.threadQuestion) {
+    return `In the thread where you were asked “${suggestion.threadQuestion}”`;
+  }
+  return suggestion.threadRootEventId
+    ? `In one thread (${suggestion.threadRootEventId.slice(0, 8)}…)`
+    : "In one thread";
 }
 
 /**
