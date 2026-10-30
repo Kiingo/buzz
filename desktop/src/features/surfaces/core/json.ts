@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at cfa0fd8c3def901ec65658b6199e22b760f44b57; do not edit here.
+// Generated from the Kiingo surface renderer packages at 7bc569bf4968cc5b06bdc6a9ea3b371d7d21efc7; do not edit here.
 /** A JSON value as it comes off the wire. */
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue =

@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at cfa0fd8c3def901ec65658b6199e22b760f44b57; do not edit here.
+// Generated from the Kiingo surface renderer packages at 7bc569bf4968cc5b06bdc6a9ea3b371d7d21efc7; do not edit here.
 // The surface renderer (kiingo.ui/v1). Logic lives in ../core; this folder only draws it.
 
 export { SurfaceView, SurfaceExpandedDialog } from "./SurfaceView";
@@ -19,6 +19,7 @@ export {
   useSurfaceHost,
 } from "./host";
 export type {
+  FileAnswer,
   MediaAnswer,
   SurfaceHost,
   UploadAnswer,

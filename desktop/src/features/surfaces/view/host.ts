@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at cfa0fd8c3def901ec65658b6199e22b760f44b57; do not edit here.
+// Generated from the Kiingo surface renderer packages at 7bc569bf4968cc5b06bdc6a9ea3b371d7d21efc7; do not edit here.
 import { createContext, useContext } from "react";
 import {
   IMAGE_MIME_TYPES,
@@ -56,7 +56,21 @@ export type SurfaceHost = {
     name: string,
     target: UploadTarget,
   ) => Promise<UploadAnswer>;
+  /**
+   * DocumentViewer's read of one Kiingo file through the viewer's own
+   * session (`GET /api/files/:fileId/content`, the files.get read check;
+   * no access and missing are both 404, so `missing`). Without it the
+   * viewer shows the file row and where to open it.
+   */
+  readFile?: (fileId: string, signal: AbortSignal) => Promise<FileAnswer>;
 };
+
+export type FileAnswer =
+  | { kind: "file"; blob: Blob }
+  /** 404: not there, or not the viewer's to read (never told apart). */
+  | { kind: "missing" }
+  /** Restoring from the archive, offline or any other failure. */
+  | { kind: "unavailable"; message?: string };
 
 /** Where an upload goes: the viewer's own chat with the surface's agent. */
 export type UploadTarget = {

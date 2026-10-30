@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at cfa0fd8c3def901ec65658b6199e22b760f44b57; do not edit here.
+// Generated from the Kiingo surface renderer packages at 7bc569bf4968cc5b06bdc6a9ea3b371d7d21efc7; do not edit here.
 import { withoutInvisible } from "./text";
 
 // Copy to clipboard (Ross, 2026-10-29): a client-only control next to input
@@ -24,23 +24,61 @@ export const copyLabel = (what: string | undefined): string => {
 const UNTRUSTED_MARKER = /<\/?untrusted_content\b[^>]{0,200}>/giu;
 
 /**
- * 64 or more spaces or tabs before more text on the same line: enough to
- * push a tail past the edge of the paste target (79 PASTEJACK).
+ * Characters that draw as blank space (79 PASTEJACK). Hangul fillers
+ * (U+115F, U+1160, U+3164, U+FFA0) are already removed as invisible; they
+ * are listed so the fold never depends on that. U+2800 (braille blank) is
+ * not removed, so it counts here.
  */
-const LONG_GAP =
-  /[\t \u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]{64,}(?=\S)/gu;
+const BLANK_RUN =
+  /[\t \u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\u115F\u1160\u2800\u3164\uFFA0]+/gu;
 
-/** A long gap as a visible marker, so a hidden tail shows when pasted. */
+/**
+ * 79 LOW-MO-PASTEJACK-GAPS: a blank run this many columns wide or wider
+ * between text on one line is folded. 64 let a tail hide behind 63 spaces
+ * (or 8 tabs) in a narrow paste target.
+ */
+export const COPY_INNER_GAP_COLUMNS = 16;
+/** Indentation this wide or wider before text is folded (code under it
+ * stays as written). */
+export const COPY_LEAD_GAP_COLUMNS = 32;
+
+/** A run's width in columns: a tab is 8, U+3000 and U+3164 are 2. */
+const gapColumns = (gap: string): number => {
+  let columns = 0;
+  for (const char of gap) {
+    columns +=
+      char === "\t" ? 8 : char === "\u3000" || char === "\u3164" ? 2 : 1;
+  }
+  return columns;
+};
+
+/**
+ * Each wide gap before more text on its line as a visible "⟨N spaces⟩ "
+ * (N in columns), so a hidden tail shows when pasted. A trailing run hides
+ * nothing and stays.
+ */
 const flagLongGaps = (text: string): string =>
-  text.replace(LONG_GAP, (gap) => `⟨${gap.length} spaces⟩ `);
+  text
+    .split("\n")
+    .map((line) =>
+      line.replace(BLANK_RUN, (gap: string, at: number) => {
+        if (at + gap.length >= line.length) {
+          return gap;
+        }
+        const columns = gapColumns(gap);
+        const wide = at === 0 ? COPY_LEAD_GAP_COLUMNS : COPY_INNER_GAP_COLUMNS;
+        return columns >= wide ? `⟨${columns} spaces⟩ ` : gap;
+      }),
+    )
+    .join("\n");
 
 /**
  * Exactly the text the control shows, as plain text: no outside-content
  * markers, no characters that draw nothing (bidi overrides, zero-width and
  * tag characters, variation selectors), no controls except tabs and line
- * breaks (each break becomes `\n`), and a run of 64+ spaces before more
- * text folded to "⟨N spaces⟩". Never HTML: the clipboard gets `text/plain`
- * only.
+ * breaks (each break becomes `\n`), and a wide blank run before more
+ * text (16+ columns, or 32+ as indentation) folded to "⟨N spaces⟩". Never
+ * HTML: the clipboard gets `text/plain` only.
  */
 export const copyableText = (text: string): string => {
   let out = "";
