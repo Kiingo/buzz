@@ -61,7 +61,7 @@ class _GrantRow extends HookConsumerWidget {
                     runSpacing: Grid.half,
                     children: [
                       for (final source in grant.dataSources)
-                        GuestBadge(label: dataSourceLabel(source)),
+                        GuestBadge(label: grantSourceLabel(source)),
                       if (grant.questionKind != null)
                         GuestBadge(
                           label: questionKindLabel(grant.questionKind),

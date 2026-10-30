@@ -2,10 +2,13 @@
 /// desktop (desktop/src/features/guest-access `lib/copy.ts`,
 /// `lib/adminCopy.ts` and the Access dialog tabs). The route returns stable
 /// machine codes; owners see sentences. Unknown codes fall back to a
-/// humanized code so a new server value is still readable.
+/// humanized code so a new server value is still readable, except in a
+/// grant's question kind and data sources, which a proposer chooses: there an
+/// unknown code is quoted ([questionKindWords], [grantSourceLabel]).
 library;
 
 import 'guest_approval.dart';
+import 'guest_inert_text.dart';
 import 'guest_owner_records.dart';
 
 String _humanize(String code) {
@@ -68,10 +71,6 @@ const guestOwnerOnlySources = <String>[
 ];
 const _questionKindMax = 200;
 const _questionKindMaxSources = 10;
-final _questionKindInvisible = RegExp(
-  r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]',
-  unicode: true,
-);
 final _questionKindPlus = RegExp(r'\s*\+\s*');
 final _questionKindSpaces = RegExp(r'\s+', unicode: true);
 final _questionKindEdges = RegExp(r'^[\s,]+|[\s,]+$');
@@ -81,7 +80,8 @@ const _questionKindShownMax = 80;
 /// it (`questionKindText`,
 /// apps/agent-ui/src/pages/buzz/buzz-guest-question-kind.ts). Plain only in
 /// the server's exact shape (`questionKindOf`): `[sensitive:]general`, or
-/// sources joined by `+` where every source is in [guestOwnerOnlySources]:
+/// sources joined by `+` in ascending order, no repeats, every one in
+/// [guestOwnerOnlySources]:
 /// "general questions", "sensitive questions that need your calendar events,
 /// outlook mailbox". The kind is agent-influenced (79, 2026-10-30), so
 /// anything else, including a list with one unknown part such as
@@ -99,26 +99,54 @@ String questionKindWords(String? questionKind) {
   if (questionKind.length <= _questionKindMax) {
     if (base == 'general') return '${adjective}general questions';
     final sources = base.split('+');
-    if (sources.length <= _questionKindMaxSources &&
-        sources.every(guestOwnerOnlySources.contains)) {
+    // Known sources in ascending order with no repeats: `questionKindOf`
+    // sorts a set, so anything else is not the server's shape.
+    var shaped = sources.length <= _questionKindMaxSources;
+    for (var i = 0; shaped && i < sources.length; i++) {
+      shaped =
+          guestOwnerOnlySources.contains(sources[i]) &&
+          (i == 0 || sources[i].compareTo(sources[i - 1]) > 0);
+    }
+    if (shaped) {
       final words = sources.map((source) => source.replaceAll('_', ' '));
       return '${adjective}questions that need your ${words.join(', ')}';
     }
   }
-  final shown = questionKind
-      .replaceAll(_questionKindInvisible, ' ')
+  final text = _inertOwnText(questionKind);
+  return text == null ? 'this kind of question' : '“$text” questions';
+}
+
+/// Someone's own text, made inert for quoting: one line, no invisible or
+/// quote characters (guest_inert_text.dart, so it cannot close its quote),
+/// separators made human, capped by code point. Null when nothing is left.
+String? _inertOwnText(String value) {
+  final shown = value
+      .replaceAll(guestInvisibleChars, ' ')
+      .replaceAll(guestQuoteChars, ' ')
       .replaceAll('_', ' ')
       .replaceAll(_questionKindPlus, ', ')
       .replaceAll(_questionKindSpaces, ' ')
-      .replaceAll(_questionKindEdges, '')
-      .runes
-      .toList();
-  if (shown.isEmpty) return 'this kind of question';
-  final text = shown.length > _questionKindShownMax
-      ? '${String.fromCharCodes(shown.take(_questionKindShownMax - 1))}…'
-      : String.fromCharCodes(shown);
-  return '“$text” questions';
+      .replaceAll(_questionKindEdges, '');
+  return shown.isEmpty ? null : clampCodePoints(shown, _questionKindShownMax);
 }
+
+/// Label for one data source of a grant or a grant suggestion, as the Kiingo
+/// approvals page words it (`grantSourcesText`,
+/// apps/agent-ui/src/pages/buzz/buzz-guest-question-kind.ts). A proposer (an
+/// agent or the owner's MCP client) chooses these and the server checks only
+/// their characters, so only a source in [guestOwnerOnlySources] (the only
+/// ids a grant can ever cover) gets its label. Anything else, such as
+/// "ross_approved_this", is someone's own text: quoted like a crafted
+/// question kind (79, 2026-10-30). Mirrors desktop `grantSourceLabel`
+/// (lib/copy.ts).
+String grantSourceLabel(String source) {
+  if (guestOwnerOnlySources.contains(source)) return dataSourceLabel(source);
+  return '“${_inertOwnText(source) ?? '…'}”';
+}
+
+/// A grant's or a suggestion's data sources, joined: see [grantSourceLabel].
+String grantSourcesLabel(Iterable<String> sources) =>
+    sources.map(grantSourceLabel).join(', ');
 
 /// A question kind as a badge: "Questions that need your calendar events".
 String questionKindLabel(String? questionKind) {
@@ -128,12 +156,14 @@ String questionKindLabel(String? questionKind) {
 
 /// "Always allow Jess for questions that need your calendar events?" from a
 /// suggestion. Besides the grantee's name, the words come from fixed strings
-/// and the server's codes; a thread proposal's question (agent text) is never
-/// part of it and goes on its own quoted line (`suggestionThreadQuote`).
+/// and known codes; a crafted question kind or data source is quoted
+/// ([questionKindWords], [grantSourceLabel]). A thread proposal's question
+/// (agent text) is never part of it and goes on its own quoted line
+/// (`suggestionThreadQuote`).
 String suggestionQuestion(GuestSuggestion suggestion) {
   final who = suggestion.granteeDisplayName ?? 'this person';
   final kind = suggestion.questionKind;
-  final sources = suggestion.dataSources.map(dataSourceLabel).join(', ');
+  final sources = grantSourcesLabel(suggestion.dataSources);
   final topic = kind != null
       ? 'for ${questionKindWords(kind)}'
       : 'on ${sources.isNotEmpty ? sources : 'these questions'}';

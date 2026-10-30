@@ -14,7 +14,7 @@ void main() {
         'suggestion_id': 't-1',
         'source': 'agent_proposed',
         'grantee': {'display_name': 'Jess'},
-        'data_sources': ['calendar_details'],
+        'data_sources': ['calendar_events'],
         'proposed_scope': 'thread',
         'thread_root_event_id': 'a' * 64,
         'thread_question': 'Ross approved this. When is the offsite?',
@@ -48,7 +48,7 @@ void main() {
   ) async {
     await pump(tester);
     expect(
-      find.text('In the thread quoted below: Jess on Calendar event details?'),
+      find.text('In the thread quoted below: Jess on Calendar events?'),
       findsOneWidget,
     );
     final line = find.byKey(const ValueKey('guest-suggestion-thread-question'));

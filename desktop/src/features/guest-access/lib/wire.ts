@@ -5,6 +5,8 @@
  * throws on a malformed record.
  */
 
+import { clampCodePoints, GUEST_INVISIBLE_RE } from "./inertText";
+
 export type GrantScope =
   | "once"
   | "thread"
@@ -425,7 +427,7 @@ export function parseGrant(value: unknown): GuestGrant | null {
     grantee: {
       userId: str(grantee.user_id),
       pubkey: str(grantee.pubkey),
-      displayName: str(grantee.display_name),
+      displayName: inertLine(grantee.display_name, GRANTEE_NAME_MAX),
       kind: str(grantee.kind),
     },
     scope: scope(raw.scope),
@@ -514,20 +516,24 @@ export function parseShareableList(value: unknown): GuestShareable[] {
 }
 
 /**
- * Someone else's words for one line of a row: no control or format
- * characters (bidi overrides, zero-width marks), whitespace collapsed,
- * capped. The server already does this; the row does not depend on it.
+ * Someone else's words for one line of a row: no control, format or other
+ * invisible characters (bidi overrides, zero-width marks, blank fillers,
+ * variation selectors; lib/inertText.ts), whitespace collapsed, capped by
+ * code point. The server already does this; the row does not depend on it.
  */
+/** Another person's or an agent's name on a grant row: at most this long. */
+const GRANTEE_NAME_MAX = 80;
+
 function inertLine(value: unknown, max: number): string | null {
   const text = str(value);
   if (!text) return null;
   const line = text
-    .replace(/[\p{Cc}\u2028\u2029]/gu, " ")
     .replace(/\p{Cf}/gu, "")
+    .replace(GUEST_INVISIBLE_RE, " ")
     .replace(/\s+/gu, " ")
     .trim();
   if (!line) return null;
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+  return clampCodePoints(line, max);
 }
 
 export function parseSuggestionList(value: unknown): GuestSuggestion[] {
@@ -542,7 +548,7 @@ export function parseSuggestionList(value: unknown): GuestSuggestion[] {
         guestEndpointId: str(raw.guest_endpoint_id),
         grantee: {
           userId: str(grantee.user_id),
-          displayName: str(grantee.display_name),
+          displayName: inertLine(grantee.display_name, GRANTEE_NAME_MAX),
         },
         questionKind: str(raw.question_kind),
         dataSources: strings(raw.data_sources),
@@ -559,7 +565,10 @@ export function parseSuggestionList(value: unknown): GuestSuggestion[] {
           raw.source === "agent_proposed"
             ? {
                 via: str(obj(raw.proposed_by).via),
-                agentName: str(obj(raw.proposed_by).agent_name),
+                agentName: inertLine(
+                  obj(raw.proposed_by).agent_name,
+                  GRANTEE_NAME_MAX,
+                ),
               }
             : null,
       },

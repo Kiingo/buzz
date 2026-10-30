@@ -1,7 +1,11 @@
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 
-import { dataSourceLabel, questionKindLabel, scopeLabel } from "../../lib/copy";
+import {
+  grantSourceLabel,
+  questionKindLabel,
+  scopeLabel,
+} from "../../lib/copy";
 import { guestAccessApi } from "../../lib/client";
 import type { GuestGrant } from "../../lib/wire";
 import { useOwnerGrants, useOwnerMutation } from "../../ownerQueries";
@@ -47,7 +51,7 @@ export function GrantRow({
         <div className="flex flex-wrap gap-1">
           {grant.dataSources.map((source) => (
             <Badge key={source} variant="outline">
-              {dataSourceLabel(source)}
+              {grantSourceLabel(source)}
             </Badge>
           ))}
           {grant.questionKind ? (

@@ -9,6 +9,7 @@
 library;
 
 import 'guest_approval.dart';
+import 'guest_inert_text.dart';
 
 /// One of the owner's agents registered with the guest route.
 class GuestOwnerAgent {
@@ -300,27 +301,28 @@ Map<String, Object?> _obj(Object? value) =>
 String? _str(Object? value) =>
     value is String && value.isNotEmpty ? value : null;
 
-final _controlChars = RegExp(r'[\p{Cc}\u2028\u2029]', unicode: true);
 final _formatChars = RegExp(r'\p{Cf}', unicode: true);
 final _spaces = RegExp(r'\s+', unicode: true);
 
-/// Someone else's words for one line of a row: no control or format
-/// characters (bidi overrides, zero-width marks), whitespace collapsed,
-/// capped. The server already does this; the row does not depend on it.
+/// Someone else's words for one line of a row: no control, format or other
+/// invisible characters (bidi overrides, zero-width marks, blank fillers,
+/// variation selectors; guest_inert_text.dart), whitespace collapsed, capped
+/// by code point. The server already does this; the row does not depend on
+/// it.
 String? _inertLine(Object? value, int max) {
   final text = _str(value);
   if (text == null) return null;
   final line = text
-      .replaceAll(_controlChars, ' ')
       .replaceAll(_formatChars, '')
+      .replaceAll(guestInvisibleChars, ' ')
       .replaceAll(_spaces, ' ')
       .trim();
   if (line.isEmpty) return null;
-  final runes = line.runes.toList();
-  return runes.length > max
-      ? '${String.fromCharCodes(runes.take(max - 1))}…'
-      : line;
+  return clampCodePoints(line, max);
 }
+
+/// Another person's or an agent's name on a grant row: at most this long.
+const _granteeNameMax = 80;
 
 int? _int(Object? value) =>
     value is num && value.isFinite ? value.toInt() : null;
@@ -391,7 +393,7 @@ GuestGrant? parseGrant(Object? value) {
     grantee: GuestGrantee(
       userId: _str(grantee['user_id']),
       pubkey: _str(grantee['pubkey']),
-      displayName: _str(grantee['display_name']),
+      displayName: _inertLine(grantee['display_name'], _granteeNameMax),
       kind: _str(grantee['kind']),
     ),
     scope: _scope(raw['scope']),
@@ -466,7 +468,10 @@ List<GuestSuggestion> parseSuggestionList(Object? value) => [
       GuestSuggestion(
         suggestionId: _str(raw['suggestion_id'])!,
         guestEndpointId: _str(raw['guest_endpoint_id']),
-        granteeDisplayName: _str(_obj(raw['grantee'])['display_name']),
+        granteeDisplayName: _inertLine(
+          _obj(raw['grantee'])['display_name'],
+          _granteeNameMax,
+        ),
         questionKind: _str(raw['question_kind']),
         dataSources: _strings(raw['data_sources']),
         approvalsCount: _int(raw['approvals_count']) ?? 0,
@@ -476,7 +481,10 @@ List<GuestSuggestion> parseSuggestionList(Object? value) => [
         threadRootEventId: _str(raw['thread_root_event_id']),
         threadQuestion: _inertLine(raw['thread_question'], 160),
         proposedVia: _str(_obj(raw['proposed_by'])['via']),
-        proposedByAgentName: _str(_obj(raw['proposed_by'])['agent_name']),
+        proposedByAgentName: _inertLine(
+          _obj(raw['proposed_by'])['agent_name'],
+          _granteeNameMax,
+        ),
       ),
 ];
 

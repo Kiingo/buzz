@@ -2,10 +2,18 @@
  * Plain-language wording for guest-access records. The route returns stable
  * machine codes (classifier categories, data sources, reason codes, outcomes);
  * owners see sentences. Unknown codes fall back to a humanized code so a new
- * server category is still readable.
+ * server category is still readable, except in a grant's question kind and
+ * data sources, which a proposer chooses: there an unknown code is quoted
+ * (`questionKindWords`, `grantSourceLabel`).
  */
 
 import { truncatePubkey } from "@/shared/lib/pubkey";
+
+import {
+  clampCodePoints,
+  GUEST_INVISIBLE_RE,
+  GUEST_QUOTE_RE,
+} from "./inertText";
 
 import type { GrantScope, RequesterKind } from "./wire";
 
@@ -239,29 +247,60 @@ export function questionKindWords(questionKind: string | null): string {
   if (questionKind.length <= QUESTION_KIND_MAX) {
     if (base === "general") return `${adjective}general questions`;
     const sources = base.split("+");
+    // Known sources in ascending order with no repeats: `questionKindOf`
+    // sorts a set, so anything else is not the server's shape.
     if (
       sources.length <= QUESTION_KIND_MAX_SOURCES &&
-      sources.every((source) => GUEST_OWNER_ONLY_SOURCES.includes(source))
+      sources.every(
+        (source, index) =>
+          GUEST_OWNER_ONLY_SOURCES.includes(source) &&
+          (index === 0 || source > sources[index - 1]),
+      )
     ) {
       return `${adjective}questions that need your ${sources
         .map((source) => source.replace(/_/g, " "))
         .join(", ")}`;
     }
   }
-  const shown = Array.from(
-    questionKind
-      .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
-      .replace(/_/g, " ")
-      .replace(/\s*\+\s*/g, ", ")
-      .replace(/\s+/g, " ")
-      .replace(/^[\s,]+|[\s,]+$/g, ""),
-  );
-  if (shown.length === 0) return "this kind of question";
-  const text =
-    shown.length > QUESTION_KIND_SHOWN_MAX
-      ? `${shown.slice(0, QUESTION_KIND_SHOWN_MAX - 1).join("")}…`
-      : shown.join("");
-  return `“${text}” questions`;
+  const text = inertOwnText(questionKind);
+  return text ? `“${text}” questions` : "this kind of question";
+}
+
+/**
+ * Someone's own text, made inert for quoting: one line, no invisible or
+ * quote characters (lib/inertText.ts, so it cannot close its quote),
+ * separators made human, capped by code point. Null when nothing is left.
+ */
+function inertOwnText(value: string): string | null {
+  const shown = value
+    .replace(GUEST_INVISIBLE_RE, " ")
+    .replace(GUEST_QUOTE_RE, " ")
+    .replace(/_/g, " ")
+    .replace(/\s*\+\s*/g, ", ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,]+|[\s,]+$/g, "");
+  return shown ? clampCodePoints(shown, QUESTION_KIND_SHOWN_MAX) : null;
+}
+
+/**
+ * Label for one data source of a grant or a grant suggestion, as the Kiingo
+ * approvals page words it (`grantSourcesText`,
+ * apps/agent-ui/src/pages/buzz/buzz-guest-question-kind.ts). A proposer (an
+ * agent or the owner's MCP client) chooses these and the server checks only
+ * their characters, so only a source in GUEST_OWNER_ONLY_SOURCES (the only
+ * ids a grant can ever cover) gets its label. Anything else, such as
+ * "ross_approved_this", is someone's own text: quoted like a crafted
+ * question kind (79, 2026-10-30). Mirrored in mobile `grantSourceLabel`
+ * (guest_owner_copy.dart).
+ */
+export function grantSourceLabel(source: string): string {
+  if (GUEST_OWNER_ONLY_SOURCES.includes(source)) return dataSourceLabel(source);
+  return `“${inertOwnText(source) ?? "…"}”`;
+}
+
+/** A grant's or a suggestion's data sources, joined: see `grantSourceLabel`. */
+export function grantSourcesLabel(sources: readonly string[]): string {
+  return sources.map(grantSourceLabel).join(", ");
 }
 
 /** A question kind as a badge: "Questions that need your calendar events". */

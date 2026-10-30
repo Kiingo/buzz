@@ -1,25 +1,28 @@
 import { Button } from "@/shared/ui/button";
 
-import { dataSourceLabel, questionKindWords, scopeLabel } from "../../lib/copy";
+import {
+  grantSourcesLabel,
+  questionKindWords,
+  scopeLabel,
+} from "../../lib/copy";
 import { guestAccessApi } from "../../lib/client";
 import type { GuestSuggestion } from "../../lib/wire";
 import { useOwnerMutation, useOwnerSuggestions } from "../../ownerQueries";
 import { MutationError, QueryState } from "./shared";
 
 /**
- * "Always allow Jess for questions that need your calendar details?" from a
+ * "Always allow Jess for questions that need your calendar events?" from a
  * suggestion. Besides the grantee's name, the words come from fixed strings
- * and the server's codes; a thread proposal's question (agent text) is never
- * part of it and goes on its own quoted line (`suggestionThreadQuote`).
+ * and known codes; a crafted question kind or data source is quoted
+ * (`questionKindWords`, `grantSourceLabel`). A thread proposal's question
+ * (agent text) is never part of it and goes on its own quoted line
+ * (`suggestionThreadQuote`).
  */
 export function suggestionQuestion(suggestion: GuestSuggestion): string {
   const who = suggestion.grantee.displayName ?? "this person";
   const topic = suggestion.questionKind
     ? `for ${questionKindWords(suggestion.questionKind)}`
-    : `on ${
-        suggestion.dataSources.map(dataSourceLabel).join(", ") ||
-        "these questions"
-      }`;
+    : `on ${grantSourcesLabel(suggestion.dataSources) || "these questions"}`;
   if (suggestion.proposedScope === "always") {
     return `Always allow ${who} ${topic}?`;
   }

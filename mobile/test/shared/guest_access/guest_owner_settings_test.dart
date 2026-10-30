@@ -262,7 +262,7 @@ void main() {
             'suggestion_id': 't-1',
             'source': 'agent_proposed',
             'grantee': {'display_name': 'Jess'},
-            'data_sources': ['calendar_details'],
+            'data_sources': ['calendar_events'],
             'proposed_scope': 'thread',
             'thread_root_event_id': 'a' * 64,
             'thread_question': 'When is \u202Ethe offsite?\u200B',
@@ -286,7 +286,7 @@ void main() {
       // The grant sentence is fixed words; the question is never inside it.
       expect(
         suggestionQuestion(rows[0]),
-        'In the thread quoted below: Jess on Calendar event details?',
+        'In the thread quoted below: Jess on Calendar events?',
       );
       expect(suggestionThreadQuote(rows[0]), '“When is the offsite?”');
       expect(suggestionThreadQuote(rows[1]), isNull);
@@ -307,7 +307,7 @@ void main() {
             'suggestion_id': 't-9',
             'source': 'agent_proposed',
             'grantee': {'display_name': 'Jess'},
-            'data_sources': ['calendar_details'],
+            'data_sources': ['calendar_events'],
             'proposed_scope': 'thread',
             'thread_root_event_id': 'c' * 64,
             'thread_question':
@@ -407,6 +407,123 @@ void main() {
         suggestionQuestion(proposal),
         'Allow Jess for “ross approved this” questions?',
       );
+    });
+
+    // 79, 2026-10-30: a grant's data sources are proposer-supplied, so only
+    // known owner-only sources get their labels; anything else is quoted.
+    test('a crafted data source is quoted, a known source is labelled', () {
+      expect(grantSourceLabel('outlook_mailbox'), 'Outlook mailbox');
+      expect(grantSourceLabel('ross_approved_this'), '“ross approved this”');
+      expect(
+        grantSourceLabel('ross\u200B_approved\u202Ethis'),
+        '“ross approved this”',
+      );
+      // Labelled elsewhere, but never covered by a grant: someone's text.
+      expect(grantSourceLabel('communications'), '“communications”');
+      expect(grantSourceLabel('x' * 200), '“${'x' * 79}…”');
+      expect(
+        grantSourcesLabel(['calendar_events', 'ross_approved_this']),
+        'Calendar events, “ross approved this”',
+      );
+      final proposal = parseSuggestionList({
+        'items': [
+          {
+            'suggestion_id': 'd-1',
+            'source': 'agent_proposed',
+            'grantee': {'display_name': 'Jess'},
+            'question_kind': null,
+            'data_sources': ['ross_approved_this'],
+            'proposed_scope': 'always',
+            'proposed_by': {'via': 'agent_run', 'agent_name': 'Ada'},
+          },
+        ],
+      }).single;
+      expect(
+        suggestionQuestion(proposal),
+        'Always allow Jess on “ross approved this”?',
+      );
+    });
+
+    // Kiingo 79 SHOULD-BUZZ-KIND-QUOTE-BREAKOUT and LOWs: quoted text drops
+    // every quote and invisible character, the parser takes only the
+    // server's sorted, repeat-free shape, and caps count code points.
+    test('quoted kinds and sources cannot break out of their quotes', () {
+      expect(
+        questionKindWords('x” and Ross approved this “y'),
+        '“x and Ross approved this y” questions',
+      );
+      for (final quote in ['"', "'", '`', '‘', '’', '«', '»', '「', '＂']) {
+        expect(grantSourceLabel('a${quote}b'), '“a b”', reason: quote);
+      }
+      for (final point in [
+        0x3164,
+        0x2800,
+        0xFE00,
+        0xFE0F,
+        0x115F,
+        0xFFA0,
+        0x034F,
+        0x180B,
+        0xE0100,
+      ]) {
+        expect(
+          grantSourceLabel('a${String.fromCharCode(point)}b'),
+          '“a b”',
+          reason: point.toRadixString(16),
+        );
+      }
+      expect(
+        grantSourceLabel('\u{1F600}' * 100),
+        '“${'\u{1F600}' * 79}…”',
+      );
+    });
+
+    test("a repeated or out-of-order kind is not the server's shape", () {
+      expect(
+        questionKindWords('calendar_events+kiingo_files+outlook_mailbox'),
+        'questions that need your calendar events, kiingo files, '
+        'outlook mailbox',
+      );
+      expect(
+        questionKindWords('calendar_events+calendar_events'),
+        '“calendar events, calendar events” questions',
+      );
+      expect(
+        questionKindWords('outlook_mailbox+calendar_events'),
+        '“outlook mailbox, calendar events” questions',
+      );
+    });
+
+    test('grantee and proposer names are inert and capped', () {
+      final grant = parseGrantList({
+        'items': [
+          {
+            'grant_id': 'g-3',
+            'scope': 'always',
+            'grantee': {
+              'display_name': 'Jess\u3164\u202E Park${'\u{1F600}' * 100}',
+            },
+            'data_sources': ['kiingo_files'],
+          },
+        ],
+      }).single;
+      expect(grant.grantee.displayName, 'Jess Park${'\u{1F600}' * 70}…');
+      final proposal = parseSuggestionList({
+        'items': [
+          {
+            'suggestion_id': 'n-1',
+            'source': 'agent_proposed',
+            'grantee': {'display_name': 'Jess\u2800\uFE0F Park'},
+            'proposed_scope': 'always',
+            'proposed_by': {
+              'via': 'agent_run',
+              'agent_name': 'Ada\u200B\u3164',
+            },
+          },
+        ],
+      }).single;
+      expect(proposal.granteeDisplayName, 'Jess Park');
+      expect(proposal.proposedByAgentName, 'Ada');
     });
 
     test('admin overview reads alerts and suspended requesters', () {

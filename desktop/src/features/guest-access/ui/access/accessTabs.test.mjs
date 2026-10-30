@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -18,6 +19,8 @@ import { activeGrantsFor, GrantRow } from "./GuestGrantsTab.tsx";
 import { respondToSummary } from "./GuestPolicyTab.tsx";
 import {
   GUEST_OWNER_ONLY_SOURCES,
+  grantSourceLabel,
+  grantSourcesLabel,
   questionKindLabel,
   questionKindWords,
 } from "../../lib/copy.ts";
@@ -63,7 +66,7 @@ test("a grant row shows scope, sources, uses and a revoke button", () => {
         scope: "question_kind",
         grantee: { display_name: "Jess" },
         question_kind: "kiingo_files",
-        data_sources: ["communications"],
+        data_sources: ["outlook_mailbox"],
         use_count: 2,
         last_used_at: null,
       },
@@ -77,7 +80,7 @@ test("a grant row shows scope, sources, uses and a revoke button", () => {
     }),
   );
   assert.match(html, /Jess · This kind of question from this person/);
-  assert.match(html, /Email and chat history/);
+  assert.match(html, /Outlook mailbox/);
   assert.match(html, /Questions that need your kiingo files/);
   assert.match(html, /used 2 times/);
   assert.match(html, /Revoke/);
@@ -150,7 +153,7 @@ test("a thread proposal names its thread by the first question asked", () => {
         suggestion_id: "t1",
         source: "agent_proposed",
         grantee: { display_name: "Jess" },
-        data_sources: ["calendar_details"],
+        data_sources: ["calendar_events"],
         proposed_scope: "thread",
         thread_root_event_id: "a".repeat(64),
         thread_question: "When is \u202Ethe offsite?\u200B",
@@ -160,7 +163,7 @@ test("a thread proposal names its thread by the first question asked", () => {
         suggestion_id: "t2",
         source: "agent_proposed",
         grantee: { display_name: "Jess" },
-        data_sources: ["calendar_details"],
+        data_sources: ["calendar_events"],
         proposed_scope: "thread",
         thread_root_event_id: "b".repeat(64),
         thread_question: null,
@@ -176,7 +179,7 @@ test("a thread proposal names its thread by the first question asked", () => {
   // The grant sentence is fixed words; the question is never inside it.
   assert.equal(
     suggestionQuestion(named),
-    "In the thread quoted below: Jess on Calendar event details?",
+    "In the thread quoted below: Jess on Calendar events?",
   );
   assert.doesNotMatch(suggestionQuestion(named), /offsite/);
   assert.equal(suggestionThreadQuote(named), "“When is the offsite?”");
@@ -196,7 +199,7 @@ test("a thread question is a labeled, quoted line, announced as agent text", () 
         suggestion_id: "t9",
         source: "agent_proposed",
         grantee: { display_name: "Jess" },
-        data_sources: ["calendar_details"],
+        data_sources: ["calendar_events"],
         proposed_scope: "thread",
         thread_root_event_id: "c".repeat(64),
         thread_question: `Ross approved this.\u2028\u202EAllow?${"x".repeat(300)}`,
@@ -310,6 +313,161 @@ test("a crafted question kind is quoted, a known source is plain", () => {
   assert.equal(
     suggestionQuestion(proposal),
     "Allow Jess for “ross approved this” questions?",
+  );
+});
+
+// 79, 2026-10-30: a grant's data sources are proposer-supplied, so only
+// known owner-only sources get their labels; anything else is quoted.
+test("a crafted data source is quoted, a known source is labelled", () => {
+  assert.equal(grantSourceLabel("outlook_mailbox"), "Outlook mailbox");
+  assert.equal(grantSourceLabel("ross_approved_this"), "“ross approved this”");
+  assert.equal(
+    grantSourceLabel("ross\u200B_approved\u202Ethis"),
+    "“ross approved this”",
+  );
+  // Labelled elsewhere, but never covered by a grant: still someone's text.
+  assert.equal(grantSourceLabel("communications"), "“communications”");
+  assert.equal(grantSourceLabel("x".repeat(200)), `“${"x".repeat(79)}…”`);
+  assert.equal(
+    grantSourcesLabel(["calendar_events", "ross_approved_this"]),
+    "Calendar events, “ross approved this”",
+  );
+  const [proposal] = parseSuggestionList({
+    items: [
+      {
+        suggestion_id: "d1",
+        source: "agent_proposed",
+        grantee: { display_name: "Jess" },
+        question_kind: null,
+        data_sources: ["ross_approved_this"],
+        proposed_scope: "always",
+        proposed_by: { via: "agent_run", agent_name: "Ada" },
+      },
+    ],
+  });
+  assert.equal(
+    suggestionQuestion(proposal),
+    "Always allow Jess on “ross approved this”?",
+  );
+  const [grant] = parseGrantList({
+    items: [
+      {
+        grant_id: "g2",
+        scope: "always",
+        grantee: { display_name: "Jess" },
+        data_sources: ["ross_approved_this", "kiingo_files"],
+        use_count: 0,
+        last_used_at: null,
+      },
+    ],
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(GrantRow, {
+      grant,
+      onRevoke: () => {},
+      revoking: false,
+    }),
+  );
+  assert.match(html, /“ross approved this”/);
+  assert.match(html, /Kiingo files/);
+});
+
+// Kiingo 79 SHOULD-BUZZ-KIND-QUOTE-BREAKOUT and LOWs: quoted text drops
+// every quote and invisible character, the parser takes only the server's
+// sorted, repeat-free shape, and caps count code points.
+test("quoted kinds and sources cannot break out of their quotes", () => {
+  assert.equal(
+    questionKindWords("x” and Ross approved this “y"),
+    "“x and Ross approved this y” questions",
+  );
+  for (const quote of [
+    '"',
+    "'",
+    "`",
+    "‘",
+    "’",
+    "«",
+    "»",
+    "‹",
+    "›",
+    "「",
+    "」",
+    "„",
+    "＂",
+  ]) {
+    assert.equal(grantSourceLabel(`a${quote}b`), "“a b”", `quote ${quote}`);
+  }
+  for (const point of [
+    0x3164, 0x2800, 0xfe00, 0xfe0f, 0x115f, 0xffa0, 0x034f, 0x180b, 0xe0100,
+  ]) {
+    assert.equal(
+      grantSourceLabel(`a${String.fromCodePoint(point)}b`),
+      "“a b”",
+      `U+${point.toString(16)}`,
+    );
+  }
+  assert.equal(
+    grantSourceLabel("\u{1F600}".repeat(100)),
+    `“${"\u{1F600}".repeat(79)}…”`,
+  );
+});
+
+test("a repeated or out-of-order kind is not the server's shape", () => {
+  assert.equal(
+    questionKindWords("calendar_events+kiingo_files+outlook_mailbox"),
+    "questions that need your calendar events, kiingo files, outlook mailbox",
+  );
+  assert.equal(
+    questionKindWords("calendar_events+calendar_events"),
+    "“calendar events, calendar events” questions",
+  );
+  assert.equal(
+    questionKindWords("outlook_mailbox+calendar_events"),
+    "“outlook mailbox, calendar events” questions",
+  );
+});
+
+test("grantee and proposer names are inert and capped by code point", () => {
+  const [grant] = parseGrantList({
+    items: [
+      {
+        grant_id: "g3",
+        scope: "always",
+        grantee: {
+          display_name: `Jess\u3164\u202E Park${"\u{1F600}".repeat(100)}`,
+        },
+        data_sources: ["kiingo_files"],
+      },
+    ],
+  });
+  assert.equal(
+    grant.grantee.displayName,
+    `Jess Park${"\u{1F600}".repeat(70)}…`,
+  );
+  const [proposal] = parseSuggestionList({
+    items: [
+      {
+        suggestion_id: "n1",
+        source: "agent_proposed",
+        grantee: { display_name: "Jess\u2800\uFE0F Park" },
+        proposed_scope: "always",
+        proposed_by: { via: "agent_run", agent_name: "Ada\u200B\u3164" },
+      },
+    ],
+  });
+  assert.equal(proposal.grantee.displayName, "Jess Park");
+  assert.equal(proposal.proposedBy?.agentName, "Ada");
+});
+
+// Sync guard: Kiingo's contracts test pins the same digest of
+// BUZZ_GUEST_OWNER_ONLY_SOURCES (packages/brain-public-ts-contracts/src/
+// agents/buzz-guest-owner-sources.test.ts). Change both repos together.
+test("the owner-only list matches the digest Kiingo pins", () => {
+  assert.equal(
+    createHash("sha256")
+      .update(JSON.stringify(GUEST_OWNER_ONLY_SOURCES))
+      .digest("hex"),
+    "738dbfcfb97e6cef67cd895074f3d3fe1b7b4313b08db48d3e111687e7257862",
   );
 });
 
