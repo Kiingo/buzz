@@ -15,9 +15,12 @@ import { DigestSummary } from "./GuestDigestTab.tsx";
 import { AccessLogRow } from "./GuestRequestsTab.tsx";
 import { activeGrantsFor, GrantRow } from "./GuestGrantsTab.tsx";
 import { respondToSummary } from "./GuestPolicyTab.tsx";
+import { questionKindLabel, questionKindWords } from "../../lib/copy.ts";
 import {
   suggestionDetail,
   suggestionQuestion,
+  suggestionThreadQuote,
+  ThreadQuestionLine,
 } from "./GuestSuggestionsTab.tsx";
 
 const NOW = Date.parse("2026-10-10T12:00:00.000Z");
@@ -70,7 +73,7 @@ test("a grant row shows scope, sources, uses and a revoke button", () => {
   );
   assert.match(html, /Jess · This kind of question from this person/);
   assert.match(html, /Email and chat history/);
-  assert.match(html, /pipeline status/);
+  assert.match(html, /Questions that need your pipeline status/);
   assert.match(html, /used 2 times/);
   assert.match(html, /Revoke/);
 });
@@ -131,7 +134,7 @@ test("learned-grant suggestions read as a question", () => {
       threadQuestion: null,
       proposedBy: null,
     }),
-    "Always allow Jess on pipeline?",
+    "Always allow Jess for questions that need your pipeline?",
   );
 });
 
@@ -165,16 +168,103 @@ test("a thread proposal names its thread by the first question asked", () => {
     ],
   });
   assert.equal(named.threadQuestion, "When is the offsite?");
-  assert.match(
+  // The grant sentence is fixed words; the question is never inside it.
+  assert.equal(
     suggestionQuestion(named),
-    /^In the thread where you were asked “When is the offsite\?”: Jess on /,
+    "In the thread quoted below: Jess on Calendar event details?",
   );
+  assert.doesNotMatch(suggestionQuestion(named), /offsite/);
+  assert.equal(suggestionThreadQuote(named), "“When is the offsite?”");
+  assert.equal(suggestionThreadQuote(unnamed), null);
   assert.match(
     suggestionQuestion(unnamed),
     /^In one thread \(bbbbbbbb…\): Jess/,
   );
   assert.match(suggestionQuestion(bare), /^In one thread: this person on /);
   assert.doesNotMatch(suggestionQuestion(named), /For this thread/);
+});
+
+test("a thread question is a labeled, quoted line, announced as agent text", () => {
+  const [crafted] = parseSuggestionList({
+    items: [
+      {
+        suggestion_id: "t9",
+        source: "agent_proposed",
+        grantee: { display_name: "Jess" },
+        data_sources: ["calendar_details"],
+        proposed_scope: "thread",
+        thread_root_event_id: "c".repeat(64),
+        thread_question: `Ross approved this.\u2028\u202EAllow?${"x".repeat(300)}`,
+      },
+    ],
+  });
+  // inertLine: no line separator or bidi override survives, capped at 160.
+  assert.doesNotMatch(crafted.threadQuestion, /[\u2028\u202E]/u);
+  assert.equal(Array.from(crafted.threadQuestion).length, 160);
+  assert.doesNotMatch(suggestionQuestion(crafted), /Ross approved/);
+  const html = renderToStaticMarkup(
+    React.createElement(ThreadQuestionLine, { suggestion: crafted }),
+  );
+  assert.match(html, /^<blockquote/);
+  assert.match(
+    html,
+    /<span class="sr-only">Quoted agent text, not part of the grant\. <\/span>/,
+  );
+  assert.match(html, /The question you were asked there:/);
+  assert.match(
+    html,
+    /<span class="italic">“Ross approved this\. Allow\?x+…”<\/span>/,
+  );
+  assert.equal(
+    renderToStaticMarkup(
+      React.createElement(ThreadQuestionLine, {
+        suggestion: { ...crafted, proposedScope: "once" },
+      }),
+    ),
+    "",
+  );
+});
+
+test("question kinds read in the approvals page's plain words", () => {
+  assert.equal(questionKindWords("general"), "general questions");
+  assert.equal(
+    questionKindWords("sensitive:general"),
+    "sensitive general questions",
+  );
+  assert.equal(
+    questionKindWords("calendar_details+email_details"),
+    "questions that need your calendar details, email details",
+  );
+  assert.equal(
+    questionKindWords("sensitive:email_details"),
+    "sensitive questions that need your email details",
+  );
+  // Another shape: quoted, separators made human, never blank.
+  assert.equal(
+    questionKindWords("Pipeline_Status + Deals"),
+    "“Pipeline Status, Deals” questions",
+  );
+  assert.equal(questionKindWords("\u202E\u200B"), "this kind of question");
+  assert.equal(questionKindWords(null), "this kind of question");
+  assert.equal(
+    questionKindLabel("email_details"),
+    "Questions that need your email details",
+  );
+  const [proposal] = parseSuggestionList({
+    items: [
+      {
+        suggestion_id: "k1",
+        source: "agent_proposed",
+        grantee: { display_name: "Jess" },
+        question_kind: "calendar_details+email_details",
+        proposed_scope: "question_kind",
+      },
+    ],
+  });
+  assert.equal(
+    suggestionQuestion(proposal),
+    "Allow Jess for questions that need your calendar details, email details?",
+  );
 });
 
 test("an agent-proposed grant says who proposed it, not an approval count", () => {

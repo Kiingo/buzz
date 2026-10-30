@@ -53,35 +53,113 @@ String respondToSummary(String? respondTo) => switch (respondTo) {
   _ => 'Only you and your own agents can ask.',
 };
 
-/// "Always allow Jess on pipeline?" for a learned-grant suggestion.
+final _questionKindSource = RegExp(r'^[a-z0-9_.-]{1,64}$');
+final _questionKindInvisible = RegExp(
+  r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]',
+  unicode: true,
+);
+final _questionKindPlus = RegExp(r'\s*\+\s*');
+final _questionKindSpaces = RegExp(r'\s+', unicode: true);
+final _questionKindEdges = RegExp(r'^[\s,]+|[\s,]+$');
+const _questionKindShownMax = 80;
+
+/// A question kind in plain words, worded as the Kiingo approvals page words
+/// it (Kiingo 39d8c72a15, F-G5: `questionKindText` in
+/// apps/agent-ui/src/pages/buzz/BuzzGuestApprovalsPage.tsx). The server's
+/// shape (`questionKindOf`) is `[sensitive:]general` or data sources joined by
+/// `+`: "general questions", "sensitive questions that need your email
+/// details, calendar details". Any other shape is someone's own text: shown
+/// quoted, one line, separators made human, never blank. Mirrors desktop
+/// `questionKindWords` (lib/copy.ts).
+String questionKindWords(String? questionKind) {
+  if (questionKind == null || questionKind.isEmpty) {
+    return 'this kind of question';
+  }
+  const prefix = 'sensitive:';
+  final sensitive = questionKind.startsWith(prefix);
+  final base = sensitive ? questionKind.substring(prefix.length) : questionKind;
+  final adjective = sensitive ? 'sensitive ' : '';
+  if (base == 'general') return '${adjective}general questions';
+  final sources = base.split('+');
+  if (questionKind.length <= 200 &&
+      sources.length <= 10 &&
+      sources.every(_questionKindSource.hasMatch)) {
+    final words = sources.map((source) => source.replaceAll('_', ' '));
+    return '${adjective}questions that need your ${words.join(', ')}';
+  }
+  final shown = questionKind
+      .replaceAll(_questionKindInvisible, ' ')
+      .replaceAll('_', ' ')
+      .replaceAll(_questionKindPlus, ', ')
+      .replaceAll(_questionKindSpaces, ' ')
+      .replaceAll(_questionKindEdges, '')
+      .runes
+      .toList();
+  if (shown.isEmpty) return 'this kind of question';
+  final text = shown.length > _questionKindShownMax
+      ? '${String.fromCharCodes(shown.take(_questionKindShownMax - 1))}…'
+      : String.fromCharCodes(shown);
+  return '“$text” questions';
+}
+
+/// A question kind as a badge: "Questions that need your email details".
+String questionKindLabel(String? questionKind) {
+  final words = questionKindWords(questionKind);
+  return '${words[0].toUpperCase()}${words.substring(1)}';
+}
+
+/// "Always allow Jess for questions that need your calendar details?" from a
+/// suggestion. Besides the grantee's name, the words come from fixed strings
+/// and the server's codes; a thread proposal's question (agent text) is never
+/// part of it and goes on its own quoted line (`suggestionThreadQuote`).
 String suggestionQuestion(GuestSuggestion suggestion) {
   final who = suggestion.granteeDisplayName ?? 'this person';
   final kind = suggestion.questionKind;
   final sources = suggestion.dataSources.map(dataSourceLabel).join(', ');
   final topic = kind != null
-      ? kind.replaceAll('_', ' ')
-      : (sources.isNotEmpty ? sources : 'these questions');
-  final scope = suggestion.proposedScope == GrantScope.always
-      ? 'Always allow'
-      : '${suggestionScopeLabel(suggestion)}:';
-  return '$scope $who on $topic?';
+      ? 'for ${questionKindWords(kind)}'
+      : 'on ${sources.isNotEmpty ? sources : 'these questions'}';
+  if (suggestion.proposedScope == GrantScope.always) {
+    return 'Always allow $who $topic?';
+  }
+  if (suggestion.proposedScope == GrantScope.questionKind && kind != null) {
+    return 'Allow $who $topic?';
+  }
+  return '${suggestionScopeLabel(suggestion)}: $who $topic?';
 }
 
-/// The scope words for a suggestion row. A list has no "this thread", so a
-/// thread proposal names its thread by the first question you were asked in
-/// it (`thread_question`), else by a short root id (Kiingo 39d8c72a15).
+/// The scope words for a suggestion row, fixed strings only. A list has no
+/// "this thread": a thread proposal points at the quoted question under it
+/// when there is one (`thread_question`), else names a short root id.
 String suggestionScopeLabel(GuestSuggestion suggestion) {
   if (suggestion.proposedScope != GrantScope.thread) {
     return scopeLabel(suggestion.proposedScope, days: suggestion.days);
   }
-  final question = suggestion.threadQuestion;
-  if (question != null) {
-    return 'In the thread where you were asked “$question”';
-  }
+  if (suggestion.threadQuestion != null) return 'In the thread quoted below';
   final root = suggestion.threadRootEventId;
   return root != null
       ? 'In one thread (${root.length > 8 ? root.substring(0, 8) : root}…)'
       : 'In one thread';
+}
+
+/// The visible label on a thread proposal's quoted question.
+const threadQuestionLabel = 'The question you were asked there:';
+
+/// What a screen reader hears first on that line: it is quoted agent text.
+const threadQuestionSpoken = 'Quoted agent text, not part of the grant.';
+
+/// A thread proposal's question, quoted: “When is the offsite?”. It is
+/// agent-written text that can carry outside content (79
+/// LOW-GRANT-ROW-THREAD-QUESTION-AGENT-TEXT), so it is already inert
+/// (`_inertLine`, guest_owner_records.dart) and is shown on its own
+/// de-emphasized line, never in the grant sentence. Null for any other scope
+/// or when none is on record.
+String? suggestionThreadQuote(GuestSuggestion suggestion) {
+  final question = suggestion.threadQuestion;
+  if (suggestion.proposedScope != GrantScope.thread || question == null) {
+    return null;
+  }
+  return '“$question”';
 }
 
 /// "Ada proposed this. Nothing is shared until you allow it." for an

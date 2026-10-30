@@ -1,40 +1,70 @@
 import { Button } from "@/shared/ui/button";
 
-import { dataSourceLabel, scopeLabel } from "../../lib/copy";
+import { dataSourceLabel, questionKindWords, scopeLabel } from "../../lib/copy";
 import { guestAccessApi } from "../../lib/client";
 import type { GuestSuggestion } from "../../lib/wire";
 import { useOwnerMutation, useOwnerSuggestions } from "../../ownerQueries";
 import { MutationError, QueryState } from "./shared";
 
-/** "Always allow Jess on pipeline?" from a learned-grant suggestion. */
+/**
+ * "Always allow Jess for questions that need your calendar details?" from a
+ * suggestion. Besides the grantee's name, the words come from fixed strings
+ * and the server's codes; a thread proposal's question (agent text) is never
+ * part of it and goes on its own quoted line (`suggestionThreadQuote`).
+ */
 export function suggestionQuestion(suggestion: GuestSuggestion): string {
   const who = suggestion.grantee.displayName ?? "this person";
   const topic = suggestion.questionKind
-    ? suggestion.questionKind.replace(/_/g, " ")
-    : suggestion.dataSources.map(dataSourceLabel).join(", ") ||
-      "these questions";
-  const scope =
-    suggestion.proposedScope === "always"
-      ? "Always allow"
-      : `${suggestionScopeLabel(suggestion)}:`;
-  return `${scope} ${who} on ${topic}?`;
+    ? `for ${questionKindWords(suggestion.questionKind)}`
+    : `on ${
+        suggestion.dataSources.map(dataSourceLabel).join(", ") ||
+        "these questions"
+      }`;
+  if (suggestion.proposedScope === "always") {
+    return `Always allow ${who} ${topic}?`;
+  }
+  if (suggestion.proposedScope === "question_kind" && suggestion.questionKind) {
+    return `Allow ${who} ${topic}?`;
+  }
+  return `${suggestionScopeLabel(suggestion)}: ${who} ${topic}?`;
 }
 
 /**
- * The scope words for a suggestion row. A list has no "this thread", so a
- * thread proposal names its thread by the first question you were asked in
- * it (`thread_question`), else by a short root id (Kiingo 39d8c72a15).
+ * The scope words for a suggestion row, fixed strings only. A list has no
+ * "this thread": a thread proposal points at the quoted question under it
+ * when there is one (`thread_question`), else names a short root id.
  */
 export function suggestionScopeLabel(suggestion: GuestSuggestion): string {
   if (suggestion.proposedScope !== "thread") {
     return scopeLabel(suggestion.proposedScope, suggestion.days);
   }
-  if (suggestion.threadQuestion) {
-    return `In the thread where you were asked “${suggestion.threadQuestion}”`;
-  }
+  if (suggestion.threadQuestion) return "In the thread quoted below";
   return suggestion.threadRootEventId
     ? `In one thread (${suggestion.threadRootEventId.slice(0, 8)}…)`
     : "In one thread";
+}
+
+/** The visible label on a thread proposal's quoted question. */
+export const THREAD_QUESTION_LABEL = "The question you were asked there:";
+
+/** What a screen reader hears first on that line: it is quoted agent text. */
+export const THREAD_QUESTION_SPOKEN =
+  "Quoted agent text, not part of the grant.";
+
+/**
+ * A thread proposal's question, quoted: “When is the offsite?”. It is
+ * agent-written text that can carry outside content (79
+ * LOW-GRANT-ROW-THREAD-QUESTION-AGENT-TEXT), so it is already inert
+ * (`inertLine`, wire.ts) and is shown on its own de-emphasized line, never
+ * in the grant sentence. Null for any other scope or when none is on record.
+ */
+export function suggestionThreadQuote(
+  suggestion: GuestSuggestion,
+): string | null {
+  if (suggestion.proposedScope !== "thread" || !suggestion.threadQuestion) {
+    return null;
+  }
+  return `“${suggestion.threadQuestion}”`;
 }
 
 /**
@@ -52,6 +82,30 @@ export function suggestionDetail(suggestion: GuestSuggestion): string {
   }
   const count = suggestion.approvalsCount;
   return `You approved ${count} similar ${count === 1 ? "request" : "requests"}.`;
+}
+
+/**
+ * The asked question under a thread proposal: labeled, quoted, italic and
+ * muted, inside a blockquote whose first words for a screen reader say it is
+ * quoted agent text.
+ */
+export function ThreadQuestionLine({
+  suggestion,
+}: {
+  suggestion: GuestSuggestion;
+}) {
+  const quote = suggestionThreadQuote(suggestion);
+  if (!quote) return null;
+  return (
+    <blockquote
+      className="my-1 border-l-2 border-border pl-2 text-xs text-muted-foreground"
+      data-testid="guest-suggestion-thread-question"
+    >
+      <span className="sr-only">{THREAD_QUESTION_SPOKEN} </span>
+      <span>{THREAD_QUESTION_LABEL}</span>{" "}
+      <span className="italic">{quote}</span>
+    </blockquote>
+  );
 }
 
 export function GuestSuggestionsTab({
@@ -90,6 +144,7 @@ export function GuestSuggestionsTab({
             >
               <div className="min-w-0">
                 <p className="font-medium">{suggestionQuestion(row)}</p>
+                <ThreadQuestionLine suggestion={row} />
                 <p className="text-xs text-muted-foreground">
                   {suggestionDetail(row)}
                 </p>

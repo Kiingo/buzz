@@ -64,7 +64,7 @@ class _GrantRow extends HookConsumerWidget {
                         GuestBadge(label: dataSourceLabel(source)),
                       if (grant.questionKind != null)
                         GuestBadge(
-                          label: grant.questionKind!.replaceAll('_', ' '),
+                          label: questionKindLabel(grant.questionKind),
                         ),
                     ],
                   ),

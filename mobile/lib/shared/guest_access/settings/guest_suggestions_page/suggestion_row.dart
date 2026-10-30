@@ -38,6 +38,7 @@ class _SuggestionRow extends HookConsumerWidget {
             suggestionQuestion(suggestion),
             style: context.textTheme.bodyLarge,
           ),
+          _ThreadQuestionLine(suggestion: suggestion),
           const SizedBox(height: Grid.half),
           Text(
             '$agentLabel · ${suggestionDetail(suggestion)}',
@@ -62,6 +63,55 @@ class _SuggestionRow extends HookConsumerWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The asked question under a thread proposal: labeled, quoted, italic and
+/// muted behind a rule, and read by a screen reader as one node that starts
+/// by saying it is quoted agent text.
+class _ThreadQuestionLine extends StatelessWidget {
+  const _ThreadQuestionLine({required this.suggestion});
+
+  final GuestSuggestion suggestion;
+
+  @override
+  Widget build(BuildContext context) {
+    final quote = suggestionThreadQuote(suggestion);
+    if (quote == null) return const SizedBox.shrink();
+    final muted = context.textTheme.bodySmall?.copyWith(
+      color: context.colors.onSurfaceVariant,
+    );
+    return Padding(
+      key: const ValueKey('guest-suggestion-thread-question'),
+      padding: const EdgeInsets.only(top: Grid.half),
+      child: Semantics(
+        container: true,
+        label: '$threadQuestionSpoken $threadQuestionLabel $quote',
+        excludeSemantics: true,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(color: context.colors.outlineVariant, width: 2),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.only(left: Grid.xxs),
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: '$threadQuestionLabel '),
+                  TextSpan(
+                    text: quote,
+                    style: const TextStyle(fontStyle: FontStyle.italic),
+                  ),
+                ],
+              ),
+              style: muted,
+            ),
+          ),
+        ),
       ),
     );
   }

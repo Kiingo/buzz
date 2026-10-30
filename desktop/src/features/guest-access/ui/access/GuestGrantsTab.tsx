@@ -1,7 +1,7 @@
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 
-import { dataSourceLabel, scopeLabel } from "../../lib/copy";
+import { dataSourceLabel, questionKindLabel, scopeLabel } from "../../lib/copy";
 import { guestAccessApi } from "../../lib/client";
 import type { GuestGrant } from "../../lib/wire";
 import { useOwnerGrants, useOwnerMutation } from "../../ownerQueries";
@@ -52,7 +52,7 @@ export function GrantRow({
           ))}
           {grant.questionKind ? (
             <Badge variant="secondary">
-              {grant.questionKind.replace(/_/g, " ")}
+              {questionKindLabel(grant.questionKind)}
             </Badge>
           ) : null}
         </div>

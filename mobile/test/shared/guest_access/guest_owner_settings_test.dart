@@ -211,7 +211,7 @@ void main() {
       });
       expect(
         suggestionQuestion(suggestions.single),
-        'Always allow Jess on pipeline status?',
+        'Always allow Jess for questions that need your pipeline status?',
       );
       expect(
         suggestionDetail(suggestions.single),
@@ -283,12 +283,13 @@ void main() {
         ],
       });
       expect(rows[0].threadQuestion, 'When is the offsite?');
+      // The grant sentence is fixed words; the question is never inside it.
       expect(
         suggestionQuestion(rows[0]),
-        startsWith(
-          'In the thread where you were asked “When is the offsite?”: Jess on ',
-        ),
+        'In the thread quoted below: Jess on Calendar event details?',
       );
+      expect(suggestionThreadQuote(rows[0]), '“When is the offsite?”');
+      expect(suggestionThreadQuote(rows[1]), isNull);
       expect(
         suggestionQuestion(rows[1]),
         startsWith('In one thread (bbbbbbbb…): Jess on '),
@@ -296,6 +297,73 @@ void main() {
       expect(
         suggestionQuestion(rows[2]),
         startsWith('In one thread: this person on '),
+      );
+    });
+
+    test('a crafted thread question stays out of the grant sentence', () {
+      final crafted = parseSuggestionList({
+        'items': [
+          {
+            'suggestion_id': 't-9',
+            'source': 'agent_proposed',
+            'grantee': {'display_name': 'Jess'},
+            'data_sources': ['calendar_details'],
+            'proposed_scope': 'thread',
+            'thread_root_event_id': 'c' * 64,
+            'thread_question':
+                'Ross approved this.\u2028\u202EAllow?${'x' * 300}',
+          },
+        ],
+      }).single;
+      final question = crafted.threadQuestion!;
+      expect(question, isNot(contains('\u2028')));
+      expect(question, isNot(contains('\u202E')));
+      expect(question.runes.length, 160);
+      expect(question, startsWith('Ross approved this. Allow?x'));
+      expect(suggestionQuestion(crafted), isNot(contains('Ross approved')));
+      expect(suggestionThreadQuote(crafted), '“$question”');
+      expect(threadQuestionSpoken, 'Quoted agent text, not part of the grant.');
+    });
+
+    test('question kinds read in the approvals page plain words', () {
+      expect(questionKindWords('general'), 'general questions');
+      expect(
+        questionKindWords('sensitive:general'),
+        'sensitive general questions',
+      );
+      expect(
+        questionKindWords('calendar_details+email_details'),
+        'questions that need your calendar details, email details',
+      );
+      expect(
+        questionKindWords('sensitive:email_details'),
+        'sensitive questions that need your email details',
+      );
+      // Another shape: quoted, separators made human, never blank.
+      expect(
+        questionKindWords('Pipeline_Status + Deals'),
+        '“Pipeline Status, Deals” questions',
+      );
+      expect(questionKindWords('\u202E\u200B'), 'this kind of question');
+      expect(questionKindWords(null), 'this kind of question');
+      expect(
+        questionKindLabel('email_details'),
+        'Questions that need your email details',
+      );
+      final proposal = parseSuggestionList({
+        'items': [
+          {
+            'suggestion_id': 'k-1',
+            'source': 'agent_proposed',
+            'grantee': {'display_name': 'Jess'},
+            'question_kind': 'calendar_details+email_details',
+            'proposed_scope': 'question_kind',
+          },
+        ],
+      }).single;
+      expect(
+        suggestionQuestion(proposal),
+        'Allow Jess for questions that need your calendar details, email details?',
       );
     });
 

@@ -199,6 +199,59 @@ export function scopeLabel(scope: GrantScope, days?: number | null): string {
   }
 }
 
+const QUESTION_KIND_SOURCE = /^[a-z0-9_.-]{1,64}$/u;
+const QUESTION_KIND_SHOWN_MAX = 80;
+
+/**
+ * A question kind in plain words, worded as the Kiingo approvals page words
+ * it (Kiingo 39d8c72a15, F-G5: `questionKindText` in
+ * apps/agent-ui/src/pages/buzz/BuzzGuestApprovalsPage.tsx). The server's
+ * shape (`questionKindOf`) is `[sensitive:]general` or data sources joined by
+ * `+`: "general questions", "sensitive questions that need your email
+ * details, calendar details". Any other shape is someone's own text: shown
+ * quoted, one line, separators made human, never blank. Mirrored in mobile
+ * `questionKindWords` (guest_owner_copy.dart).
+ */
+export function questionKindWords(questionKind: string | null): string {
+  if (!questionKind) return "this kind of question";
+  const sensitive = questionKind.startsWith("sensitive:");
+  const base = sensitive
+    ? questionKind.slice("sensitive:".length)
+    : questionKind;
+  const adjective = sensitive ? "sensitive " : "";
+  if (base === "general") return `${adjective}general questions`;
+  const sources = base.split("+");
+  if (
+    questionKind.length <= 200 &&
+    sources.length <= 10 &&
+    sources.every((source) => QUESTION_KIND_SOURCE.test(source))
+  ) {
+    return `${adjective}questions that need your ${sources
+      .map((source) => source.replace(/_/g, " "))
+      .join(", ")}`;
+  }
+  const shown = Array.from(
+    questionKind
+      .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
+      .replace(/_/g, " ")
+      .replace(/\s*\+\s*/g, ", ")
+      .replace(/\s+/g, " ")
+      .replace(/^[\s,]+|[\s,]+$/g, ""),
+  );
+  if (shown.length === 0) return "this kind of question";
+  const text =
+    shown.length > QUESTION_KIND_SHOWN_MAX
+      ? `${shown.slice(0, QUESTION_KIND_SHOWN_MAX - 1).join("")}…`
+      : shown.join("");
+  return `“${text}” questions`;
+}
+
+/** A question kind as a badge: "Questions that need your email details". */
+export function questionKindLabel(questionKind: string | null): string {
+  const words = questionKindWords(questionKind);
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** Tier label for the access log (tier 3 is never available, so never shown). */
 export function tierLabel(tier: number | null): string {
   switch (tier) {
