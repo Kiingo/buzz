@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 7bc569bf4968cc5b06bdc6a9ea3b371d7d21efc7; do not edit here.
+// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
 import { withoutInvisible } from "./text";
 
 // Copy to clipboard (Ross, 2026-10-29): a client-only control next to input
@@ -73,12 +73,47 @@ const flagLongGaps = (text: string): string =>
     .join("\n");
 
 /**
+ * 79 LOW-MO-VERTICAL-GAP: this many or more consecutive blank (or
+ * whitespace-only) lines are folded to one "⟨N blank lines⟩" line, so text
+ * pushed far below what a paste target shows is seen.
+ */
+export const COPY_BLANK_LINES = 8;
+
+const BLANK_LINE =
+  /^[\t \u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\u115F\u1160\u2800\u3164\uFFA0]*$/u;
+
+/** Each run of COPY_BLANK_LINES+ blank lines as one "⟨N blank lines⟩". */
+const flagBlankLines = (text: string): string => {
+  const out: string[] = [];
+  let run: string[] = [];
+  const flush = (): void => {
+    if (run.length >= COPY_BLANK_LINES) {
+      out.push(`⟨${run.length} blank lines⟩`);
+    } else {
+      out.push(...run);
+    }
+    run = [];
+  };
+  for (const line of text.split("\n")) {
+    if (BLANK_LINE.test(line)) {
+      run.push(line);
+      continue;
+    }
+    flush();
+    out.push(line);
+  }
+  flush();
+  return out.join("\n");
+};
+
+/**
  * Exactly the text the control shows, as plain text: no outside-content
  * markers, no characters that draw nothing (bidi overrides, zero-width and
  * tag characters, variation selectors), no controls except tabs and line
  * breaks (each break becomes `\n`), and a wide blank run before more
- * text (16+ columns, or 32+ as indentation) folded to "⟨N spaces⟩". Never
- * HTML: the clipboard gets `text/plain` only.
+ * text (16+ columns, or 32+ as indentation) folded to "⟨N spaces⟩", and 8+
+ * blank lines in a row folded to "⟨N blank lines⟩". Never HTML: the
+ * clipboard gets `text/plain` only.
  */
 export const copyableText = (text: string): string => {
   let out = "";
@@ -100,5 +135,5 @@ export const copyableText = (text: string): string => {
     }
     out += char;
   }
-  return flagLongGaps(out);
+  return flagBlankLines(flagLongGaps(out));
 };

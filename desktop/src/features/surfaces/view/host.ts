@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 7bc569bf4968cc5b06bdc6a9ea3b371d7d21efc7; do not edit here.
+// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
 import { createContext, useContext } from "react";
 import {
   IMAGE_MIME_TYPES,
@@ -60,9 +60,21 @@ export type SurfaceHost = {
    * DocumentViewer's read of one Kiingo file through the viewer's own
    * session (`GET /api/files/:fileId/content`, the files.get read check;
    * no access and missing are both 404, so `missing`). Without it the
-   * viewer shows the file row and where to open it.
+   * viewer shows the file row and where to open it. `fileId` is always a
+   * UUID (`isDocumentFileId`); the host still encodes it as one path
+   * segment. The host reads at most `maxBytes` (`DOCUMENT_MAX_BYTES`),
+   * streaming and stopping past it, and refuses a file whose first bytes
+   * aren't "%PDF-" before reading further (79 SHOULD-GUB-NO-SIZE-CAP). A
+   * host that shows the PDF outside a browser frame of a verified blob
+   * (Buzz desktop) needs its own 79 review first: never a CSP frame-src
+   * widened to blob:, pdf.js with isEvalSupported and enableScripting off,
+   * links through openUrl (SHOULD-GUB-DESKTOP-PDF-NO-FRAME-BLOB).
    */
-  readFile?: (fileId: string, signal: AbortSignal) => Promise<FileAnswer>;
+  readFile?: (
+    fileId: string,
+    signal: AbortSignal,
+    maxBytes: number,
+  ) => Promise<FileAnswer>;
 };
 
 export type FileAnswer =

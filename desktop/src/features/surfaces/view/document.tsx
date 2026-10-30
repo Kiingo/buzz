@@ -1,9 +1,13 @@
-// Generated from the Kiingo surface renderer packages at 7bc569bf4968cc5b06bdc6a9ea3b371d7d21efc7; do not edit here.
+// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
 import { useEffect, useState } from "react";
 import {
+  DOCUMENT_MAX_BYTES,
+  DOCUMENT_NOT_PDF_MESSAGE,
+  DOCUMENT_TOO_LARGE_MESSAGE,
   documentModel,
   highlightLabel,
   highlightsCopyText,
+  isDocumentFileId,
   isPdfBytes,
 } from "../core";
 import { cn } from "./cn";
@@ -51,10 +55,14 @@ export const DocumentView = ({ component, scope }: NodeProps) => {
     if (!fileId || !readFile) {
       return;
     }
+    if (!isDocumentFileId(fileId)) {
+      setLoaded({ kind: "failed", message: "This isn’t a Kiingo file." });
+      return;
+    }
     const abort = new AbortController();
     let url: string | undefined;
     setLoaded({ kind: "loading" });
-    readFile(fileId, abort.signal)
+    readFile(fileId, abort.signal, DOCUMENT_MAX_BYTES)
       .then(async (answer) => {
         if (answer.kind !== "file") {
           setLoaded({
@@ -67,6 +75,10 @@ export const DocumentView = ({ component, scope }: NodeProps) => {
           });
           return;
         }
+        if (answer.blob.size > DOCUMENT_MAX_BYTES) {
+          setLoaded({ kind: "failed", message: DOCUMENT_TOO_LARGE_MESSAGE });
+          return;
+        }
         const head = new Uint8Array(
           await answer.blob.slice(0, 5).arrayBuffer(),
         );
@@ -74,10 +86,7 @@ export const DocumentView = ({ component, scope }: NodeProps) => {
           return;
         }
         if (!isPdfBytes(head)) {
-          setLoaded({
-            kind: "failed",
-            message: "This file isn’t a PDF, so it can’t be shown here.",
-          });
+          setLoaded({ kind: "failed", message: DOCUMENT_NOT_PDF_MESSAGE });
           return;
         }
         url = URL.createObjectURL(

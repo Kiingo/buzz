@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 7bc569bf4968cc5b06bdc6a9ea3b371d7d21efc7; do not edit here.
+// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
 import { isObject } from "./json";
 import { plainText } from "./text";
 
@@ -9,6 +9,28 @@ import { plainText } from "./text";
 
 /** At most this many highlights are listed. */
 export const DOCUMENT_HIGHLIGHTS_MAX = 50;
+
+/**
+ * The largest file a DocumentViewer opens, on every renderer (79
+ * SHOULD-GUB-NO-SIZE-CAP; Swift `UiDocument.maxBytes`, the Mac broker's
+ * `files.content_read`): a host's readFile stops reading past it.
+ */
+export const DOCUMENT_MAX_BYTES = 200 * 1024 * 1024;
+
+export const DOCUMENT_TOO_LARGE_MESSAGE =
+  "This document is over 200 MB, too large to show here.";
+export const DOCUMENT_NOT_PDF_MESSAGE =
+  "This file isn’t a PDF, so it can’t be shown here.";
+
+const FILE_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Whether `id` is a Kiingo file id a viewer may read: a UUID (the files
+ * routes take only those), so never a dot segment or a path (79
+ * SHOULD-GUB-FILEID-DOT-SEGMENT). Anything else shows the file row only.
+ */
+export const isDocumentFileId = (id: string): boolean => FILE_ID.test(id);
 
 export type DocumentHighlight = {
   page: number;
