@@ -1,21 +1,25 @@
-// Generated from the Kiingo surface renderer packages at ec8a842a062bf8f90327ca1b45c1fe31730d12f4; do not edit here.
-import { useState, type DragEvent } from "react";
+// Generated from the Kiingo surface renderer packages at 31af16c4bf4bf2ccee353af7c8c836d4be5d621a; do not edit here.
+import { useState, type DragEvent, type KeyboardEvent } from "react";
 import {
   appendPointer,
   bindingOf,
   BOARD_LANE_MAX,
   boardLanes,
   childKey,
+  diagramOutline,
   laneCount,
   laneMoreText,
+  layoutDiagram,
   moveBoardCard,
   readBoardColumns,
+  readDiagram,
   type BoardCard,
   type JsonValue,
 } from "../core";
 import { cn } from "./cn";
 import { useNodeContext, type NodeProps } from "./context";
 import { BadgeLabel } from "./display";
+import { catalogIcon } from "./icons";
 import { QuotedText, TooLargeRow, toneSurface, toneText } from "./ui";
 
 // §4.2 Board on the web (GU-A); CalendarView and Diagram join it. Logic
@@ -304,5 +308,227 @@ export const BoardView = ({ component, scope }: NodeProps) => {
       </div>
       {granted < wanted ? <TooLargeRow /> : null}
     </div>
+  );
+};
+
+// --- Diagram -----------------------------------------------------------------
+
+const nodeRadius = (shape: string) =>
+  shape === "box" ? 2 : shape === "pill" || shape === "circle" ? 22 : 8;
+
+/** Shown text in a fixed-width box; the outline carries the whole label. */
+const clip = (text: string, max: number) =>
+  [...text].length > max ? `${[...text].slice(0, max - 1).join("")}…` : text;
+
+const DIAGRAM_PAD = 8;
+
+export const DiagramView = ({ component, scope }: NodeProps) => {
+  const context = useNodeContext();
+  const { nodes, edges } = readDiagram(
+    context.list(component, "nodes", scope),
+    context.list(component, "edges", scope),
+  );
+  if (nodes.length === 0) {
+    return null;
+  }
+  const direction = component.props.direction === "right" ? "right" : "down";
+  const layout = layoutDiagram(nodes, edges, direction);
+  const outline = diagramOutline(nodes, edges);
+  const title = context.text(component, "title", scope, 120);
+  // Outside content (anywhere in nodes or edges) is drawn as a quote and
+  // never taps.
+  const outside =
+    context.isUntrusted(component, "nodes", scope) ||
+    context.isUntrusted(component, "edges", scope);
+  const action = context.action(component.props.onNodeTap);
+  const tappable =
+    !outside && action !== undefined && context.canTapSilently(action);
+  const selectionPointer = bindingOf(component.props.selection, scope);
+  const selected = selectionPointer
+    ? context.read(selectionPointer)
+    : undefined;
+  const markerId = context.domId(component, scope, "-arrow");
+  const tap = (id: string) => {
+    if (!action || !tappable) {
+      return;
+    }
+    if (selectionPointer && context.acceptsEdits) {
+      context.edit(selectionPointer, id);
+    }
+    context.perform(action.id, scope);
+  };
+  const pad = DIAGRAM_PAD;
+  const drawing = (
+    <div className="overflow-x-auto">
+      <svg
+        viewBox={`${-pad} ${-pad} ${layout.width + pad * 2} ${layout.height + pad * 2}`}
+        width={layout.width + pad * 2}
+        className="h-auto max-w-full text-muted-foreground"
+        aria-hidden="true"
+      >
+        <defs>
+          <marker
+            id={markerId}
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+          </marker>
+        </defs>
+        {layout.edges.map((edge, index) => (
+          <g key={`e-${index}`}>
+            <polyline
+              points={edge.points.map((p) => `${p.x},${p.y}`).join(" ")}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              strokeDasharray={edge.style === "dashed" ? "4 3" : undefined}
+              markerEnd={`url(#${markerId})`}
+            />
+            {edge.label ? (
+              <text
+                x={edge.labelAt.x + 4}
+                y={edge.labelAt.y - 4}
+                fontSize="10"
+                className="fill-muted-foreground"
+              >
+                {clip(edge.label, 24)}
+              </text>
+            ) : null}
+          </g>
+        ))}
+        {layout.nodes.map((node) => {
+          const Icon = node.icon ? catalogIcon(node.icon) : undefined;
+          const isSelected = selected === node.id;
+          const cx = node.x + node.w / 2;
+          const cy = node.y + node.h / 2;
+          const stroke = cn(
+            "fill-card stroke-current",
+            isSelected ? "text-primary" : toneText(node.tone ?? "muted"),
+          );
+          return (
+            <g
+              key={node.id}
+              // A pointer shortcut on the drawing; the outline's buttons are
+              // the keyboard and screen-reader path (the drawing is hidden).
+              {...(tappable
+                ? {
+                    role: "button",
+                    tabIndex: -1,
+                    onClick: () => tap(node.id),
+                    onKeyDown: (event: KeyboardEvent<SVGGElement>) => {
+                      if (event.key === "Enter") {
+                        tap(node.id);
+                      }
+                    },
+                  }
+                : {})}
+              className={tappable ? "cursor-pointer" : undefined}
+            >
+              {node.shape === "diamond" ? (
+                <polygon
+                  points={`${cx},${node.y} ${node.x + node.w},${cy} ${cx},${node.y + node.h} ${node.x},${cy}`}
+                  className={stroke}
+                  strokeWidth={isSelected ? 2.5 : 1.5}
+                />
+              ) : (
+                <rect
+                  x={node.x}
+                  y={node.y}
+                  width={node.w}
+                  height={node.h}
+                  rx={nodeRadius(node.shape)}
+                  className={stroke}
+                  strokeWidth={isSelected ? 2.5 : 1.5}
+                />
+              )}
+              {Icon && node.shape !== "diamond" ? (
+                <Icon
+                  x={node.x + 8}
+                  y={cy - 7}
+                  width={14}
+                  height={14}
+                  className={toneText(node.tone)}
+                />
+              ) : null}
+              <text
+                x={cx + (Icon && node.shape !== "diamond" ? 8 : 0)}
+                y={node.detail ? cy - 3 : cy + 4}
+                textAnchor="middle"
+                fontSize="11"
+                className="fill-foreground"
+              >
+                {clip(node.label, node.shape === "diamond" ? 14 : 20)}
+              </text>
+              {node.detail ? (
+                <text
+                  x={cx}
+                  y={cy + 11}
+                  textAnchor="middle"
+                  fontSize="9"
+                  className="fill-muted-foreground"
+                >
+                  {clip(node.detail, 24)}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+  return (
+    <figure className="flex flex-col gap-2">
+      {title ? (
+        <figcaption className="text-sm font-semibold">{title}</figcaption>
+      ) : null}
+      {outside ? (
+        <div
+          className="border-l-[3px] border-muted-foreground/40 pl-1.5"
+          title="Quoted"
+        >
+          <span className="text-xs text-muted-foreground">Quoted</span>
+          {drawing}
+        </div>
+      ) : (
+        drawing
+      )}
+      {/* The outline is the diagram for screen readers, and the way to tap. */}
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground">
+          Outline
+        </summary>
+        {outside ? (
+          <QuotedText text={outline.join("\n")} />
+        ) : (
+          <ul
+            className="mt-1 flex flex-col gap-0.5"
+            aria-label={title ?? "Diagram outline"}
+          >
+            {nodes.map((node, index) => (
+              <li key={node.id}>
+                {tappable ? (
+                  <button
+                    type="button"
+                    disabled={context.busy}
+                    aria-current={selected === node.id ? "true" : undefined}
+                    onClick={() => tap(node.id)}
+                    className="text-left hover:underline"
+                  >
+                    {outline[index]}
+                  </button>
+                ) : (
+                  outline[index]
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
+    </figure>
   );
 };

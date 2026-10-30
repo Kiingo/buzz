@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at ec8a842a062bf8f90327ca1b45c1fe31730d12f4; do not edit here.
+// Generated from the Kiingo surface renderer packages at 31af16c4bf4bf2ccee353af7c8c836d4be5d621a; do not edit here.
 /** The app's words for the surface codes the server may send without a sentence. */
 export const surfaceMessage = (code: string): string => {
   switch (code) {
