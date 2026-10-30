@@ -53,7 +53,21 @@ String respondToSummary(String? respondTo) => switch (respondTo) {
   _ => 'Only you and your own agents can ask.',
 };
 
-final _questionKindSource = RegExp(r'^[a-z0-9_.-]{1,64}$');
+/// The owner-exclusive data sources: the only ids the server joins into a
+/// question kind. Mirrors Kiingo's single source of truth,
+/// BUZZ_GUEST_OWNER_ONLY_SOURCES in Kiingo/kiingo
+/// packages/brain-public-ts-contracts/src/agents/buzz-guest-owner-sources.ts
+/// (the `owner_only_requires_grant` sources of the kiingo-mcp guest policy),
+/// and desktop `GUEST_OWNER_ONLY_SOURCES` (lib/copy.ts), whose
+/// accessTabs.test.mjs checks this list stays equal. Change all three
+/// together.
+const guestOwnerOnlySources = <String>[
+  'calendar_events',
+  'outlook_mailbox',
+  'kiingo_files',
+];
+const _questionKindMax = 200;
+const _questionKindMaxSources = 10;
 final _questionKindInvisible = RegExp(
   r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]',
   unicode: true,
@@ -64,13 +78,16 @@ final _questionKindEdges = RegExp(r'^[\s,]+|[\s,]+$');
 const _questionKindShownMax = 80;
 
 /// A question kind in plain words, worded as the Kiingo approvals page words
-/// it (Kiingo 39d8c72a15, F-G5: `questionKindText` in
-/// apps/agent-ui/src/pages/buzz/BuzzGuestApprovalsPage.tsx). The server's
-/// shape (`questionKindOf`) is `[sensitive:]general` or data sources joined by
-/// `+`: "general questions", "sensitive questions that need your email
-/// details, calendar details". Any other shape is someone's own text: shown
-/// quoted, one line, separators made human, never blank. Mirrors desktop
-/// `questionKindWords` (lib/copy.ts).
+/// it (`questionKindText`,
+/// apps/agent-ui/src/pages/buzz/buzz-guest-question-kind.ts). Plain only in
+/// the server's exact shape (`questionKindOf`): `[sensitive:]general`, or
+/// sources joined by `+` where every source is in [guestOwnerOnlySources]:
+/// "general questions", "sensitive questions that need your calendar events,
+/// outlook mailbox". The kind is agent-influenced (79, 2026-10-30), so
+/// anything else, including a list with one unknown part such as
+/// "ross_approved_this", is someone's own text: shown quoted, one line, no
+/// invisible characters, separators made human, capped, never blank. Mirrors
+/// desktop `questionKindWords` (lib/copy.ts).
 String questionKindWords(String? questionKind) {
   if (questionKind == null || questionKind.isEmpty) {
     return 'this kind of question';
@@ -79,13 +96,14 @@ String questionKindWords(String? questionKind) {
   final sensitive = questionKind.startsWith(prefix);
   final base = sensitive ? questionKind.substring(prefix.length) : questionKind;
   final adjective = sensitive ? 'sensitive ' : '';
-  if (base == 'general') return '${adjective}general questions';
-  final sources = base.split('+');
-  if (questionKind.length <= 200 &&
-      sources.length <= 10 &&
-      sources.every(_questionKindSource.hasMatch)) {
-    final words = sources.map((source) => source.replaceAll('_', ' '));
-    return '${adjective}questions that need your ${words.join(', ')}';
+  if (questionKind.length <= _questionKindMax) {
+    if (base == 'general') return '${adjective}general questions';
+    final sources = base.split('+');
+    if (sources.length <= _questionKindMaxSources &&
+        sources.every(guestOwnerOnlySources.contains)) {
+      final words = sources.map((source) => source.replaceAll('_', ' '));
+      return '${adjective}questions that need your ${words.join(', ')}';
+    }
   }
   final shown = questionKind
       .replaceAll(_questionKindInvisible, ' ')
@@ -102,13 +120,13 @@ String questionKindWords(String? questionKind) {
   return '“$text” questions';
 }
 
-/// A question kind as a badge: "Questions that need your email details".
+/// A question kind as a badge: "Questions that need your calendar events".
 String questionKindLabel(String? questionKind) {
   final words = questionKindWords(questionKind);
   return '${words[0].toUpperCase()}${words.substring(1)}';
 }
 
-/// "Always allow Jess for questions that need your calendar details?" from a
+/// "Always allow Jess for questions that need your calendar events?" from a
 /// suggestion. Besides the grantee's name, the words come from fixed strings
 /// and the server's codes; a thread proposal's question (agent text) is never
 /// part of it and goes on its own quoted line (`suggestionThreadQuote`).

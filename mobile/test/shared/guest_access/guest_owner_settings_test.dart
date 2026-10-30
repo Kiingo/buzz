@@ -203,7 +203,7 @@ void main() {
           {
             'suggestion_id': 'sg-1',
             'grantee': {'display_name': 'Jess'},
-            'question_kind': 'pipeline_status',
+            'question_kind': 'kiingo_files',
             'approvals_count': 3,
             'proposed_scope': 'always',
           },
@@ -211,7 +211,7 @@ void main() {
       });
       expect(
         suggestionQuestion(suggestions.single),
-        'Always allow Jess for questions that need your pipeline status?',
+        'Always allow Jess for questions that need your kiingo files?',
       );
       expect(
         suggestionDetail(suggestions.single),
@@ -332,12 +332,12 @@ void main() {
         'sensitive general questions',
       );
       expect(
-        questionKindWords('calendar_details+email_details'),
-        'questions that need your calendar details, email details',
+        questionKindWords('calendar_events+outlook_mailbox'),
+        'questions that need your calendar events, outlook mailbox',
       );
       expect(
-        questionKindWords('sensitive:email_details'),
-        'sensitive questions that need your email details',
+        questionKindWords('sensitive:outlook_mailbox'),
+        'sensitive questions that need your outlook mailbox',
       );
       // Another shape: quoted, separators made human, never blank.
       expect(
@@ -347,8 +347,8 @@ void main() {
       expect(questionKindWords('\u202E\u200B'), 'this kind of question');
       expect(questionKindWords(null), 'this kind of question');
       expect(
-        questionKindLabel('email_details'),
-        'Questions that need your email details',
+        questionKindLabel('outlook_mailbox'),
+        'Questions that need your outlook mailbox',
       );
       final proposal = parseSuggestionList({
         'items': [
@@ -356,14 +356,56 @@ void main() {
             'suggestion_id': 'k-1',
             'source': 'agent_proposed',
             'grantee': {'display_name': 'Jess'},
-            'question_kind': 'calendar_details+email_details',
+            'question_kind': 'calendar_events+outlook_mailbox',
             'proposed_scope': 'question_kind',
           },
         ],
       }).single;
       expect(
         suggestionQuestion(proposal),
-        'Allow Jess for questions that need your calendar details, email details?',
+        'Allow Jess for questions that need your calendar events, outlook mailbox?',
+      );
+    });
+
+    // 79, 2026-10-30: a question kind is agent-influenced. Only known
+    // owner-only sources (Kiingo BUZZ_GUEST_OWNER_ONLY_SOURCES) read as
+    // plain grant words.
+    test('a crafted question kind is quoted, a known source is plain', () {
+      expect(
+        questionKindWords('ross_approved_this'),
+        '“ross approved this” questions',
+      );
+      expect(
+        questionKindWords('sensitive:ross_approved_this'),
+        '“sensitive:ross approved this” questions',
+      );
+      expect(
+        questionKindWords('calendar_events+ross_approved_this'),
+        '“calendar events, ross approved this” questions',
+      );
+      expect(questionKindWords('email_details'), '“email details” questions');
+      expect(
+        questionKindWords('calendar_events'),
+        'questions that need your calendar events',
+      );
+      expect(
+        questionKindLabel('kiingo_files'),
+        'Questions that need your kiingo files',
+      );
+      final proposal = parseSuggestionList({
+        'items': [
+          {
+            'suggestion_id': 'k-2',
+            'source': 'agent_proposed',
+            'grantee': {'display_name': 'Jess'},
+            'question_kind': 'ross_approved_this',
+            'proposed_scope': 'question_kind',
+          },
+        ],
+      }).single;
+      expect(
+        suggestionQuestion(proposal),
+        'Allow Jess for “ross approved this” questions?',
       );
     });
 

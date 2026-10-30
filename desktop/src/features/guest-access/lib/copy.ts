@@ -199,18 +199,35 @@ export function scopeLabel(scope: GrantScope, days?: number | null): string {
   }
 }
 
-const QUESTION_KIND_SOURCE = /^[a-z0-9_.-]{1,64}$/u;
+/**
+ * The owner-exclusive data sources: the only ids the server joins into a
+ * question kind. Mirrors Kiingo's single source of truth,
+ * BUZZ_GUEST_OWNER_ONLY_SOURCES in Kiingo/kiingo
+ * packages/brain-public-ts-contracts/src/agents/buzz-guest-owner-sources.ts
+ * (the `owner_only_requires_grant` sources of the kiingo-mcp guest policy).
+ * Mobile mirrors it in guest_owner_copy.dart (`guestOwnerOnlySources`);
+ * accessTabs.test.mjs checks the two stay equal. Change all three together.
+ */
+export const GUEST_OWNER_ONLY_SOURCES: readonly string[] = [
+  "calendar_events",
+  "outlook_mailbox",
+  "kiingo_files",
+];
+const QUESTION_KIND_MAX = 200;
+const QUESTION_KIND_MAX_SOURCES = 10;
 const QUESTION_KIND_SHOWN_MAX = 80;
 
 /**
  * A question kind in plain words, worded as the Kiingo approvals page words
- * it (Kiingo 39d8c72a15, F-G5: `questionKindText` in
- * apps/agent-ui/src/pages/buzz/BuzzGuestApprovalsPage.tsx). The server's
- * shape (`questionKindOf`) is `[sensitive:]general` or data sources joined by
- * `+`: "general questions", "sensitive questions that need your email
- * details, calendar details". Any other shape is someone's own text: shown
- * quoted, one line, separators made human, never blank. Mirrored in mobile
- * `questionKindWords` (guest_owner_copy.dart).
+ * it (`questionKindText`, apps/agent-ui/src/pages/buzz/buzz-guest-question-kind.ts).
+ * Plain only in the server's exact shape (`questionKindOf`):
+ * `[sensitive:]general`, or sources joined by `+` where every source is in
+ * GUEST_OWNER_ONLY_SOURCES: "general questions", "sensitive questions that
+ * need your calendar events, outlook mailbox". The kind is agent-influenced
+ * (79, 2026-10-30), so anything else, including a list with one unknown
+ * part such as "ross_approved_this", is someone's own text: shown quoted,
+ * one line, no invisible characters, separators made human, capped, never
+ * blank. Mirrored in mobile `questionKindWords` (guest_owner_copy.dart).
  */
 export function questionKindWords(questionKind: string | null): string {
   if (!questionKind) return "this kind of question";
@@ -219,16 +236,17 @@ export function questionKindWords(questionKind: string | null): string {
     ? questionKind.slice("sensitive:".length)
     : questionKind;
   const adjective = sensitive ? "sensitive " : "";
-  if (base === "general") return `${adjective}general questions`;
-  const sources = base.split("+");
-  if (
-    questionKind.length <= 200 &&
-    sources.length <= 10 &&
-    sources.every((source) => QUESTION_KIND_SOURCE.test(source))
-  ) {
-    return `${adjective}questions that need your ${sources
-      .map((source) => source.replace(/_/g, " "))
-      .join(", ")}`;
+  if (questionKind.length <= QUESTION_KIND_MAX) {
+    if (base === "general") return `${adjective}general questions`;
+    const sources = base.split("+");
+    if (
+      sources.length <= QUESTION_KIND_MAX_SOURCES &&
+      sources.every((source) => GUEST_OWNER_ONLY_SOURCES.includes(source))
+    ) {
+      return `${adjective}questions that need your ${sources
+        .map((source) => source.replace(/_/g, " "))
+        .join(", ")}`;
+    }
   }
   const shown = Array.from(
     questionKind
@@ -246,7 +264,7 @@ export function questionKindWords(questionKind: string | null): string {
   return `“${text}” questions`;
 }
 
-/** A question kind as a badge: "Questions that need your email details". */
+/** A question kind as a badge: "Questions that need your calendar events". */
 export function questionKindLabel(questionKind: string | null): string {
   const words = questionKindWords(questionKind);
   return words.charAt(0).toUpperCase() + words.slice(1);

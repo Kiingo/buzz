@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import React from "react";
@@ -15,7 +16,11 @@ import { DigestSummary } from "./GuestDigestTab.tsx";
 import { AccessLogRow } from "./GuestRequestsTab.tsx";
 import { activeGrantsFor, GrantRow } from "./GuestGrantsTab.tsx";
 import { respondToSummary } from "./GuestPolicyTab.tsx";
-import { questionKindLabel, questionKindWords } from "../../lib/copy.ts";
+import {
+  GUEST_OWNER_ONLY_SOURCES,
+  questionKindLabel,
+  questionKindWords,
+} from "../../lib/copy.ts";
 import {
   suggestionDetail,
   suggestionQuestion,
@@ -57,7 +62,7 @@ test("a grant row shows scope, sources, uses and a revoke button", () => {
         grant_id: "g",
         scope: "question_kind",
         grantee: { display_name: "Jess" },
-        question_kind: "pipeline_status",
+        question_kind: "kiingo_files",
         data_sources: ["communications"],
         use_count: 2,
         last_used_at: null,
@@ -73,7 +78,7 @@ test("a grant row shows scope, sources, uses and a revoke button", () => {
   );
   assert.match(html, /Jess · This kind of question from this person/);
   assert.match(html, /Email and chat history/);
-  assert.match(html, /Questions that need your pipeline status/);
+  assert.match(html, /Questions that need your kiingo files/);
   assert.match(html, /used 2 times/);
   assert.match(html, /Revoke/);
 });
@@ -124,7 +129,7 @@ test("learned-grant suggestions read as a question", () => {
       suggestionId: "s",
       guestEndpointId: null,
       grantee: { userId: null, displayName: "Jess" },
-      questionKind: "pipeline",
+      questionKind: "calendar_events",
       dataSources: [],
       approvalsCount: 5,
       proposedScope: "always",
@@ -134,7 +139,7 @@ test("learned-grant suggestions read as a question", () => {
       threadQuestion: null,
       proposedBy: null,
     }),
-    "Always allow Jess for questions that need your pipeline?",
+    "Always allow Jess for questions that need your calendar events?",
   );
 });
 
@@ -232,12 +237,12 @@ test("question kinds read in the approvals page's plain words", () => {
     "sensitive general questions",
   );
   assert.equal(
-    questionKindWords("calendar_details+email_details"),
-    "questions that need your calendar details, email details",
+    questionKindWords("calendar_events+outlook_mailbox"),
+    "questions that need your calendar events, outlook mailbox",
   );
   assert.equal(
-    questionKindWords("sensitive:email_details"),
-    "sensitive questions that need your email details",
+    questionKindWords("sensitive:outlook_mailbox"),
+    "sensitive questions that need your outlook mailbox",
   );
   // Another shape: quoted, separators made human, never blank.
   assert.equal(
@@ -247,8 +252,8 @@ test("question kinds read in the approvals page's plain words", () => {
   assert.equal(questionKindWords("\u202E\u200B"), "this kind of question");
   assert.equal(questionKindWords(null), "this kind of question");
   assert.equal(
-    questionKindLabel("email_details"),
-    "Questions that need your email details",
+    questionKindLabel("outlook_mailbox"),
+    "Questions that need your outlook mailbox",
   );
   const [proposal] = parseSuggestionList({
     items: [
@@ -256,15 +261,73 @@ test("question kinds read in the approvals page's plain words", () => {
         suggestion_id: "k1",
         source: "agent_proposed",
         grantee: { display_name: "Jess" },
-        question_kind: "calendar_details+email_details",
+        question_kind: "calendar_events+outlook_mailbox",
         proposed_scope: "question_kind",
       },
     ],
   });
   assert.equal(
     suggestionQuestion(proposal),
-    "Allow Jess for questions that need your calendar details, email details?",
+    "Allow Jess for questions that need your calendar events, outlook mailbox?",
   );
+});
+
+// 79, 2026-10-30: a question kind is agent-influenced. Only known owner-only
+// sources (Kiingo BUZZ_GUEST_OWNER_ONLY_SOURCES) read as plain grant words.
+test("a crafted question kind is quoted, a known source is plain", () => {
+  assert.equal(
+    questionKindWords("ross_approved_this"),
+    "“ross approved this” questions",
+  );
+  assert.equal(
+    questionKindWords("sensitive:ross_approved_this"),
+    "“sensitive:ross approved this” questions",
+  );
+  assert.equal(
+    questionKindWords("calendar_events+ross_approved_this"),
+    "“calendar events, ross approved this” questions",
+  );
+  assert.equal(questionKindWords("email_details"), "“email details” questions");
+  assert.equal(
+    questionKindWords("calendar_events"),
+    "questions that need your calendar events",
+  );
+  assert.equal(
+    questionKindLabel("kiingo_files"),
+    "Questions that need your kiingo files",
+  );
+  const [proposal] = parseSuggestionList({
+    items: [
+      {
+        suggestion_id: "k2",
+        source: "agent_proposed",
+        grantee: { display_name: "Jess" },
+        question_kind: "ross_approved_this",
+        proposed_scope: "question_kind",
+      },
+    ],
+  });
+  assert.equal(
+    suggestionQuestion(proposal),
+    "Allow Jess for “ross approved this” questions?",
+  );
+});
+
+// Drift guard: mobile mirrors the same owner-only source list.
+test("desktop and mobile share one owner-only source list", () => {
+  const dart = readFileSync(
+    new URL(
+      "../../../../../../mobile/lib/shared/guest_access/guest_owner_copy.dart",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const block = dart.match(
+    /const guestOwnerOnlySources = <String>\[([^\]]*)\]/,
+  );
+  assert.ok(block, "guestOwnerOnlySources not found in guest_owner_copy.dart");
+  const mobile = [...block[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  assert.deepEqual(mobile, [...GUEST_OWNER_ONLY_SOURCES]);
 });
 
 test("an agent-proposed grant says who proposed it, not an approval count", () => {
