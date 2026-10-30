@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
+// Generated from the Kiingo surface renderer packages at cfa0fd8c3def901ec65658b6199e22b760f44b57; do not edit here.
 import { useState, type DragEvent, type KeyboardEvent } from "react";
 import {
   allDayEvents,
@@ -293,7 +293,11 @@ export const BoardView = ({ component, scope }: NodeProps) => {
                     )}
                     {canMove ? (
                       <select
-                        aria-label={`Move ${card.title || "card"} to`}
+                        aria-label={
+                          card.title
+                            ? `Move card “${card.title}” to`
+                            : "Move card to"
+                        }
                         value={lane.id}
                         disabled={context.busy}
                         onChange={(event) =>
@@ -911,22 +915,22 @@ export const CalendarViewView = ({ component, scope }: NodeProps) => {
                     <span className="flex gap-1">
                       {[
                         {
-                          label: `Move ${event.title} ${snapMinutes} minutes earlier`,
+                          label: `Move event “${event.title}” ${snapMinutes} minutes earlier`,
                           text: `−${snapMinutes}m`,
                           run: () => nudge(event, -snapMinutes),
                         },
                         {
-                          label: `Move ${event.title} ${snapMinutes} minutes later`,
+                          label: `Move event “${event.title}” ${snapMinutes} minutes later`,
                           text: `+${snapMinutes}m`,
                           run: () => nudge(event, snapMinutes),
                         },
                         {
-                          label: `Move ${event.title} a day earlier`,
+                          label: `Move event “${event.title}” a day earlier`,
                           text: "−1d",
                           run: () => nudge(event, 0, -1),
                         },
                         {
-                          label: `Move ${event.title} a day later`,
+                          label: `Move event “${event.title}” a day later`,
                           text: "+1d",
                           run: () => nudge(event, 0, 1),
                         },
