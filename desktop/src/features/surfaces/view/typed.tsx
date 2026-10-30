@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
+// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
 import { useState } from "react";
 import {
   ADDRESS_PARTS,
@@ -98,7 +98,7 @@ export const NumberInput = (props: FieldProps) => {
             setBad(parsed === undefined);
             if (parsed === null) {
               context.edit(props.pointer, undefined);
-            } else if (parsed !== undefined) {
+            } else if (parsed !== undefined && parsed !== value) {
               context.edit(props.pointer, parsed);
             }
           }}

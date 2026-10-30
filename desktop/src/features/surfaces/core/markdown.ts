@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
+// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
 import { openableUrl } from "./text";
 
 // The safe Markdown subset surfaces carry (§3: emphasis, lists, links, code,
@@ -607,3 +607,58 @@ export const inlineText = (nodes: MdInline[]): string =>
       }
     })
     .join("");
+
+/**
+ * The plain text a person sees drawn from `markdown`, one line per block:
+ * list items as "•"/"◦"/"1." lines, table rows tab-separated, rules empty.
+ * What Copy gives for a RichTextEditor on every renderer (79 parity),
+ * as Swift `CallMarkdown.plainText`.
+ */
+export const markdownPlainText = (markdown: string): string => {
+  const lines: string[] = [];
+  const walk = (blocks: MdBlock[], depth: number) => {
+    for (const block of blocks) {
+      switch (block.kind) {
+        case "paragraph":
+        case "heading":
+          lines.push(inlineText(block.children));
+          break;
+        case "code":
+          lines.push(block.text);
+          break;
+        case "rule":
+          lines.push("");
+          break;
+        case "quote":
+          walk(block.children, depth);
+          break;
+        case "table":
+          for (const row of [block.header, ...block.rows]) {
+            lines.push(row.map(inlineText).join("\t"));
+          }
+          break;
+        case "list":
+          block.items.forEach((item, index) => {
+            const marker = block.ordered
+              ? `${block.start + index}.`
+              : depth > 0
+                ? "◦"
+                : "•";
+            item.forEach((child, at) => {
+              if (
+                at === 0 &&
+                (child.kind === "paragraph" || child.kind === "heading")
+              ) {
+                lines.push(`${marker} ${inlineText(child.children)}`);
+              } else {
+                walk([child], depth + 1);
+              }
+            });
+          });
+          break;
+      }
+    }
+  };
+  walk(parseMarkdown(markdown ?? ""), 0);
+  return lines.join("\n");
+};

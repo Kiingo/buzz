@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
+// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
 import type { ComponentType as ReactComponentType } from "react";
 import {
   childKey,
@@ -131,6 +131,9 @@ const makeViews = (): Record<ComponentType, ReactComponentType<NodeProps>> => ({
   NumberField: InputView,
   AddressField: InputView,
   ColorPicker: InputView,
+  SignaturePad: InputView,
+  PhotoCapture: InputView,
+  VoiceNote: InputView,
   LiveLog: LiveLogView,
   Gauge: GaugeView,
   Sparkline: SparklineView,

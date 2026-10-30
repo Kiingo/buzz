@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
+// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
 import { useState } from "react";
 import {
   ownEntry,
@@ -35,6 +35,7 @@ import {
 import { LocationInput } from "./places";
 import { DateRangeInput } from "./planning";
 import { AddressInput, ColorInput, NumberInput } from "./typed";
+import { PhotoInput, SignatureInput, VoiceNoteInput } from "./capture";
 
 // §4.3 Inputs. Each binds `value` to a path; edits go to the controller
 // (saved 600 ms after the last change). A field that asks for a secret is
@@ -127,6 +128,9 @@ const GROUPED = new Set<string>([
   "Stepper",
   "AddressField",
   "ColorPicker",
+  "SignaturePad",
+  "PhotoCapture",
+  "VoiceNote",
 ]);
 
 const Field = ({ type, ...props }: FieldProps & { type: ComponentType }) => {
@@ -171,6 +175,12 @@ const Field = ({ type, ...props }: FieldProps & { type: ComponentType }) => {
       return <AddressInput {...props} />;
     case "ColorPicker":
       return <ColorInput {...props} />;
+    case "SignaturePad":
+      return <SignatureInput {...props} />;
+    case "PhotoCapture":
+      return <PhotoInput {...props} />;
+    case "VoiceNote":
+      return <VoiceNoteInput {...props} />;
     default:
       return null;
   }

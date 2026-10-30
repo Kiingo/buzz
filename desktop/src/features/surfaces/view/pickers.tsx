@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
+// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   appendPointer,
@@ -12,6 +12,7 @@ import {
   dayKey,
   isObject,
   jsonEqual,
+  markdownPlainText,
   matchesFormat,
   openableUrl,
   parseDate,
@@ -29,6 +30,7 @@ import { MarkdownText } from "./markdown";
 import { CopyButton } from "./copy";
 import { fieldClass, QuoteBox, SurfaceButton } from "./ui";
 import { aria, validZone, type FieldProps } from "./field";
+import { DeviceFiles } from "./uploads";
 
 // §4.3 inputs that look things up or hold several values: the body editor,
 // recipients, files, Kiingo objects, reordering and time slots.
@@ -158,7 +160,7 @@ export const RichTextInput = (props: FieldProps) => {
         <span className="flex-1" />
         {props.component.props.copyable === false ? null : (
           <CopyButton
-            text={text}
+            text={markdownPlainText(text)}
             what={props.label}
             compact
             className="px-1.5"
@@ -434,7 +436,6 @@ export const RecipientInput = (props: FieldProps) => {
 export const FileInput = (props: FieldProps) => {
   const context = useNodeContext();
   const [query, setQuery] = useState("");
-  const [picking, setPicking] = useState(false);
   const raw = context.read(props.pointer);
   const files: JsonValue[] = Array.isArray(raw) ? raw : [];
   const maxFiles = Math.max(
@@ -448,7 +449,6 @@ export const FileInput = (props: FieldProps) => {
   const results = useLookup(query, (text) =>
     context.controller.lookupFiles(text),
   );
-  const pick = context.host.pickFiles;
   const full = files.length >= maxFiles;
   const add = (picked: JsonValue[]) => {
     const next =
@@ -483,31 +483,23 @@ export const FileInput = (props: FieldProps) => {
           </SurfaceButton>
         </div>
       ))}
-      {sources.includes("device") && pick ? (
-        <SurfaceButton
-          size="sm"
-          className="self-start"
-          disabled={props.disabled || picking || full}
-          onClick={() => {
-            setPicking(true);
-            void pick(maxFiles > 1)
-              .then((uploaded) => {
-                const refs = uploaded.map((file) => ({
-                  artifactId: file.id,
-                  name: file.name || "File",
-                  ...(file.size !== undefined ? { size: file.size } : {}),
-                  ...(file.type ? { contentType: file.type } : {}),
-                }));
-                if (refs.length) {
-                  add(refs);
-                }
-              })
-              .finally(() => setPicking(false));
+      {sources.includes("device") ? (
+        <DeviceFiles
+          target={{
+            surfaceId: context.controller.id,
+            ...(context.controller.surface.agentId
+              ? { agentId: context.controller.surface.agentId }
+              : {}),
           }}
-        >
-          <Glyphs.attach aria-hidden className="h-4 w-4" />
-          {picking ? "Attaching…" : "Attach files"}
-        </SurfaceButton>
+          multiple={maxFiles > 1}
+          room={maxFiles === 1 ? 1 : maxFiles - files.length}
+          accept={context
+            .list(props.component, "accept", props.scope)
+            .filter((item): item is string => typeof item === "string")}
+          maxBytes={asNumber(props.component.props.maxBytes)}
+          disabled={props.disabled || (maxFiles > 1 && full)}
+          onAdd={add}
+        />
       ) : null}
       {sources.includes("kiingo") ? (
         <>

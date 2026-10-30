@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
+// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
 import { asNumber } from "./json";
 
 // Agent text is plain text: control characters, format characters
@@ -84,11 +84,18 @@ export const cleanText = (text: string, max: number, lines = false): string => {
   return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : out;
 };
 
-/** A whole number without ".0"; otherwise the shortest form. */
+/**
+ * A whole number without ".0"; otherwise up to 15 significant digits. Never
+ * an exponent or grouping, so the text parses back to the same number
+ * (79 NUMFOCUS: "1e-7" read back as 17). Swift UiText.number matches.
+ */
 export const formatPlainNumber = (value: number): string =>
-  Number.isInteger(value) && Math.abs(value) < 1e15
+  !Number.isFinite(value) || value === 0
     ? String(value)
-    : String(Number(value.toPrecision(12)));
+    : value.toLocaleString("en-US", {
+        useGrouping: false,
+        maximumSignificantDigits: 15,
+      });
 
 /** A string or number as clean, trimmed text; undefined when empty. */
 export const plainText = (

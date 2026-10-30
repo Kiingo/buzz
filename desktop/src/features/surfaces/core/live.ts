@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
+// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
 import { asNumber, isObject } from "./json";
 import type { Tone } from "./model";
 import { cleanText, formatPlainNumber, plainText } from "./text";
@@ -56,6 +56,18 @@ export const logLevelTone = (level: LogLevel | undefined): Tone =>
           : "default";
 
 /**
+ * Terminal escape sequences, whole: CSI (ESC [ or U+009B, parameters,
+ * intermediates, final byte), terminated OSC (ESC ] … BEL or ESC \\) and
+ * two-byte ESC sequences. Removing only the ESC would leave "[31m" in the
+ * line (79 ANSI). Swift UiLive.logLines uses the same pattern.
+ */
+const ANSI =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ESC, CSI and BEL is the point.
+  /\u001B\[[0-?]*[ -/]*[@-~]|\u009B[0-?]*[ -/]*[@-~]|\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)|\u001B[@-_]/gu;
+
+export const stripAnsi = (text: string): string => text.replace(ANSI, "");
+
+/**
  * The newest `max` lines (default 200, at most 500), oldest first, each
  * plain text on one line, with how many earlier lines were left out.
  */
@@ -78,7 +90,7 @@ export const logLines = (
   for (let index = start; index < items.length; index += 1) {
     const item: unknown = items[index];
     if (typeof item === "string") {
-      lines.push({ index, text: cleanText(item, 2000) });
+      lines.push({ index, text: cleanText(stripAnsi(item), 2000) });
       continue;
     }
     if (!isObject(item) || typeof item.text !== "string") {
@@ -92,7 +104,7 @@ export const logLines = (
     const source = plainText(item.source, 60);
     lines.push({
       index,
-      text: cleanText(item.text, 2000),
+      text: cleanText(stripAnsi(item.text), 2000),
       ...(at ? { at } : {}),
       ...(level ? { level } : {}),
       ...(source ? { source } : {}),
@@ -161,7 +173,10 @@ export const gaugeModel = (
   const current = [...starts].reverse().find((zone) => value >= zone.from);
   const tone = current?.tone ?? "default";
   const valueText = `${formatPlainNumber(value)}${unit && unit !== "%" ? " " : ""}${unit}`;
-  const fraction = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  // A span too wide for a double reads as 1, like Swift (79 OVERFLOW).
+  const span = Number.isFinite(max - min) ? max - min : 1;
+  const ratio = (value - min) / span;
+  const fraction = Number.isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) : 0;
   const spoken = `${label}: ${valueText}, range ${formatPlainNumber(min)} to ${formatPlainNumber(max)}${
     tone !== "default" ? `, ${tone}` : ""
   }`;
@@ -204,11 +219,15 @@ export const sparklineModel = (
   }
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const span = max - min || 1;
+  // Zero or too wide for a double reads as 1, kept on the chart (79 OVERFLOW).
+  const span = max - min === 0 || !Number.isFinite(max - min) ? 1 : max - min;
   const last = values[values.length - 1]!;
   const points = values.map((value, index) => ({
     x: values.length === 1 ? 0.5 : index / (values.length - 1),
-    y: max === min ? 0.5 : 1 - (value - min) / span,
+    y:
+      max === min
+        ? 0.5
+        : Math.max(0, Math.min(1, 1 - (value - min) / span)) || 0,
   }));
   const suffix = unit ? ` ${unit}` : "";
   const lastText = `${formatPlainNumber(last)}${suffix}`;

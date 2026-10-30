@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
+// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
 import { createContext, useContext } from "react";
 import {
   IMAGE_MIME_TYPES,
@@ -38,8 +38,36 @@ export type SurfaceHost = {
   /** Loads one proxy URL (default: `fetch` with no credentials; the token is the capability). */
   loadMedia?: (url: string) => Promise<MediaAnswer>;
   /** FileInput's device source: pick and upload, answering `{id, name, size, type}` per file. */
-  pickFiles?: (multiple: boolean) => Promise<UploadedFile[]>;
+  pickFiles?: (
+    multiple: boolean,
+    target: UploadTarget,
+  ) => Promise<UploadedFile[]>;
+  /**
+   * Uploads one file the viewer chose or made in a surface (FileInput's
+   * picker on the web, a signature, a photo, a voice note) through the
+   * viewer's own app session into the normal chat attachment upload, so
+   * the viewer owns it (dd, 2026-10-29). Called only after the viewer's
+   * explicit gesture (choosing files, Done, Keep, Use photo), never on
+   * render or for an agent's action. The saved ref is visible to the agent
+   * once the surface saves, like any FileInput value.
+   */
+  uploadFile?: (
+    file: Blob,
+    name: string,
+    target: UploadTarget,
+  ) => Promise<UploadAnswer>;
 };
+
+/** Where an upload goes: the viewer's own chat with the surface's agent. */
+export type UploadTarget = {
+  surfaceId: string;
+  agentId?: string;
+};
+
+export type UploadAnswer =
+  | { kind: "uploaded"; file: UploadedFile }
+  /** A plain sentence for the viewer (too large, a type Kiingo won't take…). */
+  | { kind: "refused"; message: string };
 
 export type UploadedFile = {
   id: string;

@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at c6609e08a498bb4161d453f1ac533d04f66d8bbc; do not edit here.
+// Generated from the Kiingo surface renderer packages at 0d7eecf6d3b78f4c52514554faa33adb7a1fe131; do not edit here.
 import { withoutInvisible } from "./text";
 
 // Copy to clipboard (Ross, 2026-10-29): a client-only control next to input
@@ -24,11 +24,23 @@ export const copyLabel = (what: string | undefined): string => {
 const UNTRUSTED_MARKER = /<\/?untrusted_content\b[^>]{0,200}>/giu;
 
 /**
+ * 64 or more spaces or tabs before more text on the same line: enough to
+ * push a tail past the edge of the paste target (79 PASTEJACK).
+ */
+const LONG_GAP =
+  /[\t \u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]{64,}(?=\S)/gu;
+
+/** A long gap as a visible marker, so a hidden tail shows when pasted. */
+const flagLongGaps = (text: string): string =>
+  text.replace(LONG_GAP, (gap) => `⟨${gap.length} spaces⟩ `);
+
+/**
  * Exactly the text the control shows, as plain text: no outside-content
  * markers, no characters that draw nothing (bidi overrides, zero-width and
  * tag characters, variation selectors), no controls except tabs and line
- * breaks (each break becomes `\n`). Never HTML: the clipboard gets
- * `text/plain` only.
+ * breaks (each break becomes `\n`), and a run of 64+ spaces before more
+ * text folded to "⟨N spaces⟩". Never HTML: the clipboard gets `text/plain`
+ * only.
  */
 export const copyableText = (text: string): string => {
   let out = "";
@@ -50,5 +62,5 @@ export const copyableText = (text: string): string => {
     }
     out += char;
   }
-  return out;
+  return flagLongGaps(out);
 };
