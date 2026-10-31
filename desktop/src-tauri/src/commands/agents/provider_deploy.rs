@@ -454,23 +454,23 @@ mod tests {
         let owner = deploy_owner(
             Ok(keys.clone()),
             &scoped_payload("wss://tenant-a.example", &owner_hex),
-            "kiingo",
+            "example",
         )
         .unwrap();
         assert_eq!(owner.keys.public_key(), keys.public_key());
-        assert_eq!(owner.provider_id, "kiingo");
+        assert_eq!(owner.provider_id, "example");
 
         let switched = deploy_owner(
             Ok(nostr::Keys::generate()),
             &scoped_payload("wss://tenant-a.example", &owner_hex),
-            "kiingo",
+            "example",
         );
         assert!(switched.is_err(), "a different identity must not sign");
 
         let locked = deploy_owner(
             Err("identity is in recovery mode".to_string()),
             &scoped_payload("wss://tenant-a.example", &owner_hex),
-            "kiingo",
+            "example",
         );
         assert_eq!(
             locked.err().as_deref(),
