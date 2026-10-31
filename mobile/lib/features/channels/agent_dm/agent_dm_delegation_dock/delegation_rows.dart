@@ -1,5 +1,52 @@
 part of '../agent_dm_delegation_dock.dart';
 
+/// The server's instant ack as the agent's own line ("Starting 2 workers:
+/// …"), until its reply lands. Not a message: never stored or sent.
+class _PendingAckRow extends StatelessWidget {
+  final String agentName;
+  final String text;
+
+  const _PendingAckRow({required this.agentName, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final line = agentName.isEmpty ? text : '$agentName: $text';
+    return Semantics(
+      key: const ValueKey('agent-dm-delegation-ack'),
+      liveRegion: true,
+      label: line,
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: Grid.half),
+        child: Row(
+          children: [
+            Container(
+              width: Grid.half,
+              height: Grid.half,
+              decoration: BoxDecoration(
+                color: colors.primary,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: Grid.xxs),
+            Expanded(
+              child: Text(
+                line,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: context.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// "3 running · 1 needs you · $4.10 today" and Stop all (§10.1).
 class _BoardHeader extends StatelessWidget {
   final String text;

@@ -16,6 +16,7 @@ import {
   DelegationCardRow,
   DoneSummaryRow,
   FoldedRunningRow,
+  PendingAckRow,
 } from "./AgentDelegationCards";
 import { QuestionCardView } from "./AgentQuestionCard";
 import { useAgentDelegations } from "./useAgentDelegations";
@@ -74,7 +75,8 @@ function useNow(active: boolean) {
 
 /**
  * The agent's delegations, docked above the composer of the owner's 1:1 DM
- * (§10.1): worker asks first ("from worker: <title>", the same ask card the
+ * (§10.1): the pending ack while the agent's reply is on its way, then
+ * worker asks ("from worker: <title>", the same ask card the
  * agent's own questions use, answered straight to the worker), then the
  * running cards (folded at three or more), then one done summary per task.
  * Cards update in place and never become messages.
@@ -97,14 +99,15 @@ export function AgentDelegationDock({
   );
   const now = useNow(Boolean(view && view.running.length > 0));
   if (board.status !== "ready" || !view || !agentPubkey) return null;
+  const { page, asks, ack } = board;
   if (
+    !ack &&
     view.needsYou.length === 0 &&
     view.running.length === 0 &&
     view.done.length === 0
   ) {
     return null;
   }
-  const { page, asks } = board;
 
   const stop = (card: DelegationCard) => {
     void cancelDelegation(agentPubkey, card.delegationId).catch(() =>
@@ -132,6 +135,9 @@ export function AgentDelegationDock({
       className="mx-5 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-card/95 px-3 py-1.5 shadow-xs"
       data-testid="agent-delegation-dock"
     >
+      {ack ? (
+        <PendingAckRow agentName={page.agentName} text={ack.text} />
+      ) : null}
       {view.needsYou.map((card) => {
         const open = asks.get(card.delegationId) ?? [];
         if (open.length === 0) {

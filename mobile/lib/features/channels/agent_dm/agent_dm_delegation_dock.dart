@@ -22,8 +22,9 @@ const _hiddenMax = 500;
 const _tick = Duration(seconds: 30);
 
 /// The agent's delegations, docked above the composer of the owner's 1:1
-/// DM (§10.1). It opens with the thread header ("3 running · 1 needs you ·
-/// $4.10 today") and Stop all, then worker asks ("from worker: <title>",
+/// DM (§10.1). While the agent's reply is on its way it opens with the
+/// server's pending ack ("Starting 2 workers: …"), then the thread header
+/// ("3 running · 1 needs you · $4.10 today") and Stop all, then worker asks ("from worker: <title>",
 /// the same question card the agent's own asks use, answered straight to
 /// the worker), the running cards (folded at three or more) and one done
 /// summary per task. Cards update in place and never become messages.
@@ -55,7 +56,10 @@ class AgentDmDelegationDock extends HookConsumerWidget {
     }, [ticking]);
     if (ready == null || view == null) return const SizedBox.shrink();
     final header = delegationHeaderText(ready.page.summary);
-    if (view.isEmpty && header == null) return const SizedBox.shrink();
+    final ack = ready.ack;
+    if (ack == null && view.isEmpty && header == null) {
+      return const SizedBox.shrink();
+    }
 
     final notifier = ref.read(provider.notifier);
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -158,6 +162,11 @@ class AgentDmDelegationDock extends HookConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (ack != null)
+                  _PendingAckRow(
+                    agentName: ready.page.agentName,
+                    text: ack.text,
+                  ),
                 if (header != null)
                   _BoardHeader(
                     text: header,

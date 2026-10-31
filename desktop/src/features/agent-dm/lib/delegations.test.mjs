@@ -7,6 +7,7 @@ import {
   askAsQuestion,
   delegationBoard,
   delegationDmAgent,
+  delegationChatPath,
   delegationsPath,
   doneTitle,
   formatElapsed,
@@ -16,6 +17,7 @@ import {
   liveElapsed,
   parseDelegationAsks,
   parseDelegationCard,
+  parsePendingAck,
   parseDelegationPoll,
   sessionLink,
   stateLabel,
@@ -88,6 +90,7 @@ test("a page parses, dropping malformed and repeated cards", () => {
   assert.equal(poll.kind, "page");
   assert.equal(poll.page.cards.length, 1);
   assert.equal(poll.page.agentName, "Ada");
+  assert.equal(poll.page.agentId, AGENT);
   assert.equal(poll.page.cards[0].costUsd, 0.42);
   assert.deepEqual(parseDelegationPoll({ rev: "r2", unchanged: true }), {
     kind: "unchanged",
@@ -245,15 +248,46 @@ test("links go to the task and the worker's session", () => {
   );
 });
 
-test("the list path long-polls on the page's rev", () => {
+test("the list path names the agent key and long-polls on the page's rev", () => {
+  const key = "ab".repeat(32);
+  const base = `agents/-/delegations?agentPubkey=${key}`;
+  assert.equal(delegationsPath(key.toUpperCase(), null), base);
+  assert.equal(delegationsPath(key, "a:b/c"), `${base}&rev=a%3Ab%2Fc&wait=20`);
+  // The native route check admits only letters, digits, `-_.%` in rev.
   assert.equal(
-    delegationsPath(AGENT.toUpperCase(), null),
-    `agents/${AGENT}/delegations`,
+    delegationsPath(key, "r!'()*~"),
+    `${base}&rev=r%21%27%28%29%2A%7E&wait=20`,
   );
   assert.equal(
-    delegationsPath(AGENT, "a:b/c"),
-    `agents/${AGENT}/delegations?rev=a%3Ab%2Fc&wait=20`,
+    delegationChatPath(AGENT.toUpperCase()),
+    `agents/${AGENT}/chat?limit=1`,
   );
+});
+
+test("the pending ack is read off the owner chat page, and only while it lasts", () => {
+  const now = Date.parse("2026-10-31T10:00:00Z");
+  const chat = (pendingAck) => ({
+    rev: "c1",
+    delegations: { summary: {}, activeDelegationIds: [], pendingAck },
+  });
+  const ack = {
+    id: "ack:x",
+    text: " Starting 2 workers: A, B ",
+    expiresAt: "2026-10-31T10:05:00Z",
+  };
+  assert.deepEqual(parsePendingAck(chat(ack), now), {
+    id: "ack:x",
+    text: "Starting 2 workers: A, B",
+    expiresAtMs: Date.parse(ack.expiresAt),
+  });
+  assert.equal(parsePendingAck(chat(null), now), null);
+  assert.equal(parsePendingAck({ rev: "c1" }, now), null);
+  assert.equal(
+    parsePendingAck(chat({ ...ack, expiresAt: "2026-10-31T09:59:59Z" }), now),
+    null,
+  );
+  assert.equal(parsePendingAck(chat({ ...ack, text: " " }), now), null);
+  assert.equal(parsePendingAck(chat({ ...ack, expiresAt: "soon" }), now), null);
 });
 
 test("the board shows only in the reader's own 1:1 DM", () => {

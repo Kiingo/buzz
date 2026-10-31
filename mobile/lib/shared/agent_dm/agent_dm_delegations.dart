@@ -6,9 +6,11 @@ import 'package:flutter/foundation.dart';
 /// place, never as new messages. The same rules as desktop's
 /// `desktop/src/features/agent-dm/lib/delegations.ts`.
 ///
-/// Wire: `GET /api/buzz-voice/ios/agents/<agentId>/delegations`, long-polled
-/// with `rev` + `wait`, owner-only (D5). Every reader here fails closed: a
-/// malformed card is dropped, a malformed page is no page.
+/// Wire: `GET /api/buzz-voice/ios/agents/-/delegations?agentPubkey=<hex>`
+/// (the host resolves the Buzz agent key as its settings read does),
+/// long-polled with `rev` + `wait`, owner-only (D5). The owner's chat page
+/// (`GET …/agents/<agentId>/chat`) adds the pending ack. Every reader here
+/// fails closed: a malformed card is dropped, a malformed page is no page.
 
 /// The long-poll ceiling the host allows (DELEGATION_CARDS_MAX_WAIT_SEC).
 const delegationWaitSeconds = 20;
@@ -188,6 +190,7 @@ class DelegationPage {
   const DelegationPage({
     required this.rev,
     required this.serverNow,
+    required this.agentId,
     required this.agentName,
     required this.summary,
     required this.cards,
@@ -195,6 +198,9 @@ class DelegationPage {
 
   final String rev;
   final String serverNow;
+
+  /// The Kiingo agent behind the key: the id the per-delegation routes use.
+  final String? agentId;
   final String agentName;
   final DelegationSummary summary;
   final List<DelegationCard> cards;
@@ -230,6 +236,7 @@ class DelegationPoll {
       page: DelegationPage(
         rev: rev,
         serverNow: _text(record['serverNow']) ?? '',
+        agentId: _uuidOrNull(_map(record['agent'])?['id']),
         agentName: _text(_map(record['agent'])?['name']) ?? '',
         summary: DelegationSummary(
           runningCount: _count(summary['runningCount']),
@@ -492,11 +499,65 @@ String? delegationAppOrigin(String? apiOrigin) {
 String delegationSessionLink(String appOrigin, String sessionId) =>
     '$appOrigin/team/harness-sessions/${sessionId.toLowerCase()}/feed';
 
-/// The cards list path, long-polled on [rev] after the first read.
-String delegationsPath(String agentId, String? rev) {
-  final base = 'agents/${agentId.toLowerCase()}/delegations';
+/// The cards list path for a Buzz agent key (the host resolves it),
+/// long-polled on [rev] after the first read.
+String delegationsPath(String agentPubkey, String? rev) {
+  final base = 'agents/-/delegations?agentPubkey=${agentPubkey.toLowerCase()}';
   return rev == null
       ? base
-      : '$base?rev=${Uri.encodeComponent(rev)}'
+      : '$base&rev=${_encodeRev(rev)}'
             '&wait=$delegationWaitSeconds';
 }
+
+/// The newest page of the owner's chat: it carries the pending ack.
+String delegationChatPath(String agentId) =>
+    'agents/${agentId.toLowerCase()}/chat?limit=1';
+
+/// The server's instant acknowledgement (IDelegationPendingAck): workers
+/// the agent started this turn, shown until its own reply lands. Transient:
+/// a page without it, or with another id, drops it.
+@immutable
+class DelegationPendingAck {
+  const DelegationPendingAck({
+    required this.id,
+    required this.text,
+    required this.expiresAt,
+  });
+
+  final String id;
+
+  /// "Starting 2 workers: Fix the login bug, Draft the launch email".
+  final String text;
+
+  /// After this the row goes even without a fresh page.
+  final DateTime expiresAt;
+
+  /// The pending ack on an owner chat page, or null (absent, bad or past).
+  static DelegationPendingAck? tryParse(Object? chatPage, DateTime now) {
+    final ack = _map(_map(_map(chatPage)?['delegations'])?['pendingAck']);
+    final id = _text(ack?['id']);
+    final text = _text(ack?['text']);
+    final expiresAt = DateTime.tryParse(_text(ack?['expiresAt']) ?? '');
+    if (id == null || text == null || expiresAt == null) return null;
+    if (!expiresAt.isAfter(now)) return null;
+    return DelegationPendingAck(
+      id: id,
+      text: text.length > 500 ? text.substring(0, 500) : text,
+      expiresAt: expiresAt,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is DelegationPendingAck && other.id == id && other.text == text;
+
+  @override
+  int get hashCode => Object.hash(id, text);
+}
+
+/// `rev` percent-encoded down to letters, digits and `-_.`, as desktop
+/// sends it (its native route check refuses `!'()*~`).
+String _encodeRev(String rev) => Uri.encodeComponent(rev).replaceAllMapped(
+  RegExp(r"[!'()*~]"),
+  (match) => '%${match[0]!.codeUnitAt(0).toRadixString(16).toUpperCase()}',
+);

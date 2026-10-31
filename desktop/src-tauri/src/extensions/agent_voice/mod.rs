@@ -99,14 +99,56 @@ fn is_settings_query(query: &str) -> bool {
     }
 }
 
-/// `GET agents/<uuid>/delegations`, the one delegation route with a query.
+/// `GET agents/<uuid | ->/delegations`, the one delegation route with a
+/// query. `-` names the agent by `agentPubkey` instead (the host resolves
+/// the Buzz key as its settings read does).
 fn is_delegation_list(parts: &[&str], get: bool) -> bool {
-    get && matches!(parts, ["agents", agent, "delegations"] if is_uuid(agent))
+    get && matches!(parts, ["agents", agent, "delegations"] if is_uuid(agent) || *agent == "-")
+}
+
+/// The cards long-poll query: only `agentPubkey` (64 hex; required on the
+/// `-` path), `rev` (a percent-encoded opaque token), `wait` (seconds) and
+/// `includeFinished`, each at most once.
+fn is_delegation_list_query(query: &str, by_key: bool) -> bool {
+    let mut seen: Vec<&str> = Vec::new();
+    let ok = query.len() <= 300
+        && query.split('&').all(|pair| {
+            let Some((key, value)) = pair.split_once('=') else {
+                return false;
+            };
+            if seen.contains(&key) {
+                return false;
+            }
+            seen.push(key);
+            match key {
+                "rev" => {
+                    !value.is_empty()
+                        && value.bytes().all(|b| {
+                            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'%')
+                        })
+                }
+                "wait" => {
+                    (1..=3).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_digit())
+                }
+                "includeFinished" => value == "true" || value == "false",
+                "agentPubkey" => value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()),
+                _ => false,
+            }
+        });
+    ok && (!by_key || seen.contains(&"agentPubkey"))
+}
+
+/// The owner chat head the pending ack rides on: `limit=<n>` alone.
+fn is_chat_head_query(query: &str) -> bool {
+    match query.split_once('=') {
+        Some(("limit", n)) => (1..=2).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit()),
+        _ => false,
+    }
 }
 
 /// The call route `path` (relative to the mount) if it is one this command
-/// may reach, else `None`. A query string is allowed only on the feed and
-/// the settings read.
+/// may reach, else `None`. A query string is allowed only on the feed, the
+/// delegation cards long-poll, the owner chat head and the settings read.
 fn allowed_path(method: &str, path: &str) -> Option<String> {
     let (route, query) = match path.split_once('?') {
         Some((route, query)) => (route, Some(query)),
@@ -134,7 +176,9 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         // The owner's delegation board (delegation-driven agents §10.1):
         // cards and their long-poll, one delegation, a worker's ask answer,
         // stop one and stop all. The host answers only the agent's owner.
-        ["agents", agent, "delegations"] => get && is_uuid(agent),
+        ["agents", _, "delegations"] => is_delegation_list(&parts, get),
+        // The newest owner chat page, for the pending ack (§10.1).
+        ["agents", agent, "chat"] => get && is_uuid(agent),
         ["agents", agent, "delegations", "cancel-all"] => post && is_uuid(agent),
         ["agents", agent, "delegations", "asks", ask, "answer"] => {
             post && is_uuid(agent) && is_uuid(ask)
@@ -146,10 +190,23 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
     if !ok {
         return None;
     }
+    let by_key = parts.get(1) == Some(&"-");
     match query {
+        None if by_key => None,
         None => Some(route.to_string()),
         Some(query)
-            if (parts.last() == Some(&"feed") || is_delegation_list(&parts, get))
+            if is_delegation_list(&parts, get) && is_delegation_list_query(query, by_key) =>
+        {
+            Some(format!("{route}?{query}"))
+        }
+        Some(query)
+            if matches!(parts.as_slice(), ["agents", _, "chat"]) && is_chat_head_query(query) =>
+        {
+            Some(format!("{route}?{query}"))
+        }
+        Some(query)
+            if get
+                && parts.last() == Some(&"feed")
                 && query.len() <= 200
                 && query.bytes().all(|b| {
                     b.is_ascii_alphanumeric()
@@ -402,6 +459,42 @@ mod tests {
         assert!(allowed_path("POST", &format!("{list}/asks/q1/answer")).is_none());
         assert!(allowed_path("GET", "agents/default/delegations").is_none());
         assert!(allowed_path("GET", &format!("{list}?rev=a b")).is_none());
+        // The long-poll query is rev, wait and includeFinished, once each.
+        assert!(allowed_path("GET", &format!("{list}?rev=a%21%27%28%29%2A%7E&wait=20")).is_some());
+        assert!(allowed_path("GET", &format!("{list}?rev=a!b")).is_none());
+        assert!(allowed_path("GET", &format!("{list}?rev=r1&x=1")).is_none());
+        assert!(allowed_path("GET", &format!("{list}?rev=r1&rev=r2")).is_none());
+        assert!(allowed_path("GET", &format!("{list}?rev=")).is_none());
+        assert!(allowed_path("GET", &format!("{list}?wait=2x")).is_none());
+        assert!(allowed_path("GET", &format!("{list}?includeFinished=1")).is_none());
+        assert!(allowed_path("GET", &format!("{list}?agentPubkey=ab")).is_none());
+        // By the Buzz key: `-` needs agentPubkey, and only on the list.
+        let key = "ab".repeat(32);
+        let by_key = format!("agents/-/delegations?agentPubkey={key}");
+        assert_eq!(allowed_path("GET", &by_key), Some(by_key.clone()));
+        let by_key_poll = format!("{by_key}&rev=r%7E1&wait=20");
+        assert!(allowed_path("GET", &by_key_poll).is_some());
+        assert!(allowed_path("GET", "agents/-/delegations").is_none());
+        assert!(allowed_path("GET", "agents/-/delegations?rev=r1").is_none());
+        assert!(allowed_path("GET", &format!("{by_key}&agentPubkey={key}")).is_none());
+        assert!(allowed_path(
+            "POST",
+            &format!("agents/-/delegations/cancel-all?agentPubkey={key}")
+        )
+        .is_none());
+        assert!(allowed_path(
+            "GET",
+            &format!("agents/-/delegations/{id}?agentPubkey={key}")
+        )
+        .is_none());
+        // The owner chat head, for the pending ack.
+        let chat = format!("agents/{agent}/chat?limit=1");
+        assert_eq!(allowed_path("GET", &chat), Some(chat.clone()));
+        assert!(allowed_path("POST", &chat).is_none());
+        assert!(allowed_path("GET", &format!("agents/{agent}/chat?after=x")).is_none());
+        assert!(allowed_path("GET", &format!("agents/{agent}/chat?limit=1&x=1")).is_none());
+        assert!(allowed_path("GET", "agents/-/chat?limit=1").is_none());
+        assert!(allowed_path("POST", &format!("agents/{agent}/chat/messages")).is_none());
         assert!(allowed_path("GET", &format!("agents/{agent}/ledger")).is_none());
         assert!(allowed_path("GET", &format!("{list}/../../calls")).is_none());
     }

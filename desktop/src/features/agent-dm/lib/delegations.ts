@@ -4,9 +4,11 @@
  * worker sessions, and the DM shows them as quiet cards that update in
  * place, never as new messages.
  *
- * Wire: `GET /api/buzz-voice/<client>/agents/<agentId>/delegations`
- * (IDelegationCardsPage, long-polled with `rev` + `wait`), owner-only (D5):
- * anyone else gets 404 and sees only the agent's ordinary messages. Every
+ * Wire: `GET /api/buzz-voice/<client>/agents/-/delegations?agentPubkey=`
+ * (IDelegationCardsPage, long-polled with `rev` + `wait`; the host resolves
+ * the Buzz agent key as its settings read does), owner-only (D5): anyone
+ * else gets 404 and sees only the agent's ordinary messages. The owner's
+ * chat page (`GET …/agents/<agentId>/chat`) adds the pending ack. Every
  * parser here fails closed: a malformed card is dropped, a malformed page is
  * no page.
  */
@@ -77,6 +79,8 @@ export type DelegationSummary = {
 export type DelegationPage = {
   rev: string;
   serverNow: string;
+  /** The Kiingo agent behind the key: the id the per-delegation routes use. */
+  agentId: string | null;
   agentName: string;
   summary: DelegationSummary;
   cards: DelegationCard[];
@@ -205,6 +209,7 @@ export function parseDelegationPoll(value: unknown): DelegationPoll | null {
     page: {
       rev,
       serverNow: str(record.serverNow) ?? "",
+      agentId: uuidOrNull(asRecord(record.agent)?.id),
       agentName: str(asRecord(record.agent)?.name)?.trim() ?? "",
       summary,
       cards,
@@ -460,12 +465,61 @@ export function appOriginFor(apiHost: string | null): string | null {
 export const sessionLink = (appOrigin: string, sessionId: string) =>
   `${appOrigin}/team/harness-sessions/${sessionId.toLowerCase()}/feed`;
 
-/** The cards list path, long-polled after the first read. */
-export function delegationsPath(agentId: string, rev: string | null): string {
-  const base = `agents/${agentId.toLowerCase()}/delegations`;
+/**
+ * The cards list path for a Buzz agent key (the host resolves it), long-
+ * polled on `rev` after the first read.
+ */
+export function delegationsPath(
+  agentPubkey: string,
+  rev: string | null,
+): string {
+  const base = `agents/-/delegations?agentPubkey=${agentPubkey.toLowerCase()}`;
   return rev
-    ? `${base}?rev=${encodeURIComponent(rev)}&wait=${DELEGATION_WAIT_SEC}`
+    ? `${base}&rev=${encodeRev(rev)}&wait=${DELEGATION_WAIT_SEC}`
     : base;
+}
+
+/** The newest page of the owner's chat: it carries the pending ack. */
+export const delegationChatPath = (agentId: string) =>
+  `agents/${agentId.toLowerCase()}/chat?limit=1`;
+
+/**
+ * The server's instant acknowledgement (IDelegationPendingAck): workers the
+ * agent started this turn, shown until its own reply lands. Transient: a
+ * page without it, or with another id, drops it.
+ */
+export type DelegationPendingAck = {
+  id: string;
+  /** "Starting 2 workers: Fix the login bug, Draft the launch email". */
+  text: string;
+  /** Epoch ms after which the row goes even without a fresh page. */
+  expiresAtMs: number;
+};
+
+/** The pending ack on an owner chat page, or null (absent, bad or past). */
+export function parsePendingAck(
+  chatPage: unknown,
+  nowMs: number,
+): DelegationPendingAck | null {
+  const ack = asRecord(asRecord(asRecord(chatPage)?.delegations)?.pendingAck);
+  const id = str(ack?.id);
+  const text = str(ack?.text)?.trim();
+  const expiresAtMs = Date.parse(str(ack?.expiresAt) ?? "");
+  if (!id || !text || !Number.isFinite(expiresAtMs)) return null;
+  return expiresAtMs > nowMs
+    ? { id, text: text.slice(0, 500), expiresAtMs }
+    : null;
+}
+
+/**
+ * `rev` percent-encoded down to letters, digits and `-_.`: the native
+ * route check refuses the `!'()*~` that encodeURIComponent leaves bare.
+ */
+function encodeRev(rev: string): string {
+  return encodeURIComponent(rev).replace(
+    /[!'()*~]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 }
 
 /**

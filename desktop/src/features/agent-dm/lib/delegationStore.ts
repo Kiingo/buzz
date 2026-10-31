@@ -5,22 +5,28 @@
  * answers only the agent's owner (D5): any other reader gets `hidden` and
  * the DM shows the agent's ordinary messages alone.
  *
+ * The pending ack ("Starting 2 workers: …") comes from the owner's chat
+ * page. It is read whenever the cards change (a start moves them within a
+ * second) and re-read every few seconds while it shows, until the agent's
+ * own reply clears it or it expires.
+ *
  * Community-scoped: `resetDelegationStore()` runs in resetCommunityState().
  */
 
 import {
   AgentCallApiError,
-  getAgentVoiceSettings,
   request,
 } from "@/features/agent-call/lib/agentCallApi";
 
 import {
   type DelegationAsk,
   type DelegationPage,
+  type DelegationPendingAck,
+  delegationChatPath,
   delegationsPath,
-  isDelegationUuid,
   parseDelegationAsks,
   parseDelegationPoll,
+  parsePendingAck,
 } from "./delegations";
 
 export type DelegationBoardState =
@@ -29,10 +35,13 @@ export type DelegationBoardState =
   | { status: "hidden" }
   | {
       status: "ready";
-      agentId: string;
+      /** Null only while the host leaves the agent out of the page. */
+      agentId: string | null;
       page: DelegationPage;
       /** Open worker asks, by delegation id. */
       asks: ReadonlyMap<string, DelegationAsk[]>;
+      /** The server's instant ack, until the agent's reply replaces it. */
+      ack: DelegationPendingAck | null;
       /** The last poll failed; the page shown is the last good one. */
       stale: boolean;
     };
@@ -41,6 +50,8 @@ const RETRY_MS = 15_000;
 const RETRY_MAX_MS = 5 * 60_000;
 /** A hidden board looks again this rarely (ownership can change). */
 const HIDDEN_RECHECK_MS = 10 * 60_000;
+/** A showing pending ack is re-read this often (it ends within 10 min). */
+const ACK_RECHECK_MS = 3_000;
 
 type Entry = {
   state: DelegationBoardState;
@@ -52,6 +63,10 @@ type Entry = {
   rev: string | null;
   /** Ends the loop's current wait at once (stop, reset). */
   wake: (() => void) | null;
+  /** The pending-ack reader: its loop's generation, a re-read ask, its wait. */
+  ackLoop: number | null;
+  ackDirty: boolean;
+  ackWake: (() => void) | null;
 };
 
 const LOADING: DelegationBoardState = { status: "loading" };
@@ -59,15 +74,19 @@ const entries = new Map<string, Entry>();
 let storeGeneration = 0;
 
 /** A wait the entry can cut short, so a stopped loop holds no timer. */
-function sleep(entry: Entry, ms: number): Promise<void> {
+function sleep(
+  entry: Entry,
+  ms: number,
+  slot: "wake" | "ackWake" = "wake",
+): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(done, ms);
     function done() {
       clearTimeout(timer);
-      if (entry.wake === done) entry.wake = null;
+      if (entry[slot] === done) entry[slot] = null;
       resolve();
     }
-    entry.wake = done;
+    entry[slot] = done;
   });
 }
 
@@ -75,6 +94,7 @@ function fence(entry: Entry) {
   entry.generation = ++storeGeneration;
   entry.rev = null;
   entry.wake?.();
+  entry.ackWake?.();
 }
 
 function entryFor(agentPubkey: string): Entry {
@@ -89,6 +109,9 @@ function entryFor(agentPubkey: string): Entry {
       agentId: null,
       rev: null,
       wake: null,
+      ackLoop: null,
+      ackDirty: false,
+      ackWake: null,
     };
     entries.set(key, entry);
   }
@@ -100,16 +123,16 @@ function publish(entry: Entry, state: DelegationBoardState) {
   for (const listener of entry.listeners) listener();
 }
 
+/**
+ * Not the owner (404), not allowed, or a host without these routes or
+ * without Buzz key resolution (400 on `agentPubkey`).
+ */
 const isRefusal = (error: unknown) =>
   error instanceof AgentCallApiError &&
-  (error.status === 403 || error.status === 404 || error.status === 405);
-
-/** The Kiingo agent behind a Buzz agent key, or null when there is none. */
-async function resolveAgentId(agentPubkey: string): Promise<string | null> {
-  const settings = await getAgentVoiceSettings(agentPubkey);
-  const agentId = settings?.effective?.agentId ?? null;
-  return isDelegationUuid(agentId) ? agentId.toLowerCase() : null;
-}
+  (error.status === 400 ||
+    error.status === 403 ||
+    error.status === 404 ||
+    error.status === 405);
 
 /** The open asks of every card that has one. */
 async function loadAsks(
@@ -136,12 +159,12 @@ async function loadAsks(
 /** One read: the page (waiting on `rev` when given), or null if unchanged. */
 async function readOnce(
   entry: Entry,
-  agentId: string,
+  agentPubkey: string,
   wait: boolean,
 ): Promise<DelegationPage | null> {
   const body = await request<unknown>(
     "GET",
-    delegationsPath(agentId, wait ? entry.rev : null),
+    delegationsPath(agentPubkey, wait ? entry.rev : null),
   );
   const poll = parseDelegationPoll(body);
   if (!poll) throw new AgentCallApiError(null, "delegations_response_invalid");
@@ -152,12 +175,68 @@ async function readOnce(
 async function applyPage(
   entry: Entry,
   generation: number,
-  agentId: string,
   page: DelegationPage,
 ) {
-  const asks = await loadAsks(agentId, page);
+  entry.agentId = page.agentId ?? entry.agentId;
+  const agentId = entry.agentId;
+  const asks = agentId ? await loadAsks(agentId, page) : new Map();
   if (entry.generation !== generation) return;
-  publish(entry, { status: "ready", agentId, page, asks, stale: false });
+  const ack = entry.state.status === "ready" ? entry.state.ack : null;
+  publish(entry, { status: "ready", agentId, page, asks, ack, stale: false });
+  readAck(entry, generation);
+}
+
+/** The owner chat page's pending ack; null when it cannot be read. */
+async function fetchAck(agentId: string): Promise<DelegationPendingAck | null> {
+  try {
+    const body = await request<unknown>("GET", delegationChatPath(agentId));
+    return parsePendingAck(body, Date.now());
+  } catch {
+    // Display only: no ack row. The next cards change reads it again.
+    return null;
+  }
+}
+
+/**
+ * Reads the pending ack now (coalescing repeat asks into one more read),
+ * then while it shows re-reads it every few seconds: the agent's reply or
+ * its expiry ends it, and so does a stop.
+ */
+function readAck(entry: Entry, generation: number) {
+  entry.ackDirty = true;
+  if (entry.ackLoop === generation) {
+    entry.ackWake?.();
+    return;
+  }
+  entry.ackLoop = generation;
+  void (async () => {
+    const live = () => entry.generation === generation && entry.refs > 0;
+    try {
+      while (live() && entry.agentId) {
+        entry.ackDirty = false;
+        const ack = await fetchAck(entry.agentId);
+        if (!live()) return;
+        const state = entry.state;
+        if (
+          state.status === "ready" &&
+          (state.ack?.id !== ack?.id || state.ack?.text !== ack?.text)
+        ) {
+          publish(entry, { ...state, ack });
+        }
+        if (!ack && !entry.ackDirty) return;
+        if (!entry.ackDirty) {
+          const untilExpiry = ack ? ack.expiresAtMs - Date.now() : 0;
+          await sleep(
+            entry,
+            Math.max(0, Math.min(ACK_RECHECK_MS, untilExpiry)),
+            "ackWake",
+          );
+        }
+      }
+    } finally {
+      if (entry.ackLoop === generation) entry.ackLoop = null;
+    }
+  })();
 }
 
 async function run(entry: Entry, agentPubkey: string, generation: number) {
@@ -165,19 +244,9 @@ async function run(entry: Entry, agentPubkey: string, generation: number) {
   let backoff = RETRY_MS;
   while (live()) {
     try {
-      if (!entry.agentId) {
-        entry.agentId = await resolveAgentId(agentPubkey);
-        if (!live()) return;
-        if (!entry.agentId) {
-          publish(entry, { status: "hidden" });
-          await sleep(entry, HIDDEN_RECHECK_MS);
-          continue;
-        }
-      }
-      const agentId = entry.agentId;
-      const page = await readOnce(entry, agentId, entry.rev !== null);
+      const page = await readOnce(entry, agentPubkey, entry.rev !== null);
       if (!live()) return;
-      if (page) await applyPage(entry, generation, agentId, page);
+      if (page) await applyPage(entry, generation, page);
       backoff = RETRY_MS;
     } catch (error) {
       if (!live()) return;
@@ -202,13 +271,11 @@ async function run(entry: Entry, agentPubkey: string, generation: number) {
 /** Reads the board now (after an action), outside the waiting long-poll. */
 async function refreshNow(agentPubkey: string) {
   const entry = entryFor(agentPubkey);
-  const agentId = entry.agentId;
-  if (!agentId) return;
   const generation = entry.generation;
   try {
-    const page = await readOnce(entry, agentId, false);
+    const page = await readOnce(entry, agentPubkey, false);
     if (page && entry.generation === generation) {
-      await applyPage(entry, generation, agentId, page);
+      await applyPage(entry, generation, page);
     }
   } catch {
     // The long-poll picks it up.
@@ -242,7 +309,7 @@ export function getDelegationBoard(agentPubkey: string): DelegationBoardState {
 
 function readyAgentId(agentPubkey: string): string {
   const state = getDelegationBoard(agentPubkey);
-  if (state.status !== "ready") {
+  if (state.status !== "ready" || !state.agentId) {
     throw new AgentCallApiError(null, "delegations_unavailable");
   }
   return state.agentId;

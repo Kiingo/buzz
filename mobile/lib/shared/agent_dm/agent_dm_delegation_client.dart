@@ -22,14 +22,19 @@ const _retryMax = Duration(minutes: 5);
 /// A hidden board looks again this rarely (ownership can change).
 const _hiddenRecheck = Duration(minutes: 10);
 
+/// A showing pending ack is re-read this often (it ends within 10 min).
+const _ackRecheck = Duration(seconds: 3);
+
 class DelegationApiException implements Exception {
   const DelegationApiException(this.status, this.code);
 
   final int? status;
   final String? code;
 
-  /// Not the owner, not a hosted agent, or a host without the routes.
-  bool get isRefusal => status == 403 || status == 404 || status == 405;
+  /// Not the owner (404), not allowed, or a host without the routes or
+  /// without Buzz key resolution (400 on `agentPubkey`).
+  bool get isRefusal =>
+      status == 400 || status == 403 || status == 404 || status == 405;
 
   @override
   String toString() => 'DelegationApiException($status, $code)';
@@ -113,29 +118,23 @@ class DelegationClient {
     }
   }
 
-  /// The Kiingo agent behind a Buzz agent key (the call settings read maps
-  /// it), or null when there is none.
-  Future<String?> agentIdFor(String agentPubkey) async {
-    final body = await send(
-      'GET',
-      'settings?agentPubkey=${Uri.encodeQueryComponent(agentPubkey)}',
-    );
-    final outer = body is Map ? body : null;
-    final data = outer?['data'] is Map ? outer!['data'] as Map : outer;
-    final effective = data?['effective'];
-    final agentId = effective is Map ? effective['agentId'] : null;
-    return isDelegationUuid(agentId) ? (agentId as String).toLowerCase() : null;
-  }
-
-  Future<DelegationPoll> cards(String agentId, String? rev) async {
+  /// The cards of the agent behind a Buzz agent key (the host resolves it).
+  Future<DelegationPoll> cards(String agentPubkey, String? rev) async {
     final poll = DelegationPoll.tryParse(
-      await send('GET', delegationsPath(agentId, rev)),
+      await send('GET', delegationsPath(agentPubkey, rev)),
     );
     if (poll == null) {
       throw const DelegationApiException(null, 'response_invalid');
     }
     return poll;
   }
+
+  /// The pending ack on the owner's newest chat page, or null.
+  Future<DelegationPendingAck?> pendingAck(String agentId) async =>
+      DelegationPendingAck.tryParse(
+        await send('GET', delegationChatPath(agentId)),
+        DateTime.now(),
+      );
 
   Future<List<DelegationAsk>> asks(String agentId, String delegationId) async =>
       parseDelegationAsks(
@@ -199,14 +198,28 @@ class DelegationBoardReady extends DelegationBoardState {
     required this.agentId,
     required this.page,
     required this.asks,
+    this.ack,
     this.stale = false,
   });
 
-  final String agentId;
+  /// Null only while the host leaves the agent out of the page.
+  final String? agentId;
   final DelegationPage page;
 
   /// Open worker asks, by delegation id.
   final Map<String, List<DelegationAsk>> asks;
+
+  /// The server's instant ack, until the agent's reply replaces it.
+  final DelegationPendingAck? ack;
+
+  DelegationBoardReady withAck(DelegationPendingAck? next) =>
+      DelegationBoardReady(
+        agentId: agentId,
+        page: page,
+        asks: asks,
+        ack: next,
+        stale: stale,
+      );
 
   /// The last poll failed; the page shown is the last good one.
   final bool stale;
@@ -214,7 +227,9 @@ class DelegationBoardReady extends DelegationBoardState {
 
 /// One agent's live board: a long-poll on the cards route while anything
 /// watches it (auto-dispose), fenced by generation so a read that lands
-/// after disposal goes nowhere.
+/// after disposal goes nowhere. The pending ack is read off the owner chat
+/// page whenever the cards change, then every few seconds while it shows,
+/// until the agent's reply clears it or it expires.
 class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
   DelegationBoardNotifier(this.agentPubkey);
 
@@ -223,6 +238,9 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
   String? _agentId;
   String? _rev;
   Completer<void>? _wake;
+  Completer<void>? _ackWake;
+  int? _ackLoop;
+  bool _ackDirty = false;
 
   @override
   DelegationBoardState build() {
@@ -233,6 +251,7 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
     ref.onDispose(() {
       _generation += 1;
       _wakeUp();
+      _wakeAck();
     });
     if (client == null) return const DelegationBoardHidden();
     unawaited(_run(client, generation));
@@ -247,9 +266,19 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
     if (wake != null && !wake.isCompleted) wake.complete();
   }
 
-  Future<void> _sleep(Duration duration) {
+  void _wakeAck() {
+    final wake = _ackWake;
+    _ackWake = null;
+    if (wake != null && !wake.isCompleted) wake.complete();
+  }
+
+  Future<void> _sleep(Duration duration, {bool ack = false}) {
     final wake = Completer<void>();
-    _wake = wake;
+    if (ack) {
+      _ackWake = wake;
+    } else {
+      _wake = wake;
+    }
     final timer = Timer(duration, () {
       if (!wake.isCompleted) wake.complete();
     });
@@ -263,42 +292,89 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
   Future<void> _apply(
     DelegationClient client,
     int generation,
-    String agentId,
     DelegationPage page,
   ) async {
+    _agentId = page.agentId ?? _agentId;
+    final agentId = _agentId;
     final asks = <String, List<DelegationAsk>>{};
-    await Future.wait([
-      for (final card in page.cards.where((card) => card.pendingAsksCount > 0))
-        client
-            .asks(agentId, card.delegationId)
-            .then((open) {
-              if (open.isNotEmpty) asks[card.delegationId] = open;
-            })
-            .catchError((Object _) {}),
-    ]);
+    if (agentId != null) {
+      await Future.wait([
+        for (final card in page.cards.where(
+          (card) => card.pendingAsksCount > 0,
+        ))
+          client
+              .asks(agentId, card.delegationId)
+              .then((open) {
+                if (open.isNotEmpty) asks[card.delegationId] = open;
+              })
+              .catchError((Object _) {}),
+      ]);
+    }
+    if (!_live(generation)) return;
+    final current = state;
     _publish(
       generation,
-      DelegationBoardReady(agentId: agentId, page: page, asks: asks),
+      DelegationBoardReady(
+        agentId: agentId,
+        page: page,
+        asks: asks,
+        ack: current is DelegationBoardReady ? current.ack : null,
+      ),
     );
+    _readAck(client, generation);
+  }
+
+  /// Reads the pending ack now (folding repeat asks into one more read),
+  /// then re-reads it every few seconds while it shows.
+  void _readAck(DelegationClient client, int generation) {
+    _ackDirty = true;
+    if (_ackLoop == generation) {
+      _wakeAck();
+      return;
+    }
+    _ackLoop = generation;
+    unawaited(() async {
+      try {
+        while (_live(generation) && _agentId != null) {
+          _ackDirty = false;
+          DelegationPendingAck? ack;
+          try {
+            ack = await client.pendingAck(_agentId!);
+          } on DelegationApiException {
+            // Display only: no ack row; the next cards change reads again.
+            ack = null;
+          }
+          if (!_live(generation)) return;
+          final current = state;
+          if (current is DelegationBoardReady && current.ack != ack) {
+            _publish(generation, current.withAck(ack));
+          }
+          if (ack == null && !_ackDirty) return;
+          if (!_ackDirty && ack != null) {
+            final left = ack.expiresAt.difference(DateTime.now());
+            await _sleep(
+              left < _ackRecheck
+                  ? (left.isNegative ? Duration.zero : left)
+                  : _ackRecheck,
+              ack: true,
+            );
+          }
+        }
+      } finally {
+        if (_ackLoop == generation) _ackLoop = null;
+      }
+    }());
   }
 
   Future<void> _run(DelegationClient client, int generation) async {
     var backoff = _retry;
     while (_live(generation)) {
       try {
-        _agentId ??= await client.agentIdFor(agentPubkey);
-        if (!_live(generation)) return;
-        final agentId = _agentId;
-        if (agentId == null) {
-          _publish(generation, const DelegationBoardHidden());
-          await _sleep(_hiddenRecheck);
-          continue;
-        }
-        final poll = await client.cards(agentId, _rev);
+        final poll = await client.cards(agentPubkey, _rev);
         if (!_live(generation)) return;
         _rev = poll.rev;
         final page = poll.page;
-        if (page != null) await _apply(client, generation, agentId, page);
+        if (page != null) await _apply(client, generation, page);
         backoff = _retry;
       } on DelegationApiException catch (error) {
         if (!_live(generation)) return;
@@ -317,6 +393,7 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
               agentId: current.agentId,
               page: current.page,
               asks: current.asks,
+              ack: current.ack,
               stale: true,
             ),
           );
@@ -329,13 +406,13 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
   }
 
   /// Reads the board now (after an action), outside the waiting long-poll.
-  Future<void> _refresh(DelegationClient client, String agentId) async {
+  Future<void> _refresh(DelegationClient client) async {
     final generation = _generation;
     try {
-      final poll = await client.cards(agentId, null);
+      final poll = await client.cards(agentPubkey, null);
       final page = poll.page;
       if (page != null && _live(generation)) {
-        await _apply(client, generation, agentId, page);
+        await _apply(client, generation, page);
       }
     } on DelegationApiException {
       // The long-poll picks it up.
@@ -345,31 +422,32 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
   (DelegationClient, String) _ready() {
     final client = ref.read(delegationClientProvider);
     final current = state;
-    if (client == null || current is! DelegationBoardReady) {
+    final agentId = current is DelegationBoardReady ? current.agentId : null;
+    if (client == null || agentId == null) {
       throw const DelegationApiException(null, 'delegations_unavailable');
     }
-    return (client, current.agentId);
+    return (client, agentId);
   }
 
   /// The owner's answer to a worker ask, straight to the worker (§10.1).
   Future<void> answer(String askId, String answer) async {
     final (client, agentId) = _ready();
     await client.answer(agentId, askId, answer);
-    await _refresh(client, agentId);
+    await _refresh(client);
   }
 
   /// Stops one worker's turn; its session survives.
   Future<void> cancel(String delegationId) async {
     final (client, agentId) = _ready();
     await client.cancel(agentId, delegationId);
-    await _refresh(client, agentId);
+    await _refresh(client);
   }
 
   /// "Stop all": every running delegation of this agent; sessions are kept.
   Future<int> cancelAll() async {
     final (client, agentId) = _ready();
     final stopped = await client.cancelAll(agentId);
-    await _refresh(client, agentId);
+    await _refresh(client);
     return stopped;
   }
 }

@@ -71,25 +71,20 @@ async function until(predicate) {
   assert.fail("timed out");
 }
 
-const settings = [
-  (method, path) =>
-    method === "GET" && path.startsWith("settings?agentPubkey="),
-  () => ({
-    status: 200,
-    body: {
-      data: {
-        providers: [],
-        effective: { agentId: AGENT, provider: "gpt-live" },
-      },
-    },
-  }),
+const LIST = `agents/-/delegations?agentPubkey=${AGENT_KEY}`;
+const CHAT = `agents/${AGENT}/chat?limit=1`;
+
+/** The owner chat head: no pending ack. */
+const noAck = [
+  (_method, path) => path === CHAT,
+  () => ({ status: 200, body: { rev: "c1", entries: [] } }),
 ];
 
-test("the board maps the agent key, reads the cards and their asks, then long-polls", async () => {
+test("the board reads the cards by agent key and their asks, then long-polls", async () => {
   const sent = host([
-    settings,
+    noAck,
     [
-      (_method, path) => path === `agents/${AGENT}/delegations`,
+      (_method, path) => path === LIST,
       () => ({ status: 200, body: page("r1", 1) }),
     ],
     [
@@ -121,11 +116,11 @@ test("the board maps the agent key, reads the cards and their asks, then long-po
   await until(() => getDelegationBoard(AGENT_KEY).status === "ready");
   const board = getDelegationBoard(AGENT_KEY);
   assert.equal(board.agentId, AGENT);
+  assert.equal(board.ack, null);
+  assert.ok(!sent.some((call) => call.path.startsWith("settings")));
   assert.equal(board.asks.get(DELEGATION)?.[0]?.id, ASK);
   await until(() =>
-    sent.some(
-      (call) => call.path === `agents/${AGENT}/delegations?rev=r1&wait=20`,
-    ),
+    sent.some((call) => call.path === `${LIST}&rev=r1&wait=20`),
   );
 
   await answerDelegationAsk(AGENT_KEY, ASK, "buzz");
@@ -150,9 +145,8 @@ test("the board maps the agent key, reads the cards and their asks, then long-po
 
 test("anyone but the owner gets no board (D5)", async () => {
   host([
-    settings,
     [
-      (_method, path) => path === `agents/${AGENT}/delegations`,
+      (_method, path) => path === LIST,
       () => ({ status: 404, body: { error: "not_found" } }),
     ],
   ]);
@@ -162,11 +156,14 @@ test("anyone but the owner gets no board (D5)", async () => {
   stop();
 });
 
-test("an agent with no Kiingo agent behind it gets no board", async () => {
+test("a host that cannot resolve the key gets no board", async () => {
   host([
     [
-      (_method, path) => path.startsWith("settings?"),
-      () => ({ status: 404, body: { error: "agent_not_found" } }),
+      (_method, path) => path === LIST,
+      () => ({
+        status: 400,
+        body: { error: "invalid_request", field: "agentPubkey" },
+      }),
     ],
   ]);
   const stop = subscribeDelegations(AGENT_KEY, () => {});
@@ -174,12 +171,65 @@ test("an agent with no Kiingo agent behind it gets no board", async () => {
   stop();
 });
 
+test("the pending ack shows until a chat page arrives without it", async () => {
+  const ack = {
+    id: `ack:${DELEGATION}`,
+    text: "Starting 1 worker: Research",
+    delegationIds: [DELEGATION],
+    titles: ["Research"],
+    createdAt: "2026-10-31T10:10:00Z",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    afterSequence: 4,
+  };
+  let replied = false;
+  const sent = host([
+    [
+      (_method, path) => path === CHAT,
+      () => ({
+        status: 200,
+        body: {
+          rev: replied ? "c2" : "c1",
+          ...(replied
+            ? {}
+            : {
+                delegations: {
+                  summary: {},
+                  activeDelegationIds: [],
+                  pendingAck: ack,
+                },
+              }),
+        },
+      }),
+    ],
+    [
+      (_method, path) => path === LIST,
+      () => ({ status: 200, body: page("r1", 0) }),
+    ],
+  ]);
+  const stop = subscribeDelegations(AGENT_KEY, () => {});
+  await until(() => getDelegationBoard(AGENT_KEY).ack?.id === ack.id);
+  assert.equal(getDelegationBoard(AGENT_KEY).ack?.text, ack.text);
+  replied = true;
+  // Re-read while it shows; the agent's reply clears it.
+  for (let i = 0; i < 100 && getDelegationBoard(AGENT_KEY).ack; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(getDelegationBoard(AGENT_KEY).ack, null);
+  const reads = sent.filter((call) => call.path === CHAT).length;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(
+    sent.filter((call) => call.path === CHAT).length,
+    reads,
+    "no re-reads once the ack is gone",
+  );
+  stop();
+});
+
 test("a read that lands after the last viewer left is dropped", async () => {
   let release;
   host([
-    settings,
     [
-      (_method, path) => path === `agents/${AGENT}/delegations`,
+      (_method, path) => path === LIST,
       () =>
         new Promise((resolve) => {
           release = () => resolve({ status: 200, body: page("r1", 0) });

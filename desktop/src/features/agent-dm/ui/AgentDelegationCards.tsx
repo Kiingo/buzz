@@ -210,3 +210,34 @@ export function DoneSummaryRow({
     </li>
   );
 }
+
+/**
+ * The server's instant ack as the agent's own line ("Starting 2 workers:
+ * …"), until its reply lands. Not a message: it is never stored or sent.
+ */
+export function PendingAckRow({
+  agentName,
+  text,
+}: {
+  agentName: string;
+  text: string;
+}) {
+  return (
+    <p
+      aria-live="polite"
+      className="flex min-w-0 items-center gap-1.5 py-1 text-sm text-muted-foreground"
+      data-testid="agent-delegation-ack"
+    >
+      <span
+        aria-hidden
+        className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-primary"
+      />
+      <span className="min-w-0 truncate">
+        {agentName ? (
+          <span className="font-medium text-foreground">{agentName}: </span>
+        ) : null}
+        {text}
+      </span>
+    </p>
+  );
+}
