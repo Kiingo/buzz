@@ -79,7 +79,20 @@ class AgentSurfaceView extends StatelessWidget {
     final muted = context.colors.onSurfaceVariant;
     final sent = known ? sentEmailOf(surface) : null;
     final Widget body;
-    if (sent != null) {
+    if (sent != null && sentEmailIsPlain(surface)) {
+      // Dismissed or closed: a plain Sent, nothing more (79).
+      body = Row(
+        children: [
+          Icon(
+            _toneIcon('success'),
+            size: 16,
+            color: _toneColor(context, 'success'),
+          ),
+          const SizedBox(width: Grid.half),
+          Text('Sent', style: TextStyle(color: muted)),
+        ],
+      );
+    } else if (sent != null) {
       // Sent (Ross, 2026-10-31): a compact row whatever the state, that
       // opens to what was sent, read-only.
       body = _SentEmailRow(

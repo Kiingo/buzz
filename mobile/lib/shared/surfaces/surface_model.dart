@@ -652,8 +652,14 @@ String sentRecipientLabel(Surface surface, String address) {
   return address;
 }
 
-/// "To a, b · Cc c · Bcc d" for a sent card's row.
-String sentRecipientsLine(Surface surface, SurfaceSentEmail sent) {
+/// "To a, b · Cc c" for a sent card's row, plus "· Bcc d" only with
+/// [bcc] true, for the sender's own open view (79: Bcc never shows on the
+/// compact row; the server sends it to the sender alone).
+String sentRecipientsLine(
+  Surface surface,
+  SurfaceSentEmail sent, {
+  bool bcc = false,
+}) {
   String list(List<String> addresses) => addresses
       .map((address) => sentRecipientLabel(surface, address))
       .join(', ');
@@ -661,9 +667,13 @@ String sentRecipientsLine(Surface surface, SurfaceSentEmail sent) {
   return [
     'To ${to.isEmpty ? 'no one' : to}',
     if (sent.cc.isNotEmpty) 'Cc ${list(sent.cc)}',
-    if (sent.bcc.isNotEmpty) 'Bcc ${list(sent.bcc)}',
+    if (bcc && sent.bcc.isNotEmpty) 'Bcc ${list(sent.bcc)}',
   ].join(' · ');
 }
+
+/// A dismissed or closed sent card is a plain "Sent": no recipients,
+/// subject or body (79 SHOULD-DISMISSED-SHOWS-BCC).
+bool sentEmailIsPlain(Surface surface) => isOver(surface);
 
 /// Whether this version knows the surface's catalog.
 bool isKnownCatalog(Surface surface) => surface.catalog == surfaceCatalogV1;

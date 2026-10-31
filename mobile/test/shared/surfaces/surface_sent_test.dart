@@ -87,7 +87,7 @@ const _sentStatus = {
 };
 
 const _failedStatus = {
-  'text': 'Not sent: the mailbox refused it',
+  'text': 'Not sent: Outlook refused it before sending. Nothing went out.',
   'tone': 'danger',
   'kind': 'send_failed',
 };
@@ -180,6 +180,38 @@ void main() {
     expect(sent, isEmpty);
   });
 
+  testWidgets('Bcc shows only open, never on the compact row (79)', (
+    tester,
+  ) async {
+    final status = {
+      ..._sentStatus,
+      'sent': {
+        ...(_sentStatus['sent']! as Map<String, Object?>),
+        'bcc': ['ops@acme.com'],
+      },
+    };
+    await _pump(tester, decodeSurface(_card(status: status))!);
+    expect(find.textContaining('ops@acme.com'), findsNothing);
+    await tester.tap(find.textContaining('dana@acme.com (Dana Lee)'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Bcc ops@acme.com'), findsOneWidget);
+  });
+
+  for (final state in ['dismissed', 'closed']) {
+    testWidgets('a $state sent card is a plain Sent (79)', (tester) async {
+      await _pump(
+        tester,
+        decodeSurface(_card(state: state, status: _sentStatus))!,
+      );
+      expect(find.text('Sent'), findsOneWidget);
+      expect(find.textContaining('dana@acme.com'), findsNothing);
+      expect(find.text('Re: Q4 plan'), findsNothing);
+      expect(find.text('The plan looks right to me.'), findsNothing);
+      expect(find.text('Dismissed'), findsNothing);
+      expect(find.text('Closed'), findsNothing);
+    });
+  }
+
   testWidgets('a failed send stays open, with its failure and Send', (
     tester,
   ) async {
@@ -187,7 +219,12 @@ void main() {
       tester,
       decodeSurface(_card(state: 'active', status: _failedStatus))!,
     );
-    expect(find.text('Not sent: the mailbox refused it'), findsOneWidget);
+    expect(
+      find.text(
+        'Not sent: Outlook refused it before sending. Nothing went out.',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('The plan looks right to me.'), findsOneWidget);
     expect(find.text('Send'), findsOneWidget);
   });

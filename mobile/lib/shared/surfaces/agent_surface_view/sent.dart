@@ -29,7 +29,8 @@ class _SentEmailRowState extends State<_SentEmailRow> {
     final sent = widget.sent;
     final muted = context.colors.onSurfaceVariant;
     final when = formatSurfaceDate(sent.at);
-    final recipients = sentRecipientsLine(surface, sent);
+    // Bcc only open: never on the compact row (79).
+    final recipients = sentRecipientsLine(surface, sent, bcc: _open);
     final subject = sent.subject;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
