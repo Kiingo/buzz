@@ -412,6 +412,30 @@ test("quoted kinds and sources cannot break out of their quotes", () => {
   );
 });
 
+// Kiingo 79 LOW: marks that read as quotes go too; plain neighbours stay.
+test("quote-like marks are dropped and their neighbours kept", () => {
+  for (const point of [
+    0x02b9, 0x02ba, 0x02bc, 0x02dd, 0x02ee, 0x2032, 0x2033, 0x2036, 0x2037,
+    0x275b, 0x275c, 0x275d, 0x275e, 0x2760, 0x3003, 0x0301, 0x0308, 0x20dd,
+  ]) {
+    assert.equal(
+      grantSourceLabel(`a${String.fromCodePoint(point)} b`),
+      "“a b”",
+      `U+${point.toString(16)}`,
+    );
+  }
+  for (const point of [
+    0x02b8, 0x02dc, 0x02ef, 0x2031, 0x2038, 0x275a, 0x2761, 0x3002, 0x3004,
+  ]) {
+    const kept = String.fromCodePoint(point);
+    assert.equal(
+      grantSourceLabel(`a${kept}b`),
+      `“a${kept}b”`,
+      `U+${point.toString(16)}`,
+    );
+  }
+});
+
 test("a repeated or out-of-order kind is not the server's shape", () => {
   assert.equal(
     questionKindWords("calendar_events+kiingo_files+outlook_mailbox"),

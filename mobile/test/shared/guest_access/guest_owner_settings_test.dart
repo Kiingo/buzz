@@ -478,6 +478,54 @@ void main() {
       );
     });
 
+    // Kiingo 79 LOW: marks that read as quotes go too; plain neighbours stay.
+    test('quote-like marks are dropped and their neighbours kept', () {
+      for (final point in [
+        0x02B9,
+        0x02BA,
+        0x02BC,
+        0x02DD,
+        0x02EE,
+        0x2032,
+        0x2033,
+        0x2036,
+        0x2037,
+        0x275B,
+        0x275C,
+        0x275D,
+        0x275E,
+        0x2760,
+        0x3003,
+        0x0301,
+        0x0308,
+        0x20DD,
+      ]) {
+        expect(
+          grantSourceLabel('a${String.fromCharCode(point)} b'),
+          '“a b”',
+          reason: point.toRadixString(16),
+        );
+      }
+      for (final point in [
+        0x02B8,
+        0x02DC,
+        0x02EF,
+        0x2031,
+        0x2038,
+        0x275A,
+        0x2761,
+        0x3002,
+        0x3004,
+      ]) {
+        final kept = String.fromCharCode(point);
+        expect(
+          grantSourceLabel('a${kept}b'),
+          '“a${kept}b”',
+          reason: point.toRadixString(16),
+        );
+      }
+    });
+
     test("a repeated or out-of-order kind is not the server's shape", () {
       expect(
         questionKindWords('calendar_events+kiingo_files+outlook_mailbox'),

@@ -19,13 +19,18 @@ final guestInvisibleChars = RegExp(
 );
 
 /// Quote characters: straight, curly, angle, low-9, CJK corner and fullwidth
-/// quotes, plus every initial and final quote mark. Text shown inside quote
-/// marks drops them, so it cannot close the quote and go on as plain words
-/// (Kiingo 79 SHOULD-BUZZ-KIND-QUOTE-BREAKOUT).
+/// quotes, every initial and final quote mark, and the marks that read as
+/// quotes: modifier primes and apostrophes (U+02B9-02BD), double acute
+/// U+02DD, modifier double apostrophe U+02EE, primes U+2032-2037, dingbat
+/// quotation ornaments U+275B-2760, ditto mark U+3003, and every combining
+/// mark (Mn, Me), which can draw a quote onto a neighbour. Text shown inside
+/// quote marks drops them, so it cannot close the quote and go on as plain
+/// words (Kiingo 79 SHOULD-BUZZ-KIND-QUOTE-BREAKOUT and its LOW).
 final guestQuoteChars = RegExp(
-  r'''["'`\p{Pi}\p{Pf}\u{00AB}\u{00BB}\u{2018}-\u{201F}\u{2039}\u{203A}'''
-  r'\u{2E42}\u{300C}-\u{300F}\u{301D}-\u{301F}\u{FE41}-\u{FE44}\u{FF02}'
-  r'\u{FF07}\u{FF62}\u{FF63}]',
+  r'''["'`\p{Pi}\p{Pf}\p{Mn}\p{Me}\u{00AB}\u{00BB}\u{02B9}-\u{02BD}'''
+  r'\u{02DD}\u{02EE}\u{2018}-\u{201F}\u{2032}-\u{2037}\u{2039}\u{203A}'
+  r'\u{275B}-\u{2760}\u{2E42}\u{3003}\u{300C}-\u{300F}\u{301D}-\u{301F}'
+  r'\u{FE41}-\u{FE44}\u{FF02}\u{FF07}\u{FF62}\u{FF63}]',
   unicode: true,
 );
 
