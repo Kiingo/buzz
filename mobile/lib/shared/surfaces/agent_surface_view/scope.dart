@@ -78,7 +78,6 @@ class _SurfaceContext {
     shown ?? action.label,
     shown == null ? action.text : action.text ?? action.label,
     hidden: action.hidden || shownHidden,
-    agentName: agentName,
   );
 
   /// The card's agent, from the message signer's profile (79), never the

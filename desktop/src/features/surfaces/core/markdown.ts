@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 5736645688767c7e713cc125961539139af6ba91; do not edit here.
+// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
 import { openableUrl } from "./text";
 
 // The safe Markdown subset surfaces carry (§3: emphasis, lists, links, code,

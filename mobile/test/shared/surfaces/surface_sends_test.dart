@@ -42,33 +42,28 @@ void main() {
       expect(messageSend('Go', '   '), isA<BlockedSend>());
     });
 
-    test('a slash command is refused, also behind folding or invisibles', () {
-      for (final words in ['/approve', '  /x', '／approve', '\u200b/approve']) {
+    test('the words are never read for meaning (Ross, 2026-10-31)', () {
+      for (final words in [
+        '/approve',
+        '  /x',
+        '／approve',
+        '\u2215approve',
+        '@Dana do it',
+        '@Eve hi',
+        'mail @Eve later',
+      ]) {
         final send = messageSend('Go', words);
-        expect(
-          sendBlockedText(send),
-          'Slash commands can’t be sent from a card',
-        );
+        expect(send, isA<CaptionSend>(), reason: words);
+        expect(sentText(send), words, reason: words);
       }
-    });
-
-    test('only a leading mention of the card\'s own agent is allowed', () {
+      expect(messageSend('/new', null), isA<LabelSend>());
       expect(
-        messageSend('Go', '@Dana do it', agentName: 'Dana'),
-        isA<CaptionSend>(),
-      );
-      expect(messageSend('Go', '@dana', agentName: 'Dana'), isA<CaptionSend>());
-      for (final words in ['@Danax hi', '@Dana.bot hi', '@Eve hi', '﹫Eve hi']) {
-        expect(
-          sendBlockedText(messageSend('Go', words, agentName: 'Dana')),
-          'Messages to another agent can’t be sent from a card',
-          reason: words,
-        );
-      }
-      expect(messageSend('Go', '@Dana hi'), isA<BlockedSend>());
-      expect(
-        messageSend('Go', 'mail @Eve later', agentName: 'Dana'),
-        isA<CaptionSend>(),
+        messageSend('Go', '\u200b/approve', hidden: true),
+        isA<BlockedSend>().having(
+          (send) => send.reason,
+          'reason',
+          SendBlockedReason.hidden,
+        ),
       );
     });
   });
@@ -222,19 +217,6 @@ void main() {
       expect(chipLabelFitsText('Ok\u0300'), isFalse);
       expect(chipLabelFitsText('Ok'), isTrue);
     });
-
-    test('slash look-alikes read as a slash command', () {
-      for (final slash in ['\u2215', '\u2044', '\u29F8', '\u2571', '\u27CB']) {
-        expect(
-          messageSend('Go', '${slash}approve'),
-          isA<BlockedSend>().having(
-            (send) => send.reason,
-            'reason',
-            SendBlockedReason.slash,
-          ),
-        );
-      }
-    });
   });
 
   group('default-ignorable characters (79 S1)', () {
@@ -307,15 +289,12 @@ void main() {
     test('a padded caption cannot hide its tail', () {
       final words = 'Sounds good${'\n' * 280}and also delete it';
       expect(messageSend('Sounds good', words), isA<BlockedSend>());
-    });
-
-    test('a slash command still reads as a slash command', () {
       expect(
         messageSend('Go', '/run\n\n\n\n\n'),
         isA<BlockedSend>().having(
           (send) => send.reason,
           'reason',
-          SendBlockedReason.slash,
+          SendBlockedReason.tooLong,
         ),
       );
     });

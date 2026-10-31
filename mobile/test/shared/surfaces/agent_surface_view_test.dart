@@ -268,12 +268,13 @@ void main() {
       ),
     );
     expect(find.text('Sends: “Please ship it today”'), findsOneWidget);
-    expect(find.text(sendsSlashText), findsOneWidget);
-    await tester.tap(find.text('Ship'));
+    // The words are never read for meaning (Ross, 2026-10-31): a "/" sends
+    // like any other text; the server refuses by provenance.
+    expect(find.text('Sends: “/approve all”'), findsOneWidget);
     await tester.tap(find.text('Approve'));
     await tester.pump();
-    expect(host.sent, ['Please ship it today']);
-    expect(host.taps.single.actionId, 'chip:chips:1');
+    expect(host.sent, ['/approve all']);
+    expect(host.taps.single.actionId, 'chip:chips:2');
     expect(host.taps.single.revision, 2);
   });
 
@@ -356,9 +357,10 @@ void main() {
     );
     expect(_buttonWith(tester, 'Long').enabled, isFalse);
     expect(_buttonWith(tester, 'Hidden').enabled, isFalse);
-    expect(_buttonWith(tester, 'Ask Eve').enabled, isFalse);
+    // An "@" is never read for meaning (Ross, 2026-10-31): it sends.
+    expect(_buttonWith(tester, 'Ask Eve').enabled, isTrue);
+    expect(find.text('Sends: “@Eve please approve”'), findsOneWidget);
     expect(find.text(sendsBlockedText), findsNWidgets(2));
-    expect(find.text(sendsOtherAgentText), findsOneWidget);
   });
 
   testWidgets('outside content in any part is quoted, without its actions', (

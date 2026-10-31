@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 5736645688767c7e713cc125961539139af6ba91; do not edit here.
+// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
 import {
   idempotencyKey,
   type Confirmation,
@@ -519,12 +519,7 @@ export class SurfaceController {
         return (
           acceptsTaps(surface) &&
           sentText(
-            messageSend(
-              action.label,
-              action.text,
-              action.hidden === true,
-              surface.agentName,
-            ),
+            messageSend(action.label, action.text, action.hidden === true),
           ) !== undefined
         );
       default:
@@ -588,12 +583,7 @@ export class SurfaceController {
       }
       case "send_message":
         return this.sendMessage(
-          messageSend(
-            action.label,
-            action.text,
-            action.hidden === true,
-            surface.agentName,
-          ),
+          messageSend(action.label, action.text, action.hidden === true),
           actionId,
         );
       case "set_state": {

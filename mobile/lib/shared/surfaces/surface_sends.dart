@@ -1,9 +1,10 @@
 /// A control that sends words as the person's own message (`send_message`,
 /// suggestion chips) sends ONLY words the person can see on it (79 M1). The
 /// control draws its label and, when the words differ, the words themselves
-/// in full; past [sendsMax] or [sendsMaxLineBreaks], holding an invisible
-/// character, a slash command or addressed to another agent, it is disabled
-/// with a line saying why.
+/// in full; past [sendsMax] or [sendsMaxLineBreaks], or holding an
+/// invisible character, it is disabled with a line saying why. The words are
+/// never read for meaning: a "/" or an "@" sends like any other text (Ross,
+/// 2026-10-31: no word parsing; the server refuses by provenance).
 /// The same rules as the Kiingo renderers (surface-core sends.ts).
 library;
 
@@ -27,15 +28,8 @@ final _lineBreaks = RegExp('\r\n|[\n\r\v\f\u0085\u2028\u2029]');
 /// Shown on a control that can't send here.
 const sendsBlockedText = 'Open in Kiingo to send this';
 
-/// Shown on a control whose words are a slash command.
-const sendsSlashText = 'Slash commands can’t be sent from a card';
-
-/// Shown on a control whose words address another agent.
-const sendsOtherAgentText =
-    'Messages to another agent can’t be sent from a card';
-
 /// Why a control can't send.
-enum SendBlockedReason { tooLong, hidden, empty, slash, otherAgent }
+enum SendBlockedReason { tooLong, hidden, empty }
 
 /// What a sending control shows and sends.
 @immutable
@@ -64,8 +58,6 @@ class BlockedSend extends MessageSend {
 
 /// The blocked line a control draws, or null when it can send.
 String? sendBlockedText(MessageSend send) => switch (send) {
-  BlockedSend(reason: SendBlockedReason.slash) => sendsSlashText,
-  BlockedSend(reason: SendBlockedReason.otherAgent) => sendsOtherAgentText,
   BlockedSend() => sendsBlockedText,
   _ => null,
 };
@@ -79,51 +71,13 @@ String? sentText(MessageSend send) => switch (send) {
 /// The caption a [CaptionSend] control draws (newlines kept).
 String sendsCaption(String text) => 'Sends: “$text”';
 
-final _nameChar = RegExp(r'[\p{L}\p{N}_.-]', unicode: true);
-
-/// Characters that read as a leading slash: "/", fullwidth "／", the
-/// division slash U+2215, the fraction slash U+2044, the big solidus
-/// U+29F8, the box-drawing diagonal U+2571 and the mathematical rising
-/// diagonal U+27CB.
-const _slashes = {0x2f, 0xff0f, 0x2215, 0x2044, 0x29f8, 0x2571, 0x27cb};
-
-/// A send a card may not make, read after compatibility folding and
-/// invisible-character cleaning so nothing hides in front (79, r3d): a
-/// leading "/" (a slash command), or a leading "@name" that is not the
-/// surface's own agent.
-SendBlockedReason? _refusedLead(String words, String? agentName) {
-  final lead = comparableText(words).trimLeft();
-  if (lead.isNotEmpty && _slashes.contains(lead.runes.first)) {
-    return SendBlockedReason.slash;
-  }
-  if (!lead.startsWith('@')) return null;
-  final own = agentName == null ? '' : comparableText(agentName).trim();
-  final named = lead.substring(1);
-  if (own.isEmpty || !named.startsWith(own)) {
-    return SendBlockedReason.otherAgent;
-  }
-  final next = named.length > own.length
-      ? String.fromCharCode(named.substring(own.length).runes.first)
-      : '';
-  return _nameChar.hasMatch(next) ? SendBlockedReason.otherAgent : null;
-}
-
 /// What a sending control shows and sends: [text] (else [label]) when it
 /// can be shown in full. [hidden] is true when the agent's raw label or
 /// words held an invisible character (S1): such a control never sends.
-/// [agentName] is the surface's agent: a leading `@` mention of it is allowed, no
-/// other.
-MessageSend messageSend(
-  String label,
-  String? text, {
-  bool hidden = false,
-  String? agentName,
-}) {
+MessageSend messageSend(String label, String? text, {bool hidden = false}) {
   if (hidden) return const BlockedSend(SendBlockedReason.hidden);
   final words = text ?? label;
   if (words.trim().isEmpty) return const BlockedSend(SendBlockedReason.empty);
-  final refused = _refusedLead(words, agentName);
-  if (refused != null) return BlockedSend(refused);
   if (_lineBreaks.allMatches(words).length > sendsMaxLineBreaks) {
     return const BlockedSend(SendBlockedReason.tooLong);
   }
@@ -184,10 +138,7 @@ const chipLabelFits = 20;
 /// A suggestion chip (`{text, label?}`): its label and what it sends, or
 /// null when it has no words. Words a one-line chip can't show in full
 /// send as a [CaptionSend] under a shortened label.
-({String label, MessageSend send})? chipSend(
-  Object? chip, {
-  String? agentName,
-}) {
+({String label, MessageSend send})? chipSend(Object? chip) {
   final rawText = fieldOf(chip, 'text');
   final rawLabel = fieldOf(chip, 'label');
   final text = plainText(rawText, 2000, lines: true);
@@ -197,7 +148,6 @@ const chipLabelFits = 20;
     label,
     text,
     hidden: hasInvisibleText(rawText) || hasInvisibleText(rawLabel),
-    agentName: agentName,
   );
   if (send is LabelSend && !chipLabelFitsText(send.text)) {
     return (label: _chipLabel(send.text), send: CaptionSend(send.text));

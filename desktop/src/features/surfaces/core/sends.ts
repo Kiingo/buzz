@@ -1,6 +1,6 @@
-// Generated from the Kiingo surface renderer packages at 5736645688767c7e713cc125961539139af6ba91; do not edit here.
+// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
 import { isObject } from "./json";
-import { comparableText, hasInvisibleText, plainText } from "./text";
+import { hasInvisibleText, plainText } from "./text";
 
 // A control that sends words as the person's own message (`send_message`,
 // suggestion chips; `ask_agent` on an MCP Apps page) sends ONLY words the
@@ -35,53 +35,21 @@ export type MessageSend =
   | { kind: "sends"; text: string }
   /**
    * Disabled: too long to show in full (or more than
-   * {@link SENDS_MAX_LINE_BREAKS} lines), empty, hiding something, a slash
-   * command, or addressed to another agent (79, r3d).
+   * {@link SENDS_MAX_LINE_BREAKS} lines), empty, or hiding something. The
+   * words are never read for meaning: no slash-command or @mention rule
+   * (Ross, 2026-10-31: "if we ever have any sort of 'whitelist' or trying
+   * to parse an agent's words then we're doing it wrong"). The server
+   * decides by provenance: a tapped send never runs a chat command there
+   * (kiingo-api ui-surfaces/tap-turn-session-refusal.ts).
    */
   | {
       kind: "blocked";
-      reason: "too_long" | "hidden" | "empty" | "slash" | "other_agent";
+      reason: "too_long" | "hidden" | "empty";
     };
 
-/** The blocked line a control draws for `reason`. */
-export const sendBlockedText = (send: MessageSend): string | undefined => {
-  if (send.kind !== "blocked") {
-    return undefined;
-  }
-  switch (send.reason) {
-    case "slash":
-      return "Slash commands can’t be sent from a card";
-    case "other_agent":
-      return "Messages to another agent can’t be sent from a card";
-    default:
-      return SENDS_BLOCKED_TEXT;
-  }
-};
-
-/**
- * A send a card may not make, read after NFKC and invisible-character
- * cleaning so nothing hides in front (79, r3d): a leading "/" (a slash
- * command), or a leading "@name" that is not the surface's own agent.
- */
-const refusedLead = (
-  words: string,
-  agentName: string | undefined,
-): "slash" | "other_agent" | undefined => {
-  const lead = comparableText(words).trimStart();
-  if (lead.startsWith("/") || lead.startsWith("／")) {
-    return "slash";
-  }
-  if (lead.startsWith("@")) {
-    const own = agentName ? comparableText(agentName).trim() : "";
-    const named = lead.slice(1);
-    const addressesOwn =
-      own !== "" &&
-      named.startsWith(own) &&
-      !/[\p{L}\p{N}_.-]/u.test(named.charAt(own.length));
-    return addressesOwn ? undefined : "other_agent";
-  }
-  return undefined;
-};
+/** The blocked line a control draws, or undefined when it can send. */
+export const sendBlockedText = (send: MessageSend): string | undefined =>
+  send.kind === "blocked" ? SENDS_BLOCKED_TEXT : undefined;
 
 /**
  * What a sending control shows and sends: `text` (else the label) when it
@@ -92,8 +60,6 @@ export const messageSend = (
   label: string,
   text: string | undefined,
   hidden = false,
-  /** The surface's agent: a leading "@<it>" is allowed, no other. */
-  agentName?: string,
 ): MessageSend => {
   if (hidden) {
     return { kind: "blocked", reason: "hidden" };
@@ -101,10 +67,6 @@ export const messageSend = (
   const words = text ?? label;
   if (!words.trim()) {
     return { kind: "blocked", reason: "empty" };
-  }
-  const refused = refusedLead(words, agentName);
-  if (refused) {
-    return { kind: "blocked", reason: refused };
   }
   if ((words.match(LINE_BREAKS)?.length ?? 0) > SENDS_MAX_LINE_BREAKS) {
     return { kind: "blocked", reason: "too_long" };
@@ -158,7 +120,6 @@ export const buzzSurfaceTapTag = (tap: SurfaceTapRef): string[] => [
 /** A suggestion chip (`{text, label?}`): its label and what it sends. */
 export const chipSend = (
   chip: unknown,
-  agentName?: string,
 ): { label: string; send: MessageSend } | undefined => {
   const record = isObject(chip) ? chip : {};
   const text = plainText(record.text, 2000, true);
@@ -172,7 +133,6 @@ export const chipSend = (
       label,
       text,
       hasInvisibleText(record.text) || hasInvisibleText(record.label),
-      agentName,
     ),
   };
 };

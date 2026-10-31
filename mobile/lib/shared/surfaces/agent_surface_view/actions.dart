@@ -278,7 +278,7 @@ class _SuggestionChipsView extends StatelessWidget {
     final chips = [
       for (final raw
           in scope.list(p.component, 'chips', p.scope).take(surfaceMaxChips))
-        ?chipSend(raw, agentName: scope.agentName),
+        ?chipSend(raw),
     ];
     return Wrap(
       spacing: Grid.half + Grid.quarter,

@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 5736645688767c7e713cc125961539139af6ba91; do not edit here.
+// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
 import { useId } from "react";
 import {
   acceptsTaps,
@@ -58,12 +58,9 @@ export const SendsLine = ({
 };
 
 /** The `messageSend` of a `send_message` action, else undefined. */
-export const actionSend = (
-  action: SurfaceAction,
-  agentName: string | undefined,
-): MessageSend | undefined =>
+export const actionSend = (action: SurfaceAction): MessageSend | undefined =>
   action.kind === "send_message"
-    ? messageSend(action.label, action.text, action.hidden === true, agentName)
+    ? messageSend(action.label, action.text, action.hidden === true)
     : undefined;
 
 export const ActionButton = ({
@@ -84,7 +81,7 @@ export const ActionButton = ({
   const text = action.label;
   const busy = context.snapshot.busyActionId === action.id;
   const runOff = action.kind === "run" && !context.controller.runAvailable;
-  const send = actionSend(action, context.surface.agentName);
+  const send = actionSend(action);
   const caption = runOff || (send !== undefined && send.kind !== "label");
   const iconName = icon ?? action.icon;
   const Icon = iconName ? catalogIcon(iconName) : undefined;
@@ -176,7 +173,7 @@ const MenuOf = ({
           action.kind === "run" && !context.controller.runAvailable;
         // A menu row shows only its label: a send whose words differ is
         // drawn as a button outside menus, never here (79 W1).
-        const send = actionSend(action, context.surface.agentName);
+        const send = actionSend(action);
         const hidesWords = send !== undefined && send.kind !== "label";
         return {
           key: action.id,
@@ -214,7 +211,7 @@ export const ActionBarView = ({ component, scope }: NodeProps) => {
     : listed;
   // A send that shows its words stays a button: menus show labels only.
   const showsWords = (action: SurfaceAction) => {
-    const send = actionSend(action, context.surface.agentName);
+    const send = actionSend(action);
     return send !== undefined && send.kind === "sends";
   };
   const head = ordered.length > 4 ? ordered.slice(0, 3) : ordered;
@@ -277,7 +274,7 @@ export const SuggestionChipsView = ({ component, scope }: NodeProps) => {
   return (
     <div className="flex flex-wrap items-start gap-1.5">
       {chips.map((chip, index) => {
-        const parsed = chipSend(chip, context.surface.agentName);
+        const parsed = chipSend(chip);
         if (!parsed) {
           return null;
         }
@@ -321,7 +318,7 @@ export const LinkView = ({ component, scope }: NodeProps) => {
     return label ? <span className="text-sm">{label}</span> : null;
   }
   const shown = label ?? action.label;
-  const send = actionSend(action, context.surface.agentName);
+  const send = actionSend(action);
   const sendsOther =
     send !== undefined && (send.kind === "blocked" || send.text !== shown);
   return (
