@@ -147,6 +147,18 @@ class DelegationClient {
     {'answer': answer},
   );
 
+  /// "Since you last looked" for this agent (the owner's own cursor).
+  Future<DelegationSince?> since(String agentId) async =>
+      DelegationSince.tryParse(await send('GET', delegationSincePath(agentId)));
+
+  /// Moves the owner's seen cursor forward to [at].
+  Future<void> seen(String agentId, String at) =>
+      send('POST', delegationSeenPath(agentId), {'at': at});
+
+  /// Undo Stop, inside its window: the same work starts again.
+  Future<void> undoStop(String agentId, String delegationId) =>
+      send('POST', delegationUndoStopPath(agentId, delegationId));
+
   Future<void> cancel(String agentId, String delegationId) => send(
     'POST',
     'agents/$agentId/delegations/$delegationId/cancel',
@@ -199,6 +211,7 @@ class DelegationBoardReady extends DelegationBoardState {
     required this.page,
     required this.asks,
     this.ack,
+    this.since,
     this.stale = false,
   });
 
@@ -212,14 +225,27 @@ class DelegationBoardReady extends DelegationBoardState {
   /// The server's instant ack, until the agent's reply replaces it.
   final DelegationPendingAck? ack;
 
+  /// What changed since the owner last marked it seen.
+  final DelegationSince? since;
+
   DelegationBoardReady withAck(DelegationPendingAck? next) =>
       DelegationBoardReady(
         agentId: agentId,
         page: page,
         asks: asks,
         ack: next,
+        since: since,
         stale: stale,
       );
+
+  DelegationBoardReady withSince(DelegationSince? next) => DelegationBoardReady(
+    agentId: agentId,
+    page: page,
+    asks: asks,
+    ack: ack,
+    since: next,
+    stale: stale,
+  );
 
   /// The last poll failed; the page shown is the last good one.
   final bool stale;
@@ -241,6 +267,9 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
   Completer<void>? _ackWake;
   int? _ackLoop;
   bool _ackDirty = false;
+
+  /// The generation whose "since" read has run (once per viewing).
+  int? _sinceRead;
 
   @override
   DelegationBoardState build() {
@@ -319,9 +348,33 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
         page: page,
         asks: asks,
         ack: current is DelegationBoardReady ? current.ack : null,
+        since: current is DelegationBoardReady ? current.since : null,
       ),
     );
     _readAck(client, generation);
+    if (agentId != null && _sinceRead != generation) {
+      _sinceRead = generation;
+      unawaited(_readSince(client, generation, agentId));
+    }
+  }
+
+  /// "Since you last looked", once per viewing.
+  Future<void> _readSince(
+    DelegationClient client,
+    int generation,
+    String agentId,
+  ) async {
+    DelegationSince? since;
+    try {
+      since = await client.since(agentId);
+    } on DelegationApiException {
+      // Display only: no chip this time; the next viewing reads it again.
+      return;
+    }
+    final current = state;
+    if (_live(generation) && current is DelegationBoardReady) {
+      _publish(generation, current.withSince(since));
+    }
   }
 
   /// Reads the pending ack now (folding repeat asks into one more read),
@@ -394,6 +447,7 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
               page: current.page,
               asks: current.asks,
               ack: current.ack,
+              since: current.since,
               stale: true,
             ),
           );
@@ -433,6 +487,27 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
   Future<void> answer(String askId, String answer) async {
     final (client, agentId) = _ready();
     await client.answer(agentId, askId, answer);
+    await _refresh(client);
+  }
+
+  /// Marks everything up to the chip's newest change as seen (the owner's
+  /// own cursor) and drops the chip. A failure keeps the chip and throws.
+  Future<void> markSeen() async {
+    final (client, agentId) = _ready();
+    final current = state;
+    final since = current is DelegationBoardReady ? current.since : null;
+    if (since == null) return;
+    await client.seen(agentId, since.latestAt);
+    final now = state;
+    if (now is DelegationBoardReady && identical(now.since, since)) {
+      _publish(_generation, now.withSince(null));
+    }
+  }
+
+  /// Undo Stop, inside its window: the same work starts again.
+  Future<void> undoStop(String delegationId) async {
+    final (client, agentId) = _ready();
+    await client.undoStop(agentId, delegationId);
     await _refresh(client);
   }
 

@@ -66,6 +66,8 @@ export type DelegationCard = {
   result: DelegationCardResult | null;
   pendingAsksCount: number;
   ownerActive: boolean;
+  /** Cancelled cards only: Undo shows until this time (60 s after Stop). */
+  undoStopUntil: string | null;
 };
 
 export type DelegationSummary = {
@@ -173,6 +175,7 @@ export function parseDelegationCard(value: unknown): DelegationCard | null {
     result: ACTIVE.has(state) ? null : parseResult(record.result),
     pendingAsksCount: count(record.pendingAsksCount),
     ownerActive: record.ownerActive === true,
+    undoStopUntil: state === "cancelled" ? str(record.undoStopUntil) : null,
   };
 }
 
@@ -542,4 +545,69 @@ export function delegationDmAgent(
   if (people.length !== 2 || !people.includes(viewer)) return null;
   const other = people.find((pubkey) => pubkey !== viewer) ?? null;
   return other && /^[0-9a-f]{64}$/u.test(other) ? other : null;
+}
+
+/**
+ * How long a stopped card can still be undone, in ms (0: not undoable).
+ * Like `liveElapsed`, the reader's clock carries on from `serverNow`.
+ */
+export function undoStopRemainingMs(
+  card: DelegationCard,
+  serverNow: string,
+  now: number,
+): number {
+  if (card.state !== "cancelled" || !card.undoStopUntil) return 0;
+  const until = Date.parse(card.undoStopUntil);
+  const at = Date.parse(serverNow);
+  if (!Number.isFinite(until)) return 0;
+  return Math.max(0, until - (Number.isFinite(at) ? Math.max(at, now) : now));
+}
+
+/** Stopped cards still inside their Undo window, newest stop first. */
+export function undoableCards(
+  cards: readonly DelegationCard[],
+  serverNow: string,
+  now: number,
+): DelegationCard[] {
+  return cards
+    .filter((card) => undoStopRemainingMs(card, serverNow, now) > 0)
+    .sort((a, b) => byNewest(a.finishedAt, b.finishedAt));
+}
+
+export const undoStopPath = (agentId: string, delegationId: string) =>
+  `agents/${agentId.toLowerCase()}/delegations/${delegationId.toLowerCase()}/undo-stop`;
+
+/** "Since you last looked" (IDelegationSinceLastLooked), as one chip. */
+export type DelegationSince = {
+  /** The newest change: marking seen moves the cursor here. */
+  latestAt: string;
+  /** "2 finished · 1 failed · 1 new question". */
+  text: string;
+};
+
+export const delegationSincePath = (agentId: string) =>
+  `agents/${agentId.toLowerCase()}/delegations/since`;
+
+export const delegationSeenPath = (agentId: string) =>
+  `agents/${agentId.toLowerCase()}/delegations/seen`;
+
+const plural = (n: number, one: string, many: string) =>
+  `${n} ${n === 1 ? one : many}`;
+
+/** The chip for a since read, or null when nothing changed (or it's bad). */
+export function parseDelegationSince(value: unknown): DelegationSince | null {
+  const record = asRecord(value);
+  const latestAt = str(record?.latestAt) ?? str(record?.serverNow);
+  if (!record || !latestAt) return null;
+  const n = (key: string) => count(asRecord(record[key])?.count);
+  const parts = [
+    n("finished") ? `${n("finished")} finished` : null,
+    n("failed") ? `${n("failed")} failed` : null,
+    n("cancelled") ? `${n("cancelled")} stopped` : null,
+    n("newQuestions")
+      ? plural(n("newQuestions"), "new question", "new questions")
+      : null,
+    n("started") ? `${n("started")} started` : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? { latestAt, text: parts.join(" · ") } : null;
 }

@@ -319,3 +319,62 @@ class _DoneSummaryRow extends StatelessWidget {
     );
   }
 }
+
+/// "Since you last looked: 2 finished · 1 failed", until marked seen.
+class _SinceChip extends StatelessWidget {
+  final String text;
+  final VoidCallback onSeen;
+
+  const _SinceChip({required this.text, required this.onSeen});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      key: const ValueKey('agent-dm-delegation-since'),
+      children: [
+        Expanded(
+          child: Text(
+            'Since you last looked: $text',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: context.textTheme.labelMedium,
+          ),
+        ),
+        TextButton(onPressed: onSeen, child: const Text('Mark seen')),
+      ],
+    );
+  }
+}
+
+/// A worker just stopped: Undo restarts the same work while it lasts.
+class _UndoStopRow extends StatelessWidget {
+  final DelegationCard card;
+  final VoidCallback onUndo;
+
+  const _UndoStopRow({super.key, required this.card, required this.onUndo});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            'Stopped ${card.title}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: context.textTheme.labelMedium?.copyWith(
+              color: context.colors.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Semantics(
+          button: true,
+          label: 'Undo stopping ${card.title}',
+          excludeSemantics: true,
+          onTap: onUndo,
+          child: TextButton(onPressed: onUndo, child: const Text('Undo')),
+        ),
+      ],
+    );
+  }
+}

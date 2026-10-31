@@ -8,6 +8,8 @@ import {
   delegationBoard,
   delegationDmAgent,
   delegationChatPath,
+  delegationSeenPath,
+  delegationSincePath,
   delegationsPath,
   doneTitle,
   formatElapsed,
@@ -19,9 +21,13 @@ import {
   parseDelegationCard,
   parsePendingAck,
   parseDelegationPoll,
+  parseDelegationSince,
   sessionLink,
   stateLabel,
   taskLink,
+  undoStopPath,
+  undoStopRemainingMs,
+  undoableCards,
 } from "./delegations.ts";
 
 const AGENT = "0192a6b0-0000-6000-8000-0000000000a1";
@@ -329,4 +335,74 @@ test("time and money read briefly", () => {
   );
   const done = parseDelegationCard(card(2, { state: "done" }));
   assert.equal(liveElapsed(done, "2026-10-31T10:10:00Z", Date.now()), 90);
+});
+
+test("Undo shows only on a stopped card inside its window", () => {
+  const serverNow = "2026-10-31T10:10:00Z";
+  const at = Date.parse(serverNow);
+  const stopped = (n, until, state = "cancelled") =>
+    parseDelegationCard(
+      card(n, {
+        state,
+        finishedAt: `2026-10-31T10:09:5${n}Z`,
+        undoStopUntil: until,
+      }),
+    );
+  const open = stopped(1, "2026-10-31T10:10:30Z");
+  assert.equal(undoStopRemainingMs(open, serverNow, at), 30_000);
+  // The reader's clock carries on from serverNow.
+  assert.equal(undoStopRemainingMs(open, serverNow, at + 10_000), 20_000);
+  assert.equal(undoStopRemainingMs(open, serverNow, at + 31_000), 0);
+  // A stale reader clock never stretches the window past serverNow.
+  assert.equal(undoStopRemainingMs(open, serverNow, at - 60_000), 30_000);
+  const passed = stopped(2, "2026-10-31T10:09:59Z");
+  const done = stopped(3, "2026-10-31T10:10:30Z", "done");
+  assert.equal(done.undoStopUntil, null);
+  const later = stopped(4, "2026-10-31T10:10:40Z");
+  assert.deepEqual(
+    undoableCards([open, passed, done, later], serverNow, at).map(
+      (c) => c.delegationId,
+    ),
+    [id(4), id(1)],
+  );
+  assert.equal(
+    undoStopPath(AGENT.toUpperCase(), id(1)),
+    `agents/${AGENT}/delegations/${id(1)}/undo-stop`,
+  );
+});
+
+test("since you last looked reads as one chip, or none", () => {
+  const since = (counts) => ({
+    seenAt: "2026-10-31T09:00:00Z",
+    latestAt: "2026-10-31T10:00:00Z",
+    serverNow: "2026-10-31T10:10:00Z",
+    finished: { count: 0, delegationIds: [] },
+    failed: { count: 0, delegationIds: [] },
+    cancelled: { count: 0, delegationIds: [] },
+    started: { count: 0, delegationIds: [] },
+    newQuestions: { count: 0, askIds: [], delegationIds: [] },
+    changedDelegationIds: [],
+    ...counts,
+  });
+  assert.equal(parseDelegationSince(since({})), null);
+  assert.deepEqual(
+    parseDelegationSince(
+      since({
+        finished: { count: 2 },
+        failed: { count: 1 },
+        newQuestions: { count: 1 },
+      }),
+    ),
+    {
+      latestAt: "2026-10-31T10:00:00Z",
+      text: "2 finished · 1 failed · 1 new question",
+    },
+  );
+  assert.equal(
+    parseDelegationSince(since({ cancelled: { count: 3 } }))?.text,
+    "3 stopped",
+  );
+  assert.equal(parseDelegationSince({}), null);
+  assert.equal(delegationSincePath(AGENT), `agents/${AGENT}/delegations/since`);
+  assert.equal(delegationSeenPath(AGENT), `agents/${AGENT}/delegations/seen`);
 });

@@ -458,5 +458,185 @@ void main() {
         expect(chatReads, reads, reason: 'no re-reads once the ack is gone');
       },
     );
+
+    test('since is read once per viewing; Mark seen and Undo post', () async {
+      final sent = <http.Request>[];
+      final hold = Completer<http.Response>();
+      final container = containerWith(
+        MockClient((request) async {
+          sent.add(request);
+          final path = request.url.path;
+          if (path.endsWith('/agents/$_agent/delegations/since')) {
+            return http.Response(
+              jsonEncode({
+                'seenAt': null,
+                'latestAt': '2026-10-31T10:05:00Z',
+                'serverNow': '2026-10-31T10:10:00Z',
+                'finished': {
+                  'count': 1,
+                  'delegationIds': [_id(1)],
+                },
+                'failed': {'count': 0, 'delegationIds': <String>[]},
+                'cancelled': {'count': 0, 'delegationIds': <String>[]},
+                'started': {'count': 0, 'delegationIds': <String>[]},
+                'newQuestions': {
+                  'count': 0,
+                  'askIds': <String>[],
+                  'delegationIds': <String>[],
+                },
+                'changedDelegationIds': [_id(1)],
+              }),
+              200,
+            );
+          }
+          if (request.method == 'POST') {
+            return http.Response(
+              jsonEncode({'seenAt': '2026-10-31T10:05:00Z'}),
+              200,
+            );
+          }
+          if (request.url.query == 'agentPubkey=$_agentKey') {
+            return http.Response(jsonEncode(_page([_card(1)])), 200);
+          }
+          if (path.endsWith('/chat')) return http.Response('{}', 200);
+          return hold.future;
+        }),
+      );
+      final shown =
+          await settle(
+                container,
+                (state) => state is DelegationBoardReady && state.since != null,
+              )
+              as DelegationBoardReady;
+      expect(shown.since!.text, '1 finished');
+      final notifier = container.read(
+        delegationBoardProvider(_agentKey).notifier,
+      );
+      await notifier.markSeen();
+      final after =
+          container.read(delegationBoardProvider(_agentKey))
+              as DelegationBoardReady;
+      expect(after.since, isNull);
+      final seen = sent.singleWhere(
+        (r) => r.url.path.endsWith('/agents/$_agent/delegations/seen'),
+      );
+      expect(seen.method, 'POST');
+      expect(jsonDecode(seen.body), {'at': '2026-10-31T10:05:00Z'});
+      await notifier.undoStop(_id(1));
+      expect(
+        sent.any(
+          (r) =>
+              r.method == 'POST' &&
+              r.url.path.endsWith(
+                '/agents/$_agent/delegations/${_id(1)}/undo-stop',
+              ),
+        ),
+        isTrue,
+      );
+      expect(
+        sent.where((r) => r.url.path.endsWith('/delegations/since')).length,
+        1,
+        reason: 'read once per viewing, not on every page',
+      );
+    });
+  });
+
+  group('since you last looked and Undo Stop', () {
+    test('Undo shows only on a stopped card inside its window', () {
+      const serverNow = '2026-10-31T10:10:00Z';
+      final at = DateTime.parse(serverNow);
+      DelegationCard stopped(
+        int n,
+        String until, [
+        String state = 'cancelled',
+      ]) => DelegationCard.tryParse(
+        _card(n, {
+          'state': state,
+          'finishedAt': '2026-10-31T10:09:5${n}Z',
+          'undoStopUntil': until,
+        }),
+      )!;
+      final open = stopped(1, '2026-10-31T10:10:30Z');
+      expect(
+        delegationUndoRemaining(open, serverNow, at),
+        const Duration(seconds: 30),
+      );
+      expect(
+        delegationUndoRemaining(
+          open,
+          serverNow,
+          at.add(const Duration(seconds: 10)),
+        ),
+        const Duration(seconds: 20),
+      );
+      expect(
+        delegationUndoRemaining(
+          open,
+          serverNow,
+          at.add(const Duration(seconds: 31)),
+        ),
+        Duration.zero,
+      );
+      // A stale reader clock never stretches the window past serverNow.
+      expect(
+        delegationUndoRemaining(
+          open,
+          serverNow,
+          at.subtract(const Duration(minutes: 1)),
+        ),
+        const Duration(seconds: 30),
+      );
+      final passed = stopped(2, '2026-10-31T10:09:59Z');
+      final done = stopped(3, '2026-10-31T10:10:30Z', 'done');
+      expect(done.undoStopUntil, isNull);
+      final later = stopped(4, '2026-10-31T10:10:40Z');
+      expect(
+        undoableDelegations(
+          [open, passed, done, later],
+          serverNow,
+          at,
+        ).map((c) => c.delegationId),
+        [_id(4), _id(1)],
+      );
+      expect(
+        delegationUndoStopPath(_agent, _id(1)),
+        'agents/$_agent/delegations/${_id(1)}/undo-stop',
+      );
+    });
+
+    test('since reads as one chip, or none', () {
+      Map<String, Object?> since(Map<String, Object?> counts) => {
+        'seenAt': null,
+        'latestAt': '2026-10-31T10:00:00Z',
+        'serverNow': '2026-10-31T10:10:00Z',
+        'finished': {'count': 0},
+        'failed': {'count': 0},
+        'cancelled': {'count': 0},
+        'started': {'count': 0},
+        'newQuestions': {'count': 0},
+        ...counts,
+      };
+      expect(DelegationSince.tryParse(since({})), isNull);
+      final chip = DelegationSince.tryParse(
+        since({
+          'finished': {'count': 2},
+          'failed': {'count': 1},
+          'newQuestions': {'count': 1},
+        }),
+      )!;
+      expect(chip.text, '2 finished · 1 failed · 1 new question');
+      expect(chip.latestAt, '2026-10-31T10:00:00Z');
+      expect(
+        DelegationSince.tryParse(
+          since({
+            'cancelled': {'count': 3},
+          }),
+        )!.text,
+        '3 stopped',
+      );
+      expect(DelegationSince.tryParse(<String, Object?>{}), isNull);
+      expect(delegationSincePath(_agent), 'agents/$_agent/delegations/since');
+      expect(delegationSeenPath(_agent), 'agents/$_agent/delegations/seen');
+    });
   });
 }

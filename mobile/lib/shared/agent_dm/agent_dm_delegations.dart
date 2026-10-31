@@ -99,6 +99,7 @@ class DelegationCard {
     this.lastProgressLine,
     this.result,
     this.pendingAsksCount = 0,
+    this.undoStopUntil,
   });
 
   final String delegationId;
@@ -121,6 +122,9 @@ class DelegationCard {
   final String? lastProgressLine;
   final DelegationResult? result;
   final int pendingAsksCount;
+
+  /// Cancelled cards only: Undo shows until this time (60 s after Stop).
+  final String? undoStopUntil;
 
   bool get isActive => state.isActive;
 
@@ -164,6 +168,9 @@ class DelegationCard {
       lastProgressLine: _text(record['lastProgressLine']),
       result: result,
       pendingAsksCount: _count(record['pendingAsksCount']),
+      undoStopUntil: state == DelegationState.cancelled
+          ? _text(record['undoStopUntil'])
+          : null,
     );
   }
 }
@@ -561,3 +568,76 @@ String _encodeRev(String rev) => Uri.encodeComponent(rev).replaceAllMapped(
   RegExp(r"[!'()*~]"),
   (match) => '%${match[0]!.codeUnitAt(0).toRadixString(16).toUpperCase()}',
 );
+
+/// How long a stopped card can still be undone (zero: not undoable). Like
+/// [delegationLiveElapsed], the reader's clock carries on from serverNow.
+Duration delegationUndoRemaining(
+  DelegationCard card,
+  String serverNow,
+  DateTime now,
+) {
+  final until = card.state == DelegationState.cancelled
+      ? DateTime.tryParse(card.undoStopUntil ?? '')
+      : null;
+  if (until == null) return Duration.zero;
+  final at = DateTime.tryParse(serverNow);
+  final from = at != null && at.isAfter(now) ? at : now;
+  final left = until.difference(from);
+  return left.isNegative ? Duration.zero : left;
+}
+
+/// Stopped cards still inside their Undo window, newest stop first.
+List<DelegationCard> undoableDelegations(
+  List<DelegationCard> cards,
+  String serverNow,
+  DateTime now,
+) =>
+    cards
+        .where(
+          (card) =>
+              delegationUndoRemaining(card, serverNow, now) > Duration.zero,
+        )
+        .toList()
+      ..sort((a, b) => _newest(a.finishedAt, b.finishedAt));
+
+String delegationUndoStopPath(String agentId, String delegationId) =>
+    'agents/${agentId.toLowerCase()}/delegations/'
+    '${delegationId.toLowerCase()}/undo-stop';
+
+String delegationSincePath(String agentId) =>
+    'agents/${agentId.toLowerCase()}/delegations/since';
+
+String delegationSeenPath(String agentId) =>
+    'agents/${agentId.toLowerCase()}/delegations/seen';
+
+/// "Since you last looked" (IDelegationSinceLastLooked), as one chip.
+@immutable
+class DelegationSince {
+  const DelegationSince({required this.latestAt, required this.text});
+
+  /// The newest change: marking seen moves the cursor here.
+  final String latestAt;
+
+  /// "2 finished · 1 failed · 1 new question".
+  final String text;
+
+  /// The chip for a since read, or null when nothing changed (or it's bad).
+  static DelegationSince? tryParse(Object? value) {
+    final record = _map(value);
+    final latestAt = _text(record?['latestAt']) ?? _text(record?['serverNow']);
+    if (record == null || latestAt == null) return null;
+    int n(String key) => _count(_map(record[key])?['count']);
+    final questions = n('newQuestions');
+    final parts = [
+      if (n('finished') > 0) '${n('finished')} finished',
+      if (n('failed') > 0) '${n('failed')} failed',
+      if (n('cancelled') > 0) '${n('cancelled')} stopped',
+      if (questions > 0)
+        questions == 1 ? '1 new question' : '$questions new questions',
+      if (n('started') > 0) '${n('started')} started',
+    ];
+    return parts.isEmpty
+        ? null
+        : DelegationSince(latestAt: latestAt, text: parts.join(' · '));
+  }
+}

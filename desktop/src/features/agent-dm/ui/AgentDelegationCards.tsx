@@ -241,3 +241,63 @@ export function PendingAckRow({
     </p>
   );
 }
+
+/** "Since you last looked: 2 finished · 1 failed", until marked seen. */
+export function SinceChip({
+  text,
+  onSeen,
+}: {
+  text: string;
+  onSeen: () => void;
+}) {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-2 py-1"
+      data-testid="agent-delegation-since"
+    >
+      <p className="min-w-0 flex-1 truncate text-xs text-foreground">
+        <span className="font-medium">Since you last looked:</span> {text}
+      </p>
+      <Button
+        className="h-6 shrink-0 px-1.5 text-xs"
+        onClick={onSeen}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        Mark seen
+      </Button>
+    </div>
+  );
+}
+
+/** A worker just stopped: Undo restarts the same work while it lasts. */
+export function UndoStopRow({
+  card,
+  onUndo,
+}: {
+  card: DelegationCard;
+  onUndo: (card: DelegationCard) => void;
+}) {
+  return (
+    <li
+      className="flex min-w-0 items-center gap-2 py-1"
+      data-testid="agent-delegation-undo"
+    >
+      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+        Stopped{" "}
+        <span className="font-medium text-foreground">{card.title}</span>
+      </span>
+      <Button
+        aria-label={`Undo stopping ${card.title}`}
+        className="h-6 shrink-0 px-1.5 text-xs"
+        onClick={() => onUndo(card)}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        Undo
+      </Button>
+    </li>
+  );
+}

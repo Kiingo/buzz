@@ -7,8 +7,10 @@ import {
   answerDelegationAsk,
   cancelAllDelegations,
   getDelegationBoard,
+  markDelegationsSeen,
   resetDelegationStore,
   subscribeDelegations,
+  undoStopDelegation,
 } from "./delegationStore.ts";
 
 const AGENT_KEY = "a".repeat(64);
@@ -242,4 +244,64 @@ test("a read that lands after the last viewer left is dropped", async () => {
   release();
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(getDelegationBoard(AGENT_KEY).status, "loading");
+});
+
+test("since you last looked is read once per viewing, and Mark seen moves the owner's cursor", async () => {
+  const sent = host([
+    noAck,
+    [
+      (_method, path) => path === `agents/${AGENT}/delegations/since`,
+      () => ({
+        status: 200,
+        body: {
+          seenAt: null,
+          latestAt: "2026-10-31T10:05:00Z",
+          serverNow: "2026-10-31T10:10:00Z",
+          finished: { count: 1, delegationIds: [DELEGATION] },
+          failed: { count: 0, delegationIds: [] },
+          cancelled: { count: 0, delegationIds: [] },
+          started: { count: 0, delegationIds: [] },
+          newQuestions: { count: 0, askIds: [], delegationIds: [] },
+          changedDelegationIds: [DELEGATION],
+        },
+      }),
+    ],
+    [
+      (_method, path) => path === LIST,
+      () => ({ status: 200, body: page("r1", 0) }),
+    ],
+    [
+      (method) => method === "POST",
+      () => ({ status: 200, body: { seenAt: "2026-10-31T10:05:00Z" } }),
+    ],
+  ]);
+  const stop = subscribeDelegations(AGENT_KEY, () => {});
+  await until(
+    () =>
+      getDelegationBoard(AGENT_KEY).since !== null &&
+      getDelegationBoard(AGENT_KEY).since !== undefined,
+  );
+  assert.equal(getDelegationBoard(AGENT_KEY).since.text, "1 finished");
+  await markDelegationsSeen(AGENT_KEY);
+  assert.equal(getDelegationBoard(AGENT_KEY).since, null);
+  const seen = sent.find(
+    (call) => call.path === `agents/${AGENT}/delegations/seen`,
+  );
+  assert.equal(seen.method, "POST");
+  assert.deepEqual(seen.body, { at: "2026-10-31T10:05:00Z" });
+  await undoStopDelegation(AGENT_KEY, DELEGATION);
+  assert.ok(
+    sent.some(
+      (call) =>
+        call.method === "POST" &&
+        call.path === `agents/${AGENT}/delegations/${DELEGATION}/undo-stop`,
+    ),
+  );
+  assert.equal(
+    sent.filter((call) => call.path === `agents/${AGENT}/delegations/since`)
+      .length,
+    1,
+    "read once per viewing, not on every page",
+  );
+  stop();
 });

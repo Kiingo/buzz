@@ -21,9 +21,13 @@ const _hiddenMax = 500;
 /// Running cards re-read their elapsed time this often.
 const _tick = Duration(seconds: 30);
 
+/// While an Undo shows, the dock re-reads its window this often.
+const _undoTick = Duration(seconds: 1);
+
 /// The agent's delegations, docked above the composer of the owner's 1:1
 /// DM (§10.1). While the agent's reply is on its way it opens with the
-/// server's pending ack ("Starting 2 workers: …"), then the thread header
+/// server's pending ack ("Starting 2 workers: …"), "since you last looked"
+/// and Undo for a just-stopped worker, then the thread header
 /// ("3 running · 1 needs you · $4.10 today") and Stop all, then worker asks ("from worker: <title>",
 /// the same question card the agent's own asks use, answered straight to
 /// the worker), the running cards (folded at three or more) and one done
@@ -48,16 +52,38 @@ class AgentDmDelegationDock extends HookConsumerWidget {
     final view = ready == null
         ? null
         : delegationBoard(ready.page.cards, hidden: hidden.value);
-    final ticking = view != null && view.running.isNotEmpty;
+    // Fast only while some Undo window is open; it stops when they close.
+    final undoOpen =
+        ready != null &&
+        undoableDelegations(
+          ready.page.cards,
+          ready.page.serverNow,
+          DateTime.now(),
+        ).isNotEmpty;
+    final period = undoOpen
+        ? _undoTick
+        : view != null && view.running.isNotEmpty
+        ? _tick
+        : null;
     useEffect(() {
-      if (!ticking) return null;
-      final timer = Timer.periodic(_tick, (_) => now.value = DateTime.now());
+      if (period == null) return null;
+      final timer = Timer.periodic(period, (_) => now.value = DateTime.now());
       return timer.cancel;
-    }, [ticking]);
+    }, [period]);
     if (ready == null || view == null) return const SizedBox.shrink();
     final header = delegationHeaderText(ready.page.summary);
     final ack = ready.ack;
-    if (ack == null && view.isEmpty && header == null) {
+    final since = ready.since;
+    final undoable = undoableDelegations(
+      ready.page.cards,
+      ready.page.serverNow,
+      now.value,
+    );
+    if (ack == null &&
+        since == null &&
+        undoable.isEmpty &&
+        view.isEmpty &&
+        header == null) {
       return const SizedBox.shrink();
     }
 
@@ -125,6 +151,24 @@ class AgentDmDelegationDock extends HookConsumerWidget {
       );
     }
 
+    void undo(DelegationCard card) {
+      unawaited(
+        notifier
+            .undoStop(card.delegationId)
+            .catchError(
+              (Object _) => say("Couldn't undo that stop. It may be too late."),
+            ),
+      );
+    }
+
+    void markSeen() {
+      unawaited(
+        notifier.markSeen().catchError(
+          (Object _) => say("Couldn't mark that as seen. Try again."),
+        ),
+      );
+    }
+
     void hide(String key) {
       final next = {...hidden.value, key};
       hidden.value = next;
@@ -166,6 +210,14 @@ class AgentDmDelegationDock extends HookConsumerWidget {
                   _PendingAckRow(
                     agentName: ready.page.agentName,
                     text: ack.text,
+                  ),
+                if (since != null)
+                  _SinceChip(text: since.text, onSeen: markSeen),
+                for (final card in undoable)
+                  _UndoStopRow(
+                    key: ValueKey('delegation-undo-${card.delegationId}'),
+                    card: card,
+                    onUndo: () => undo(card),
                   ),
                 if (header != null)
                   _BoardHeader(

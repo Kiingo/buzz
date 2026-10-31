@@ -4,25 +4,35 @@ import { toast } from "sonner";
 import { getAgentCallStreamHost } from "@/features/agent-call/lib/agentCallApi";
 import type { Channel } from "@/shared/api/types";
 
-import { answerDelegationAsk, cancelDelegation } from "../lib/delegationStore";
+import {
+  answerDelegationAsk,
+  cancelDelegation,
+  markDelegationsSeen,
+  undoStopDelegation,
+} from "../lib/delegationStore";
 import {
   type DelegationCard,
   appOriginFor,
   askAsQuestion,
   delegationBoard,
   fromWorkerLabel,
+  undoableCards,
 } from "../lib/delegations";
 import {
   DelegationCardRow,
   DoneSummaryRow,
   FoldedRunningRow,
   PendingAckRow,
+  SinceChip,
+  UndoStopRow,
 } from "./AgentDelegationCards";
 import { QuestionCardView } from "./AgentQuestionCard";
 import { useAgentDelegations } from "./useAgentDelegations";
 
 /** Running cards re-read their elapsed time this often. */
 const TICK_MS = 30_000;
+/** While an Undo shows, the dock re-reads its window this often. */
+const UNDO_TICK_MS = 1_000;
 const HIDDEN_KEY = "buzz.agentDelegations.hiddenDone.v1";
 const HIDDEN_MAX = 500;
 
@@ -63,20 +73,21 @@ function useAppOrigin(enabled: boolean) {
   return origin;
 }
 
-function useNow(active: boolean) {
+function useNow(intervalMs: number | null) {
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
-    if (!active) return;
-    const timer = setInterval(() => setNow(Date.now()), TICK_MS);
+    if (intervalMs === null) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
     return () => clearInterval(timer);
-  }, [active]);
+  }, [intervalMs]);
   return now;
 }
 
 /**
  * The agent's delegations, docked above the composer of the owner's 1:1 DM
  * (§10.1): the pending ack while the agent's reply is on its way, then
- * worker asks ("from worker: <title>", the same ask card the
+ * "since you last looked", Undo for a just-stopped worker, then worker asks ("from worker: <title>", the same ask card the
  * agent's own questions use, answered straight to the worker), then the
  * running cards (folded at three or more), then one done summary per task.
  * Cards update in place and never become messages.
@@ -97,11 +108,21 @@ export function AgentDelegationDock({
     () => (ready ? delegationBoard(board.page.cards, hidden) : null),
     [ready, board, hidden],
   );
-  const now = useNow(Boolean(view && view.running.length > 0));
+  // Tick fast only while some Undo window is open; it stops when they close.
+  const hasUndo =
+    ready &&
+    undoableCards(board.page.cards, board.page.serverNow, Date.now()).length >
+      0;
+  const now = useNow(
+    hasUndo ? UNDO_TICK_MS : view && view.running.length > 0 ? TICK_MS : null,
+  );
   if (board.status !== "ready" || !view || !agentPubkey) return null;
-  const { page, asks, ack } = board;
+  const { page, asks, ack, since } = board;
+  const undoable = undoableCards(page.cards, page.serverNow, now);
   if (
     !ack &&
+    !since &&
+    undoable.length === 0 &&
     view.needsYou.length === 0 &&
     view.running.length === 0 &&
     view.done.length === 0
@@ -112,6 +133,16 @@ export function AgentDelegationDock({
   const stop = (card: DelegationCard) => {
     void cancelDelegation(agentPubkey, card.delegationId).catch(() =>
       toast.error("Couldn’t stop that worker. Try again."),
+    );
+  };
+  const undo = (card: DelegationCard) => {
+    void undoStopDelegation(agentPubkey, card.delegationId).catch(() =>
+      toast.error("Couldn’t undo that stop. It may be too late."),
+    );
+  };
+  const seen = () => {
+    void markDelegationsSeen(agentPubkey).catch(() =>
+      toast.error("Couldn’t mark that as seen. Try again."),
     );
   };
   const hide = (key: string) => {
@@ -137,6 +168,14 @@ export function AgentDelegationDock({
     >
       {ack ? (
         <PendingAckRow agentName={page.agentName} text={ack.text} />
+      ) : null}
+      {since ? <SinceChip onSeen={seen} text={since.text} /> : null}
+      {undoable.length > 0 ? (
+        <ul>
+          {undoable.map((card) => (
+            <UndoStopRow card={card} key={card.delegationId} onUndo={undo} />
+          ))}
+        </ul>
       ) : null}
       {view.needsYou.map((card) => {
         const open = asks.get(card.delegationId) ?? [];

@@ -8,7 +8,8 @@
  * The pending ack ("Starting 2 workers: …") comes from the owner's chat
  * page. It is read whenever the cards change (a start moves them within a
  * second) and re-read every few seconds while it shows, until the agent's
- * own reply clears it or it expires.
+ * own reply clears it or it expires. "Since you last looked" is read once
+ * per viewing, when the first page lands.
  *
  * Community-scoped: `resetDelegationStore()` runs in resetCommunityState().
  */
@@ -22,11 +23,16 @@ import {
   type DelegationAsk,
   type DelegationPage,
   type DelegationPendingAck,
+  type DelegationSince,
   delegationChatPath,
+  delegationSeenPath,
+  delegationSincePath,
   delegationsPath,
   parseDelegationAsks,
   parseDelegationPoll,
+  parseDelegationSince,
   parsePendingAck,
+  undoStopPath,
 } from "./delegations";
 
 export type DelegationBoardState =
@@ -42,6 +48,8 @@ export type DelegationBoardState =
       asks: ReadonlyMap<string, DelegationAsk[]>;
       /** The server's instant ack, until the agent's reply replaces it. */
       ack: DelegationPendingAck | null;
+      /** What changed since the owner last marked it seen. */
+      since: DelegationSince | null;
       /** The last poll failed; the page shown is the last good one. */
       stale: boolean;
     };
@@ -67,6 +75,8 @@ type Entry = {
   ackLoop: number | null;
   ackDirty: boolean;
   ackWake: (() => void) | null;
+  /** The generation whose "since" read has run (once per viewing). */
+  sinceRead: number | null;
 };
 
 const LOADING: DelegationBoardState = { status: "loading" };
@@ -112,6 +122,7 @@ function entryFor(agentPubkey: string): Entry {
       ackLoop: null,
       ackDirty: false,
       ackWake: null,
+      sinceRead: null,
     };
     entries.set(key, entry);
   }
@@ -181,9 +192,38 @@ async function applyPage(
   const agentId = entry.agentId;
   const asks = agentId ? await loadAsks(agentId, page) : new Map();
   if (entry.generation !== generation) return;
-  const ack = entry.state.status === "ready" ? entry.state.ack : null;
-  publish(entry, { status: "ready", agentId, page, asks, ack, stale: false });
+  const previous = entry.state.status === "ready" ? entry.state : null;
+  publish(entry, {
+    status: "ready",
+    agentId,
+    page,
+    asks,
+    ack: previous?.ack ?? null,
+    since: previous?.since ?? null,
+    stale: false,
+  });
   readAck(entry, generation);
+  if (agentId && entry.sinceRead !== generation) {
+    entry.sinceRead = generation;
+    void readSince(entry, generation, agentId);
+  }
+}
+
+/** "Since you last looked", once per viewing. */
+async function readSince(entry: Entry, generation: number, agentId: string) {
+  let since: DelegationSince | null = null;
+  try {
+    since = parseDelegationSince(
+      await request<unknown>("GET", delegationSincePath(agentId)),
+    );
+  } catch {
+    // Display only: no chip this time; the next viewing reads it again.
+    return;
+  }
+  const state = entry.state;
+  if (entry.generation === generation && state.status === "ready") {
+    publish(entry, { ...state, since });
+  }
 }
 
 /** The owner chat page's pending ack; null when it cannot be read. */
@@ -325,6 +365,33 @@ export async function answerDelegationAsk(
   await request("POST", `agents/${agentId}/delegations/asks/${askId}/answer`, {
     answer,
   });
+  await refreshNow(agentPubkey);
+}
+
+/**
+ * Marks everything up to the chip's newest change as seen (the owner's own
+ * cursor) and drops the chip. A failure keeps the chip and rejects.
+ */
+export async function markDelegationsSeen(agentPubkey: string): Promise<void> {
+  const agentId = readyAgentId(agentPubkey);
+  const entry = entryFor(agentPubkey);
+  const state = entry.state;
+  if (state.status !== "ready" || !state.since) return;
+  const { since } = state;
+  await request("POST", delegationSeenPath(agentId), { at: since.latestAt });
+  const current = entry.state;
+  if (current.status === "ready" && current.since === since) {
+    publish(entry, { ...current, since: null });
+  }
+}
+
+/** Undo Stop, inside its window: the same work starts again. */
+export async function undoStopDelegation(
+  agentPubkey: string,
+  delegationId: string,
+): Promise<void> {
+  const agentId = readyAgentId(agentPubkey);
+  await request("POST", undoStopPath(agentId, delegationId));
   await refreshNow(agentPubkey);
 }
 

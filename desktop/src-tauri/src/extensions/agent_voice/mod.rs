@@ -138,6 +138,11 @@ fn is_delegation_list_query(query: &str, by_key: bool) -> bool {
     ok && (!by_key || seen.contains(&"agentPubkey"))
 }
 
+/// "Since you last looked" for one thread: `threadId=<uuid>` alone.
+fn is_since_query(query: &str) -> bool {
+    matches!(query.split_once('='), Some(("threadId", id)) if is_uuid(id))
+}
+
 /// The owner chat head the pending ack rides on: `limit=<n>` alone.
 fn is_chat_head_query(query: &str) -> bool {
     match query.split_once('=') {
@@ -180,11 +185,16 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         // The newest owner chat page, for the pending ack (§10.1).
         ["agents", agent, "chat"] => get && is_uuid(agent),
         ["agents", agent, "delegations", "cancel-all"] => post && is_uuid(agent),
+        // "Since you last looked" and the owner's own seen marker.
+        ["agents", agent, "delegations", "since"] => get && is_uuid(agent),
+        ["agents", agent, "delegations", "seen"] => post && is_uuid(agent),
         ["agents", agent, "delegations", "asks", ask, "answer"] => {
             post && is_uuid(agent) && is_uuid(ask)
         }
         ["agents", agent, "delegations", id] => get && is_uuid(agent) && is_uuid(id),
-        ["agents", agent, "delegations", id, "cancel"] => post && is_uuid(agent) && is_uuid(id),
+        ["agents", agent, "delegations", id, "cancel" | "undo-stop"] => {
+            post && is_uuid(agent) && is_uuid(id)
+        }
         _ => false,
     };
     if !ok {
@@ -196,6 +206,12 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         None => Some(route.to_string()),
         Some(query)
             if is_delegation_list(&parts, get) && is_delegation_list_query(query, by_key) =>
+        {
+            Some(format!("{route}?{query}"))
+        }
+        Some(query)
+            if matches!(parts.as_slice(), ["agents", _, "delegations", "since"])
+                && is_since_query(query) =>
         {
             Some(format!("{route}?{query}"))
         }
@@ -487,6 +503,25 @@ mod tests {
             &format!("agents/-/delegations/{id}?agentPubkey={key}")
         )
         .is_none());
+        // Since you last looked, seen and Undo Stop.
+        let since = format!("{list}/since");
+        assert_eq!(allowed_path("GET", &since), Some(since.clone()));
+        let since_thread = format!("{since}?threadId={id}");
+        assert_eq!(
+            allowed_path("GET", &since_thread),
+            Some(since_thread.clone())
+        );
+        assert!(allowed_path("GET", &format!("{since}?threadId=x")).is_none());
+        assert!(allowed_path("GET", &format!("{since}?threadId={id}&x=1")).is_none());
+        assert!(allowed_path("GET", &format!("{since}?agentPubkey={key}")).is_none());
+        assert!(allowed_path("POST", &since).is_none());
+        assert!(allowed_path("POST", &format!("{list}/seen")).is_some());
+        assert!(allowed_path("GET", &format!("{list}/seen")).is_none());
+        assert!(allowed_path("POST", &format!("{list}/seen?threadId={id}")).is_none());
+        assert!(allowed_path("POST", &format!("{list}/{id}/undo-stop")).is_some());
+        assert!(allowed_path("GET", &format!("{list}/{id}/undo-stop")).is_none());
+        assert!(allowed_path("POST", &format!("{list}/not-an-id/undo-stop")).is_none());
+        assert!(allowed_path("POST", "agents/-/delegations/seen").is_none());
         // The owner chat head, for the pending ack.
         let chat = format!("agents/{agent}/chat?limit=1");
         assert_eq!(allowed_path("GET", &chat), Some(chat.clone()));
