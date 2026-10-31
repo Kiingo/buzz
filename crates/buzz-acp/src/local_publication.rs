@@ -92,6 +92,28 @@ pub(crate) struct LocalPublicationIntent {
     /// tags. Status events stay anchored to `reply_to_event_id`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub top_level: bool,
+    /// Reply buttons for chat (`buzz-action` tag values
+    /// `[action_id, label, send_text, style, ref]`, docs/agent-dm-markers.md
+    /// §5), exactly as the bridge saved them and hashed into the runtime
+    /// authorization. A tap sends `send_text` tagged `["buzz-action-ref", ref]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<Vec<String>>,
+}
+
+/// The bridge's limits for one saved `buzz-action` value (mirrors the API's
+/// `isBuzzActionTag`): five non-empty fields of at most 200 characters with no
+/// tab or line break, the style `primary` or `secondary`; at most four.
+const MAX_PUBLICATION_ACTIONS: usize = 4;
+const MAX_PUBLICATION_ACTION_FIELD_CHARS: usize = 200;
+
+fn publication_action_is_valid(action: &[String]) -> bool {
+    action.len() == 5
+        && action.iter().all(|field| {
+            !field.is_empty()
+                && field.chars().count() <= MAX_PUBLICATION_ACTION_FIELD_CHARS
+                && !field.contains(['\r', '\n', '\t'])
+        })
+        && matches!(action[3].as_str(), "primary" | "secondary")
 }
 
 #[derive(Debug, Clone)]
@@ -642,6 +664,19 @@ impl LocalPublicationWorker {
             parent_event_id: root,
         };
         let builder = if publication_event_kind(intent) == 9 {
+            // Tag order is the bridge's template order: d, buttons, runtime.
+            let mut extra_tags = vec![vec!["d".to_string(), fence_tag_value.clone()]];
+            for action in &intent.actions {
+                let mut tag = vec!["buzz-action".to_string()];
+                tag.extend(action.iter().cloned());
+                extra_tags.push(tag);
+            }
+            extra_tags.push(vec![
+                AUTHORIZATION_TAG.to_string(),
+                runtime_authorization
+                    .ok_or("publication runtime authorization missing")?
+                    .to_string(),
+            ]);
             buzz_sdk::build_message_with_extra_tags(
                 channel_id,
                 &intent.content,
@@ -649,15 +684,7 @@ impl LocalPublicationWorker {
                 &[],
                 false,
                 &[],
-                &[
-                    vec!["d".to_string(), fence_tag_value.clone()],
-                    vec![
-                        AUTHORIZATION_TAG.to_string(),
-                        runtime_authorization
-                            .ok_or("publication runtime authorization missing")?
-                            .to_string(),
-                    ],
-                ],
+                &extra_tags,
             )
             .map_err(|error| format!("publication build failed: {error}"))?
         } else {
@@ -979,6 +1006,16 @@ fn validate_intent(intent: &LocalPublicationIntent, rest: &RestClient) -> Result
         && (intent.thread_root_event_id.is_some() || publication_event_kind(intent) != 9)
     {
         return Err("only unthreaded chat can be published top-level".to_string());
+    }
+    if !intent.actions.is_empty()
+        && (publication_event_kind(intent) != 9
+            || intent.actions.len() > MAX_PUBLICATION_ACTIONS
+            || !intent
+                .actions
+                .iter()
+                .all(|action| publication_action_is_valid(action)))
+    {
+        return Err("publication actions are invalid".to_string());
     }
     Ok(())
 }

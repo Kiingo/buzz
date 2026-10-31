@@ -36,6 +36,11 @@ pub(super) fn authorization_response(
             intent["fence_id"].as_str().unwrap()
         )
     ]));
+    for action in intent["actions"].as_array().into_iter().flatten() {
+        let mut tag = vec![serde_json::json!("buzz-action")];
+        tag.extend(action.as_array().unwrap().iter().cloned());
+        tags.push(serde_json::Value::Array(tag));
+    }
     let template = serde_json::json!([
         0,
         intent["agent_public_key"],
@@ -91,6 +96,7 @@ pub(super) fn intent(agent_public_key: String) -> LocalPublicationIntent {
         publication_kind: "final".to_string(),
         content: "Done".to_string(),
         top_level: false,
+        actions: Vec::new(),
     }
 }
 
@@ -1819,4 +1825,137 @@ async fn recovery_transport_errors_name_timeout_and_connect_causes() {
         .unwrap_err();
     let detail = transport_error_detail(&refused);
     assert!(detail.starts_with("connect failed: "), "{detail}");
+}
+
+#[test]
+fn reply_buttons_are_chat_only_bounded_and_omitted_by_default() {
+    let keys = Keys::generate();
+    let plain = intent(keys.public_key().to_hex());
+    assert!(serde_json::to_value(&plain)
+        .unwrap()
+        .get("actions")
+        .is_none());
+    let button = |id: &str, style: &str| {
+        vec![
+            id.to_string(),
+            "Approve".to_string(),
+            "Approve".to_string(),
+            style.to_string(),
+            format!("kiingo-buzz-approval:v1:{}:approve", "4".repeat(8)),
+        ]
+    };
+    let mut with_buttons = plain.clone();
+    with_buttons.publication_kind = "action".into();
+    with_buttons.actions = vec![button("approve", "primary"), button("reject", "secondary")];
+    assert!(validate_intent(&with_buttons, &rest(keys.clone())).is_ok());
+    let value = serde_json::to_value(&with_buttons).unwrap();
+    assert_eq!(value["actions"][0][0], "approve");
+    assert_eq!(
+        serde_json::from_value::<LocalPublicationIntent>(value)
+            .unwrap()
+            .actions,
+        with_buttons.actions
+    );
+    for broken in [
+        vec![button("a", "loud")],
+        vec![vec!["a".to_string(); 4]],
+        vec![{
+            let mut action = button("a", "primary");
+            action[1] = "two\nlines".into();
+            action
+        }],
+        vec![{
+            let mut action = button("a", "primary");
+            action[4] = "r".repeat(201);
+            action
+        }],
+        (0..5)
+            .map(|index| button(&format!("a{index}"), "primary"))
+            .collect(),
+    ] {
+        let mut invalid = with_buttons.clone();
+        invalid.actions = broken;
+        assert!(validate_intent(&invalid, &rest(keys.clone())).is_err());
+    }
+    let mut status = with_buttons;
+    status.publication_kind = "progress".into();
+    assert!(validate_intent(&status, &rest(keys)).is_err());
+}
+
+#[tokio::test]
+async fn reply_buttons_are_signed_as_buzz_action_tags_inside_the_authorized_template() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let keys = Keys::generate();
+        let mut saved = intent(keys.public_key().to_hex());
+        saved.publication_kind = "action".into();
+        saved.actions = vec![
+            vec![
+                "approve".into(),
+                "Approve".into(),
+                "Approve".into(),
+                "primary".into(),
+                "kiingo-buzz-approval:v1:ref:approve".into(),
+            ],
+            vec![
+                "reject".into(),
+                "Reject".into(),
+                "Reject".into(),
+                "secondary".into(),
+                "kiingo-buzz-approval:v1:ref:reject".into(),
+            ],
+        ];
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let worker = LocalPublicationWorker {
+            rest: RestClient {
+                base_url: base.clone(),
+                ..rest(keys.clone())
+            },
+            community_id: saved.community_id.clone(),
+            completion_api_base_url: base,
+            internal_token: "buttons-test-token".into(),
+            reconcile_reactions: false,
+            retry_pacing: Default::default(),
+        };
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (_, body) = receive_http(&mut stream).await;
+            respond_http(&mut stream, 200, authorization_response(&body, true)).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, _) = receive_http(&mut stream).await;
+            assert!(headers.starts_with("POST /query "));
+            respond_http(&mut stream, 200, serde_json::json!([])).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, body) = receive_http(&mut stream).await;
+            assert!(headers.starts_with("POST /events "));
+            let event: nostr::Event = serde_json::from_value(body).unwrap();
+            event.verify().unwrap();
+            respond_http(&mut stream, 200, serde_json::json!({"accepted": true})).await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, _) = receive_http(&mut stream).await;
+            assert!(headers.contains("/complete "));
+            respond_http(&mut stream, 200, serde_json::json!({"status": "published"})).await;
+            event
+        });
+        worker.publish(&saved).await.unwrap().unwrap();
+        let event = server.await.unwrap();
+        let names: Vec<&str> = event
+            .tags
+            .iter()
+            .filter_map(|tag| tag.as_slice().first().map(String::as_str))
+            .collect();
+        assert_eq!(
+            names,
+            ["h", "e", "d", "buzz-action", "buzz-action", "runtime"]
+        );
+        let buttons: Vec<Vec<String>> = event
+            .tags
+            .iter()
+            .filter(|tag| tag.as_slice().first().map(String::as_str) == Some("buzz-action"))
+            .map(|tag| tag.as_slice()[1..].to_vec())
+            .collect();
+        assert_eq!(buttons, saved.actions);
+    })
+    .await
+    .expect("bounded reply-button publication");
 }
