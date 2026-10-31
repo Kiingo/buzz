@@ -83,6 +83,9 @@ jobs:
               - 'scripts/model-capabilities.json'
               - 'scripts/normative-corpus.json'
               - 'desktop/**'
+              # desktop `pnpm check` compares the desktop guest owner-only
+              # list with this mobile copy (check:guest-owner-sources).
+              - 'mobile/lib/shared/guest_access/guest_owner_copy.dart'
               - 'pnpm-lock.yaml'
             desktop-rust:
               - 'desktop/src-tauri/**'

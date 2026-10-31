@@ -20,10 +20,31 @@ const desktopRoot = path.resolve(
 const read = (relative) =>
   readFileSync(path.resolve(desktopRoot, relative), "utf8");
 
+// Kiingo 79 LOW: a constant, spread or other non-literal entry would be
+// skipped by the item regex. Count the elements structurally (comments and a
+// trailing comma ignored) and fail closed unless each is one string literal.
 const listIn = (text, blockRe, itemRe, where) => {
   const block = text.match(blockRe);
   if (!block) throw new Error(`owner-only source list not found in ${where}`);
-  return [...block[1].matchAll(itemRe)].map((match) => match[1]);
+  const body = block[1]
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  const elements = body
+    .split(",")
+    .map((element) => element.trim())
+    .filter((element) => element !== "");
+  const items = [...body.matchAll(itemRe)].map((match) => match[1]);
+  const literal = new RegExp(`^${itemRe.source}$`, "u");
+  if (
+    elements.length === 0 ||
+    items.length !== elements.length ||
+    !elements.every((element) => literal.test(element))
+  ) {
+    throw new Error(
+      `owner-only source list in ${where} has ${elements.length} element(s) but ${items.length} plain string literal(s); every entry must be a literal`,
+    );
+  }
+  return items;
 };
 
 const digest = (list) =>
