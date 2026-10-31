@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 9bead1b8e2a179fc0d6d93a384d86d28e66ddf51; do not edit here.
+// Generated from the Kiingo surface renderer packages at 5736645688767c7e713cc125961539139af6ba91; do not edit here.
 import {
   asBool,
   asInt,
@@ -871,21 +871,33 @@ export const sentRecipientLabel = (recipient: SentRecipient): string => {
 };
 
 /**
- * "To dana@acme.com (Dana Lee), sam@acme.com · Cc … · Bcc …": the sent row's recipient
- * line. Empty Cc and Bcc are left out.
+ * "To dana@acme.com (Dana Lee), sam@acme.com · Cc …": the sent row's
+ * recipient line. Empty Cc is left out. Bcc only with `bcc: true`, for the
+ * sender's own expanded view (79 SHOULD-DISMISSED-SHOWS-BCC: Bcc never
+ * shows on the compact row; the server sends it to the sender alone).
  */
-export const sentRecipientsLine = (sent: SentEmail): string => {
+export const sentRecipientsLine = (
+  sent: SentEmail,
+  options: { bcc?: boolean } = {},
+): string => {
   const list = (recipients: SentRecipient[]) =>
     recipients.map(sentRecipientLabel).join(", ");
   const parts = [`To ${list(sent.to) || "no one"}`];
   if (sent.cc.length) {
     parts.push(`Cc ${list(sent.cc)}`);
   }
-  if (sent.bcc.length) {
+  if (options.bcc && sent.bcc.length) {
     parts.push(`Bcc ${list(sent.bcc)}`);
   }
   return parts.join(" · ");
 };
+
+/**
+ * A dismissed or closed sent card is a plain "Sent": no recipients, no
+ * subject, no body (79 SHOULD-DISMISSED-SHOWS-BCC).
+ */
+export const sentEmailIsPlain = (surface: Surface): boolean =>
+  surface.state === "dismissed" || surface.state === "closed";
 
 export const isOver = (surface: Surface): boolean =>
   surface.state === "dismissed" || surface.state === "closed";

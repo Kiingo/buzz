@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 9bead1b8e2a179fc0d6d93a384d86d28e66ddf51; do not edit here.
+// Generated from the Kiingo surface renderer packages at 5736645688767c7e713cc125961539139af6ba91; do not edit here.
 import { useId, useState, type ReactNode } from "react";
 import { formatDateText, sentRecipientsLine, type SentEmail } from "../core";
 import { cn } from "./cn";
@@ -11,21 +11,44 @@ import { toneText } from "./ui";
  * it's sent?"): a check, "Sent", the recipients, the subject and the sent
  * time, all from the server's sent record (never the agent's words). The row
  * is a button that shows the card read-only below it: no Send, no edits.
+ * Bcc shows only open; a dismissed or closed card is a plain Sent.
  */
 export const SentEmailRow = ({
   sent,
   initiallyOpen = false,
+  plain = false,
   children,
 }: {
   sent: SentEmail;
   initiallyOpen?: boolean;
+  /**
+   * A dismissed or closed card: a plain "Sent", no recipients, subject or
+   * body, and nothing to open (79 SHOULD-DISMISSED-SHOWS-BCC).
+   */
+  plain?: boolean;
   /** The card body, drawn read-only when open. */
   children: ReactNode;
 }) => {
   const [open, setOpen] = useState(initiallyOpen);
   const bodyId = useId();
+  if (plain) {
+    return (
+      <p
+        className="flex items-center gap-2 text-sm text-muted-foreground"
+        data-surface-sent=""
+      >
+        <Glyphs.success
+          aria-hidden
+          className={cn("h-4 w-4 shrink-0", toneText("success"))}
+        />
+        Sent
+      </p>
+    );
+  }
   const time = sent.at ? formatDateText(sent.at) : undefined;
-  const recipients = sentRecipientsLine(sent);
+  // Bcc only open: the compact row never shows it (79), and the server
+  // sends it to the sender alone.
+  const recipients = sentRecipientsLine(sent, { bcc: open });
   const Chevron = open ? Glyphs.down : Glyphs.right;
   return (
     <div className="flex flex-col gap-2">

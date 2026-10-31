@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 9bead1b8e2a179fc0d6d93a384d86d28e66ddf51; do not edit here.
+// Generated from the Kiingo surface renderer packages at 5736645688767c7e713cc125961539139af6ba91; do not edit here.
 import {
   Component,
   useCallback,
@@ -14,6 +14,7 @@ import {
   acceptsTaps,
   openableUrl,
   ROOT,
+  sentEmailIsPlain,
   sentEmailOf,
   unknownTypes,
   urlHost,
@@ -214,7 +215,11 @@ export const SurfaceView = ({
             ) : null}
           </header>
           {sent ? (
-            <SentEmailRow sent={sent} initiallyOpen={mode === "expanded"}>
+            <SentEmailRow
+              sent={sent}
+              initiallyOpen={mode === "expanded"}
+              plain={sentEmailIsPlain(surface)}
+            >
               {body}
             </SentEmailRow>
           ) : over ? (
