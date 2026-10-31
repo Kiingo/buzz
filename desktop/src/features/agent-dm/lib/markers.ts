@@ -385,7 +385,22 @@ export type AgentQuestionItem = {
   options: AgentQuestionOption[];
 };
 
-export type AgentQuestion = { askId: string; items: AgentQuestionItem[] };
+export type AgentQuestion = {
+  askId: string;
+  items: AgentQuestionItem[];
+  /** The ask revision the card shows (`buzz-question-revision`); a tap
+   * echoes it so an old card never answers a revised ask. */
+  revision?: string;
+};
+
+/** The card's `["buzz-question-revision", askId, n]`, when it is for this
+ * ask and well formed; anything else reads as no revision. */
+function questionRevision(tags: Tags, askId: string): string | undefined {
+  const tag = firstTag(tags, "buzz-question-revision");
+  return tag?.[1] === askId && tag[2] && REVISION_RE.test(tag[2])
+    ? tag[2]
+    : undefined;
+}
 
 /** Strict: any malformed question or option drops the whole card. */
 export function parseQuestion(tags: Tags): AgentQuestion | null {
@@ -438,7 +453,8 @@ export function parseQuestion(tags: Tags): AgentQuestion | null {
       description: description.trim() || null,
     });
   }
-  return { askId, items };
+  const revision = questionRevision(tags, askId);
+  return revision ? { askId, items, revision } : { askId, items };
 }
 
 export type AgentQuestionStateValue = "answered" | "closed";

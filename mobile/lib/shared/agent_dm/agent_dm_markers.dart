@@ -456,7 +456,15 @@ class AgentDmQuestionCard {
   /// One to four questions, in order.
   final List<AgentDmQuestion> questions;
 
-  const AgentDmQuestionCard({required this.askId, required this.questions});
+  /// The ask revision the card shows (`buzz-question-revision`), or null.
+  /// An answer echoes it so an old card never answers a revised ask.
+  final String? revision;
+
+  const AgentDmQuestionCard({
+    required this.askId,
+    required this.questions,
+    this.revision,
+  });
 
   /// A single single-select question sends on tap.
   bool get sendsOnTap => questions.length == 1 && !questions.single.multi;
@@ -516,7 +524,21 @@ AgentDmQuestionCard? readAgentDmQuestionCard(List<List<String>> tags) {
   return AgentDmQuestionCard(
     askId: ask[1],
     questions: List.unmodifiable(questions),
+    revision: _questionRevision(tags, ask[1]),
   );
+}
+
+final _revision = RegExp(r'^[1-9][0-9]{0,8}$');
+
+/// The card's `["buzz-question-revision", askId, n]` when it is for this ask
+/// and well formed; anything else reads as no revision (the card still
+/// draws).
+String? _questionRevision(List<List<String>> tags, String askId) {
+  final tag = _single(tags, 'buzz-question-revision', 3);
+  if (tag == null || tag[1] != askId || !_revision.hasMatch(tag[2])) {
+    return null;
+  }
+  return tag[2];
 }
 
 /// The terminal state a `buzz-question-state` event gives a card.

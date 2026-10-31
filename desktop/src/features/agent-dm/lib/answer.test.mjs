@@ -97,3 +97,36 @@ test("Other is refused where the question does not allow it", () => {
   assert.deepEqual(setOtherText({}, days, "x"), {});
   assert.deepEqual(toggleOption({}, days, "Fri"), {}, "unknown labels ignored");
 });
+
+test("the card's revision rides on the answer, so an old card never answers a revised ask", () => {
+  const card = (revisionTag) =>
+    parseQuestion([
+      ["buzz-question", "ask-9"],
+      ...(revisionTag ? [revisionTag] : []),
+      ["buzz-question-item", "q1", "Which plan?", "", "0", "0"],
+      ["buzz-question-option", "q1", "Pro", ""],
+    ]);
+  const revised = card(["buzz-question-revision", "ask-9", "4"]);
+  assert.equal(revised.revision, "4");
+  const pick = toggleOption({}, revised.items[0], "Pro");
+  assert.deepEqual(buildAnswerMessage(revised, pick).tags[0], [
+    "buzz-answer",
+    "ask-9",
+    "4",
+  ]);
+  // No revision, one for another ask, or a malformed one: none is echoed.
+  for (const tag of [
+    null,
+    ["buzz-question-revision", "ask-1", "4"],
+    ["buzz-question-revision", "ask-9", "0"],
+    ["buzz-question-revision", "ask-9", "x"],
+  ]) {
+    const plain = card(tag);
+    assert.equal(plain.revision, undefined);
+    assert.deepEqual(
+      buildAnswerMessage(plain, toggleOption({}, plain.items[0], "Pro"))
+        .tags[0],
+      ["buzz-answer", "ask-9"],
+    );
+  }
+});

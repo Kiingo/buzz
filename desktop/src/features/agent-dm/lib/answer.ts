@@ -100,7 +100,11 @@ export function buildAnswerMessage(
   selection: AnswerSelection,
 ): AnswerMessage | null {
   const lines: string[] = [];
-  const tags: string[][] = [["buzz-answer", question.askId]];
+  const tags: string[][] = [
+    question.revision
+      ? ["buzz-answer", question.askId, question.revision]
+      : ["buzz-answer", question.askId],
+  ];
   for (const item of question.items) {
     const pick = pickFor(selection, item.qid);
     const text = answerTextFor(item, pick);

@@ -224,6 +224,9 @@ The agent asks the person a question with options and waits for the answer.
 
 - Kind `9` (a normal agent reply; it notifies and pushes like one).
 - `["buzz-question", <ask_id>]`
+- Optional: `["buzz-question-revision", <ask_id>, <n>]`, the ask revision the
+  card shows (a positive integer). It is its own tag so a client that reads
+  `buzz-question` at exactly two values still draws the card.
 - 1 to 4 questions, in order:
   `["buzz-question-item", <qid>, <question>, <header or "">, <multi 0|1>, <allow_other 0|1>]`
 - 0 to 8 options per question, in order:
@@ -241,14 +244,18 @@ Answering: a tap sends one user-signed kind 9 top-level message in the DM.
 - One question: the content is the chosen label (several labels for a
   multi-select joined by ", "), or the typed "Other" text.
 - Several questions: one line per question, `<n>. <answer>`, in question order.
-- Tags: `["buzz-answer", <ask_id>]` and, per question,
+- Tags: `["buzz-answer", <ask_id>]`, or `["buzz-answer", <ask_id>, <n>]`
+  when the card had a `buzz-question-revision` for that ask, and, per question,
   `["buzz-answer-item", <qid>, <label>, ...]` or
   `["buzz-answer-other", <qid>, <text>]`.
 - Kiingo reads these tags as provenance only: a message that carries a
   `buzz-answer` tag answers that ask as a tapped pick (the labels checked
   against the ask's own options), never as typed text, and is never read
-  as a command. The content stays the answer for every other client and
-  runtime, which may ignore the tags.
+  as a command. The tap must echo the card's revision: Kiingo answers only
+  a card it published to that DM at that revision, and a tap without one,
+  or with an old one after the ask was revised, is kept and not answered.
+  The content stays the answer for every other client and runtime, which
+  may ignore the tags.
 
 The card shows "Answered" after this client sends an answer, or after any
 `buzz-answer` message for the ask from the DM's other member, and "Closed"

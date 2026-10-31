@@ -52,7 +52,7 @@ AgentDmAnswer? buildAgentDmAnswer(
 ) {
   final answers = <String>[];
   final tags = <List<String>>[
-    ['buzz-answer', card.askId],
+    ['buzz-answer', card.askId, ?card.revision],
   ];
   for (final question in card.questions) {
     final selection = selections[question.qid];

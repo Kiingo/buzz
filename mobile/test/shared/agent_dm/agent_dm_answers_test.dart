@@ -38,6 +38,41 @@ void main() {
     ]);
   });
 
+  // An old card never answers a revised ask (79 LOW-79-TAP-REVISION-CLAIM).
+  test('the card revision rides on the answer', () {
+    final revised = readAgentDmQuestionCard(const [
+      ['buzz-question', 'ask-1'],
+      ['buzz-question-revision', 'ask-1', '4'],
+      ['buzz-question-item', 'q1', 'Ship it?', '', '0', '0'],
+      ['buzz-question-option', 'q1', 'Yes', ''],
+    ])!;
+    expect(revised.revision, '4');
+    final answer = buildAgentDmAnswer(revised, {
+      'q1': const AgentDmAnswerSelection(labels: {'Yes'}),
+    })!;
+    expect(answer.tags.first, ['buzz-answer', 'ask-1', '4']);
+    for (final tag in const [
+      ['buzz-question-revision', 'ask-2', '4'],
+      ['buzz-question-revision', 'ask-1', '0'],
+      ['buzz-question-revision', 'ask-1', 'x'],
+      ['buzz-question-revision', 'ask-1'],
+    ]) {
+      final plain = readAgentDmQuestionCard([
+        const ['buzz-question', 'ask-1'],
+        tag,
+        const ['buzz-question-item', 'q1', 'Ship it?', '', '0', '0'],
+        const ['buzz-question-option', 'q1', 'Yes', ''],
+      ])!;
+      expect(plain.revision, isNull, reason: tag.join(' '));
+      expect(
+        buildAgentDmAnswer(plain, {
+          'q1': const AgentDmAnswerSelection(labels: {'Yes'}),
+        })!.tags.first,
+        ['buzz-answer', 'ask-1'],
+      );
+    }
+  });
+
   test('a multi-select joins labels with ", " in option order', () {
     final answer = buildAgentDmAnswer(multi, {
       'q1': const AgentDmAnswerSelection(labels: {'Wed', 'Mon'}),
