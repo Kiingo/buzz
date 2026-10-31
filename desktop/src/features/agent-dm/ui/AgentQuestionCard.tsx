@@ -19,7 +19,11 @@ import {
   toggleOther,
   type AnswerSelection,
 } from "../lib/answer";
-import { parseQuestion, type AgentQuestionItem } from "../lib/markers";
+import {
+  parseQuestion,
+  type AgentQuestion,
+  type AgentQuestionItem,
+} from "../lib/markers";
 import {
   getAgentDmStateVersion,
   isQuestionAnsweredLocally,
@@ -28,7 +32,7 @@ import {
 } from "../lib/registry";
 import { sendAgentDmTaggedMessage } from "../lib/send";
 
-type CardStatus = "open" | "answered" | "closed";
+export type CardStatus = "open" | "answered" | "closed";
 
 /** Answered beats open; a closing state event beats both. */
 export function questionCardStatus(
@@ -53,9 +57,6 @@ export function AgentQuestionCard({
   );
   const queryClient = useQueryClient();
   const senderPubkey = useIdentityQuery().data?.pubkey;
-  const [selection, setSelection] = React.useState<AnswerSelection>({});
-  const [sending, setSending] = React.useState(false);
-  const titleId = React.useId();
   React.useSyncExternalStore(
     subscribeAgentDmState,
     getAgentDmStateVersion,
@@ -63,10 +64,47 @@ export function AgentQuestionCard({
   );
   if (!question) return null;
 
-  const status = questionCardStatus(
-    message.agentDmQuestionState,
-    isQuestionAnsweredLocally(message.id),
+  return (
+    <QuestionCardView
+      onSend={async (answer) => {
+        await sendAgentDmTaggedMessage({
+          queryClient,
+          channelId,
+          senderPubkey,
+          content: answer.content,
+          markerTags: answer.tags,
+        });
+        markQuestionAnsweredLocally(message.id);
+      }}
+      question={question}
+      status={questionCardStatus(
+        message.agentDmQuestionState,
+        isQuestionAnsweredLocally(message.id),
+      )}
+    />
   );
+}
+
+/**
+ * The ask card itself: options, "Other" text and Send. The agent's own
+ * questions answer with a DM message; a worker's ask (delegation board)
+ * answers through the host. `title` replaces "Question", e.g.
+ * "from worker: <title>".
+ */
+export function QuestionCardView({
+  question,
+  status,
+  title,
+  onSend,
+}: {
+  question: AgentQuestion;
+  status: CardStatus;
+  title?: string;
+  onSend: (answer: { content: string; tags: string[][] }) => Promise<void>;
+}) {
+  const [selection, setSelection] = React.useState<AnswerSelection>({});
+  const [sending, setSending] = React.useState(false);
+  const titleId = React.useId();
   const locked = status !== "open" || sending;
   const immediate = sendsOnTap(question);
 
@@ -75,14 +113,7 @@ export function AgentQuestionCard({
     if (!answer || locked) return;
     setSending(true);
     try {
-      await sendAgentDmTaggedMessage({
-        queryClient,
-        channelId,
-        senderPubkey,
-        content: answer.content,
-        markerTags: answer.tags,
-      });
-      markQuestionAnsweredLocally(message.id);
+      await onSend(answer);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to send your answer.",
@@ -115,7 +146,7 @@ export function AgentQuestionCard({
           className="text-xs font-semibold text-muted-foreground"
           id={titleId}
         >
-          {question.items.length === 1 ? "Question" : "Questions"}
+          {title ?? (question.items.length === 1 ? "Question" : "Questions")}
         </h4>
         {status === "open" ? null : (
           <span

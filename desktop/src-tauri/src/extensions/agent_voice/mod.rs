@@ -12,7 +12,9 @@
 //!   `X-Buzz-Community`, so the key never reaches the webview;
 //! - only the call routes are reachable (start, view, feed long-poll, end,
 //!   stop, answers and the per-ask routes, preferences, the voice provider
-//!   settings and a Gemini call's stream-token), nothing else; the
+//!   settings and a Gemini call's stream-token) and the owner's delegation
+//!   board (cards and their long-poll, one delegation, a worker ask's
+//!   answer, stop one, stop all), nothing else; the
 //!   request URL is parsed once, its normalised path checked, and that same
 //!   URL is signed and sent;
 //! - answers are capped at 2 MiB (declared length first, then while read);
@@ -97,6 +99,11 @@ fn is_settings_query(query: &str) -> bool {
     }
 }
 
+/// `GET agents/<uuid>/delegations`, the one delegation route with a query.
+fn is_delegation_list(parts: &[&str], get: bool) -> bool {
+    get && matches!(parts, ["agents", agent, "delegations"] if is_uuid(agent))
+}
+
 /// The call route `path` (relative to the mount) if it is one this command
 /// may reach, else `None`. A query string is allowed only on the feed and
 /// the settings read.
@@ -124,6 +131,16 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         }
         ["calls", id, "asks", "state" | "cancel" | "tell-more" | "reply"] => post && is_uuid(id),
         ["calls", id, "human-asks", ask, "answer"] => post && is_uuid(id) && is_ask_id(ask),
+        // The owner's delegation board (delegation-driven agents §10.1):
+        // cards and their long-poll, one delegation, a worker's ask answer,
+        // stop one and stop all. The host answers only the agent's owner.
+        ["agents", agent, "delegations"] => get && is_uuid(agent),
+        ["agents", agent, "delegations", "cancel-all"] => post && is_uuid(agent),
+        ["agents", agent, "delegations", "asks", ask, "answer"] => {
+            post && is_uuid(agent) && is_uuid(ask)
+        }
+        ["agents", agent, "delegations", id] => get && is_uuid(agent) && is_uuid(id),
+        ["agents", agent, "delegations", id, "cancel"] => post && is_uuid(agent) && is_uuid(id),
         _ => false,
     };
     if !ok {
@@ -132,7 +149,7 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
     match query {
         None => Some(route.to_string()),
         Some(query)
-            if parts.last() == Some(&"feed")
+            if (parts.last() == Some(&"feed") || is_delegation_list(&parts, get))
                 && query.len() <= 200
                 && query.bytes().all(|b| {
                     b.is_ascii_alphanumeric()
@@ -360,6 +377,33 @@ mod tests {
         assert!(allowed_path("GET", "calls/not-a-call/feed").is_none());
         assert!(allowed_path("GET", &format!("calls/{CALL}/feed?rev=a b")).is_none());
         assert!(allowed_path("POST", "owner/agents/list").is_none());
+    }
+
+    #[test]
+    fn only_the_owner_delegation_routes_are_reachable() {
+        let agent = CALL;
+        let id = "0192a6b0-0000-7000-8000-0000000000de";
+        let list = format!("agents/{agent}/delegations");
+        assert_eq!(allowed_path("GET", &list), Some(list.clone()));
+        let poll = format!("{list}?includeFinished=true&rev=r%3A1&wait=20");
+        assert_eq!(allowed_path("GET", &poll), Some(poll.clone()));
+        assert!(allowed_path("POST", &format!("{list}/cancel-all")).is_some());
+        assert!(allowed_path("GET", &format!("{list}/{id}")).is_some());
+        assert!(allowed_path("POST", &format!("{list}/{id}/cancel")).is_some());
+        assert!(allowed_path("POST", &format!("{list}/asks/{id}/answer")).is_some());
+        // Other methods, routes, queries, ids and traversal stay closed.
+        assert!(allowed_path("POST", &list).is_none());
+        assert!(allowed_path("GET", &format!("{list}/cancel-all")).is_none());
+        assert!(allowed_path("GET", &format!("{list}/{id}?x=1")).is_none());
+        assert!(allowed_path("POST", &format!("{list}/{id}/message")).is_none());
+        assert!(allowed_path("POST", &format!("{list}/{id}/detach")).is_none());
+        assert!(allowed_path("GET", &format!("{list}/journal")).is_none());
+        assert!(allowed_path("GET", &format!("{list}/not-an-id")).is_none());
+        assert!(allowed_path("POST", &format!("{list}/asks/q1/answer")).is_none());
+        assert!(allowed_path("GET", "agents/default/delegations").is_none());
+        assert!(allowed_path("GET", &format!("{list}?rev=a b")).is_none());
+        assert!(allowed_path("GET", &format!("agents/{agent}/ledger")).is_none());
+        assert!(allowed_path("GET", &format!("{list}/../../calls")).is_none());
     }
 
     #[test]

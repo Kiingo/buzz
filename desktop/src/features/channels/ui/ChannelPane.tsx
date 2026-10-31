@@ -6,6 +6,7 @@ import { useMediaUpload } from "@/features/messages/lib/useMediaUpload";
 import { ComposerDockBackdrop } from "@/features/messages/ui/ComposerDockBackdrop";
 import { ComposerUploadProgressOverlay } from "@/features/messages/ui/ComposerUploadProgressOverlay";
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
+import { AgentDelegationDock } from "@/features/agent-dm/ui/AgentDelegationDock";
 import { ComposerTimeoutBanner } from "@/features/moderation/ui/ComposerTimeoutBanner";
 import { useTimeoutActive } from "@/features/moderation/lib/timeoutStore";
 import { isModerationDm } from "@/features/moderation/lib/moderationDm";
@@ -760,6 +761,10 @@ export const ChannelPane = React.memo(function ChannelPane({
                     </WelcomeComposerGuidanceLayer>
                   ) : null}
                   {timeoutActive ? <ComposerTimeoutBanner /> : null}
+                  <AgentDelegationDock
+                    channel={activeChannel}
+                    currentPubkey={currentPubkey}
+                  />
                   <ComposerDockBackdrop gutterClassName="inset-x-5" />
                   <MessageComposer
                     channelId={activeChannel?.id ?? null}

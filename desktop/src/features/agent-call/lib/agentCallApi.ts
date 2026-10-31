@@ -86,7 +86,8 @@ function nativeCode(error: unknown): string | null {
   }
 }
 
-async function request<T>(
+/** One signed request to the agent host's Buzz mount (the agent DM's other features use it too). */
+export async function request<T>(
   method: string,
   path: string,
   body?: unknown,

@@ -16,6 +16,7 @@ import {
 } from "@/features/profile/ui/ProfileAvatarWithStatus";
 import { AgentManagementMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
 import { AgentSessionsPicker } from "@/features/agent-dm/ui/AgentSessionsPicker";
+import { AgentDelegationHeader } from "@/features/agent-dm/ui/AgentDelegationHeader";
 import { AgentDmPrewarm } from "@/features/agent-dm/ui/AgentDmPrewarm";
 import { AgentCallButton } from "@/features/agent-call/ui/AgentCallButton";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
@@ -133,6 +134,10 @@ export function ChannelScreenHeader({
   const sessionsPicker =
     activeChannel?.channelType === "dm" && !isGroupDm && activeDmParticipant ? (
       <>
+        <AgentDelegationHeader
+          channel={activeChannel}
+          currentPubkey={currentPubkey}
+        />
         <AgentDmPrewarm
           agentPubkey={activeDmParticipant.pubkey}
           isAgentHint={activeDmParticipant.isAgent === true}

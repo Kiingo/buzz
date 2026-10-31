@@ -42,6 +42,7 @@ import {
 import { resetAgentWorkingSignal } from "@/features/agents/agentWorkingSignal";
 import { resetAgentSummaryCache } from "@/features/agent-dm/lib/agentSummary";
 import { resetAgentPrewarm } from "@/features/agent-dm/lib/agentPrewarm";
+import { resetDelegationStore } from "@/features/agent-dm/lib/delegationStore";
 import { resetAgentCall } from "@/features/agent-call/lib/agentCallController";
 import { resetSurfaceStore } from "@/features/surfaces/lib/surfaceStore";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
@@ -93,6 +94,7 @@ async function resetCommunityState({
   }
   resetSidebarRelayConnectionCardState();
   resetAgentSummaryCache();
+  resetDelegationStore();
   resetAgentPrewarm();
   resetAgentCall();
   resetSurfaceStore();
