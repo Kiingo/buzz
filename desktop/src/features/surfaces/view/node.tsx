@@ -1,10 +1,11 @@
-// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
+// Generated from the Kiingo surface renderer packages at 9bead1b8e2a179fc0d6d93a384d86d28e66ddf51; do not edit here.
 import type { ComponentType as ReactComponentType } from "react";
 import {
   childKey,
   isVisible,
   MAX_DEPTH,
   MAX_SURFACE_NODES,
+  sentEmailOf,
   type ChildRef,
   type ComponentType,
   type Pointer,
@@ -158,6 +159,14 @@ export const NewerAppRow = ({
   </p>
 );
 
+/** Action components a sent email card never draws. */
+const SENT_HIDDEN_TYPES: ReadonlySet<string> = new Set([
+  "Button",
+  "ActionBar",
+  "SuggestionChips",
+  "Menu",
+]);
+
 /** One component by id at one scope; hidden by `visibleWhen`, cut off past depth 12. */
 export const Node = ({
   componentId,
@@ -192,6 +201,11 @@ export const Node = ({
       ) : null;
     }
     nodes.seen.add(key);
+  }
+  // A sent email card is a read-only record of what went out (Ross,
+  // 2026-10-31): no Send, Revise or Discard, no chips or menus.
+  if (SENT_HIDDEN_TYPES.has(component.type) && sentEmailOf(context.surface)) {
+    return null;
   }
   const View = component.known
     ? viewFor(component.type as ComponentType)

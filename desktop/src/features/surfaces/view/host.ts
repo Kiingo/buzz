@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
+// Generated from the Kiingo surface renderer packages at 9bead1b8e2a179fc0d6d93a384d86d28e66ddf51; do not edit here.
 import { createContext, useContext } from "react";
 import {
   IMAGE_MIME_TYPES,
@@ -71,6 +71,20 @@ export type SurfaceHost = {
    * links through openUrl (SHOULD-GUB-DESKTOP-PDF-NO-FRAME-BLOB).
    */
   readFile?: (
+    fileId: string,
+    signal: AbortSignal,
+    maxBytes: number,
+  ) => Promise<FileAnswer>;
+  /**
+   * The text viewer's read of one Kiingo text or Markdown file (a FileList
+   * row, e.g. an email_draft card's long body) through the viewer's own
+   * session: the same `GET /api/files/:fileId/content` and read check as
+   * `readFile`, but for text, so no "%PDF-" check. The host reads at most
+   * `maxBytes` (`TEXT_FILE_MAX_BYTES`), streaming and stopping past it;
+   * the renderer checks the card's sha256 and that the bytes are UTF-8.
+   * Without it the row opens as a file entity, as before.
+   */
+  readTextFile?: (
     fileId: string,
     signal: AbortSignal,
     maxBytes: number,

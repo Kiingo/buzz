@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
+// Generated from the Kiingo surface renderer packages at 9bead1b8e2a179fc0d6d93a384d86d28e66ddf51; do not edit here.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ownEntry,
@@ -20,6 +20,7 @@ import {
   proxiedMediaUrl,
   repeatsSurfaceTitle,
   resolveProp,
+  textFileRef,
   urlHost,
   type EntityKey,
   type EntityType,
@@ -30,6 +31,7 @@ import { cn } from "./cn";
 import { useNodeContext, type NodeProps } from "./context";
 import { catalogIcon, ENTITY_ICONS, ENTITY_NOUNS, Glyphs } from "./icons";
 import { MarkdownText } from "./markdown";
+import { TextFileRow } from "./text-file";
 import { ProxyImage } from "./media";
 import {
   QuoteBox,
@@ -838,6 +840,7 @@ export const FileRow = ({
   item: JsonValue;
   outside?: boolean;
 }) => {
+  const host = useNodeContext().host;
   const record = isObject(item) ? item : {};
   const name = plainText(record.name, 200) ?? "File";
   const id = plainId(record.artifactId);
@@ -863,6 +866,12 @@ export const FileRow = ({
       </span>
     </span>
   );
+  // A text or Markdown file opens in the text viewer, read with the
+  // viewer's own session (`text-file.tsx`), when the host can read it.
+  const textFile = textFileRef(item);
+  if (textFile && host.readTextFile) {
+    return <TextFileRow file={textFile}>{content}</TextFileRow>;
+  }
   return id ? (
     <EntityChipRow entity={{ type: "file", id, title: name }}>
       {content}

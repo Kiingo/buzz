@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
+// Generated from the Kiingo surface renderer packages at 9bead1b8e2a179fc0d6d93a384d86d28e66ddf51; do not edit here.
 import {
   asBool,
   asInt,
@@ -248,12 +248,33 @@ export type SurfaceAction = {
   hidden?: true;
 };
 
+/**
+ * What a sent email_draft card sent (`status.sent`, server-written from the
+ * provider-confirmed send, never agent or user words).
+ */
+export type SurfaceSentEmail = {
+  /** When the provider sent it (ISO). */
+  at?: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  /** Absent for a reply that kept the thread's own subject. */
+  subject?: string;
+  messageId?: string;
+};
+
+/** `sent`: the email went out; `send_failed`: refused before anything went out. */
+export type SurfaceStatusKind = "sent" | "send_failed";
+
 export type SurfaceStatus = {
   text: string;
   tone: StatusTone;
   at?: string;
   actionId?: string;
   retryable: boolean;
+  kind?: SurfaceStatusKind;
+  /** With kind `sent`: what was sent. */
+  sent?: SurfaceSentEmail;
 };
 
 export type SurfaceLastEdit = {
@@ -492,6 +513,42 @@ export const decodeAction = (
   return action;
 };
 
+const SENT_ADDRESSES_MAX = 100;
+
+const decodeAddresses = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value
+        .slice(0, SENT_ADDRESSES_MAX)
+        .map((entry) => plainText(entry, 320))
+        .filter((entry): entry is string => entry !== undefined)
+    : [];
+
+/** Lenient: a sent record without a single recipient is no sent record. */
+const decodeSentEmail = (value: unknown): SurfaceSentEmail | undefined => {
+  if (!isObject(value)) {
+    return undefined;
+  }
+  const to = decodeAddresses(value.to);
+  const cc = decodeAddresses(value.cc);
+  const bcc = decodeAddresses(value.bcc);
+  if (to.length + cc.length + bcc.length === 0) {
+    return undefined;
+  }
+  const at = asString(value.at);
+  const subject = plainText(value.subject, 998);
+  const messageId = plainText(value.messageId, 500);
+  return {
+    ...(at ? { at } : {}),
+    to,
+    cc,
+    bcc,
+    ...(subject ? { subject } : {}),
+    ...(messageId ? { messageId } : {}),
+  };
+};
+
+const STATUS_KINDS = new Set<SurfaceStatusKind>(["sent", "send_failed"]);
+
 const decodeStatus = (value: unknown): SurfaceStatus | undefined => {
   const text = plainText(field(value, "text"), 500);
   if (!text || !isObject(value)) {
@@ -500,12 +557,16 @@ const decodeStatus = (value: unknown): SurfaceStatus | undefined => {
   const tone = asString(value.tone) as StatusTone | undefined;
   const at = asString(value.at);
   const actionId = plainId(value.actionId);
+  const kind = asString(value.kind) as SurfaceStatusKind | undefined;
+  const sent = kind === "sent" ? decodeSentEmail(value.sent) : undefined;
   return {
     text,
     tone: tone && STATUS_TONES.has(tone) ? tone : "info",
     ...(at ? { at } : {}),
     ...(actionId ? { actionId } : {}),
     retryable: value.retryable === true,
+    ...(kind && STATUS_KINDS.has(kind) ? { kind } : {}),
+    ...(sent ? { sent } : {}),
   };
 };
 
@@ -729,6 +790,102 @@ export const decodeSurface = (value: unknown): Surface | undefined => {
 
 export const isKnownCatalog = (surface: Surface): boolean =>
   surface.catalog === CATALOG_V1;
+
+/** One recipient of a sent email: the address, and its card name if any. */
+export type SentRecipient = { email: string; name?: string };
+
+/** A sent email_draft card's compact row (renderers collapse to it). */
+export type SentEmail = {
+  /** When the provider sent it (ISO), when known. */
+  at?: string;
+  to: SentRecipient[];
+  cc: SentRecipient[];
+  bcc: SentRecipient[];
+  subject: string | null;
+};
+
+const recipientNames = (value: unknown): Map<string, string> => {
+  const names = new Map<string, string>();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (isObject(item)) {
+        const email = asString(item.email)?.trim().toLowerCase();
+        const name = plainText(item.name, 200);
+        if (email && name && !names.has(email)) {
+          names.set(email, name);
+        }
+      }
+    }
+  }
+  return names;
+};
+
+/**
+ * The sent row of an email_draft card the server marked sent (status kind
+ * `sent` with its `sent` record), whatever its state (submitted, closed or
+ * dismissed), or null. Recipients are the exact sent addresses; a display
+ * name is the card's own name for that same address (its /to, /cc, /bcc
+ * data), matched case-insensitively. A `send_failed` card is never sent.
+ */
+export const sentEmailOf = (surface: Surface): SentEmail | null => {
+  const sent =
+    surface.status?.kind === "sent" ? surface.status.sent : undefined;
+  if (surface.template !== "email_draft" || !sent) {
+    return null;
+  }
+  const names = new Map<string, string>();
+  for (const key of ["to", "cc", "bcc"]) {
+    for (const [email, name] of recipientNames(surface.data[key])) {
+      if (!names.has(email)) {
+        names.set(email, name);
+      }
+    }
+  }
+  const named = (addresses: string[]): SentRecipient[] =>
+    addresses.map((email) => {
+      const name = names.get(email.trim().toLowerCase());
+      return name ? { email, name } : { email };
+    });
+  return {
+    ...(sent.at ? { at: sent.at } : {}),
+    to: named(sent.to),
+    cc: named(sent.cc),
+    bcc: named(sent.bcc),
+    subject: sent.subject ?? null,
+  };
+};
+
+/**
+ * How a sent recipient reads: its address first, always (79: a recipient is
+ * its address; the draft's author picks display names), then the card's name
+ * in parentheses when it is a plain name (no "@"-like character, not the
+ * address again): "dana@acme.com (Dana Lee)".
+ */
+export const sentRecipientLabel = (recipient: SentRecipient): string => {
+  const name = recipient.name?.trim();
+  return name &&
+    !/[@\uFF20\uFE6B]/u.test(name) &&
+    name.toLowerCase() !== recipient.email.trim().toLowerCase()
+    ? `${recipient.email} (${name})`
+    : recipient.email;
+};
+
+/**
+ * "To dana@acme.com (Dana Lee), sam@acme.com · Cc … · Bcc …": the sent row's recipient
+ * line. Empty Cc and Bcc are left out.
+ */
+export const sentRecipientsLine = (sent: SentEmail): string => {
+  const list = (recipients: SentRecipient[]) =>
+    recipients.map(sentRecipientLabel).join(", ");
+  const parts = [`To ${list(sent.to) || "no one"}`];
+  if (sent.cc.length) {
+    parts.push(`Cc ${list(sent.cc)}`);
+  }
+  if (sent.bcc.length) {
+    parts.push(`Bcc ${list(sent.bcc)}`);
+  }
+  return parts.join(" · ");
+};
 
 export const isOver = (surface: Surface): boolean =>
   surface.state === "dismissed" || surface.state === "closed";

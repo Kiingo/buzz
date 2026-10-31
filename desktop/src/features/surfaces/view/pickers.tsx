@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
+// Generated from the Kiingo surface renderer packages at 9bead1b8e2a179fc0d6d93a384d86d28e66ddf51; do not edit here.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   appendPointer,
@@ -347,10 +347,18 @@ export const RecipientInput = (props: FieldProps) => {
   const suggestions = useLookup(query, (text) =>
     context.controller.lookupRecipients(text),
   );
-  const labelOf = (item: JsonValue) =>
-    (isObject(item) ? plainText(item.name, 80) : undefined) ??
-    plainText(isObject(item) ? item.email : item, 320) ??
-    "?";
+  const nameOf = (item: JsonValue) =>
+    isObject(item) ? plainText(item.name, 80) : undefined;
+  const emailOf = (item: JsonValue) =>
+    plainText(isObject(item) ? item.email : item, 320);
+  // A display name is never shown alone: names come from drafts and agents,
+  // so "Dana Lee" (or one reading "dana@acme.com") always shows next to the
+  // address the email goes to (79, 2026-10-30).
+  const labelOf = (item: JsonValue) => {
+    const name = nameOf(item);
+    const email = emailOf(item);
+    return name && email ? `${name} <${email}>` : (email ?? name ?? "?");
+  };
   const addressOf = (item: JsonValue) => (isObject(item) ? item.email : item);
   const add = (item: JsonValue) => {
     const address = String(addressOf(item) ?? "").toLowerCase();
@@ -394,7 +402,21 @@ export const RecipientInput = (props: FieldProps) => {
                   className="h-3 w-3 text-amber-800"
                 />
               ) : null}
-              <span className="truncate">{labelOf(item)}</span>
+              {nameOf(item) && emailOf(item) ? (
+                <>
+                  <bdi className="min-w-0 truncate">{nameOf(item)}</bdi>
+                  <span
+                    className="shrink-0 text-muted-foreground"
+                    data-recipient-address
+                  >
+                    {`<${emailOf(item)}>`}
+                  </span>
+                </>
+              ) : (
+                <span className="truncate" data-recipient-address>
+                  {emailOf(item) ?? nameOf(item) ?? "?"}
+                </span>
+              )}
             </Chip>
           ))}
         </div>

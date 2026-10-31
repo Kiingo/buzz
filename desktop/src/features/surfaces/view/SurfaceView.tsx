@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at f674e04ba1130af309f8d467ccc7fc5a2efeba01; do not edit here.
+// Generated from the Kiingo surface renderer packages at 9bead1b8e2a179fc0d6d93a384d86d28e66ddf51; do not edit here.
 import {
   Component,
   useCallback,
@@ -14,6 +14,7 @@ import {
   acceptsTaps,
   openableUrl,
   ROOT,
+  sentEmailOf,
   unknownTypes,
   urlHost,
   VIEW_ONLY_HINT,
@@ -39,6 +40,7 @@ import {
 } from "./host";
 import { Glyphs } from "./icons";
 import { Node } from "./node";
+import { SentEmailRow } from "./sent";
 import { SurfaceButton, SurfaceDialog, toneText, ToneGlyph } from "./ui";
 
 /**
@@ -179,6 +181,20 @@ export const SurfaceView = ({
   const over = isOver(surface) && mode === "inline";
   const known = isKnownCatalog(surface);
   const collapsed = surface.display === "expanded" && mode === "inline";
+  // A sent email card collapses to its Sent row whatever its state (Ross,
+  // 2026-10-31); open, it shows the card read-only. A refused send
+  // (send_failed) is not sent: that card stays open and editable.
+  const sent = known ? sentEmailOf(surface) : null;
+  const body = (
+    <>
+      <SurfaceErrorBoundary webUrl={surface.webUrl} onOpen={openLink}>
+        <Node componentId={surface.root} scope={ROOT} depth={0} />
+      </SurfaceErrorBoundary>
+      {unknownTypes(surface).length > 0 ? (
+        <NewerAppNotice webUrl={surface.webUrl} onOpen={openLink} />
+      ) : null}
+    </>
+  );
 
   return (
     <SurfaceHostContext.Provider value={host}>
@@ -197,7 +213,11 @@ export const SurfaceView = ({
               <h3 className="text-sm font-semibold">{surface.title}</h3>
             ) : null}
           </header>
-          {over ? (
+          {sent ? (
+            <SentEmailRow sent={sent} initiallyOpen={mode === "expanded"}>
+              {body}
+            </SentEmailRow>
+          ) : over ? (
             <p className="text-sm text-muted-foreground">
               {surface.state === "dismissed" ? "Dismissed" : "Closed"}
             </p>
@@ -213,18 +233,12 @@ export const SurfaceView = ({
               Open
             </SurfaceButton>
           ) : (
-            <>
-              <SurfaceErrorBoundary webUrl={surface.webUrl} onOpen={openLink}>
-                <Node componentId={surface.root} scope={ROOT} depth={0} />
-              </SurfaceErrorBoundary>
-              {unknownTypes(surface).length > 0 ? (
-                <NewerAppNotice webUrl={surface.webUrl} onOpen={openLink} />
-              ) : null}
-            </>
+            body
           )}
           <Footer
             snapshot={snapshot}
             controller={controller}
+            sent={sent !== null}
             onRetry={(id) => perform(id, ROOT)}
             onOpen={openLink}
           />
@@ -364,11 +378,14 @@ const saveLine = (
 const Footer = ({
   snapshot,
   controller,
+  sent,
   onRetry,
   onOpen,
 }: {
   snapshot: ControllerSnapshot;
   controller: SurfaceController;
+  /** The card shows its Sent row: no status line twice, no Retry. */
+  sent: boolean;
   onRetry: (actionId: string) => void;
   onOpen: (url: string) => void;
 }) => {
@@ -379,7 +396,7 @@ const Footer = ({
     controller.editsDisabled &&
     !isOver(surface) &&
     (acceptsEdits(surface) || acceptsTaps(surface));
-  const status = surface.status;
+  const status = sent ? undefined : surface.status;
   const retry =
     status?.retryable &&
     status.actionId &&
