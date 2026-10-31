@@ -45,6 +45,9 @@ Widget? _viewFor(_NodeProps p) => switch (p.component.type) {
   _ => null,
 };
 
+/// Action components a sent email card never draws.
+const _sentHiddenTypes = {'Button', 'ActionBar', 'SuggestionChips', 'Menu'};
+
 /// A part this app can't draw (a newer catalog type). Never its raw props.
 class _NewerAppRow extends StatelessWidget {
   /// Another notice in the same style, else "needs a newer version".
@@ -94,6 +97,12 @@ class _Node extends StatelessWidget {
       return const SizedBox.shrink();
     }
     if (!component.known) return const _NewerAppRow();
+    // A sent email card is a read-only record of what went out (Ross,
+    // 2026-10-31): no Send, Revise or Discard, no chips or menus.
+    if (_sentHiddenTypes.contains(component.type) &&
+        sentEmailOf(surface) != null) {
+      return const SizedBox.shrink();
+    }
     final props = (component: component, scope: scope, depth: depth);
     final view = _viewFor(props) ?? const _NewerAppRow();
     return readsUntrusted(surface, component, scope)

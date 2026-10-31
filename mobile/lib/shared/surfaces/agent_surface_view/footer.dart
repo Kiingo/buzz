@@ -9,7 +9,8 @@ class _Footer extends StatelessWidget {
   Widget build(BuildContext context) {
     final scope = _SurfaceScope.of(context);
     final surface = scope.surface;
-    final status = surface.status;
+    // A sent card's Sent row already says it: no status line twice.
+    final status = sentEmailOf(surface) == null ? surface.status : null;
     final note = editedNote(surface, agentName: scope.agentName);
     final viewOnly =
         !isOver(surface) && (acceptsEdits(surface) || acceptsTaps(surface));

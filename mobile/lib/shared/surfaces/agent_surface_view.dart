@@ -36,6 +36,7 @@ part 'agent_surface_view/layout.dart';
 part 'agent_surface_view/markdown.dart';
 part 'agent_surface_view/node.dart';
 part 'agent_surface_view/scope.dart';
+part 'agent_surface_view/sent.dart';
 part 'agent_surface_view/ui.dart';
 
 /// An agent surface (`kiingo.ui/v1`) drawn view only, with the same meaning
@@ -76,8 +77,17 @@ class AgentSurfaceView extends StatelessWidget {
     final known = isKnownCatalog(surface);
     final collapsed = surface.display == SurfaceDisplay.expanded && !expanded;
     final muted = context.colors.onSurfaceVariant;
+    final sent = known ? sentEmailOf(surface) : null;
     final Widget body;
-    if (over) {
+    if (sent != null) {
+      // Sent (Ross, 2026-10-31): a compact row whatever the state, that
+      // opens to what was sent, read-only.
+      body = _SentEmailRow(
+        sent: sent,
+        initiallyOpen: expanded,
+        child: _Node(componentId: surface.root, scope: rootPointer, depth: 0),
+      );
+    } else if (over) {
       body = Text(
         surface.state == SurfaceState.dismissed ? 'Dismissed' : 'Closed',
         style: context.textTheme.bodyMedium?.copyWith(color: muted),

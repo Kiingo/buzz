@@ -202,13 +202,48 @@ class SurfaceAction {
 /// The status tone the server sets.
 enum SurfaceStatusTone { info, success, warning, danger }
 
+/// `sent`: the card's email went out; `sendFailed`: refused before
+/// anything went out (the card stays open and editable).
+enum SurfaceStatusKind { sent, sendFailed }
+
+/// What a sent email_draft card sent (`status.sent`), written by the server
+/// from the provider-confirmed send, never from anyone's words.
+@immutable
+class SurfaceSentEmail {
+  /// When the provider sent it (ISO 8601), when known.
+  final String? at;
+  final List<String> to;
+  final List<String> cc;
+  final List<String> bcc;
+
+  /// Null for a reply that kept the thread's own subject.
+  final String? subject;
+
+  const SurfaceSentEmail({
+    this.at,
+    required this.to,
+    this.cc = const [],
+    this.bcc = const [],
+    this.subject,
+  });
+}
+
 /// The server's status line.
 @immutable
 class SurfaceStatus {
   final String text;
   final SurfaceStatusTone tone;
+  final SurfaceStatusKind? kind;
 
-  const SurfaceStatus({required this.text, required this.tone});
+  /// With [kind] sent: what was sent.
+  final SurfaceSentEmail? sent;
+
+  const SurfaceStatus({
+    required this.text,
+    required this.tone,
+    this.kind,
+    this.sent,
+  });
 }
 
 /// The last change's author.
@@ -225,6 +260,9 @@ class SurfaceLastEdit {
 class Surface {
   final String id;
   final String catalog;
+
+  /// The template label (`email_draft`, …), or null.
+  final String? template;
   final String title;
   final SurfaceDisplay display;
   final String root;
@@ -261,6 +299,7 @@ class Surface {
   const Surface({
     required this.id,
     required this.catalog,
+    this.template,
     required this.title,
     required this.display,
     required this.root,
@@ -491,6 +530,7 @@ Surface? decodeSurface(Object? value) {
   return Surface(
     id: id,
     catalog: asString(get('catalog')) ?? surfaceCatalogV1,
+    template: asString(get('template')),
     title: plainText(get('title'), 200) ?? '',
     display: display == 'expanded'
         ? SurfaceDisplay.expanded
@@ -537,12 +577,93 @@ Surface? decodeSurface(Object? value) {
             tone:
                 _statusTones[asString(rawStatus?['tone'])] ??
                 SurfaceStatusTone.info,
+            kind: _statusKinds[asString(rawStatus?['kind'])],
+            sent: asString(rawStatus?['kind']) == 'sent'
+                ? _sentEmailOf(rawStatus?['sent'])
+                : null,
           ),
     webUrl: _httpsUrl(object['webUrl']),
   );
 }
 
+const _statusKinds = {
+  'sent': SurfaceStatusKind.sent,
+  'send_failed': SurfaceStatusKind.sendFailed,
+};
+
+List<String> _sentAddresses(Object? value) => value is List
+    ? value
+          .take(100)
+          .map((entry) => plainText(entry, 320))
+          .whereType<String>()
+          .toList(growable: false)
+    : const [];
+
+/// `{at, to, cc, bcc, subject}`; null without a single recipient.
+SurfaceSentEmail? _sentEmailOf(Object? value) {
+  final object = asObject(value);
+  if (object == null) return null;
+  final to = _sentAddresses(object['to']);
+  final cc = _sentAddresses(object['cc']);
+  final bcc = _sentAddresses(object['bcc']);
+  if (to.isEmpty && cc.isEmpty && bcc.isEmpty) return null;
+  return SurfaceSentEmail(
+    at: asString(object['at']),
+    to: to,
+    cc: cc,
+    bcc: bcc,
+    subject: plainText(object['subject'], 998),
+  );
+}
+
 // --- Rules on a decoded surface ----------------------------------------------
+
+/// The email a sent email_draft card sent, when the server marked it sent
+/// (status kind `sent`), whatever its state; null otherwise, a refused
+/// send included (that card stays open). Ross, 2026-10-31: a sent card
+/// collapses to a compact Sent row that opens read-only.
+SurfaceSentEmail? sentEmailOf(Surface surface) =>
+    surface.template == 'email_draft' &&
+        surface.status?.kind == SurfaceStatusKind.sent
+    ? surface.status?.sent
+    : null;
+
+/// A sent recipient as the card shows it: the address first, always (a
+/// recipient is its address), then the card's own name for that address
+/// (its /to, /cc or /bcc data, matched without case) when it is a plain
+/// name: "dana@acme.com (Dana Lee)".
+String sentRecipientLabel(Surface surface, String address) {
+  final key = address.trim().toLowerCase();
+  for (final field in const ['to', 'cc', 'bcc']) {
+    final list = surface.data[field];
+    if (list is! List) continue;
+    for (final entry in list) {
+      final object = asObject(entry);
+      final email = asString(object?['email'])?.trim().toLowerCase();
+      if (email != key) continue;
+      final name = plainText(object?['name'], 200);
+      if (name != null &&
+          !RegExp('[@\uFF20\uFE6B]').hasMatch(name) &&
+          name.toLowerCase() != key) {
+        return '$address ($name)';
+      }
+    }
+  }
+  return address;
+}
+
+/// "To a, b · Cc c · Bcc d" for a sent card's row.
+String sentRecipientsLine(Surface surface, SurfaceSentEmail sent) {
+  String list(List<String> addresses) => addresses
+      .map((address) => sentRecipientLabel(surface, address))
+      .join(', ');
+  final to = list(sent.to);
+  return [
+    'To ${to.isEmpty ? 'no one' : to}',
+    if (sent.cc.isNotEmpty) 'Cc ${list(sent.cc)}',
+    if (sent.bcc.isNotEmpty) 'Bcc ${list(sent.bcc)}',
+  ].join(' · ');
+}
 
 /// Whether this version knows the surface's catalog.
 bool isKnownCatalog(Surface surface) => surface.catalog == surfaceCatalogV1;
