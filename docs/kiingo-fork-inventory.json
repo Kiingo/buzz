@@ -2348,6 +2348,29 @@
         "desktop/src-tauri/src/relay/tests.rs",
         "desktop/src/shared/api/relayWebSocketPluginUsers.test.mjs"
       ]
+    },
+    {
+      "id": "agent-dm-delegation-board",
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "purpose": "The owner's delegation board in a 1:1 agent DM (desktop and iOS). Above the composer it shows the thread header (\"N running · N needs you · $X today\") with Stop all, worker asks as the existing question card titled \"from worker: <title>\" and answered straight to the worker, running delegation cards that update in place and fold at three or more, and one done summary per task with links into Kiingo Tasks and the worker session. Data is a long-poll on the host's owner delegation routes on the Buzz mount (/api/buzz-voice/<desktop|ios>/agents/<id>/delegations), NIP-98 signed by the reader with X-Buzz-Community; the desktop native transport allowlists only those routes with UUID-checked ids. The host answers only the agent's owner (D5), so others never see the board, and group channels show only the orchestrator's own messages.",
+      "upstreamStatus": "Kiingo-hosted agent surface; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when agent delegation no longer reaches Buzz agent DMs, or upstream ships an equivalent owner-only delegation board.",
+      "paths": [
+        "desktop/src/features/agent-dm/lib/delegationStore.test.mjs",
+        "desktop/src/features/agent-dm/lib/delegationStore.ts",
+        "desktop/src/features/agent-dm/lib/delegations.test.mjs",
+        "desktop/src/features/agent-dm/lib/delegations.ts",
+        "desktop/src/features/agent-dm/ui/AgentDelegationCards.tsx",
+        "desktop/src/features/agent-dm/ui/AgentDelegationDock.tsx",
+        "desktop/src/features/agent-dm/ui/AgentDelegationHeader.tsx",
+        "desktop/src/features/agent-dm/ui/useAgentDelegations.ts",
+        "mobile/lib/features/channels/agent_dm/agent_dm_delegation_dock.dart",
+        "mobile/lib/features/channels/agent_dm/agent_dm_delegation_dock/delegation_rows.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_delegation_client.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_delegations.dart",
+        "mobile/test/shared/agent_dm/agent_dm_delegations_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [
