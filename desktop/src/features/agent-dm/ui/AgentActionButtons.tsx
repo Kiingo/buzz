@@ -6,7 +6,7 @@ import type { TimelineMessage } from "@/features/messages/types";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { Button } from "@/shared/ui/button";
 
-import { actionRefTag, parseActions, type AgentAction } from "../lib/markers";
+import { actionTapTags, parseActions, type AgentAction } from "../lib/markers";
 import {
   areActionsUsed,
   getAgentDmStateVersion,
@@ -25,7 +25,8 @@ export function orderActions(actions: readonly AgentAction[]) {
 
 /**
  * Up to three agent action buttons (for example Retry after a visible
- * failure). A tap sends the button's text with its `buzz-action-ref`; after a
+ * failure). A tap sends the button's text with its `buzz-action-ref` and an
+ * `e` mention of this message (actionTapTags); after a
  * successful send every button on the message is disabled.
  */
 export function AgentActionButtons({
@@ -59,7 +60,7 @@ export function AgentActionButtons({
         channelId,
         senderPubkey,
         content: action.sendText,
-        markerTags: [actionRefTag(action)],
+        markerTags: actionTapTags(action, message.id),
       });
       markActionsUsed(message.id);
     } catch (error) {

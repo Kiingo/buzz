@@ -503,7 +503,11 @@ void main() {
       expect(actions.first.primary, isTrue);
       expect(actions.last.primary, isFalse);
       expect(actions.first.ref, 'ref-1');
-      expect(agentDmActionRefTags(actions.first), [
+      expect(agentDmActionRefTags(actions.first, messageId: 'AB' * 32), [
+        ['buzz-action-ref', 'ref-1'],
+        ['e', 'ab' * 32, '', 'mention'],
+      ]);
+      expect(agentDmActionRefTags(actions.first, messageId: 'local-id'), [
         ['buzz-action-ref', 'ref-1'],
       ]);
     });

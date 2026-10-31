@@ -510,6 +510,23 @@ export function actionRefTag(action: AgentAction): string[] {
   return ["buzz-action-ref", action.ref];
 }
 
+/**
+ * Every tag a tap sends: the ref, and `["e", <message id>, "", "mention"]`
+ * naming the message the button was on (a mention marker, so the tap stays
+ * top-level, never a thread reply). Kiingo checks that message is its own
+ * notice that carried this button, so a lookalike posted by an agent's key
+ * can't borrow a real ask's ref (79 MUST-79-LEND-CONSENT-TAP-NOT-BOUND-TO-
+ * NOTICE). A message without a relay id yet sends the ref alone.
+ */
+export function actionTapTags(
+  action: AgentAction,
+  messageId: string,
+): string[][] {
+  return HEX64_RE.test(messageId)
+    ? [actionRefTag(action), ["e", messageId.toLowerCase(), "", "mention"]]
+    : [actionRefTag(action)];
+}
+
 export type AgentSurface = { surfaceId: string; revision: number };
 
 const UUID_RE =

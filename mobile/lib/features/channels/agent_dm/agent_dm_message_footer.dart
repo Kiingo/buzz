@@ -103,7 +103,11 @@ class AgentDmMessageFooter extends ConsumerWidget {
             actions: actions,
             enabled: actionsEnabled,
             onTap: (AgentDmAction action) => unawaited(
-              deliver(actionKey, action.sendText, agentDmActionRefTags(action)),
+              deliver(
+                actionKey,
+                action.sendText,
+                agentDmActionRefTags(action, messageId: messageId),
+              ),
             ),
           ),
       ],

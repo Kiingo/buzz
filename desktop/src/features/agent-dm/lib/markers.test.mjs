@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   actionRefTag,
+  actionTapTags,
   areAgentDmMarkersHonoured,
   mirrorBadgeLabel,
   mirrorDisplayAuthorPubkey,
@@ -353,6 +354,15 @@ test("question state, answers and actions", () => {
     ],
   );
   assert.deepEqual(actionRefTag(actions[0]), ["buzz-action-ref", "ref-1"]);
+  // A tap names the message it was on, as a mention (never a thread reply).
+  const messageId = "AB".repeat(32);
+  assert.deepEqual(actionTapTags(actions[0], messageId), [
+    ["buzz-action-ref", "ref-1"],
+    ["e", "ab".repeat(32), "", "mention"],
+  ]);
+  assert.deepEqual(actionTapTags(actions[0], "local-optimistic-id"), [
+    ["buzz-action-ref", "ref-1"],
+  ]);
 });
 
 test("parseSurface reads exactly one well-formed surface card marker", () => {

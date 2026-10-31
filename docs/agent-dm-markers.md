@@ -260,9 +260,14 @@ model" after a visible failure.
   - `ref` is an opaque string (at most 512 characters) minted by the agent
     runtime for this exact action.
 - A tap sends one user-signed kind 9 top-level message with content
-  `send_text` and `["buzz-action-ref", <ref>]`. The agent runtime acts only on
-  a ref it minted, from the person it was minted for; typed text without the
-  ref is an ordinary message. The button carries no authority of its own.
+  `send_text`, `["buzz-action-ref", <ref>]` and
+  `["e", <id of the message the button was on>, "", "mention"]` (a mention
+  marker, so it is never a thread reply; omitted only while the message has
+  no relay id). The agent runtime acts only on a ref it minted, from the
+  person it was minted for, tapped on the message it minted it on (Kiingo:
+  the tap's `e` must be its own notice that carried that button, so a
+  lookalike message cannot borrow a real ref); typed text without the ref is
+  an ordinary message. The button carries no authority of its own.
 - After a successful tap the client disables every button on that message.
   The runtime acknowledges an applied action without a chat reply.
 
