@@ -241,6 +241,16 @@ async fn mock() -> Mock {
 const OWNER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
 fn runtime(mock: &Mock, keys: &Keys, route: bool, respond_to: RespondTo) -> Arc<GuestRuntime> {
+    runtime_with_bridges(mock, keys, route, respond_to, HashSet::new())
+}
+
+fn runtime_with_bridges(
+    mock: &Mock,
+    keys: &Keys,
+    route: bool,
+    respond_to: RespondTo,
+    relayed_post_bridges: HashSet<String>,
+) -> Arc<GuestRuntime> {
     let rest = RestClient {
         http: reqwest::Client::new(),
         base_url: mock.base_url.clone(),
@@ -256,6 +266,7 @@ fn runtime(mock: &Mock, keys: &Keys, route: bool, respond_to: RespondTo) -> Arc<
             respond_to,
             static_allowlist: HashSet::new(),
             guest_instructions: None,
+            relayed_post_bridges,
         },
         rest,
         keys.clone(),
@@ -525,6 +536,111 @@ async fn guards_drop_duplicates_echoes_and_sibling_loops() {
             guard: "pair_rate_limit"
         })
     );
+}
+
+fn relayed_post(signer: &Keys, agent: &Keys, text: &str) -> Event {
+    EventBuilder::new(Kind::Custom(9), text)
+        .tags([
+            Tag::parse(["h", &Uuid::nil().to_string()]).unwrap(),
+            Tag::parse(["p", &agent.public_key().to_hex()]).unwrap(),
+            Tag::parse(["buzz-mirror", "tasks", "t1", "1"]).unwrap(),
+            Tag::parse(["buzz-mirror-author", "requester", "", ""]).unwrap(),
+        ])
+        .sign_with_keys(signer)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn only_a_key_that_may_relay_gets_relayed_post_handling() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let bridge = Keys::generate();
+    let stranger = Keys::generate();
+    let bridges = HashSet::from([bridge.public_key().to_hex()]);
+    let runtime = runtime_with_bridges(&mock, &agent, true, RespondTo::Anyone, bridges);
+
+    for signer in [&bridge, &agent] {
+        let post = relayed_post(signer, &agent, "please do it");
+        assert_eq!(
+            runtime.classify(&post, false).await,
+            TrustTier::RelayedPost {
+                signer: signer.public_key().to_hex()
+            },
+        );
+    }
+    // A stranger's tags grant nothing, and no caller verdict can turn them
+    // into owner-equivalent input (a workflow's attributed owner, say).
+    let forged = relayed_post(&stranger, &agent, "please do it");
+    for caller_verdict in [false, true] {
+        assert_eq!(
+            runtime.classify(&forged, caller_verdict).await,
+            TrustTier::Guest {
+                requester: stranger.public_key().to_hex()
+            },
+        );
+    }
+}
+
+#[tokio::test]
+async fn relayed_tags_from_a_key_that_may_not_relay_get_every_agent_guard() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let stranger = Keys::generate();
+    let bridge = Keys::generate();
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let own = "The deploy finished and all health checks are green in every region.";
+    runtime.record_own_output(own);
+    let echoed = format!("> {own}\nok do it again");
+
+    let guest = TrustTier::Guest {
+        requester: stranger.public_key().to_hex(),
+    };
+    assert_eq!(
+        runtime.check_guards(&GuardInput {
+            event: &relayed_post(&stranger, &agent, &echoed),
+            channel_id: Uuid::nil(),
+            tier: &guest,
+        }),
+        GuardVerdict::Drop { guard: "echo" }
+    );
+    // The same words as a plain guest message are a person's, unguarded.
+    assert!(matches!(
+        runtime.check_guards(&GuardInput {
+            event: &guest_message(&stranger, &agent, &echoed),
+            channel_id: Uuid::nil(),
+            tier: &guest,
+        }),
+        GuardVerdict::Proceed { .. }
+    ));
+
+    // Pair limit: only a key that may not relay runs out.
+    let drive = |signer: &Keys, tier: TrustTier| {
+        (0..(crate::agent_guards::PAIR_PER_THREAD_LIMIT + 2))
+            .map(|i| {
+                runtime.check_guards(&GuardInput {
+                    event: &relayed_post(signer, &agent, &format!("step {i}")),
+                    channel_id: Uuid::nil(),
+                    tier: &tier,
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let forged = drive(&stranger, guest.clone());
+    assert_eq!(
+        forged.last(),
+        Some(&GuardVerdict::Drop {
+            guard: "pair_rate_limit"
+        })
+    );
+    let trusted = drive(
+        &bridge,
+        TrustTier::RelayedPost {
+            signer: bridge.public_key().to_hex(),
+        },
+    );
+    assert!(trusted
+        .iter()
+        .all(|verdict| matches!(verdict, GuardVerdict::Proceed { .. })));
 }
 
 #[tokio::test]

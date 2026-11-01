@@ -103,8 +103,12 @@ indistinguishable from a message the requester signed:
     signed it, and only on the hosted guest route: a local turn (legacy local
     guest mode, a structured wake) drops it. The claimed author is a label
     only (sanitized and bounded in the prompt marker; the fourth author
-    element is at most 64 characters). It is human traffic for the guards,
-    deduplicated per signer, claimed author and event. The text is wrapped
+    element is at most 64 characters). When the signer may relay (a bridge
+    pinned with `BUZZ_ACP_RELAYED_POST_BRIDGES`, the owner, or an agent of
+    the same owner) it is human traffic for the guards, deduplicated per
+    signer, claimed author and event. From any other key the tags grant
+    nothing: the key is judged on its own and every agent guard applies.
+    Either way the post keeps all the limits here. The text is wrapped
     as untrusted, only its `h`, `e` and `p` tags are shown, and it never
     steers, interrupts or runs a control command (`!shutdown`, `!cancel`,
     `!rotate` are dropped before the owner checks). The hosted guest route

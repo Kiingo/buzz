@@ -138,8 +138,9 @@ pub(crate) fn is_call_line_event(event: &nostr::Event) -> bool {
 /// A relayed person post ([`crate::agent_dm_markers::relayed_person_mirror`])
 /// is not dropped here: it may start a turn, but only as a guest crossing
 /// (`GuestRuntime::classify`), never steering, cancelling or controlling
-/// (`admit`), with all agent-traffic guards (`check_guards`) and its text
-/// wrapped as untrusted in the prompt (`queue::format_event_block_for_owner`).
+/// (`admit`), with the agent-traffic guards for its signer (`check_guards`) and
+/// its text wrapped as untrusted in the prompt
+/// (`queue::format_event_block_for_owner`).
 pub(crate) fn non_prompt_event(event: &nostr::Event) -> Option<&'static str> {
     if is_call_line_event(event) {
         return Some("call transcript line");

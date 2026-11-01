@@ -246,6 +246,8 @@ pub(crate) struct GuestRuntimeConfig {
     pub(crate) respond_to: RespondTo,
     pub(crate) static_allowlist: HashSet<String>,
     pub(crate) guest_instructions: Option<String>,
+    /// Keys pinned to relay people's posts (lowercase hex).
+    pub(crate) relayed_post_bridges: HashSet<String>,
 }
 
 /// Verdict of the agent-traffic guards for one event.
@@ -275,6 +277,7 @@ pub(crate) struct GuestRuntime {
     respond_to: RespondTo,
     static_allowlist: HashSet<String>,
     guest_instructions: Option<String>,
+    relayed_post_bridges: HashSet<String>,
     relay_url: String,
     profiles: ProfileDirectory,
     roster: DmParticipantResolver,
@@ -330,6 +333,7 @@ impl GuestRuntime {
             respond_to: config.respond_to,
             static_allowlist: config.static_allowlist,
             guest_instructions: config.guest_instructions,
+            relayed_post_bridges: config.relayed_post_bridges,
             relay_url: config.relay_url,
             profiles: ProfileDirectory::default(),
             guards: Mutex::new(AgentGuards::default()),
@@ -369,6 +373,13 @@ impl GuestRuntime {
             .is_some_and(|attested| attested.eq_ignore_ascii_case(owner))
     }
 
+    /// Whether `signer` may relay a person's words: a pinned bridge, or the
+    /// owner, this agent or an agent attested by the same owner. A profile
+    /// that cannot be read proves nothing, so that signer may not.
+    async fn may_relay(&self, signer: &str) -> bool {
+        self.relayed_post_bridges.contains(signer) || self.is_owner_equivalent_author(signer).await
+    }
+
     fn emit(&self, kind: &str, channel_id: Option<Uuid>, payload: Value) {
         if let Some(observer) = &self.observer {
             let context = ObserverContext {
@@ -390,12 +401,18 @@ impl GuestRuntime {
     /// owner-or-sibling verdict (true for the owner too).
     pub(crate) async fn classify(&self, event: &Event, is_owner_or_sibling: bool) -> TrustTier {
         let author = event.pubkey.to_hex();
-        if crate::agent_dm_markers::relayed_person_mirror(event).is_some() {
+        let tagged_relayed = crate::agent_dm_markers::relayed_person_mirror(event).is_some();
+        if tagged_relayed && self.may_relay(&author).await {
             // Words relayed for someone else: never owner or sibling input,
             // whoever signed them, and the claimed author grants nothing. One
             // guest lane per relaying key.
-            return TrustTier::Guest { requester: author };
+            return TrustTier::RelayedPost { signer: author };
         }
+        // The relayed tags came from a key that may not relay: judge the key
+        // on its own, and never as owner-equivalent (79 SHOULD-RELAYED-POST-
+        // SIGNER). `is_owner_or_sibling` can come from a workflow's attributed
+        // owner rather than this signer.
+        let is_owner_or_sibling = is_owner_or_sibling && !tagged_relayed;
         let owner = self.owner_pubkey.as_deref();
         let is_owner = owner.is_some_and(|o| o.eq_ignore_ascii_case(&author));
         let guest_tag = agent_relay::guest_requester(event);
@@ -431,7 +448,8 @@ impl GuestRuntime {
     /// Run the loop and amplification guards. Owner events always proceed.
     pub(crate) fn check_guards(&self, input: &GuardInput<'_>) -> GuardVerdict {
         let author = input.event.pubkey.to_hex();
-        let relayed = crate::agent_dm_markers::relayed_person_mirror(input.event);
+        let tagged_relayed = crate::agent_dm_markers::relayed_person_mirror(input.event);
+        let trusted_relay = matches!(input.tier, TrustTier::RelayedPost { .. });
         let (requester, author_is_agent) = match input.tier {
             TrustTier::Owner => {
                 return GuardVerdict::Proceed { request_key: None };
@@ -441,15 +459,20 @@ impl GuestRuntime {
             // text a person typed, R1), relayed for many people by one key:
             // the agent-loop guards (echo, root budget, pair limit) would
             // misfire on a busy thread, so it is human traffic (79 LOW-7).
-            TrustTier::Guest { requester } => {
-                (requester.clone(), *requester != author && relayed.is_none())
-            }
+            // Only a key that may relay gets this; see `classify`.
+            TrustTier::RelayedPost { signer } => (signer.clone(), false),
+            // People do not write relay tags, so a key that may not relay
+            // but uses them gets every agent guard.
+            TrustTier::Guest { requester } => (
+                requester.clone(),
+                *requester != author || tagged_relayed.is_some(),
+            ),
             TrustTier::OtherOwnerAgent { owner, .. } => (owner.clone(), true),
         };
         let now = Instant::now();
         // A relayed post dedupes per signer, claimed author and event: two
         // people relayed by one key never collide.
-        let dedupe_requester = match &relayed {
+        let dedupe_requester = match tagged_relayed.as_ref().filter(|_| trusted_relay) {
             Some(post) => format!(
                 "relayed:{author}:{}:{}",
                 post.claimed_author.as_deref().unwrap_or("anon"),
@@ -469,7 +492,7 @@ impl GuestRuntime {
                 Err("echo")
             } else if author_is_agent && guards.pending_reference(&key, now).is_some() {
                 Err("approval_pending")
-            } else if (author_is_agent || relayed.is_some()) && guards.is_duplicate(&key, now) {
+            } else if (author_is_agent || trusted_relay) && guards.is_duplicate(&key, now) {
                 // People re-asking are deduplicated server-side, which can
                 // answer "already asked"; a silent local drop would not.
                 Err("duplicate")
@@ -631,7 +654,7 @@ impl GuestRuntime {
         let author_profile = self.profiles.lookup(&author, &self.rest).await;
         // A relayed person post is human traffic (see `check_guards`): the
         // signer's own profile says nothing about the words.
-        let author_is_agent = if crate::agent_dm_markers::relayed_person_mirror(&event).is_some() {
+        let author_is_agent = if matches!(tier, TrustTier::RelayedPost { .. }) {
             false
         } else {
             author_profile.is_agent()

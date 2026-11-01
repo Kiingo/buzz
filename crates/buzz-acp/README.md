@@ -147,6 +147,7 @@ Controls which authors' events the harness forwards to the agent. Events from di
 | `--guest-route-url` | `BUZZ_ACP_GUEST_ROUTE_URL` | — | Base URL of the hosted guest-turn route (HTTPS or loopback HTTP). Requests are NIP-98 signed by the agent key. |
 | `--guest-instructions` | `BUZZ_ACP_GUEST_INSTRUCTIONS` | — | Owner-authored persona text registered for hosted guest turns. |
 | `--respond-to-allowlist` | `BUZZ_ACP_RESPOND_TO_ALLOWLIST` | — | Comma-separated 64-char hex pubkeys (required when mode is `allowlist`). Owner is always implicitly included. |
+| `--relayed-post-bridges` | `BUZZ_ACP_RELAYED_POST_BRIDGES` | — | Comma-separated 64-char hex pubkeys of bridges pinned to relay people's posts. The owner and same-owner agents may always relay. From any other key, relay tags are not honoured: the post gets every agent guard. |
 | `--allowlist-in-dms` | `BUZZ_ACP_ALLOWLIST_IN_DMS` | `false` | Opt-in, `allowlist` mode only: also admit allowlisted authors inside DMs, but only when **every** DM participant (relay kind:39002 roster) is this agent, the owner / a same-owner sibling, or allowlisted. Unresolvable rosters are denied. Off by default: DMs admit only the owner and siblings. Legacy: ignored when guest turns are hosted (non-owner DMs are routed). |
 
 **Modes:**

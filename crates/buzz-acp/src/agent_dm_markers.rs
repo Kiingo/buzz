@@ -18,8 +18,9 @@
 //! in the Kiingo app (conversations-unified §8.4). It is input from someone
 //! who is not the owner, never owner-trusted whoever signed it: the listener
 //! admits it only as a guest crossing keyed to its signer, its text is wrapped
-//! as untrusted, and the claimed author is shown as a claim only. Kind 40002
-//! stays the quiet marker in every room.
+//! as untrusted, and the claimed author is shown as a claim only. Only a
+//! signer that may relay makes it human traffic (`GuestRuntime::classify`).
+//! Kind 40002 stays the quiet marker in every room.
 
 use buzz_core::agent_dm_marker::{is_quiet_marker_tag_name, MIRROR_AUTHOR_TAG, MIRROR_TAG};
 
@@ -50,7 +51,9 @@ pub(crate) fn is_quiet_agent_dm_marker_event(event: &nostr::Event) -> bool {
 
 /// A Kiingo-relayed person post: the words someone wrote in the Kiingo app,
 /// relayed into a linked room by a Kiingo key. Nothing here is verified: the
-/// claimed author is what the signer says, so it is a label, never authority.
+/// claimed author is what the signer says, so it is a label, never authority,
+/// and the shape says nothing about the signer: it may only limit an event
+/// here, and `GuestRuntime::classify` decides whether the signer may relay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RelayedPersonMirror {
     /// The surface the person wrote on (`tasks`, `companion`, ...).

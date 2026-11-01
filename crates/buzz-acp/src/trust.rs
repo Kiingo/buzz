@@ -9,6 +9,8 @@
 //!   `buzz-guest` tag (text produced for someone else is never an owner
 //!   instruction).
 //! - [`TrustTier::OtherOwnerAgent`]: an agent attested by a different owner.
+//! - [`TrustTier::RelayedPost`]: a person's words relayed by a key trusted to
+//!   relay them (a pinned bridge, the owner or a sibling). Never owner input.
 //!
 //! Owner and sibling events run local turns. In [`GuestTurns::Hosted`] mode
 //! every other tier is handed to the hosted guest-turn route and never reaches
@@ -66,6 +68,14 @@ pub(crate) enum TrustTier {
         /// Claimed author chain, origin first, ending with `agent`.
         chain: Vec<String>,
     },
+    /// A relayed person post whose signer may relay (see
+    /// `GuestRuntime::classify`, the only place this tier is made). Its tags
+    /// alone grant nothing: the same post from another key is judged as that
+    /// key's own traffic.
+    RelayedPost {
+        /// The relaying key (hex). One guest lane per relaying key.
+        signer: String,
+    },
 }
 
 impl TrustTier {
@@ -79,7 +89,7 @@ impl TrustTier {
         match self {
             Self::Owner => "owner",
             Self::Sibling => "sibling",
-            Self::Guest { .. } => "guest",
+            Self::Guest { .. } | Self::RelayedPost { .. } => "guest",
             Self::OtherOwnerAgent { .. } => "other_owner_agent",
         }
     }
@@ -90,6 +100,7 @@ impl TrustTier {
             Self::Owner | Self::Sibling => TrustLane::Owner,
             Self::Guest { requester } => TrustLane::Guest(requester.clone()),
             Self::OtherOwnerAgent { agent, .. } => TrustLane::Guest(agent.clone()),
+            Self::RelayedPost { signer } => TrustLane::Guest(signer.clone()),
         }
     }
 }
@@ -421,6 +432,16 @@ impl crate::scope::SessionScope {
 mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Tag};
+
+    #[test]
+    fn a_relayed_post_is_a_guest_crossing_in_its_signers_lane() {
+        let tier = TrustTier::RelayedPost {
+            signer: "bridge".into(),
+        };
+        assert!(!tier.is_owner_equivalent());
+        assert_eq!(tier.label(), "guest");
+        assert_eq!(tier.lane(), TrustLane::Guest("bridge".into()));
+    }
 
     #[test]
     fn relayed_posts_are_marked_as_claims_and_wrapped_as_untrusted() {

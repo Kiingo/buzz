@@ -513,6 +513,11 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_RESPOND_TO_ALLOWLIST", value_delimiter = ',')]
     pub respond_to_allowlist: Option<Vec<String>>,
 
+    /// Comma-separated 64-char hex pubkeys of bridges pinned to relay
+    /// people's posts. The owner and same-owner agents may always relay.
+    #[arg(long, env = "BUZZ_ACP_RELAYED_POST_BRIDGES", value_delimiter = ',')]
+    pub relayed_post_bridges: Option<Vec<String>>,
+
     /// Comma-separated list of allowed `--respond-to` modes.
     /// When set, the harness rejects startup if `--respond-to` is not in this list.
     /// Modes: owner-only, allowlist, anyone, nobody.
@@ -642,6 +647,8 @@ pub struct Config {
     pub guest_instructions: Option<String>,
     /// Validated allowlist of pubkey hex strings (used when respond_to == Allowlist).
     pub respond_to_allowlist: HashSet<String>,
+    /// Validated pubkey hex strings of bridges pinned to relay people's posts.
+    pub relayed_post_bridges: HashSet<String>,
     /// Allowed `respond_to` modes. Empty = all modes allowed.
     pub allowed_respond_to: Vec<String>,
     /// Opt-in: admit allowlisted authors in DMs whose participants are all
@@ -776,12 +783,16 @@ fn compose_session_title_with_limit(
 
 /// Validate and deduplicate allowlist entries: each must be exactly 64 hex chars.
 fn validate_allowlist(entries: &[String]) -> Result<HashSet<String>, ConfigError> {
+    validate_pubkeys("--respond-to-allowlist", entries)
+}
+
+fn validate_pubkeys(flag: &str, entries: &[String]) -> Result<HashSet<String>, ConfigError> {
     let mut validated = HashSet::new();
     for entry in entries {
         let trimmed = entry.trim().to_ascii_lowercase();
         if trimmed.len() != 64 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(ConfigError::ConfigFile(format!(
-                "invalid pubkey in --respond-to-allowlist: '{entry}' \
+                "invalid pubkey in {flag}: '{entry}' \
                  (must be exactly 64 hex characters)"
             )));
         }
@@ -1238,6 +1249,10 @@ impl Config {
         if args.allowlist_in_dms && respond_to != RespondTo::Allowlist {
             tracing::warn!("--allowlist-in-dms is ignored when --respond-to is not 'allowlist'");
         }
+        let relayed_post_bridges = validate_pubkeys(
+            "--relayed-post-bridges",
+            args.relayed_post_bridges.as_deref().unwrap_or_default(),
+        )?;
 
         // Validate respond_to against the allowed set.
         let allowed_respond_to = if let Some(raw) = args.allowed_respond_to {
@@ -1349,6 +1364,7 @@ impl Config {
                 .guest_instructions
                 .filter(|text| !text.trim().is_empty()),
             respond_to_allowlist,
+            relayed_post_bridges,
             allowed_respond_to,
             allowlist_in_dms: args.allowlist_in_dms,
             persona_env_vars,
@@ -1743,6 +1759,7 @@ mod tests {
             permission_mode: PermissionMode::BypassPermissions,
             respond_to: RespondTo::Anyone,
             respond_to_allowlist: HashSet::new(),
+            relayed_post_bridges: HashSet::new(),
             allowed_respond_to: Vec::new(),
             allowlist_in_dms: false,
             guest_turns: crate::trust::GuestTurns::Local,
@@ -2907,6 +2924,17 @@ channels = "ALL"
         let result = validate_allowlist(&entries).unwrap();
         assert_eq!(result.len(), 1);
         assert!(result.contains(&"ab".repeat(32)));
+    }
+
+    #[test]
+    fn test_validate_pubkeys_normalizes_and_names_its_flag() {
+        let valid = "AB".repeat(32);
+        assert_eq!(
+            validate_pubkeys("--relayed-post-bridges", std::slice::from_ref(&valid)).unwrap(),
+            HashSet::from([valid.to_ascii_lowercase()])
+        );
+        let error = validate_pubkeys("--relayed-post-bridges", &["short".to_string()]).unwrap_err();
+        assert!(error.to_string().contains("--relayed-post-bridges"));
     }
 
     #[test]
