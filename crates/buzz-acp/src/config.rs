@@ -241,7 +241,7 @@ pub struct AuthenticateArgs {
     pub method_id: String,
 }
 
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(
     name = "buzz-acp",
     about = "ACP harness that bridges Buzz events to AI agents",
@@ -573,7 +573,6 @@ pub struct ChannelFilter {
     pub require_mention: bool,
 }
 
-#[derive(Debug)]
 pub struct Config {
     pub keys: Keys,
     pub relay_url: String,
@@ -775,6 +774,26 @@ fn compose_session_title_with_limit(
 }
 
 /// Validate and deduplicate allowlist entries: each must be exactly 64 hex chars.
+// `CliArgs` and `Config` hold the agent's private key and other settings from
+// the environment. Debug names only what identifies the harness, so a new
+// secret field cannot reach a log by default.
+impl std::fmt::Debug for CliArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CliArgs")
+            .field("relay_url", &self.relay_url)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("public_key", &self.keys.public_key().to_hex())
+            .field("relay_url", &self.relay_url)
+            .finish_non_exhaustive()
+    }
+}
+
 fn validate_allowlist(entries: &[String]) -> Result<HashSet<String>, ConfigError> {
     let mut validated = HashSet::new();
     for entry in entries {
@@ -2517,6 +2536,20 @@ channels = "ALL"
     fn test_turn_liveness_one_rejected() {
         let err = validate_turn_liveness(1).unwrap_err();
         assert!(err.to_string().contains("turn liveness interval must be 0"));
+    }
+
+    #[test]
+    fn debug_output_never_shows_the_private_key() {
+        let config = test_config(SubscribeMode::Mentions);
+        let secret = config.keys.secret_key().to_secret_hex();
+        let shown = format!("{config:?}");
+        assert!(shown.contains(&config.keys.public_key().to_hex()));
+        assert!(!shown.contains(&secret), "{shown}");
+
+        let args = CliArgs::parse_from(["buzz-acp", "--private-key", &secret]);
+        let shown = format!("{args:?}");
+        assert!(shown.contains("CliArgs"));
+        assert!(!shown.contains(&secret), "{shown}");
     }
 
     #[test]
