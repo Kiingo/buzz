@@ -24,6 +24,9 @@ buzz-persona = { path = "../buzz-persona" }
 # Git multicall helpers and ephemeral key ownership
 git-credential-nostr = { path = "../git-credential-nostr" }
 git-sign-nostr = { path = "../git-sign-nostr" }
+buzz-signer = { workspace = true }
+rand = { workspace = true }
+subtle = { workspace = true }
 tempfile = "3"
 zeroize = { workspace = true }
 
@@ -83,7 +86,7 @@ evalexpr = { workspace = true }
 # Process-group kill (safe wrapper around killpg) — Unix-only; kill_process_group
 # has a #[cfg(not(unix))] fallback in acp.rs.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["signal", "user"] }
+nix = { version = "0.31", default-features = false, features = ["signal", "user", "process"] }
 
 [dev-dependencies]
 ed25519-dalek = "=3.0.0"

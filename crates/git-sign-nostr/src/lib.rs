@@ -588,7 +588,7 @@ fn validate_conditions(conditions: &str) -> bool {
 /// Checks `created_at<N` (t must be < N) and `created_at>N` (t must be > N).
 /// `kind=` clauses are not applicable in NIP-GS context and are skipped.
 /// Assumes `validate_conditions()` has already confirmed structural validity.
-fn enforce_conditions(conditions: &str, t: u64) -> Result<(), String> {
+pub fn enforce_conditions(conditions: &str, t: u64) -> Result<(), String> {
     if conditions.is_empty() {
         return Ok(());
     }
@@ -892,7 +892,7 @@ fn read_keyfile_secure(path: &str) -> Result<zeroize::Zeroizing<String>, Error> 
 /// Where `oa_binding` is:
 /// - If oa present: `oa[0] || ":" || oa[1] || ":" || oa[2] || ":"`
 /// - If oa absent: empty (zero bytes)
-fn compute_signing_hash(
+pub fn compute_signing_hash(
     timestamp: u64,
     oa: Option<&(String, String, String)>,
     payload: &[u8],

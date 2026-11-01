@@ -14,6 +14,7 @@ members = [
     "crates/buzz-agent",
     "crates/sprig",
     "crates/buzz-test-client",
+    "crates/buzz-signer",
     "crates/buzz-ws-client",
     "crates/buzz-admin",
     "crates/buzz-deletion",
@@ -154,6 +155,7 @@ buzz-workflow = { path = "crates/buzz-workflow" }
 buzz-media = { path = "crates/buzz-media" }
 buzz-azure-storage = { path = "crates/buzz-azure-storage" }
 buzz-sdk = { path = "crates/buzz-sdk" }
+buzz-signer = { path = "crates/buzz-signer" }
 buzz-ws-client = { path = "crates/buzz-ws-client" }
 buzz-relay-mesh = { path = "crates/buzz-relay-mesh" }
 buzz-datastore-tracing = { path = "crates/buzz-datastore-tracing" }

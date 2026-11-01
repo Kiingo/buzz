@@ -36,6 +36,7 @@ mod runtime_failure_status;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
 mod scope;
 mod setup_mode;
+mod signer;
 mod trust;
 mod turn_context;
 mod unpublished_reply;
