@@ -291,6 +291,7 @@ impl AuthSigner for AgentKey {
                 let json = client
                     .event(Op::RelayAuth {
                         challenge: challenge.to_string(),
+                        relay: relay_url.to_string(),
                     })
                     .map_err(|e| WsClientError::EventBuilder(e.to_string()))?;
                 Event::from_json(json).map_err(|e| WsClientError::EventBuilder(e.to_string()))

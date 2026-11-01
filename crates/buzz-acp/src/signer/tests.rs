@@ -204,12 +204,13 @@ fn blossom_stays_on_the_configured_origins() {
 }
 
 #[test]
-fn relay_auth_names_only_the_configured_relay() {
+fn relay_auth_names_only_a_relay_of_the_signers_own() {
     let f = fixture();
     let challenge = "a1".repeat(32);
     let event = signed_event(f.signer.handle(
         Op::RelayAuth {
             challenge: challenge.clone(),
+            relay: RELAY.into(),
         },
         NOW,
     ));
@@ -230,11 +231,34 @@ fn relay_auth_refuses_anything_but_a_relay_challenge() {
         refused(f.signer.handle(
             Op::RelayAuth {
                 challenge: "short".into(),
+                relay: RELAY.into(),
             },
             NOW,
         )),
         "signer_challenge_invalid"
     );
+}
+
+#[test]
+fn relay_auth_refuses_a_relay_off_the_signers_origins() {
+    let f = fixture();
+    for relay in [
+        "wss://relay.evil.example",
+        "https://relay.example",
+        "not a url",
+    ] {
+        assert_eq!(
+            refused(f.signer.handle(
+                Op::RelayAuth {
+                    challenge: "a1".repeat(32),
+                    relay: relay.into(),
+                },
+                NOW,
+            )),
+            "signer_origin_refused",
+            "{relay}"
+        );
+    }
 }
 
 fn memory_body() -> Body {

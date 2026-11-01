@@ -113,7 +113,7 @@ impl Signer {
             } => self.nip98(&url, &method, payload_hash.as_deref(), owner_tag),
             Op::BlossomGet { media_url } => self.blossom_get(&media_url, now),
             Op::BlossomUpload { sha256, url } => self.blossom_upload(&sha256, &url, now),
-            Op::RelayAuth { challenge } => self.relay_auth(&challenge),
+            Op::RelayAuth { challenge, relay } => self.relay_auth(&challenge, &relay),
             Op::MemDTag { slug } => self.mem_d_tag(&slug),
             Op::MemWrite {
                 body_json,
@@ -232,9 +232,11 @@ impl Signer {
     }
 
     /// The relay is always the configured one and the time always the signer's.
-    fn relay_auth(&self, challenge: &str) -> Result<Output, Refusal> {
+    fn relay_auth(&self, challenge: &str, relay: &str) -> Result<Output, Refusal> {
         policy::check_challenge(challenge)?;
-        let builder = EventBuilder::auth(challenge, self.relay_url.clone());
+        self.check_origin(relay)?;
+        let relay = RelayUrl::parse(relay).map_err(|_| "signer_origin_refused")?;
+        let builder = EventBuilder::auth(challenge, relay);
         self.signed(match &self.auth_tag {
             Some(tag) => builder.tags([tag.clone()]),
             None => builder,

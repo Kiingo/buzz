@@ -45,8 +45,9 @@ pub enum Op {
     BlossomGet { media_url: String },
     /// Build and sign a Blossom `upload` event for an allowed origin.
     BlossomUpload { sha256: String, url: String },
-    /// Build and sign a NIP-42 event for the configured relay.
-    RelayAuth { challenge: String },
+    /// Build and sign a NIP-42 event for `relay`, which must be one of the
+    /// signer's own origins: the dial URL or the canonical community URL.
+    RelayAuth { challenge: String, relay: String },
     /// The `d` tag for a memory slug. The conversation key never leaves.
     MemDTag { slug: String },
     /// Encrypt an engram body to the owner and sign it.
