@@ -41,6 +41,7 @@ use buzz_core::verification::verify_event;
 use buzz_core::CommunityId;
 use nostr::Event;
 
+use crate::api::git::binding::{resolve_repo_binding, RepoBinding};
 use crate::state::AppState;
 
 use super::event::dispatch_persistent_event;
@@ -881,6 +882,58 @@ pub(crate) async fn check_channel_membership(
     } else {
         Err("restricted: not a channel member".to_string())
     }
+}
+
+/// The channel this repo or project event newly binds, if any. An unchanged
+/// binding or a removed one binds nothing new, so an author who has since left
+/// the channel can still update or clean up their own event.
+fn newly_bound_channel(event: &Event, prior: Option<&Event>) -> Option<Uuid> {
+    let RepoBinding::Bound(channel) = resolve_repo_binding(event) else {
+        return None;
+    };
+    let unchanged =
+        prior.is_some_and(|prior| resolve_repo_binding(prior) == RepoBinding::Bound(channel));
+    (!unchanged).then_some(channel)
+}
+
+/// A repo announcement or project that sets or changes its first `buzz-channel`
+/// must come from a member of that channel. These kinds aren't channel-scoped,
+/// so nothing else in ingest looks at the binding, and it reaches other members:
+/// it is the repo's ACL, and agents in that channel read it as the project home.
+async fn check_channel_binding(
+    tenant: &TenantContext,
+    state: &AppState,
+    event: &Event,
+) -> Result<(), IngestError> {
+    if !matches!(resolve_repo_binding(event), RepoBinding::Bound(_)) {
+        return Ok(());
+    }
+    let d_tag = event
+        .tags
+        .iter()
+        .find(|tag| tag.as_slice().first().map(String::as_str) == Some("d"))
+        .and_then(|tag| tag.as_slice().get(1))
+        .cloned()
+        .unwrap_or_default();
+    let prior = state
+        .db
+        .query_events_for_event_write(&buzz_db::EventQuery {
+            kinds: Some(vec![event.kind.as_u16() as i32]),
+            pubkey: Some(event.pubkey.to_bytes().to_vec()),
+            d_tag: Some(d_tag),
+            global_only: true,
+            limit: Some(1),
+            ..buzz_db::EventQuery::for_community(tenant.community())
+        })
+        .await
+        .map_err(|e| IngestError::Internal(format!("error: database error: {e}")))?;
+    let Some(channel) = newly_bound_channel(event, prior.first().map(|stored| &stored.event))
+    else {
+        return Ok(());
+    };
+    check_channel_membership(tenant, state, channel, &event.pubkey.to_bytes(), None)
+        .await
+        .map_err(IngestError::Rejected)
 }
 
 /// The kind-9 channel write gates (token scope, membership or open channel,
@@ -3148,6 +3201,10 @@ async fn ingest_event_inner(
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
     }
 
+    if matches!(kind_u32, KIND_GIT_REPO_ANNOUNCEMENT | KIND_PROJECT) {
+        check_channel_binding(tenant, state, &event).await?;
+    }
+
     // Track pre-created channel UUID for compensation on insert failure.
     let mut pre_created_channel: Option<Uuid> = None;
 
@@ -3816,6 +3873,148 @@ mod postgres_tests {
             now
         )
         .is_ok());
+    }
+
+    fn binding_event(keys: &nostr::Keys, kind: u32, d: &str, channel: Option<Uuid>) -> Event {
+        let mut tags = vec![nostr::Tag::parse(["d", d]).expect("d tag")];
+        tags.extend(channel.map(|channel| {
+            nostr::Tag::parse(["buzz-channel", &channel.to_string()]).expect("binding tag")
+        }));
+        EventBuilder::new(Kind::Custom(kind as u16), "")
+            .tags(tags)
+            .sign_with_keys(keys)
+            .expect("sign binding event")
+    }
+
+    #[test]
+    fn only_setting_or_changing_a_binding_counts_as_new() {
+        let keys = nostr::Keys::generate();
+        let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+        for kind in [KIND_GIT_REPO_ANNOUNCEMENT, KIND_PROJECT] {
+            let bound = binding_event(&keys, kind, "r", Some(first));
+            let moved = binding_event(&keys, kind, "r", Some(second));
+            let unbound = binding_event(&keys, kind, "r", None);
+            assert_eq!(newly_bound_channel(&bound, None), Some(first));
+            assert_eq!(newly_bound_channel(&bound, Some(&unbound)), Some(first));
+            assert_eq!(newly_bound_channel(&moved, Some(&bound)), Some(second));
+            assert_eq!(newly_bound_channel(&bound, Some(&bound)), None);
+            assert_eq!(newly_bound_channel(&unbound, Some(&bound)), None);
+            assert_eq!(newly_bound_channel(&unbound, None), None);
+        }
+    }
+
+    /// A first tag that isn't a UUID binds nothing: every reader fails closed.
+    #[test]
+    fn a_broken_first_binding_binds_nothing() {
+        let keys = nostr::Keys::generate();
+        let event = EventBuilder::new(Kind::Custom(KIND_GIT_REPO_ANNOUNCEMENT as u16), "")
+            .tags([
+                nostr::Tag::parse(["d", "r"]).expect("d tag"),
+                nostr::Tag::parse(["buzz-channel", "not-a-uuid"]).expect("broken tag"),
+                nostr::Tag::parse(["buzz-channel", &Uuid::new_v4().to_string()])
+                    .expect("later tag"),
+            ])
+            .sign_with_keys(&keys)
+            .expect("sign");
+        assert_eq!(newly_bound_channel(&event, None), None);
+    }
+
+    async fn private_channel(state: &AppState, community: CommunityId, creator: &[u8]) -> Uuid {
+        use buzz_db::channel::{ChannelType, ChannelVisibility};
+        let channel = Uuid::new_v4();
+        state
+            .db
+            .create_channel_with_id(
+                community,
+                channel,
+                &format!("binding-{}", channel.simple()),
+                ChannelType::Stream,
+                ChannelVisibility::Private,
+                None,
+                creator,
+                None,
+            )
+            .await
+            .expect("create private channel");
+        channel
+    }
+
+    /// SHOULD-79-CHANNEL-BIND-NO-MEMBERSHIP. The creator is the member; the
+    /// agent from the fixture isn't, and its prior bound event stands for an
+    /// author who has left.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn binding_a_channel_takes_membership_but_keeping_or_leaving_one_does_not() {
+        let state = ingest_state().await;
+        let (tenant, member, outsider) = owned_agent_fixture(&state, "channel-binding").await;
+        let community = tenant.community();
+        let creator = member.public_key().to_bytes();
+        let channel = private_channel(&state, community, &creator).await;
+        let other = private_channel(&state, community, &creator).await;
+
+        for kind in [KIND_GIT_REPO_ANNOUNCEMENT, KIND_PROJECT] {
+            let d = format!("repo-{kind}");
+            let refused = binding_event(&outsider, kind, &d, Some(channel));
+            match check_channel_binding(&tenant, &state, &refused).await {
+                Err(IngestError::Rejected(reason)) => {
+                    assert_eq!(reason, "restricted: not a channel member")
+                }
+                other => panic!("a non-member must not bind, got {other:?}"),
+            }
+
+            let by_member = binding_event(&member, kind, &d, Some(channel));
+            check_channel_binding(&tenant, &state, &by_member)
+                .await
+                .expect("a member binds");
+
+            state
+                .db
+                .insert_event(community, &refused, None)
+                .await
+                .expect("store a binding from before the author left");
+            check_channel_binding(&tenant, &state, &refused)
+                .await
+                .expect("a replayed unchanged event passes");
+            let updated = binding_event(&outsider, kind, &d, Some(channel));
+            check_channel_binding(&tenant, &state, &updated)
+                .await
+                .expect("a newer event with the same binding passes");
+            let rebound_out = binding_event(&outsider, kind, &d, None);
+            check_channel_binding(&tenant, &state, &rebound_out)
+                .await
+                .expect("removing a binding passes");
+            let moved = binding_event(&outsider, kind, &d, Some(other));
+            assert!(
+                matches!(
+                    check_channel_binding(&tenant, &state, &moved).await,
+                    Err(IngestError::Rejected(_))
+                ),
+                "changing a binding needs membership of the new channel"
+            );
+        }
+    }
+
+    /// The check sits on the ingest path, not just beside it.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn ingest_refuses_a_repo_bound_by_a_non_member() {
+        let state = ingest_state().await;
+        let (tenant, member, outsider) = owned_agent_fixture(&state, "channel-binding-wire").await;
+        let channel =
+            private_channel(&state, tenant.community(), &member.public_key().to_bytes()).await;
+        let event = binding_event(&outsider, KIND_GIT_REPO_ANNOUNCEMENT, "repo", Some(channel));
+        let auth = IngestAuth::Http {
+            pubkey: outsider.public_key(),
+            scopes: vec![Scope::ReposWrite],
+            auth_method: HttpAuthMethod::Nip98,
+        };
+        match ingest_event(&state, &tenant, event, auth).await {
+            Err(IngestError::Rejected(reason)) => {
+                assert_eq!(reason, "restricted: not a channel member")
+            }
+            Err(other) => panic!("wrong refusal: {other:?}"),
+            Ok(_) => panic!("a non-member bound a repo to a private channel"),
+        }
     }
 
     /// A channel lookup failure must deny the write. Before, the error became

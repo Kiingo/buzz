@@ -16,6 +16,9 @@
 //! parse. If this ever became "find the first *parseable* tag", an author
 //! who can append a second `buzz-channel` tag would pick the channel.
 //!
+//! Ingest (`handlers::ingest::check_channel_binding`) uses the same resolver:
+//! setting or changing a binding takes membership of the channel it names.
+//!
 //! # What this deliberately does NOT do
 //!
 //! No DB access. A well-formed UUID that names a nonexistent or deleted
