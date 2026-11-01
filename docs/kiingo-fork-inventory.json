@@ -2422,6 +2422,52 @@
         "desktop/src/features/sidebar/ui/CustomChannelSection.tsx",
         "desktop/src/features/sidebar/ui/RenameChannelDialog.tsx"
       ]
+    },
+    {
+      "id": "agent-key-signer",
+      "classification": "retain-generic",
+      "owner": "Buzz runtime maintainers",
+      "purpose": "buzz-acp holds the agent key and signs for its children over a per-start unix socket with a per-start token, so no child process gets the key in its env, argv or on disk. The buzz CLI, the git helpers, the dev MCP and the websocket client sign through that socket. Signing is default-deny by kind, and NIP-98, Blossom and relay auth are never signed as plain events, only by operations bound to their origin, verb and time. buzz-acp refuses to start a hosted run if it is dumpable. A compromised child can still sign as its agent while it runs; it cannot take the key away.",
+      "upstreamStatus": "Generic agent key custody; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream keeps the agent key out of harness children with an equivalent signer.",
+      "paths": [
+        "SECURITY.md",
+        "crates/buzz-acp/src/git_runtime_tests.rs",
+        "crates/buzz-acp/src/signer/mod.rs",
+        "crates/buzz-acp/src/signer/ops.rs",
+        "crates/buzz-acp/src/signer/policy.rs",
+        "crates/buzz-acp/src/signer/server.rs",
+        "crates/buzz-acp/src/signer/tests.rs",
+        "crates/buzz-cli/src/agent_key.rs",
+        "crates/buzz-cli/src/agent_management.rs",
+        "crates/buzz-cli/src/commands/gifs.rs",
+        "crates/buzz-cli/src/commands/mem.rs",
+        "crates/buzz-dev-mcp/Cargo.toml",
+        "crates/buzz-dev-mcp/src/shell.rs",
+        "crates/buzz-dev-mcp/src/view_image.rs",
+        "crates/buzz-signer/Cargo.toml",
+        "crates/buzz-signer/src/client.rs",
+        "crates/buzz-signer/src/lib.rs",
+        "crates/buzz-signer/src/protocol.rs",
+        "crates/buzz-ws-client/src/connection.rs",
+        "crates/buzz-ws-client/src/lib.rs",
+        "crates/buzz-ws-client/src/message.rs",
+        "crates/git-credential-nostr/Cargo.toml",
+        "crates/git-credential-nostr/src/lib.rs",
+        "crates/git-sign-nostr/Cargo.toml",
+        "crates/git-sign-nostr/src/lib.rs"
+      ]
+    },
+    {
+      "id": "channel-binding-takes-membership",
+      "classification": "retain-generic",
+      "owner": "Buzz relay maintainers",
+      "purpose": "A repo announcement or project event that newly binds a channel needs the signer to pass the same membership check as posting there. A lookup failure refuses it. Keeping or removing a binding, or an unreadable one, needs nothing. Existing bindings are not recounted.",
+      "upstreamStatus": "Generic relay authorization; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream checks channel membership when a repo or project binds a channel.",
+      "paths": [
+        "crates/buzz-relay/src/api/git/binding.rs"
+      ]
     }
   ],
   "budgetAmendments": [
