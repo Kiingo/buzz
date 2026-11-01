@@ -212,6 +212,27 @@ class ChannelActionsSheet extends HookConsumerWidget {
                           : notifier.muteChannel(channel.id);
                     },
                   ),
+                  // Rename (Ross 2026-10-31: rename a channel from a long
+                  // press): the same name editor as Manage channel.
+                  if (!channel.isDm &&
+                      canManageLifecycle &&
+                      !currentChannel.isArchived)
+                    ListTile(
+                      leading: const Icon(BuzzIcons.pencil),
+                      title: const Text('Rename channel'),
+                      onTap: () async {
+                        final shouldClose = await showManageChannelSheet(
+                          context: context,
+                          channel: currentChannel,
+                          canEditDetails: true,
+                          onChannelUpdated: (updated) =>
+                              displayedChannel.value = updated,
+                        );
+                        if (shouldClose == true && context.mounted) {
+                          Navigator.of(context).pop(true);
+                        }
+                      },
+                    ),
                   if (!channel.isDm)
                     ListTile(
                       leading: const Icon(BuzzIcons.settings),
