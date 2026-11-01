@@ -3220,13 +3220,6 @@ pub async fn run_prompt_task(
 
         if let Some(trigger) = b.events.last() {
             let trigger_event_id = trigger.event.id.to_hex();
-            let thread = crate::queue::parse_thread_tags(&trigger.event);
-            let tags: Vec<&[String]> = trigger
-                .event
-                .tags
-                .iter()
-                .map(|tag| tag.as_slice())
-                .collect();
             let structured_context = conversation_context.as_ref().map(|context| {
                 let (kind, messages, total, truncated) = match context {
                     ConversationContext::Thread {
@@ -3257,25 +3250,15 @@ pub async fn run_prompt_task(
                         .collect::<Vec<_>>(),
                 })
             });
-            agent.acp.set_buzz_prompt_metadata(Some(serde_json::json!({
-                "contractVersion": 3,
-                "inputEventCount": b.events.len() + b.cancelled_events.len(),
-                "eventId": trigger_event_id,
-                "channelId": b.channel_id.to_string(),
-                "channelName": channel_info.as_ref().map(|info| info.name.as_str()),
-                "channelType": channel_info.as_ref().map(|info| info.channel_type.as_str()),
-                "kind": trigger.event.kind.as_u16() as u32,
-                "authorPublicKey": trigger.event.pubkey.to_hex(),
-                "authoredAt": chrono::DateTime::from_timestamp(
-                    trigger.event.created_at.as_secs() as i64,
-                    0,
-                ).map(|time| time.to_rfc3339()),
-                "text": trigger.event.content,
-                "tags": tags,
-                "threadRootEventId": thread.root_event_id,
-                "replyToEventId": trigger_event_id,
-                "conversationContext": structured_context,
-            })));
+            agent
+                .acp
+                .set_buzz_prompt_metadata(Some(structured_trigger_metadata(
+                    &trigger.event,
+                    b.events.len() + b.cancelled_events.len(),
+                    b.channel_id,
+                    channel_info.as_ref(),
+                    structured_context,
+                )));
         } else {
             agent.acp.set_buzz_prompt_metadata(None);
         }
@@ -6055,8 +6038,64 @@ async fn react_working(rest: &crate::relay::RestClient, event_ids: &[String]) {
     reconcile_reactions(rest, event_ids, ReactionState::Running).await;
 }
 
+/// The structured trigger an adapter reads from `_meta.buzz`: the event's raw
+/// text under its real signer, so a workflow message names the relay's key and
+/// never its attributed owner. An adapter marks that text by signer, as it does
+/// any other sender's; the wrapped form is only in the prompt blocks. The
+/// workflow template tag is left out, like the prompt's `Tags:` line.
+fn structured_trigger_metadata(
+    event: &nostr::Event,
+    input_event_count: usize,
+    channel_id: Uuid,
+    channel_info: Option<&crate::queue::PromptChannelInfo>,
+    conversation_context: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let event_id = event.id.to_hex();
+    let thread = crate::queue::parse_thread_tags(event);
+    let tags: Vec<&[String]> = crate::workflow_text::visible_tags(event).collect();
+    serde_json::json!({
+        "contractVersion": 3,
+        "inputEventCount": input_event_count,
+        "eventId": event_id,
+        "channelId": channel_id.to_string(),
+        "channelName": channel_info.map(|info| info.name.as_str()),
+        "channelType": channel_info.map(|info| info.channel_type.as_str()),
+        "kind": event.kind.as_u16() as u32,
+        "authorPublicKey": event.pubkey.to_hex(),
+        "authoredAt": chrono::DateTime::from_timestamp(
+            event.created_at.as_secs() as i64,
+            0,
+        ).map(|time| time.to_rfc3339()),
+        "text": event.content,
+        "tags": tags,
+        "threadRootEventId": thread.root_event_id,
+        "replyToEventId": event_id,
+        "conversationContext": conversation_context,
+    })
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn structured_metadata_names_the_signer_and_never_shows_the_template_tag() {
+        let template = "Summarize: {{trigger.text}}";
+        let event =
+            crate::workflow_text::test_support::workflow_message("Summarize: hi", Some(template));
+        let channel_id = uuid::Uuid::new_v4();
+        let metadata = super::structured_trigger_metadata(&event, 1, channel_id, None, None);
+        assert_eq!(metadata["authorPublicKey"], event.pubkey.to_hex());
+        assert_eq!(metadata["text"], "Summarize: hi");
+        let tags = metadata["tags"].as_array().expect("tags");
+        assert!(
+            tags.len() + 1 == event.tags.len(),
+            "only that tag is dropped"
+        );
+        assert!(!tags
+            .iter()
+            .any(|tag| { tag[0] == crate::workflow_text::WORKFLOW_TEMPLATE_TAG }));
+        assert!(!metadata.to_string().contains(template));
+    }
+
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
     use serde_json::json;

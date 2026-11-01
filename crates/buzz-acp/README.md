@@ -334,6 +334,8 @@ A message that is its own template, with nothing to substitute, is treated as th
 
 The tag is on the message, so **everyone in the channel can read a step's stored template**, including text behind a `{{...}}` that never rendered. Don't put anything in a step's text that the channel shouldn't see.
 
+An adapter reading `_meta.buzz` gets the event's raw `text` under its real signer: for a workflow message `authorPublicKey` is the relay's key, not the owner's, and the wrapped form is only in the prompt blocks. The adapter must mark that text by signer, as it would any other sender's. The Kiingo API does this: a key bound to no person never opens a mission, and input it adds to one reaches the Run as outside content. `_meta.buzz.tags` never carries the template tag.
+
 ### Runtime failure status
 
 Native timeout, authentication-attention and exhausted-retry notices are signed kind-40098 system status, not kind-9 agent answers. Each affected thread receives one status for the native prompt attempt; an unthreaded input is the root of its own status thread. Mixed-thread batches are scoped separately. Payloads use fixed operational descriptions, never raw provider errors or request content, and do not request a user to resend completed work.

@@ -1692,19 +1692,11 @@ pub(crate) fn format_event_block_for_owner(
     // anything else on it is the relaying key's, outside the untrusted
     // wrapper (79 LOW-2).
     let relayed = crate::listener_trust::is_relayed_person_post(&be.event);
-    let tags_json: Vec<&[String]> = be
-        .event
-        .tags
-        .iter()
-        .map(|t| t.as_slice())
+    let tags_json: Vec<&[String]> = crate::workflow_text::visible_tags(&be.event)
         .filter(|t| {
             !relayed
                 || t.first()
                     .is_some_and(|name| matches!(name.as_str(), "h" | "e" | "p"))
-        })
-        // Shown as the content when it counts; never as a tag.
-        .filter(|t| {
-            t.first().map(String::as_str) != Some(crate::workflow_text::WORKFLOW_TEMPLATE_TAG)
         })
         .collect();
     if let Ok(tags_str) = serde_json::to_string(&tags_json) {

@@ -129,6 +129,16 @@ pub(crate) fn prompt_content(event: &Event, workflow_verified: bool) -> Option<S
     })
 }
 
+/// The event's tags an agent or adapter may see. The template tag is never one
+/// of them: when it counts, it is shown as the content.
+pub(crate) fn visible_tags(event: &Event) -> impl Iterator<Item = &[String]> {
+    event
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice())
+        .filter(|tag| tag.first().map(String::as_str) != Some(WORKFLOW_TEMPLATE_TAG))
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use nostr::{Event, EventBuilder, Keys, Kind, Tag};
