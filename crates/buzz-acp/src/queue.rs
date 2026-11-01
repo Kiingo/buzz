@@ -118,6 +118,10 @@ pub struct QueuedEvent {
     /// admission. `None` for ordinary events and for edits whose original
     /// could not be fetched (routing then falls back to the edit target id).
     pub edit: Option<ResolvedEdit>,
+    /// Admission verified this as a workflow message signed by the relay.
+    /// Only then does its `buzz:workflow-template` tag count: see
+    /// [`crate::workflow_text`]. Every other path leaves it false.
+    pub workflow_verified: bool,
 }
 
 impl QueuedEvent {
@@ -127,6 +131,7 @@ impl QueuedEvent {
             prompt_tag: self.prompt_tag,
             received_at: self.received_at,
             edit: self.edit,
+            workflow_verified: self.workflow_verified,
         }
     }
 }
@@ -139,6 +144,8 @@ pub struct BatchEvent {
     pub received_at: Instant,
     /// See [`QueuedEvent::edit`].
     pub edit: Option<ResolvedEdit>,
+    /// See [`QueuedEvent::workflow_verified`].
+    pub workflow_verified: bool,
 }
 
 impl BatchEvent {
@@ -748,6 +755,7 @@ impl EventQueue {
                 prompt_tag: be.prompt_tag,
                 received_at: be.received_at, // preserve original timestamp (#46)
                 edit: be.edit,
+                workflow_verified: be.workflow_verified,
             });
         }
         // Enforce per-scope cap: trim oldest (back) events if requeue pushed
@@ -813,6 +821,7 @@ impl EventQueue {
                 prompt_tag: be.prompt_tag,
                 received_at: be.received_at,
                 edit: be.edit,
+                workflow_verified: be.workflow_verified,
             });
         }
         // Enforce per-scope cap: trim newest (back) events if over limit.
@@ -1483,7 +1492,14 @@ pub fn extract_slash_command(content: &str, known_names: &[&str]) -> Option<Stri
 /// carryover (a cancel + re-prompt needs the merged context format), and
 /// content that is a slash command after leading mentions.
 pub fn slash_command_for_batch(batch: &FlushBatch, known_names: &[&str]) -> Option<String> {
-    if batch.events.len() != 1 || !batch.cancelled_events.is_empty() {
+    if batch.events.len() != 1
+        || !batch.cancelled_events.is_empty()
+        || crate::workflow_text::templated_workflow_text(
+            &batch.events[0].event,
+            batch.events[0].workflow_verified,
+        )
+        .is_some()
+    {
         return None;
     }
     extract_slash_command(&batch.events[0].event.content, known_names)
@@ -1662,6 +1678,10 @@ pub(crate) fn format_event_block_for_owner(
         },
         if crate::listener_trust::is_relayed_person_post(&be.event) {
             std::borrow::Cow::Owned(crate::trust::wrap_untrusted_relayed(&be.event.content))
+        } else if let Some(content) =
+            crate::workflow_text::prompt_content(&be.event, be.workflow_verified)
+        {
+            std::borrow::Cow::Owned(content)
         } else {
             std::borrow::Cow::Borrowed(be.event.content.as_str())
         },
@@ -1681,6 +1701,10 @@ pub(crate) fn format_event_block_for_owner(
             !relayed
                 || t.first()
                     .is_some_and(|name| matches!(name.as_str(), "h" | "e" | "p"))
+        })
+        // Shown as the content when it counts; never as a tag.
+        .filter(|t| {
+            t.first().map(String::as_str) != Some(crate::workflow_text::WORKFLOW_TEMPLATE_TAG)
         })
         .collect();
     if let Ok(tags_str) = serde_json::to_string(&tags_json) {
@@ -2789,6 +2813,7 @@ mod tests {
     fn make_queued(channel_id: Uuid, content: &str) -> QueuedEvent {
         QueuedEvent {
             edit: None,
+            workflow_verified: false,
             channel_id,
             scope: conv(channel_id),
             event: make_event(content),
@@ -2801,6 +2826,7 @@ mod tests {
     fn make_queued_at(channel_id: Uuid, content: &str, age: Duration) -> QueuedEvent {
         QueuedEvent {
             edit: None,
+            workflow_verified: false,
             channel_id,
             scope: conv(channel_id),
             event: make_event(content),
@@ -2823,6 +2849,7 @@ mod tests {
             .unwrap();
         QueuedEvent {
             edit: None,
+            workflow_verified: false,
             channel_id,
             scope: conv(channel_id),
             event,
@@ -2851,6 +2878,7 @@ mod tests {
     fn make_scoped(scope: SessionScope, content: &str) -> QueuedEvent {
         QueuedEvent {
             edit: None,
+            workflow_verified: false,
             channel_id: scope.channel_id(),
             scope,
             event: make_event(content),
@@ -3163,6 +3191,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -3195,12 +3224,14 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("the new message"),
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
             }],
             cancelled_events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("the original task"),
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -3336,12 +3367,14 @@ mod tests {
             events: vec![
                 BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event: make_event("new one"),
                     prompt_tag: "@mention".into(),
                     received_at: Instant::now(),
                 },
                 BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event: make_event("new two"),
                     prompt_tag: "@mention".into(),
                     received_at: Instant::now(),
@@ -3349,6 +3382,7 @@ mod tests {
             ],
             cancelled_events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("original"),
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -3396,12 +3430,14 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: steering,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
             }],
             cancelled_events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: original,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -3571,18 +3607,21 @@ mod tests {
             events: vec![
                 BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event: e1,
                     prompt_tag: "tag-a".into(),
                     received_at: Instant::now(),
                 },
                 BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event: e2,
                     prompt_tag: "tag-b".into(),
                     received_at: Instant::now(),
                 },
                 BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event: e3,
                     prompt_tag: "tag-c".into(),
                     received_at: Instant::now(),
@@ -3614,6 +3653,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -3639,6 +3679,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -3673,6 +3714,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -3705,6 +3747,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -3734,6 +3777,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -3760,6 +3804,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -3823,6 +3868,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("hello"),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -3878,6 +3924,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -3918,6 +3965,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -4147,6 +4195,7 @@ mod tests {
 
         q.push(QueuedEvent {
             edit: None,
+            workflow_verified: false,
             channel_id: ch,
             scope: conv(ch),
             event: make_event("old-msg"),
@@ -4180,12 +4229,14 @@ mod tests {
             scope: scope.clone(),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("the follow-up"),
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
             }],
             cancelled_events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("the original request"),
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -4511,6 +4562,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -4546,6 +4598,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "dm".into(),
                 received_at: Instant::now(),
@@ -4595,6 +4648,7 @@ mod tests {
                         scope: SessionScope::derive(policy, channel_id, is_dm, event),
                         events: vec![BatchEvent {
                             edit: None,
+                            workflow_verified: false,
                             event: event.clone(),
                             prompt_tag: "@mention".into(),
                             received_at: Instant::now(),
@@ -4678,6 +4732,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -4706,6 +4761,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -4817,6 +4873,7 @@ mod tests {
         let root_b = "b".repeat(64);
         let reply = |content: &str, root: &str| BatchEvent {
             edit: None,
+            workflow_verified: false,
             event: make_event_with_tags(
                 content,
                 vec![vec!["e".into(), root.into(), "".into(), "reply".into()]],
@@ -4894,6 +4951,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "dm".into(),
                 received_at: Instant::now(),
@@ -4952,6 +5010,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -5145,6 +5204,7 @@ mod tests {
         ]);
         let in_thread = |keys: &Keys, content: &str| BatchEvent {
             edit: None,
+            workflow_verified: false,
             event: EventBuilder::new(Kind::Custom(9), content)
                 .tags([
                     nostr::Tag::parse(["e", root.as_str(), "", "reply"]).unwrap(),
@@ -5226,6 +5286,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "dm".into(),
                 received_at: Instant::now(),
@@ -5298,6 +5359,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -5333,6 +5395,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("follow up"),
                 prompt_tag: "dm".into(),
                 received_at: Instant::now(),
@@ -5385,6 +5448,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "dm".into(),
                 received_at: Instant::now(),
@@ -5429,6 +5493,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -5455,6 +5520,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -5480,6 +5546,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -5515,6 +5582,7 @@ mod tests {
             None,
             &BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: direct_event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -5543,6 +5611,7 @@ mod tests {
             None,
             &BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: nested_event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -5911,6 +5980,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -5955,6 +6025,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -5993,6 +6064,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -6024,6 +6096,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -6070,6 +6143,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -6108,6 +6182,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
@@ -6146,12 +6221,14 @@ mod tests {
             events: vec![
                 BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event: plain,
                     prompt_tag: "test".into(),
                     received_at: Instant::now(),
                 },
                 BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event: threaded,
                     prompt_tag: "@mention".into(),
                     received_at: Instant::now(),
@@ -6186,12 +6263,14 @@ mod tests {
             events: vec![
                 BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event: threaded,
                     prompt_tag: "@mention".into(),
                     received_at: Instant::now(),
                 },
                 BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event: plain,
                     prompt_tag: "test".into(),
                     received_at: Instant::now(),
@@ -6222,6 +6301,7 @@ mod tests {
             scope: conv(channel_id),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event(content),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -6289,6 +6369,26 @@ mod tests {
     }
 
     #[test]
+    fn templated_workflow_text_is_never_a_slash_command() {
+        use crate::workflow_text::test_support::workflow_message;
+        let mut batch = make_single_batch("/init");
+        batch.events[0].workflow_verified = true;
+        batch.events[0].event = workflow_message("/init", Some("{{trigger.text}}"));
+        assert_eq!(slash_command_for_batch(&batch, &[]), None);
+        batch.events[0].event = workflow_message("/init", None);
+        assert_eq!(slash_command_for_batch(&batch, &[]), None);
+        batch.events[0].event = workflow_message("/init", Some("/init"));
+        assert_eq!(
+            slash_command_for_batch(&batch, &[]),
+            Some("/init".to_string()),
+            "the owner's own words still pass through"
+        );
+        // A forged tag equal to the text is not the owner's words.
+        batch.events[0].workflow_verified = false;
+        assert_eq!(slash_command_for_batch(&batch, &[]), None);
+    }
+
+    #[test]
     fn test_slash_command_for_batch_gating() {
         // Single qualifying event → pass-through.
         assert_eq!(
@@ -6300,6 +6400,7 @@ mod tests {
         let mut multi = make_single_batch("@Eva /init");
         multi.events.push(BatchEvent {
             edit: None,
+            workflow_verified: false,
             event: make_event("another message"),
             prompt_tag: "test".into(),
             received_at: Instant::now(),
@@ -6310,6 +6411,7 @@ mod tests {
         let mut cancelled = make_single_batch("@Eva /init");
         cancelled.cancelled_events.push(BatchEvent {
             edit: None,
+            workflow_verified: false,
             event: make_event("interrupted"),
             prompt_tag: "test".into(),
             received_at: Instant::now(),
@@ -6526,6 +6628,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("hi"),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -6557,6 +6660,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("hi"),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -6587,6 +6691,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: make_event("hi"),
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
@@ -6818,6 +6923,7 @@ mod tests {
     fn queued_edit(channel_id: Uuid, target: &str, edit: Option<ResolvedEdit>) -> QueuedEvent {
         QueuedEvent {
             edit,
+            workflow_verified: false,
             channel_id,
             scope: conv(channel_id),
             event: edit_event(target),
@@ -6836,6 +6942,7 @@ mod tests {
                 prompt_tag: "@mention".into(),
                 received_at: Instant::now(),
                 edit,
+                workflow_verified: false,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -7242,6 +7349,7 @@ mod tests {
             scope: conv(ch),
             events: vec![BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),

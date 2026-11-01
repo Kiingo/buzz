@@ -326,6 +326,14 @@ On startup, the harness captures a new watermark before connecting; reconnects u
 
 Recipient-scoped invocation controls (kind 24201) are delivered one at a time. Failed delivery retains the exact wake with bounded exponential backoff, including authentication attention and hard/idle request timeouts; the ordinary message retry limit does not discard it. Channel removal still prevents requeue, and explicit cancellation keeps its existing path. The receiving runtime must validate the capability and current durable dispatch before starting work. This in-process retry policy does not replace durable dispatch ownership across harness restarts or prove that ordinary chat inputs are durably queued.
 
+### Workflow messages
+
+A workflow's `send_message` step is its owner's stored template, and the relay signs what it renders, so substitutions like `{{trigger.text}}` can carry other people's words. The relay sends the stored template in a `buzz:workflow-template` tag. The harness believes that tag only on a message it verified as signed by the relay.
+
+A message that is its own template, with nothing to substitute, is treated as the owner's words. Any other workflow message wakes the agent as usual, but its text is wrapped as untrusted, it never steers or interrupts a running turn, and it is never a slash command. The template is shown beside the wrapped text only when the rendered text matches its literal parts exactly and in one way.
+
+The tag is on the message, so **everyone in the channel can read a step's stored template**, including text behind a `{{...}}` that never rendered. Don't put anything in a step's text that the channel shouldn't see.
+
 ### Runtime failure status
 
 Native timeout, authentication-attention and exhausted-retry notices are signed kind-40098 system status, not kind-9 agent answers. Each affected thread receives one status for the native prompt attempt; an unthreaded input is the root of its own status thread. Mixed-thread batches are scoped separately. Payloads use fixed operational descriptions, never raw provider errors or request content, and do not request a user to resend completed work.

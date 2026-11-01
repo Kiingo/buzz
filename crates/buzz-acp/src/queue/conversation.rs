@@ -223,6 +223,7 @@ impl EventQueue {
                     prompt_tag: event.prompt_tag,
                     received_at: event.received_at,
                     edit: event.edit,
+                    workflow_verified: false,
                 });
             }
         }
@@ -263,6 +264,7 @@ mod tests {
             received_at: Instant::now(),
             prompt_tag: "@mention".into(),
             edit: None,
+            workflow_verified: false,
         }
     }
 

@@ -7816,6 +7816,7 @@ pub(crate) mod tests {
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "@mention".into(),
                 received_at: std::time::Instant::now(),
@@ -8189,6 +8190,7 @@ done"#
                 scope: SessionScope::Conversation { channel_id },
                 events: vec![crate::queue::BatchEvent {
                     edit: None,
+                    workflow_verified: false,
                     event,
                     prompt_tag: "test".into(),
                     received_at: std::time::Instant::now(),
@@ -8390,6 +8392,7 @@ done"#
             scope: scope.clone(),
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: root,
                 prompt_tag: "@mention".into(),
                 received_at: std::time::Instant::now(),
@@ -8402,6 +8405,7 @@ done"#
             scope: scope.clone(),
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: trigger,
                 prompt_tag: "@mention".into(),
                 received_at: std::time::Instant::now(),
@@ -8495,12 +8499,14 @@ done"#
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: new_event.clone(),
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
             }],
             cancelled_events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: carry_over.clone(),
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
@@ -8512,6 +8518,7 @@ done"#
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: next_event,
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
@@ -8671,6 +8678,7 @@ done"#
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: trigger,
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
@@ -8956,6 +8964,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             },
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: trigger,
                 prompt_tag: "@mention".into(),
                 received_at: std::time::Instant::now(),
@@ -9010,6 +9019,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event: trigger,
                 prompt_tag: "@mention".into(),
                 received_at: std::time::Instant::now(),
@@ -9251,6 +9261,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             scope,
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
@@ -9334,6 +9345,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let mut batch = batch_with_scope(conv(channel), current);
         batch.cancelled_events.push(crate::queue::BatchEvent {
             edit: None,
+            workflow_verified: false,
             event: cancelled,
             prompt_tag: "cancelled".into(),
             received_at: std::time::Instant::now(),
@@ -10018,6 +10030,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             scope: SessionScope::Conversation { channel_id },
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),
@@ -11967,6 +11980,7 @@ done"#
             scope: conv(channel_id),
             events: vec![crate::queue::BatchEvent {
                 edit: None,
+                workflow_verified: false,
                 event,
                 prompt_tag: "test".into(),
                 received_at: std::time::Instant::now(),

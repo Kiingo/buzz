@@ -395,8 +395,13 @@ pub(crate) fn relayed_post_marker(
 /// Wrap relayed text as untrusted outside content (Kiingo's
 /// `<untrusted_content>` convention), escaping any markup inside it.
 pub(crate) fn wrap_untrusted_relayed(text: &str) -> String {
+    wrap_untrusted("buzz-relayed-post", text)
+}
+
+/// Wrap outside text from `source` as untrusted, escaping any markup in it.
+pub(crate) fn wrap_untrusted(source: &str, text: &str) -> String {
     format!(
-        "<untrusted_content source=\"buzz-relayed-post\">\n{}\n</untrusted_content>",
+        "<untrusted_content source=\"{source}\">\n{}\n</untrusted_content>",
         crate::prompt_framing::escape_semantic_text(text)
     )
 }

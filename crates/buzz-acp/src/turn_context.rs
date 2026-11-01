@@ -257,6 +257,7 @@ mod tests {
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
                 edit: None,
+                workflow_verified: false,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
@@ -328,6 +329,7 @@ mod tests {
                 prompt_tag: "test".into(),
                 received_at: Instant::now(),
                 edit: None,
+                workflow_verified: false,
             });
         }
         assert_eq!(

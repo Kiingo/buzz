@@ -1078,6 +1078,7 @@
         "crates/buzz-acp/src/relay_signers.rs",
         "crates/buzz-acp/src/scope.rs",
         "crates/buzz-acp/src/trust.rs",
+        "crates/buzz-acp/src/workflow_text.rs",
         "crates/buzz-acp/tests/e2e_guest_routing.rs",
         "crates/buzz-acp/tests/fixtures/fake_acp_agent.py",
         "crates/buzz-cli/src/client.rs",

@@ -317,6 +317,7 @@ mod tests {
                 prompt_tag: "test".to_string(),
                 received_at: Instant::now(),
                 edit: None,
+                workflow_verified: false,
             }],
             cancelled_events: vec![],
             cancel_reason: None,
