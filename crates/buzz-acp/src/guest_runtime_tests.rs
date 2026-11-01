@@ -539,11 +539,16 @@ async fn guards_drop_duplicates_echoes_and_sibling_loops() {
 }
 
 fn relayed_post(signer: &Keys, agent: &Keys, text: &str) -> Event {
+    relayed_post_from(signer, agent, text, "t1")
+}
+
+/// A relayed post of one source message; two sources never share an event id.
+fn relayed_post_from(signer: &Keys, agent: &Keys, text: &str, source_id: &str) -> Event {
     EventBuilder::new(Kind::Custom(9), text)
         .tags([
             Tag::parse(["h", &Uuid::nil().to_string()]).unwrap(),
             Tag::parse(["p", &agent.public_key().to_hex()]).unwrap(),
-            Tag::parse(["buzz-mirror", "tasks", "t1", "1"]).unwrap(),
+            Tag::parse(["buzz-mirror", "tasks", source_id, "1"]).unwrap(),
             Tag::parse(["buzz-mirror-author", "requester", "", ""]).unwrap(),
         ])
         .sign_with_keys(signer)
@@ -641,6 +646,40 @@ async fn relayed_tags_from_a_key_that_may_not_relay_get_every_agent_guard() {
     assert!(trusted
         .iter()
         .all(|verdict| matches!(verdict, GuardVerdict::Proceed { .. })));
+}
+
+#[tokio::test]
+async fn relayed_posts_dedupe_per_event_whoever_signed_them() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let relayer = Keys::generate();
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let tiers = [
+        TrustTier::Guest {
+            requester: relayer.public_key().to_hex(),
+        },
+        TrustTier::RelayedPost {
+            signer: relayer.public_key().to_hex(),
+        },
+    ];
+    for (round, tier) in tiers.iter().enumerate() {
+        let text = format!("yes {round}");
+        let first = relayed_post_from(&relayer, &agent, &text, "first");
+        let second = relayed_post_from(&relayer, &agent, &text, "second");
+        assert_ne!(first.id, second.id);
+        let check = |event: &Event| {
+            runtime.check_guards(&GuardInput {
+                event,
+                channel_id: Uuid::nil(),
+                tier,
+            })
+        };
+        // The same words twice are two posts.
+        assert!(matches!(check(&first), GuardVerdict::Proceed { .. }));
+        assert!(matches!(check(&second), GuardVerdict::Proceed { .. }));
+        // The same event again is the only duplicate.
+        assert_eq!(check(&first), GuardVerdict::Drop { guard: "duplicate" });
+    }
 }
 
 #[tokio::test]

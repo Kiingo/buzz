@@ -470,9 +470,11 @@ impl GuestRuntime {
             TrustTier::OtherOwnerAgent { owner, .. } => (owner.clone(), true),
         };
         let now = Instant::now();
-        // A relayed post dedupes per signer, claimed author and event: two
-        // people relayed by one key never collide.
-        let dedupe_requester = match tagged_relayed.as_ref().filter(|_| trusted_relay) {
+        // A tagged post dedupes per signer, claimed author and event, whoever
+        // signed it: one key can carry two people, and one person can say
+        // "yes" twice. Only a redelivered event is a duplicate (79 SHOULD-
+        // RELAY-DEDUPE-UNPINNED).
+        let dedupe_requester = match &tagged_relayed {
             Some(post) => format!(
                 "relayed:{author}:{}:{}",
                 post.claimed_author.as_deref().unwrap_or("anon"),
