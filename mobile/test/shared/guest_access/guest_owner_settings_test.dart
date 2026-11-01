@@ -472,10 +472,7 @@ void main() {
           reason: point.toRadixString(16),
         );
       }
-      expect(
-        grantSourceLabel('\u{1F600}' * 100),
-        '“${'\u{1F600}' * 79}…”',
-      );
+      expect(grantSourceLabel('\u{1F600}' * 100), '“${'\u{1F600}' * 79}…”');
     });
 
     // Kiingo 79 LOW: marks that read as quotes go too; plain neighbours stay.
