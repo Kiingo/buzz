@@ -349,9 +349,10 @@ check existing reply handlers for the pattern.
 
 ## Agent CLI (`buzz-cli`)
 
-`buzz` is the agent-first CLI. Auth env vars
-(`BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG`) are auto-injected
-by the ACP harness into managed agent subprocesses. In development, set
+`buzz` is the agent-first CLI. The ACP harness injects `BUZZ_RELAY_URL`,
+`BUZZ_AUTH_TAG`, `BUZZ_SIGNER_SOCKET` and `BUZZ_SIGNER_TOKEN` into managed agent
+subprocesses, which sign through that socket and never see the key. In
+development, set
 `BUZZ_PRIVATE_KEY` and `BUZZ_RELAY_URL` in your environment manually.
 
 ### Building the CLI

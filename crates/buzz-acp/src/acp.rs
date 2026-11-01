@@ -235,9 +235,7 @@ pub struct AcpClient {
     external_indicator_event_ids: Vec<String>,
     /// Optional, explicitly enabled publisher for the local ACP extension.
     /// It holds the Buzz signer in this parent process, and the child only
-    /// emits validated publication intents through it. This path hands the
-    /// child no key, but others still do: its inherited and managed env, and
-    /// the `session/new` mcpServers env.
+    /// emits validated publication intents through it.
     local_publication_publisher: Option<LocalPublicationPublisher>,
     /// Structured Buzz envelope attached to the next `session/prompt` as a
     /// namespaced ACP extension. Custom agents can consume this instead of
@@ -257,6 +255,56 @@ pub struct AcpClient {
     /// readable thinking unless asked; set only when the CLI the adapter runs
     /// is new enough to accept `--thinking-display`.
     claude_thinking_summaries: bool,
+}
+
+/// A copy of an outbound frame for the wire log and the observer feed. The
+/// signer token rides in `session/new`'s mcpServers env and goes no further.
+fn without_signer_token(frame: &serde_json::Value) -> serde_json::Value {
+    let mut copy = frame.clone();
+    let servers = copy
+        .pointer_mut("/params/mcpServers")
+        .and_then(serde_json::Value::as_array_mut);
+    for server in servers.into_iter().flatten() {
+        let env = server
+            .get_mut("env")
+            .and_then(serde_json::Value::as_array_mut);
+        for entry in env.into_iter().flatten() {
+            if entry.get("name").and_then(serde_json::Value::as_str) == Some(buzz_signer::TOKEN_ENV)
+            {
+                entry["value"] = serde_json::json!("[redacted]");
+            }
+        }
+    }
+    copy
+}
+
+#[cfg(test)]
+mod signer_token_tests {
+    use super::without_signer_token;
+    use serde_json::json;
+
+    #[test]
+    fn the_token_stays_out_of_logged_copies_and_the_frame_keeps_it() {
+        let frame = json!({
+            "method": "session/new",
+            "params": {"mcpServers": [{"name": "buzz", "env": [
+                {"name": "BUZZ_RELAY_URL", "value": "wss://relay.example"},
+                {"name": buzz_signer::SOCKET_ENV, "value": "/tmp/signer.sock"},
+                {"name": buzz_signer::TOKEN_ENV, "value": "secret-token"},
+            ]}]},
+        });
+        let logged = without_signer_token(&frame).to_string();
+        assert!(!logged.contains("secret-token"));
+        assert!(logged.contains("wss://relay.example"));
+        assert!(logged.contains("/tmp/signer.sock"));
+        assert!(frame.to_string().contains("secret-token"));
+    }
+
+    #[test]
+    fn frames_without_mcp_servers_pass_through() {
+        let frame = json!({"method": "session/prompt", "params": {"text": "hi"}});
+        assert_eq!(without_signer_token(&frame), frame);
+    }
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -606,7 +654,9 @@ impl AcpClient {
         // Keeping it would let an ambient user.name or signing setting win
         // over the harness-owned agent identity in native shells.
         cmd.env_remove("GIT_CONFIG_PARAMETERS");
-        cmd.env_remove("NOSTR_PRIVATE_KEY");
+        for name in crate::git::KEY_ENV {
+            cmd.env_remove(name);
+        }
         if extra_env.iter().any(|(name, _)| name == "GIT_CONFIG_COUNT") {
             // Native shells inherit these overrides, while buzz-agent clears
             // them for MCP. Let both paths use the harness's agent identity.
@@ -1298,7 +1348,7 @@ impl AcpClient {
         .await
         .map_err(|_| AcpError::WriteTimeout(WRITE_TIMEOUT))?
         .map_err(AcpError::Io)?;
-        self.observe("acp_write", value.clone());
+        self.observe("acp_write", without_signer_token(value));
         Ok(())
     }
 
@@ -1329,7 +1379,7 @@ impl AcpClient {
             "params": params,
         });
 
-        tracing::debug!(target: "acp::wire", "→ {}", &serde_json::to_string(&msg).unwrap_or_default());
+        tracing::debug!(target: "acp::wire", "→ {}", &serde_json::to_string(&without_signer_token(&msg)).unwrap_or_default());
 
         // Wrap write + read in a single timeout so a hung agent can't block forever.
         // We cannot use an async block that borrows `self` mutably across two awaits
@@ -2661,6 +2711,9 @@ async fn claude_cli_accepts_thinking_display(cmd: &tokio::process::Command) -> b
 /// Pipe stdout only, and put the probe in its own process group (like the
 /// adapter) so a timeout also kills a launcher's children.
 fn configure_version_probe(cmd: &mut tokio::process::Command) {
+    for name in crate::git::KEY_ENV {
+        cmd.env_remove(name);
+    }
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())

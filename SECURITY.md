@@ -99,7 +99,10 @@ a rotated key from a leftover file.
 When no keyring backend is available (headless Linux with no Secret Service, for
 example), keys fall back to a `0o600` owner-only file. The `BUZZ_PRIVATE_KEY`
 environment variable, when set, always takes precedence over both stores — this
-is how harnessed agents and CI receive their identity.
+is how `buzz-acp` and CI receive their identity. `buzz-acp` keeps the key to
+itself: its children sign through a local socket with a per-start token, under a
+default-deny kind list. A compromised child can sign as its agent while it runs,
+but can't take the key away.
 
 ### Input Validation
 

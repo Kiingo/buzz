@@ -442,10 +442,17 @@ for agents that clear their MCP child environment.
 
 `buzz-acp` includes both Git helpers as multicall personalities, so standalone
 and remote launches need no separate signer installation. The harness creates
-private helper aliases and a 0600 keyfile, keeps them alive across adapter
-respawns, and removes them when it exits normally or completes graceful
-shutdown. As with other temporary files, SIGKILL or a machine crash cannot run
-cleanup. `BUZZ_PRIVATE_KEY` remains available to the Buzz CLI; adapters do not
-receive the redundant `NOSTR_PRIVATE_KEY` variable. No global Git config is
+private helper aliases, keeps them alive across adapter respawns, and removes
+them when it exits normally or completes graceful shutdown. As with other
+temporary files, SIGKILL or a machine crash cannot run cleanup.
+
+The agent key stays in `buzz-acp`. Adapters, MCP servers and the shells under
+them get `BUZZ_SIGNER_SOCKET` and `BUZZ_SIGNER_TOKEN` instead, and the `buzz`
+CLI and both Git helpers sign through that socket. The token is new each start.
+The signer refuses anything off its kind list and never signs caller-supplied
+bytes. This stops key theft and lasting impersonation. It doesn't stop misuse
+during a run: a compromised child can sign as its agent while it runs.
+
+No global Git config is
 modified. Standalone `buzz-dev-mcp` supplies utility aliases only; a non-Buzz
 ACP client must supply any desired Git environment itself.

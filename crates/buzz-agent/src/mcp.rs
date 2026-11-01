@@ -80,7 +80,11 @@ const PASSTHROUGH_ENV: &[&str] = &[
     // was configured correctly and the child could not see it.
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
-    // Git config/keyfile paths arrive explicitly in session/new mcpServers[].env.
+    // Under buzz-acp the signer's socket and token arrive in session/new
+    // mcpServers[].env and the key doesn't reach this process at all. A
+    // standalone run may still hold a key of its own.
+    "BUZZ_SIGNER_SOCKET",
+    "BUZZ_SIGNER_TOKEN",
     "BUZZ_PRIVATE_KEY",
     "BUZZ_RELAY_URL",
     "BUZZ_AUTH_TAG",

@@ -83,19 +83,21 @@ async fn check_runtime(goose: bool) {
         git::GitEnvironment::install(&config.keys, &config.relay_url, &binaries.join("buzz-acp"))
             .unwrap();
     config.persona_env_vars.extend(git.env.iter().cloned());
-    let keyfile = git
-        .env
-        .windows(2)
-        .find(|pair| pair[0].1 == "nostr.keyfile")
-        .unwrap()[1]
-        .1
-        .clone();
+    let signer = crate::signer::SignerServer::start(
+        crate::signer::Signer::new(config.keys.clone(), None, &config.relay_url, &[]).unwrap(),
+    )
+    .unwrap();
+    let socket = signer.child_env()[0].1.clone();
+    config.persona_env_vars.extend(signer.child_env());
     let script = temp.path().join("probe.sh");
     std::fs::write(
         &script,
         r#"set -eu
 cd "$(dirname "$0")"
 test -z "${NOSTR_PRIVATE_KEY:-}"
+test -z "${BUZZ_PRIVATE_KEY:-}"
+test -S "$BUZZ_SIGNER_SOCKET"
+if git config nostr.keyfile; then exit 1; fi
 git config user.name > identity
 git config user.email >> identity
 test "$(git config --get-urlmatch credential.helper https://relay.invalid/git/test/repo)" = nostr
@@ -106,7 +108,6 @@ git -c core.hooksPath=/dev/null commit -s --allow-empty -qm 'runtime Git probe'
 git tag -m 'runtime tag probe' probe
 git verify-commit HEAD
 git verify-tag probe
-git config nostr.keyfile > ../keyfile
 printf 'passed' > ../result
 "#,
     )
@@ -158,15 +159,10 @@ printf 'passed' > ../result
         "{}@relay.invalid",
         config.keys.public_key().to_hex()
     )));
-    assert_eq!(
-        std::fs::read_to_string(temp.path().join("keyfile"))
-            .unwrap()
-            .trim(),
-        keyfile
-    );
-    assert!(std::path::Path::new(&keyfile).exists());
+    assert!(std::path::Path::new(&socket).exists());
+    drop(signer);
     drop(git);
-    assert!(!std::path::Path::new(&keyfile).exists());
+    assert!(!std::path::Path::new(&socket).exists());
 }
 
 #[tokio::test]

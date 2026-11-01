@@ -26,6 +26,8 @@ fn check_native_git_and_startup_shutdown_cleanup(task: bool) {
 set -eu
 cd "$PROBE_DIR"
 test -z "${NOSTR_PRIVATE_KEY:-}"
+test -z "${BUZZ_PRIVATE_KEY:-}"
+test -S "$BUZZ_SIGNER_SOCKET"
 test "$(git config test.inherited)" = preserved
 test -z "${GIT_CONFIG_VALUE_200:-}"
 ! env | grep -q old-helper
@@ -34,7 +36,8 @@ test "$(git config --get-urlmatch credential.helper https://relay.invalid/git/te
 ! git config --get-urlmatch credential.helper https://unrelated.invalid/git/test/repo
 ! git config --get-urlmatch credential.helper https://relay.invalid/other/repo
 ! git config --get-urlmatch credential.helper https://relay.invalid/git-other/repo
-git config nostr.keyfile > keyfile
+if git config nostr.keyfile; then exit 1; fi
+printf '%s' "$BUZZ_SIGNER_SOCKET" > socket
 command -v git-sign-nostr > signer
 command -v git-credential-nostr > credential
 git init -q repo
@@ -173,7 +176,7 @@ exec sleep 60
         .tags
         .iter()
         .any(|tag| tag.as_slice() == ["u", "https://relay.invalid/git/test/repo"]));
-    for file in ["keyfile", "signer", "credential"] {
+    for file in ["socket", "signer", "credential"] {
         let path = std::fs::read_to_string(workspace.join(file)).unwrap();
         assert!(
             !std::path::Path::new(path.trim()).exists(),
@@ -183,16 +186,16 @@ exec sleep 60
 }
 
 #[test]
-fn keyfile_removed_after_adapter_failure() {
-    check_keyfile_removed_after_adapter_failure(false);
+fn temp_state_removed_after_adapter_failure() {
+    check_temp_state_removed_after_adapter_failure(false);
 }
 
 #[test]
-fn task_keyfile_removed_after_adapter_failure() {
-    check_keyfile_removed_after_adapter_failure(true);
+fn task_temp_state_removed_after_adapter_failure() {
+    check_temp_state_removed_after_adapter_failure(true);
 }
 
-fn check_keyfile_removed_after_adapter_failure(task: bool) {
+fn check_temp_state_removed_after_adapter_failure(task: bool) {
     let temp = tempfile::tempdir().unwrap();
     let keys = nostr::Keys::generate();
     let input = tempfile::NamedTempFile::new().unwrap();
@@ -257,6 +260,8 @@ set -eu
 cd "$PROBE_DIR"
 test "$BUZZ_GIT_IDENTITY" = off
 test -z "${NOSTR_PRIVATE_KEY:-}"
+test -z "${BUZZ_PRIVATE_KEY:-}"
+test -S "$BUZZ_SIGNER_SOCKET"
 test "$GIT_CONFIG_COUNT" = 1
 test "$(git config test.inherited)" = preserved
 test "$GIT_AUTHOR_NAME" = 'Inherited Human'

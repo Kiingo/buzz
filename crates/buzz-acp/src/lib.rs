@@ -6673,23 +6673,10 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
         command: config.mcp_command.clone(),
         args: vec![],
         env: {
-            let mut env = vec![
-                EnvVar {
-                    name: "BUZZ_RELAY_URL".into(),
-                    value: config.relay_url.clone(),
-                },
-                EnvVar {
-                    name: "BUZZ_PRIVATE_KEY".into(),
-                    // bech32 encoding of a valid secret key is infallible.
-                    // Panic here is correct: injecting a bogus secret would cause
-                    // delayed, hard-to-diagnose agent failures downstream.
-                    value: config
-                        .keys
-                        .secret_key()
-                        .to_bech32()
-                        .expect("secret key bech32 encoding should never fail"),
-                },
-            ];
+            let mut env = vec![EnvVar {
+                name: "BUZZ_RELAY_URL".into(),
+                value: config.relay_url.clone(),
+            }];
             // Forward BUZZ_AUTH_TAG (NIP-OA owner attestation credential)
             // so the MCP server can attach it to every signed event.
             if let Ok(auth_tag) = std::env::var("BUZZ_AUTH_TAG") {
@@ -10464,7 +10451,7 @@ mod build_mcp_servers_tests {
         let names: Vec<&str> = git.env.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(
             names,
-            ["BUZZ_PRIVATE_KEY", "BUZZ_RELAY_URL", "BUZZ_GIT_IDENTITY"],
+            ["BUZZ_RELAY_URL", "BUZZ_GIT_IDENTITY"],
             "off mode must not touch PATH or the Git config block"
         );
         assert!(git
@@ -10558,7 +10545,7 @@ mod build_mcp_servers_tests {
             );
         }
         assert!(
-            entries.iter().any(|(key, _)| key == "nostr.keyfile"),
+            !entries.iter().any(|(key, _)| key == "nostr.keyfile"),
             "{entries:?}"
         );
         assert_eq!(value_of("BUZZ_GIT_IDENTITY").as_deref(), Some("user"));
@@ -10610,25 +10597,35 @@ mod build_mcp_servers_tests {
             assert_eq!(entries.len(), 1, "{name} must appear exactly once");
             assert_eq!(entries[0].value, *value);
         }
-        assert!(!env.iter().any(|entry| entry.name == "NOSTR_PRIVATE_KEY"));
-        let keyfile = git
-            .env
-            .windows(2)
-            .find(|pair| pair[0].1 == "nostr.keyfile")
-            .unwrap()[1]
-            .1
-            .clone();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&keyfile).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
+        for key_env in git::KEY_ENV {
+            assert!(!env.iter().any(|entry| entry.name == key_env), "{key_env}");
         }
-        assert!(std::path::Path::new(&keyfile).exists());
-        drop(git);
-        assert!(!std::path::Path::new(&keyfile).exists());
+        assert!(
+            !git.env.iter().any(|(_, value)| value == "nostr.keyfile"),
+            "no key file may be configured"
+        );
+    }
+
+    #[test]
+    fn session_new_gives_the_signer_socket_and_token_and_never_the_key() {
+        let mut config = test_config();
+        config
+            .persona_env_vars
+            .push((buzz_signer::SOCKET_ENV.into(), "/run/signer.sock".into()));
+        config
+            .persona_env_vars
+            .push((buzz_signer::TOKEN_ENV.into(), "token".into()));
+        let servers = build_mcp_servers(&config);
+        let env = &servers[0].env;
+        for name in [buzz_signer::SOCKET_ENV, buzz_signer::TOKEN_ENV] {
+            assert!(env.iter().any(|entry| entry.name == name), "{name}");
+        }
+        let secret = config.keys.secret_key().to_secret_hex();
+        let bech32 = config.keys.secret_key().to_bech32().unwrap();
+        for entry in env {
+            assert!(!git::KEY_ENV.contains(&entry.name.as_str()));
+            assert!(entry.value != secret && entry.value != bech32);
+        }
     }
 
     #[test]
@@ -10645,8 +10642,8 @@ mod build_mcp_servers_tests {
             "missing BUZZ_RELAY_URL; got {names:?}"
         );
         assert!(
-            names.contains(&"BUZZ_PRIVATE_KEY"),
-            "missing BUZZ_PRIVATE_KEY; got {names:?}"
+            !names.contains(&"BUZZ_PRIVATE_KEY"),
+            "the key must not reach a child; got {names:?}"
         );
     }
 

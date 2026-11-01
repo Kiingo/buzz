@@ -2,7 +2,7 @@
 //! environment, credentials, adapter settings and prompt equipment belong here.
 use crate::{
     build_mcp_servers, config::Config, current_working_directory, git, observer, pool, relay,
-    resolve_agent_owner, PromptContext,
+    resolve_agent_owner, signer, PromptContext,
 };
 use anyhow::Result;
 use std::{collections::HashMap, time::Duration};
@@ -18,14 +18,39 @@ pub(crate) enum SessionMode {
 pub(crate) struct AgentRuntime {
     config: Config,
     _git_environment: git::GitEnvironment,
+    _signer: signer::SignerServer,
+}
+
+/// Starts this run's signer. Children sign through it and never see the key.
+fn start_signer(config: &Config) -> Result<signer::SignerServer> {
+    let auth_tag = std::env::var("BUZZ_AUTH_TAG")
+        .ok()
+        .filter(|tag| !tag.is_empty())
+        .and_then(|tag| buzz_sdk::nip_oa::parse_auth_tag(&tag).ok());
+    // A URL that doesn't parse only means its origin gets refused at sign time.
+    let origins: Vec<String> = std::env::var("BUZZ_CANONICAL_RELAY_URL")
+        .ok()
+        .into_iter()
+        .chain(config.guest_route_url.clone())
+        .filter(|url| url::Url::parse(url.trim()).is_ok())
+        .collect();
+    let owner =
+        resolve_agent_owner(config).and_then(|owner| nostr::PublicKey::from_hex(&owner).ok());
+    let signer = signer::Signer::new(config.keys.clone(), auth_tag, &config.relay_url, &origins)?
+        .with_owner(owner);
+    signer::SignerServer::start(signer)
 }
 
 impl AgentRuntime {
     pub(crate) fn prepare(mut config: Config) -> Result<Self> {
+        signer::require_not_dumpable()?;
+        let signer = start_signer(&config)?;
         let git_environment = git::GitEnvironment::for_config(&mut config)?;
+        config.persona_env_vars.extend(signer.child_env());
         Ok(Self {
             config,
             _git_environment: git_environment,
+            _signer: signer,
         })
     }
 

@@ -28,7 +28,7 @@ The `buzz` CLI is your primary interface. Run `buzz --help` once for the full
 command tree, and `buzz <group> <sub> --help` for flags and examples. Before
 assuming a capability doesn't exist, check `buzz --help`.
 
-Auth env vars: `BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG`. Exit codes:
+Auth is already set up for you. Exit codes:
 0 ok, 1 user error, 2 network, 3 auth, 4 other, 5 write conflict. Output is
 structured JSON. `--format compact` is global — it goes before the subcommand.
 

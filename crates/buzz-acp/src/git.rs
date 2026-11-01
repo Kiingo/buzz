@@ -2,7 +2,13 @@
 use nostr::ToBech32;
 use std::path::Path;
 use tempfile::TempDir;
-use zeroize::Zeroizing;
+
+/// Process env that can hold an agent key. No child gets any of these.
+pub(crate) const KEY_ENV: [&str; 3] = [
+    "BUZZ_PRIVATE_KEY",
+    "BUZZ_ACP_PRIVATE_KEY",
+    "NOSTR_PRIVATE_KEY",
+];
 
 /// Keep this guard alive until the adapter pool has shut down.
 pub(crate) struct GitEnvironment {
@@ -31,7 +37,7 @@ impl GitEnvironment {
     ) -> anyhow::Result<Self> {
         let mode = GitIdentityMode::from_value(std::env::var_os(GIT_IDENTITY_ENV).as_deref())?;
         if mode == GitIdentityMode::Off {
-            return Ok(Self::off(keys, relay_url));
+            return Ok(Self::off(relay_url));
         }
         let agent = mode == GitIdentityMode::Agent;
         let dir = tempfile::Builder::new().prefix("buzz-acp-git-").tempdir()?;
@@ -40,14 +46,7 @@ impl GitEnvironment {
         if agent {
             symlink(executable, &dir.path().join("git-sign-nostr"))?;
         }
-        let keyfile = dir.path().join(".nostr-key");
-        let secret = Zeroizing::new(keys.secret_key().to_secret_hex());
-        write_keyfile_atomic(&keyfile, secret.as_bytes())?;
         let info = KeyInfo {
-            keyfile_path: keyfile
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Git keyfile path is not UTF-8"))?
-                .to_owned(),
             pubkey_hex: keys.public_key().to_hex(),
             npub: keys.public_key().to_bech32()?,
         };
@@ -69,7 +68,7 @@ impl GitEnvironment {
             let display_name = std::env::var("BUZZ_ACP_DISPLAY_NAME").ok();
             identity_entries(&info, relay, display_name.as_deref())
         } else {
-            vec![("nostr.keyfile".into(), info.keyfile_path.clone())]
+            Vec::new()
         };
         // In `user` mode nothing later overrides inherited identity or signing,
         // so drop agent mode's own managed keys, the author/committer
@@ -99,8 +98,7 @@ impl GitEnvironment {
                 .map_err(|_| anyhow::anyhow!("Git PATH is not UTF-8"))?,
         ));
         env.push(("GIT_TERMINAL_PROMPT".into(), "0".into()));
-        // CLI flags must work even when the caller did not export these variables.
-        env.push(("BUZZ_PRIVATE_KEY".into(), secret.to_string()));
+        // CLI flags must work even when the caller did not export this variable.
         env.push(("BUZZ_RELAY_URL".into(), relay_url.to_owned()));
         // MCP children start from a cleared env; forward the resolved mode so a
         // nested harness keeps it instead of defaulting to `agent`.
@@ -114,15 +112,12 @@ impl GitEnvironment {
         })
     }
 
-    /// `off`: no tempdir, keyfile, helper links, PATH entry or Git config
-    /// block. Git in agent shells behaves exactly as the inherited environment
-    /// configures it. The key stays in process env only, as the CLI needs it.
-    fn off(keys: &nostr::Keys, relay_url: &str) -> Self {
-        let secret = Zeroizing::new(keys.secret_key().to_secret_hex());
+    /// `off`: no tempdir, helper links, PATH entry or Git config block. Git in
+    /// agent shells behaves exactly as the inherited environment configures it.
+    fn off(relay_url: &str) -> Self {
         Self {
             _dir: None,
             env: vec![
-                ("BUZZ_PRIVATE_KEY".into(), secret.to_string()),
                 ("BUZZ_RELAY_URL".into(), relay_url.to_owned()),
                 (GIT_IDENTITY_ENV.into(), "off".into()),
             ],
@@ -131,7 +126,6 @@ impl GitEnvironment {
 }
 
 struct KeyInfo {
-    keyfile_path: String,
     pubkey_hex: String,
     npub: String,
 }
@@ -144,6 +138,7 @@ fn is_sensitive_inherited_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     key.starts_with("credential.")
         || key.starts_with("gpg.")
+        || key.starts_with("nostr.")
         || matches!(
             key.as_str(),
             "http.extraheader" | "core.sshcommand" | "core.askpass"
@@ -248,26 +243,6 @@ fn is_config_include(key: &str) -> bool {
         }
         None => false,
     }
-}
-
-/// Write `data` to `path` with 0600 permissions set at creation time via
-/// `OpenOptions::mode()` (no window where the file is world-readable).
-/// Non-Unix: plain write — acceptable inside our 0700 tempdir.
-#[cfg(unix)]
-fn write_keyfile_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    f.write_all(data)
-}
-
-#[cfg(not(unix))]
-fn write_keyfile_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, data)
 }
 
 /// Stable identity contract for git attribution: the bare agent display name,
@@ -397,7 +372,6 @@ fn identity_entries(
         ("commit.gpgSign".into(), "true".into()),
         ("tag.gpgSign".into(), "true".into()),
         ("user.signingkey".into(), info.pubkey_hex.clone()),
-        ("nostr.keyfile".into(), info.keyfile_path.clone()),
     ]);
     entries
 }
@@ -437,7 +411,8 @@ pub(crate) fn is_managed_env(name: &str) -> bool {
             name,
             "PATH"
                 | "GIT_TERMINAL_PROMPT"
-                | "BUZZ_PRIVATE_KEY"
+                | buzz_signer::SOCKET_ENV
+                | buzz_signer::TOKEN_ENV
                 | "BUZZ_RELAY_URL"
                 | GIT_IDENTITY_ENV
         )
@@ -481,7 +456,6 @@ mod git_user_name_tests {
 
     fn key_info() -> KeyInfo {
         KeyInfo {
-            keyfile_path: "/tmp/.nostr-key".into(),
             pubkey_hex: PUBKEY_HEX.into(),
             npub: NPUB.into(),
         }
@@ -813,6 +787,8 @@ mod inherited_key_tests {
             "gpg.ssh.program",
             "core.sshCommand",
             "core.askPass",
+            "nostr.keyfile",
+            "NOSTR.KeyFile",
         ] {
             assert!(is_sensitive_inherited_key(key), "{key}");
         }

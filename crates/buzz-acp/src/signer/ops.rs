@@ -84,6 +84,13 @@ impl Signer {
         })
     }
 
+    /// The owner `mem_*` ops encrypt to, from the harness's own resolution:
+    /// the verified tag, else the configured owner. A child can't choose it.
+    pub(crate) fn with_owner(mut self, owner: Option<PublicKey>) -> Self {
+        self.owner = owner;
+        self
+    }
+
     pub(crate) fn agent_hex(&self) -> String {
         self.keys.public_key().to_hex()
     }
