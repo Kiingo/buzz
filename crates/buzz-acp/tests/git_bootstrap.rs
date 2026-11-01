@@ -27,6 +27,8 @@ set -eu
 cd "$PROBE_DIR"
 test -z "${NOSTR_PRIVATE_KEY:-}"
 test "$(git config test.inherited)" = preserved
+test -z "${GIT_CONFIG_VALUE_200:-}"
+! env | grep -q old-helper
 test "$(git config user.name)" = 'Git Probe'
 test "$(git config --get-urlmatch credential.helper https://relay.invalid/git/test/repo)" = nostr
 ! git config --get-urlmatch credential.helper https://unrelated.invalid/git/test/repo
@@ -92,7 +94,8 @@ exec sleep 60
         .env("GIT_CONFIG_KEY_0", "test.inherited")
         .env("GIT_CONFIG_VALUE_0", "preserved")
         // Emulate an old Desktop launcher's scoped entries. These must be
-        // carried through and overridden without duplicating config counts.
+        // dropped, leaving only the harness's own, and an entry past the
+        // count must not stay readable in the child's env.
         .env(
             "GIT_CONFIG_KEY_1",
             "credential.https://relay.invalid/git.helper",
@@ -103,6 +106,8 @@ exec sleep 60
             "credential.https://relay.invalid/git.useHttpPath",
         )
         .env("GIT_CONFIG_VALUE_2", "true")
+        .env("GIT_CONFIG_KEY_200", "credential.helper")
+        .env("GIT_CONFIG_VALUE_200", "stale-tail")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_PARAMETERS", "'user.name=Inherited Human'")

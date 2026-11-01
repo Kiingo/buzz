@@ -10502,6 +10502,8 @@ mod build_mcp_servers_tests {
             ("COMMITTER.name", "Inherited Committer"),
             ("committer.EMAIL", "committer@example.invalid"),
             ("gpg.X509.program", "distinct-subsection"),
+            ("credential.helper", "inherited-helper"),
+            ("core.sshCommand", "inherited-ssh"),
             ("core.abbrev", "12"),
         ];
         let mut vars = vec![
@@ -10531,23 +10533,19 @@ mod build_mcp_servers_tests {
                 )
             })
             .collect();
-        for (key, _) in &inherited[..13] {
+        for (key, _) in &inherited[..inherited.len() - 1] {
             assert!(
                 !entries.iter().any(|(forwarded, _)| forwarded == key),
                 "{key} leaked: {entries:?}"
             );
         }
-        for survivor in [
-            ("gpg.X509.program", "distinct-subsection"),
-            ("core.abbrev", "12"),
-        ] {
-            assert!(
-                entries
-                    .iter()
-                    .any(|(key, value)| (key.as_str(), value.as_str()) == survivor),
-                "{survivor:?} must survive unchanged: {entries:?}"
-            );
-        }
+        let survivor = ("core.abbrev", "12");
+        assert!(
+            entries
+                .iter()
+                .any(|(key, value)| (key.as_str(), value.as_str()) == survivor),
+            "{survivor:?} must survive unchanged: {entries:?}"
+        );
         for absent in ["user.name", "user.email", "gpg.format", "commit.gpgSign"] {
             assert!(
                 !entries.iter().any(|(key, _)| key == absent),

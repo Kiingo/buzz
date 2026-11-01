@@ -584,6 +584,18 @@ impl AcpClient {
 
         // The harness composes the entire Git config block once. It must replace
         // inherited counts/PATH rather than mixing two independently indexed blocks.
+        // A filtered block can be shorter than the inherited one, so the old
+        // numbered entries go first or their tail stays readable in this env.
+        if extra_env.iter().any(|(name, _)| name == "GIT_CONFIG_COUNT") {
+            for (name, _) in std::env::vars_os() {
+                if name
+                    .to_str()
+                    .is_some_and(crate::git::is_numbered_config_env)
+                {
+                    cmd.env_remove(name);
+                }
+            }
+        }
         for (name, value) in extra_env
             .iter()
             .filter(|(name, _)| crate::git::is_managed_env(name))

@@ -136,6 +136,23 @@ struct KeyInfo {
     npub: String,
 }
 
+/// Whether an inherited Git config entry could carry a credential or run a
+/// program under the agent's identity. This block crosses into MCP shells
+/// (`is_managed_env`), so these never go with it. Decided by key name alone;
+/// the value is never parsed.
+fn is_sensitive_inherited_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.starts_with("credential.")
+        || key.starts_with("gpg.")
+        || matches!(
+            key.as_str(),
+            "http.extraheader" | "core.sshcommand" | "core.askpass"
+        )
+        || (key.starts_with("http.") && key.ends_with(".extraheader"))
+        || (key.starts_with("url.")
+            && (key.ends_with(".insteadof") || key.ends_with(".pushinsteadof")))
+}
+
 fn inherited_config() -> anyhow::Result<Vec<(String, String)>> {
     let count = match std::env::var("GIT_CONFIG_COUNT") {
         Ok(value) => value.parse::<usize>()?,
@@ -149,6 +166,9 @@ fn inherited_config() -> anyhow::Result<Vec<(String, String)>> {
                 std::env::var(format!("GIT_CONFIG_KEY_{i}"))?,
                 std::env::var(format!("GIT_CONFIG_VALUE_{i}"))?,
             ))
+        })
+        .filter(|entry: &anyhow::Result<(String, String)>| {
+            !matches!(entry, Ok((key, _)) if is_sensitive_inherited_key(key))
         })
         .collect()
 }
@@ -403,6 +423,11 @@ fn build_git_env(
         env.push((format!("GIT_CONFIG_VALUE_{i}"), value));
     }
     env
+}
+
+/// An entry of a numbered `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` block.
+pub(crate) fn is_numbered_config_env(name: &str) -> bool {
+    name.starts_with("GIT_CONFIG_KEY_") || name.starts_with("GIT_CONFIG_VALUE_")
 }
 
 /// Variables owned by the harness and forwarded across the MCP env-clear boundary.
@@ -765,6 +790,47 @@ mod git_user_name_tests {
         }
         for c in ['.', '-', '_', '@', '(', 'a', '🐝'] {
             assert!(!is_git_crud(c), "{c:?} should not be crud");
+        }
+    }
+}
+
+#[cfg(test)]
+mod inherited_key_tests {
+    use super::is_sensitive_inherited_key;
+
+    #[test]
+    fn entries_that_can_carry_a_credential_or_run_a_program_are_dropped() {
+        for key in [
+            "credential.helper",
+            "credential.https://example.com.username",
+            "CREDENTIAL.Helper",
+            "http.extraHeader",
+            "http.https://example.com/.extraheader",
+            "HTTP.https://example.com/.EXTRAHEADER",
+            "url.https://token@example.com/.insteadOf",
+            "url.https://token@example.com/.pushInsteadOf",
+            "gpg.program",
+            "gpg.ssh.program",
+            "core.sshCommand",
+            "core.askPass",
+        ] {
+            assert!(is_sensitive_inherited_key(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn ordinary_entries_pass_and_only_the_key_name_counts() {
+        for key in [
+            "user.name",
+            "test.inherited",
+            "core.autocrlf",
+            "http.proxy",
+            "http.https://example.com/.proxy",
+            "url.https://example.com/.other",
+            "credentials.notasection",
+            "commit.gpgsign",
+        ] {
+            assert!(!is_sensitive_inherited_key(key), "{key}");
         }
     }
 }
