@@ -57,6 +57,7 @@ import type {
   CreateChannelKind,
 } from "@/features/sidebar/ui/AppSidebar.types";
 import { SidebarRelayConnectionCard } from "@/features/sidebar/ui/SidebarRelayConnectionCard";
+import { useRenameChannelDialog } from "@/features/sidebar/ui/RenameChannelDialog";
 import {
   SidebarLoadingContent,
   useSidebarLoadingShape,
@@ -299,6 +300,8 @@ export function AppSidebar({
     React.useState<ChannelSection | null>(null);
   const { requestLeaveChannel, dialog: leaveChannelDialog } =
     useLeaveChannelDialog();
+  const { requestRenameChannel, dialog: renameChannelDialog } =
+    useRenameChannelDialog();
   const { requestDeleteChannel, dialog: deleteChannelDialog } =
     useDeleteChannelDialog((channel) => {
       if (channel.id === selectedChannelId) onSelectHome();
@@ -617,6 +620,7 @@ export function AppSidebar({
                       onUnstarChannel={onUnstarChannel}
                       onDeleteChannel={requestDeleteChannel}
                       onLeaveChannel={requestLeaveChannel}
+                      onRenameChannel={requestRenameChannel}
                     />
                   ) : null}
                   <SidebarDndContext
@@ -686,6 +690,7 @@ export function AppSidebar({
                         onUnstarChannel={onUnstarChannel}
                         onDeleteChannel={requestDeleteChannel}
                         onLeaveChannel={requestLeaveChannel}
+                        onRenameChannel={requestRenameChannel}
                       />
                     ))}
                     <ChannelGroupSection
@@ -725,6 +730,7 @@ export function AppSidebar({
                       onUnstarChannel={onUnstarChannel}
                       onDeleteChannel={requestDeleteChannel}
                       onLeaveChannel={requestLeaveChannel}
+                      onRenameChannel={requestRenameChannel}
                     />
                   </SidebarDndContext>
                   <FeatureGate feature="forum">
@@ -754,6 +760,7 @@ export function AppSidebar({
                       onMuteChannel={onMuteChannel}
                       onUnmuteChannel={onUnmuteChannel}
                       onDeleteChannel={requestDeleteChannel}
+                      onRenameChannel={requestRenameChannel}
                     />
                   </FeatureGate>
                   <SidebarSection
@@ -955,6 +962,7 @@ export function AppSidebar({
           setDeleteSectionTarget(null);
         }}
       />
+      {renameChannelDialog}
       {deleteChannelDialog}
       {leaveChannelDialog}
       <SidebarRail />

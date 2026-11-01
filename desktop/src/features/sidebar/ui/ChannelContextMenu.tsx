@@ -8,6 +8,7 @@ import {
   Copy,
   LogOut,
   LoaderCircle,
+  Pencil,
   Plus,
   Star,
   StarOff,
@@ -157,6 +158,7 @@ export function ChannelContextMenuItems({
   onCreateSectionForChannel,
   onDeleteChannel,
   onLeaveChannel,
+  onRenameChannel,
 }: {
   channel: Channel;
   hasUnread: boolean;
@@ -178,6 +180,7 @@ export function ChannelContextMenuItems({
   onCreateSectionForChannel?: (channelId: string) => void;
   onDeleteChannel?: (channel: Channel) => void;
   onLeaveChannel?: (channel: Channel) => void;
+  onRenameChannel?: (channel: Channel) => void;
 }) {
   const {
     feedItemState,
@@ -196,7 +199,7 @@ export function ChannelContextMenuItems({
       hasSidebarUnreadProjections &&
       unreadThreadChannelIds.has(channel.id));
   const canLoadOwnerActions =
-    channel.channelType !== "dm" && Boolean(onDeleteChannel);
+    channel.channelType !== "dm" && Boolean(onDeleteChannel || onRenameChannel);
   const membersQuery = useChannelMembersQuery(channel.id, canLoadOwnerActions);
   const currentPubkey = useIdentityQuery().data?.pubkey;
   const archiveChannel = useArchiveChannelMutation(channel.id);
@@ -347,6 +350,17 @@ export function ChannelContextMenuItems({
             <TriangleAlert className="h-4 w-4" />
           </ContextMenuIconSlot>
           <span>Channel actions unavailable</span>
+        </ContextMenuItem>
+      ) : null}
+      {canManageChannel && onRenameChannel && !channel.archivedAt ? (
+        <ContextMenuItem
+          data-testid={`rename-channel-${channel.name}`}
+          onSelect={() => deferMenuAction(() => onRenameChannel(channel))}
+        >
+          <ContextMenuIconSlot>
+            <Pencil className="h-4 w-4" />
+          </ContextMenuIconSlot>
+          <span>Rename channel</span>
         </ContextMenuItem>
       ) : null}
       {canManageChannel ? (
