@@ -649,11 +649,11 @@ String? readAgentDmActionRef(List<List<String>> tags) {
 
 final _tapMessageId = RegExp(r'^[0-9a-fA-F]{64}$');
 
-/// The tags a tapped action sends: the ref, and `['e', <message id>, '',
-/// 'mention']` naming the message the button was on (a mention marker, so
-/// the tap stays top-level, never a thread reply). Kiingo checks that
-/// message is its own notice that carried this button, so a lookalike from
-/// an agent's key can't borrow a real ask's ref (79
+/// The tags a tapped action sends: the ref, and
+/// `['e', <message id>, '', 'mention']` naming the message the button was on
+/// (a mention marker, so the tap stays top-level, never a thread reply).
+/// Kiingo checks that message is its own notice that carried this button, so
+/// a lookalike from an agent's key can't borrow a real ask's ref (79
 /// MUST-79-LEND-CONSENT-TAP-NOT-BOUND-TO-NOTICE). A message without a relay
 /// id yet sends the ref alone.
 List<List<String>> agentDmActionRefTags(
