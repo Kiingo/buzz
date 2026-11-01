@@ -670,6 +670,16 @@ void main() {
         delegationPreviewLinkLabel('PR', preview.prUrl!),
         'PR (github.com)',
       );
+      // Unicode hosts show as punycode, as desktop's URL parser shows them.
+      expect(
+        delegationPreviewLinkLabel('PR', 'https://bücher.de/x'),
+        'PR (xn--bcher-kva.de)',
+      );
+      expect(
+        delegationPreviewLinkLabel('PR', 'https://\u0430pple.com/'),
+        'PR (xn--pple-43d.com)',
+      );
+      expect(delegationAsciiHost('b%C3%BCcher.de'), 'xn--bcher-kva.de');
       expect(preview.testReceiptUrlLinkable, isFalse);
       expect(DelegationResultPreview.tryParse(const {}), isNull);
     });

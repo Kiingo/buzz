@@ -91,10 +91,82 @@ class DelegationResultPreview {
 }
 
 /// A linkable preview URL's label with its host, "PR (github.com)", so the
-/// owner sees where a worker-reported link goes before opening it.
+/// owner sees where a worker-reported link goes before opening it. The host
+/// shows in its ASCII form, as desktop's URL parser shows it: a Unicode
+/// label becomes punycode ("xn--pple-43d.com"), so a look-alike host cannot
+/// pass for a familiar one.
 String delegationPreviewLinkLabel(String label, String url) {
-  final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+  final host = delegationAsciiHost(Uri.tryParse(url)?.host ?? '');
   return host.isEmpty ? label : '$label ($host)';
+}
+
+/// [host] (as `Uri.host` gives it, percent-encoded past ASCII) in lowercase
+/// ASCII, every non-ASCII label as `xn--` punycode (RFC 3492).
+String delegationAsciiHost(String host) {
+  String decoded;
+  try {
+    decoded = Uri.decodeComponent(host);
+  } on ArgumentError {
+    decoded = host;
+  }
+  return decoded
+      .toLowerCase()
+      .split('.')
+      .map(
+        (part) => part.runes.every((c) => c < 0x80)
+            ? part
+            : 'xn--${_punycode(part.runes.toList())}',
+      )
+      .join('.');
+}
+
+/// RFC 3492 §6.3 encoding of one label's code points.
+String _punycode(List<int> input) {
+  const base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700;
+  int adapt(int delta, int points, {required bool first}) {
+    var d = first ? delta ~/ damp : delta ~/ 2;
+    d += d ~/ points;
+    var k = 0;
+    while (d > ((base - tMin) * tMax) ~/ 2) {
+      d ~/= base - tMin;
+      k += base;
+    }
+    return k + ((base - tMin + 1) * d) ~/ (d + skew);
+  }
+
+  String digit(int d) => String.fromCharCode(d < 26 ? 0x61 + d : 0x16 + d);
+
+  final out = StringBuffer();
+  for (final c in input) {
+    if (c < 0x80) out.writeCharCode(c);
+  }
+  final basic = out.length;
+  if (basic > 0) out.write('-');
+  var handled = basic;
+  var n = 0x80, delta = 0, bias = 72;
+  while (handled < input.length) {
+    final m = input.where((c) => c >= n).reduce((a, b) => a < b ? a : b);
+    delta += (m - n) * (handled + 1);
+    n = m;
+    for (final c in input) {
+      if (c < n) delta++;
+      if (c != n) continue;
+      var q = delta;
+      for (var k = base; ; k += base) {
+        final t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
+        if (q < t) break;
+        out.write(digit(t + (q - t) % (base - t)));
+        q = (q - t) ~/ (base - t);
+      }
+      out.write(digit(q));
+      bias = adapt(delta, handled + 1, first: handled == basic);
+      delta = 0;
+      handled++;
+    }
+    delta++;
+    n++;
+  }
+  return out.toString();
 }
 
 enum DelegationJournalKind {
