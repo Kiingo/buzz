@@ -336,6 +336,10 @@ The tag is on the message, so **everyone in the channel can read a step's stored
 
 An adapter reading `_meta.buzz` gets the event's raw `text` under its real signer: for a workflow message `authorPublicKey` is the relay's key, not the owner's, and the wrapped form is only in the prompt blocks. The adapter must mark that text by signer, as it would any other sender's. The Kiingo API does this: a key bound to no person never opens a mission, and input it adds to one reaches the Run as outside content. `_meta.buzz.tags` never carries the template tag.
 
+### Relay key
+
+A relay signs relay-authored state with the key its NIP-11 `self` field advertises, and a relay run with no stable key advertises none. When a relay advertises no key, the harness logs a warning with code `relay_key_not_advertised`. A harness with a guest route (`BUZZ_ACP_GUEST_ROUTE_URL`) goes further and refuses that answer, so whatever reads relay-authored state fails closed: it keeps no pin across a restart, and can't tell a downgrade from a relay that never had a key.
+
 ### Runtime failure status
 
 Native timeout, authentication-attention and exhausted-retry notices are signed kind-40098 system status, not kind-9 agent answers. Each affected thread receives one status for the native prompt attempt; an unthreaded input is the root of its own status thread. Mixed-thread batches are scoped separately. Payloads use fixed operational descriptions, never raw provider errors or request content, and do not request a user to resend completed work.

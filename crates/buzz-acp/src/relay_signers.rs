@@ -63,6 +63,26 @@ pub(crate) struct RoomRead {
     pub(crate) refresh: Option<u64>,
 }
 
+/// A running lookup's claim on its room. A lookup that ends without an answer,
+/// by a panic or a cancelled task, leaves as a failed one, so the room doesn't
+/// stay unlisted and spared from eviction with nothing running.
+struct LookupClaim<'a> {
+    cache: &'a RoomSignerCache,
+    channel_id: Uuid,
+    refresh: u64,
+    answered: bool,
+}
+
+impl Drop for LookupClaim<'_> {
+    fn drop(&mut self) {
+        if !self.answered {
+            let (signers, ttl) = failed(self.channel_id, None, "abandoned");
+            self.cache
+                .store(self.channel_id, self.refresh, signers, ttl);
+        }
+    }
+}
+
 /// Bounded per-room cache of the route's answers. Reads never wait: they run
 /// on the listener, and a hung route must not delay another room or a control
 /// command.
@@ -120,11 +140,23 @@ impl RoomSignerCache {
         Lookup: FnOnce() -> LookupFut,
         LookupFut: Future<Output = Result<RelaySigners, RouteError>>,
     {
+        let mut claim = LookupClaim {
+            cache: self,
+            channel_id,
+            refresh,
+            answered: false,
+        };
         let (signers, ttl) = match tokio::time::timeout(LOOKUP_TIMEOUT, lookup()).await {
             Ok(Ok(found)) => parse_answer(channel_id, found),
             Ok(Err(error)) => failed(channel_id, error.status, failure_code(&error)),
             Err(_) => failed(channel_id, None, "timeout"),
         };
+        claim.answered = true;
+        self.store(channel_id, refresh, signers, ttl);
+    }
+
+    /// Store a lookup's answer, if that lookup still owns its room.
+    fn store(&self, channel_id: Uuid, refresh: u64, signers: HashSet<String>, ttl: Duration) {
         let mut state = self
             .state
             .lock()
@@ -392,6 +424,70 @@ mod tests {
         let read = cache.read(room);
         assert!(!read.signers.contains(&key));
         assert!(read.refresh.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_lookup_that_panics_leaves_as_a_failed_lookup() {
+        let cache = Arc::new(RoomSignerCache::default());
+        let room = Uuid::new_v4();
+        let refresh = cache.read(room).refresh.expect("lookup");
+
+        let task = tokio::spawn({
+            let cache = cache.clone();
+            async move {
+                cache
+                    .refresh(room, refresh, || async { panic!("the lookup broke") })
+                    .await;
+            }
+        });
+
+        assert!(task.await.expect_err("it panicked").is_panic());
+        assert_eq!(
+            cache.state.lock().unwrap().rooms[&room].refreshing,
+            None,
+            "nothing is running, so the room can be evicted"
+        );
+        assert_eq!(cache.read(room).refresh, None, "not repeated at once");
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_lookup_leaves_as_a_failed_lookup() {
+        let cache = Arc::new(RoomSignerCache::default());
+        let room = Uuid::new_v4();
+        let refresh = cache.read(room).refresh.expect("lookup");
+
+        let task = tokio::spawn({
+            let cache = cache.clone();
+            async move {
+                cache.refresh(room, refresh, std::future::pending).await;
+            }
+        });
+        tokio::task::yield_now().await;
+        task.abort();
+
+        assert!(task.await.expect_err("it was cancelled").is_cancelled());
+        assert_eq!(cache.state.lock().unwrap().rooms[&room].refreshing, None);
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_lookup_leaves_a_newer_one_alone() {
+        let cache = RoomSignerCache::default();
+        let room = Uuid::new_v4();
+        let stale = cache.read(room).refresh.expect("lookup");
+        cache.state.lock().unwrap().rooms.remove(&room);
+        let current = cache.read(room).refresh.expect("a new lookup");
+
+        drop(LookupClaim {
+            cache: &cache,
+            channel_id: room,
+            refresh: stale,
+            answered: false,
+        });
+
+        assert_eq!(
+            cache.state.lock().unwrap().rooms[&room].refreshing,
+            Some(current)
+        );
     }
 
     #[tokio::test]
