@@ -523,19 +523,25 @@ impl GuestRuntime {
             TrustTier::OtherOwnerAgent { owner, .. } => (owner.clone(), true),
         };
         let now = Instant::now();
+        // What waits on the owner is the words, so a repeat stays held however
+        // it was delivered.
+        let key = request_key(&input.event.content, &requester, &self.agent_pubkey);
         // A tagged post dedupes per signer, claimed author and event, whoever
         // signed it: one key can carry two people, and one person can say
         // "yes" twice. Only a redelivered event is a duplicate (79 SHOULD-
         // RELAY-DEDUPE-UNPINNED).
-        let dedupe_requester = match &tagged_relayed {
-            Some(post) => format!(
-                "relayed:{author}:{}:{}",
-                post.claimed_author.as_deref().unwrap_or("anon"),
-                input.event.id.to_hex()
+        let duplicate_key = match &tagged_relayed {
+            Some(post) => request_key(
+                &input.event.content,
+                &format!(
+                    "relayed:{author}:{}:{}",
+                    post.claimed_author.as_deref().unwrap_or("anon"),
+                    input.event.id.to_hex()
+                ),
+                &self.agent_pubkey,
             ),
-            None => requester.clone(),
+            None => key.clone(),
         };
-        let key = request_key(&input.event.content, &dedupe_requester, &self.agent_pubkey);
         // Top-level posts share one key per channel, so a loop of top-level
         // posts is limited like a loop inside one thread.
         let thread = parse_thread_tags(input.event)
@@ -547,7 +553,8 @@ impl GuestRuntime {
                 Err("echo")
             } else if author_is_agent && guards.pending_reference(&key, now).is_some() {
                 Err("approval_pending")
-            } else if (author_is_agent || trusted_relay) && guards.is_duplicate(&key, now) {
+            } else if (author_is_agent || trusted_relay) && guards.is_duplicate(&duplicate_key, now)
+            {
                 // People re-asking are deduplicated server-side, which can
                 // answer "already asked"; a silent local drop would not.
                 Err("duplicate")

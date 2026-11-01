@@ -881,6 +881,50 @@ async fn relayed_tags_from_a_key_that_may_not_relay_get_every_agent_guard() {
 }
 
 #[tokio::test]
+async fn words_waiting_on_the_owner_stay_held_in_any_post() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let relayer = Keys::generate();
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let guest = TrustTier::Guest {
+        requester: relayer.public_key().to_hex(),
+    };
+    let check = |event: &Event, tier: &TrustTier| {
+        runtime.check_guards(&GuardInput {
+            event,
+            channel_id: Uuid::nil(),
+            tier,
+        })
+    };
+    let first = relayed_post_from(&relayer, &agent, "ship it", "first");
+    let second = relayed_post_from(&relayer, &agent, "ship it", "second");
+    let GuardVerdict::Proceed {
+        request_key: Some(key),
+    } = check(&first, &guest)
+    else {
+        panic!("the first post proceeds");
+    };
+    runtime
+        .guards()
+        .mark_pending(&key, "turn-1", Instant::now());
+
+    assert_eq!(
+        check(&second, &guest),
+        GuardVerdict::Drop {
+            guard: "approval_pending"
+        }
+    );
+    // A key that may relay is human traffic: nothing of its is held.
+    let relayed = TrustTier::RelayedPost {
+        signer: relayer.public_key().to_hex(),
+    };
+    assert!(matches!(
+        check(&second, &relayed),
+        GuardVerdict::Proceed { .. }
+    ));
+}
+
+#[tokio::test]
 async fn relayed_posts_dedupe_per_event_whoever_signed_them() {
     let mock = mock().await;
     let agent = Keys::generate();
