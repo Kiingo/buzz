@@ -39,6 +39,7 @@ use crate::observer::{ObserverContext, ObserverHandle};
 use crate::provenance::{self, ChainStatus};
 use crate::queue::parse_thread_tags;
 use crate::relay::RestClient;
+use crate::relay_signers::{RelayedPostCeiling, RoomSignerCache};
 use crate::trust::{tier_from_parts, GuestTurns, ProfileDirectory, TrustTier};
 
 /// Tag on harness-authored notices (refusals, hop-limit and pair-limit
@@ -246,8 +247,6 @@ pub(crate) struct GuestRuntimeConfig {
     pub(crate) respond_to: RespondTo,
     pub(crate) static_allowlist: HashSet<String>,
     pub(crate) guest_instructions: Option<String>,
-    /// Keys pinned to relay people's posts (lowercase hex).
-    pub(crate) relayed_post_bridges: HashSet<String>,
 }
 
 /// Verdict of the agent-traffic guards for one event.
@@ -277,7 +276,8 @@ pub(crate) struct GuestRuntime {
     respond_to: RespondTo,
     static_allowlist: HashSet<String>,
     guest_instructions: Option<String>,
-    relayed_post_bridges: HashSet<String>,
+    room_signers: RoomSignerCache,
+    relayed_ceiling: Mutex<RelayedPostCeiling>,
     relay_url: String,
     profiles: ProfileDirectory,
     roster: DmParticipantResolver,
@@ -333,7 +333,8 @@ impl GuestRuntime {
             respond_to: config.respond_to,
             static_allowlist: config.static_allowlist,
             guest_instructions: config.guest_instructions,
-            relayed_post_bridges: config.relayed_post_bridges,
+            room_signers: RoomSignerCache::default(),
+            relayed_ceiling: Mutex::default(),
             relay_url: config.relay_url,
             profiles: ProfileDirectory::default(),
             guards: Mutex::new(AgentGuards::default()),
@@ -373,11 +374,32 @@ impl GuestRuntime {
             .is_some_and(|attested| attested.eq_ignore_ascii_case(owner))
     }
 
-    /// Whether `signer` may relay a person's words: a pinned bridge, or the
-    /// owner, this agent or an agent attested by the same owner. A profile
-    /// that cannot be read proves nothing, so that signer may not.
-    async fn may_relay(&self, signer: &str) -> bool {
-        self.relayed_post_bridges.contains(signer) || self.is_owner_equivalent_author(signer).await
+    /// Whether `signer` may relay a person's words into this room: the owner,
+    /// this agent, an agent attested by the same owner, or a key the hosted
+    /// route lists for the room. The list comes from the server, never the
+    /// event. It decides only which loop guards apply: it says who could
+    /// sign, not that a person wrote the post. A profile or a list that
+    /// cannot be read proves nothing, so that signer may not.
+    async fn may_relay(&self, signer: &str, channel_id: Uuid) -> bool {
+        if self.is_owner_equivalent_author(signer).await {
+            return true;
+        }
+        let Some(client) = self.client.as_ref() else {
+            return false;
+        };
+        let signers = self
+            .room_signers
+            .signers(channel_id, || client.relay_signers(channel_id))
+            .await;
+        let listed = signers.contains(signer);
+        if !listed {
+            tracing::info!(
+                channel_id = %channel_id,
+                code = "not_listed",
+                "relayed tags from a key this room does not list"
+            );
+        }
+        listed
     }
 
     fn emit(&self, kind: &str, channel_id: Option<Uuid>, payload: Value) {
@@ -399,10 +421,31 @@ impl GuestRuntime {
 
     /// Classify `event`'s signed author. `is_sibling` is the existing
     /// owner-or-sibling verdict (true for the owner too).
-    pub(crate) async fn classify(&self, event: &Event, is_owner_or_sibling: bool) -> TrustTier {
+    pub(crate) async fn classify(
+        &self,
+        event: &Event,
+        channel_id: Uuid,
+        is_owner_or_sibling: bool,
+    ) -> TrustTier {
         let author = event.pubkey.to_hex();
         let tagged_relayed = crate::agent_dm_markers::relayed_person_mirror(event).is_some();
-        if tagged_relayed && self.may_relay(&author).await {
+        if tagged_relayed && self.may_relay(&author, channel_id).await {
+            let within_ceiling = self
+                .relayed_ceiling
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .admit(&author, channel_id, Instant::now());
+            if !within_ceiling {
+                // Faster than people post, so treat it as a loop: a guest
+                // with every agent guard, never refused here. `tier_from_parts`
+                // would read the owner's own key as the owner.
+                tracing::info!(
+                    channel_id = %channel_id,
+                    code = "relay_ceiling",
+                    "relayed post over the ceiling; agent guards apply"
+                );
+                return TrustTier::Guest { requester: author };
+            }
             // Words relayed for someone else: never owner or sibling input,
             // whoever signed them, and the claimed author grants nothing. One
             // guest lane per relaying key.
@@ -459,7 +502,9 @@ impl GuestRuntime {
             // text a person typed, R1), relayed for many people by one key:
             // the agent-loop guards (echo, root budget, pair limit) would
             // misfire on a busy thread, so it is human traffic (79 LOW-7).
-            // Only a key that may relay gets this; see `classify`.
+            // Only a key that may relay gets this, up to a rate no person
+            // reaches, because a listed key could tag its own loop traffic;
+            // see `classify`.
             TrustTier::RelayedPost { signer } => (signer.clone(), false),
             // People do not write relay tags, so a key that may not relay
             // but uses them gets every agent guard.

@@ -9,8 +9,9 @@
 //!   `buzz-guest` tag (text produced for someone else is never an owner
 //!   instruction).
 //! - [`TrustTier::OtherOwnerAgent`]: an agent attested by a different owner.
-//! - [`TrustTier::RelayedPost`]: a person's words relayed by a key trusted to
-//!   relay them (a pinned bridge, the owner or a sibling). Never owner input.
+//! - [`TrustTier::RelayedPost`]: a post relayed by a key that may relay in that
+//!   room (one Kiingo's server lists, the owner or a sibling). The tier only
+//!   decides which loop guards apply. Never owner input.
 //!
 //! Owner and sibling events run local turns. In [`GuestTurns::Hosted`] mode
 //! every other tier is handed to the hosted guest-turn route and never reaches

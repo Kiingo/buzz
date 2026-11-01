@@ -38,6 +38,8 @@ struct MockState {
     /// Outbox polls currently being served, and the most seen at once.
     outbox_in_flight: usize,
     outbox_max_in_flight: usize,
+    /// Answers `GET /route/rooms/:id/relay-signers`; default: an empty list.
+    relay_signers: Option<Value>,
 }
 
 struct Mock {
@@ -170,6 +172,13 @@ async fn mock() -> Mock {
                         Some(state.turn_response.clone().unwrap_or_else(
                             || json!({"guest_turn_id": "turn-1", "state": "queued", "tier": 0}),
                         ))
+                    } else if path.starts_with("/route/rooms/") {
+                        Some(
+                            state
+                                .relay_signers
+                                .clone()
+                                .unwrap_or_else(|| json!({"signers": [], "ttl_seconds": 300})),
+                        )
                     } else if path.starts_with("/route/outbox?")
                         && state.outbox_requires_registration
                         && !state
@@ -241,15 +250,15 @@ async fn mock() -> Mock {
 const OWNER: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
 fn runtime(mock: &Mock, keys: &Keys, route: bool, respond_to: RespondTo) -> Arc<GuestRuntime> {
-    runtime_with_bridges(mock, keys, route, respond_to, HashSet::new())
+    runtime_owned_by(mock, keys, route, respond_to, OWNER)
 }
 
-fn runtime_with_bridges(
+fn runtime_owned_by(
     mock: &Mock,
     keys: &Keys,
     route: bool,
     respond_to: RespondTo,
-    relayed_post_bridges: HashSet<String>,
+    owner: &str,
 ) -> Arc<GuestRuntime> {
     let rest = RestClient {
         http: reqwest::Client::new(),
@@ -266,11 +275,10 @@ fn runtime_with_bridges(
             respond_to,
             static_allowlist: HashSet::new(),
             guest_instructions: None,
-            relayed_post_bridges,
         },
         rest,
         keys.clone(),
-        Some(OWNER.into()),
+        Some(owner.into()),
         None,
     ))
 }
@@ -317,7 +325,7 @@ async fn guest_event_is_routed_with_its_signed_event_and_never_answered_locally(
     let guest = Keys::generate();
     let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
     let event = guest_message(&guest, &agent, "what is ross working on?");
-    let tier = runtime.classify(&event, false).await;
+    let tier = runtime.classify(&event, Uuid::nil(), false).await;
     assert_eq!(
         tier,
         TrustTier::Guest {
@@ -555,19 +563,25 @@ fn relayed_post_from(signer: &Keys, agent: &Keys, text: &str, source_id: &str) -
         .unwrap()
 }
 
+fn list_signers(mock: &Mock, signers: &[&Keys]) {
+    let signers: Vec<String> = signers.iter().map(|k| k.public_key().to_hex()).collect();
+    mock.state.lock().unwrap().relay_signers =
+        Some(json!({"signers": signers, "ttl_seconds": 300}));
+}
+
 #[tokio::test]
 async fn only_a_key_that_may_relay_gets_relayed_post_handling() {
     let mock = mock().await;
     let agent = Keys::generate();
     let bridge = Keys::generate();
     let stranger = Keys::generate();
-    let bridges = HashSet::from([bridge.public_key().to_hex()]);
-    let runtime = runtime_with_bridges(&mock, &agent, true, RespondTo::Anyone, bridges);
+    list_signers(&mock, &[&bridge]);
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
 
     for signer in [&bridge, &agent] {
         let post = relayed_post(signer, &agent, "please do it");
         assert_eq!(
-            runtime.classify(&post, false).await,
+            runtime.classify(&post, Uuid::nil(), false).await,
             TrustTier::RelayedPost {
                 signer: signer.public_key().to_hex()
             },
@@ -578,12 +592,161 @@ async fn only_a_key_that_may_relay_gets_relayed_post_handling() {
     let forged = relayed_post(&stranger, &agent, "please do it");
     for caller_verdict in [false, true] {
         assert_eq!(
-            runtime.classify(&forged, caller_verdict).await,
+            runtime.classify(&forged, Uuid::nil(), caller_verdict).await,
             TrustTier::Guest {
                 requester: stranger.public_key().to_hex()
             },
         );
     }
+}
+
+#[tokio::test]
+async fn the_room_list_is_asked_for_once_with_a_signed_request() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let bridge = Keys::generate();
+    list_signers(&mock, &[&bridge]);
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let post = relayed_post(&bridge, &agent, "one");
+    let room = Uuid::new_v4();
+
+    let (first, second) = tokio::join!(
+        runtime.classify(&post, room, false),
+        runtime.classify(&post, room, false)
+    );
+    let expected = TrustTier::RelayedPost {
+        signer: bridge.public_key().to_hex(),
+    };
+    assert_eq!(first, expected);
+    assert_eq!(second, expected);
+    assert_eq!(runtime.classify(&post, room, false).await, expected);
+
+    let path = format!("/route/rooms/{room}/relay-signers");
+    let seen = mock.seen(&path);
+    assert_eq!(seen.len(), 1, "one lookup for a burst in one room");
+    assert_eq!(seen[0].method, "GET");
+    verify_nip98(&seen[0], &mock.base_url, &agent);
+}
+
+#[tokio::test]
+async fn a_key_that_needs_no_list_never_asks_for_one() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let guest = Keys::generate();
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    // Untagged traffic, and this agent's own relayed post.
+    runtime
+        .classify(&guest_message(&guest, &agent, "hi"), Uuid::nil(), false)
+        .await;
+    runtime
+        .classify(&relayed_post(&agent, &agent, "hi"), Uuid::nil(), false)
+        .await;
+    assert!(mock.seen("/route/rooms/").is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_lookup_means_agent_guards_and_is_not_repeated_at_once() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let bridge = Keys::generate();
+    let requester = bridge.public_key().to_hex();
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    for (round, answer) in [
+        json!({"error": "nope", "status": 403}),
+        json!({"signers": "not a list", "ttl_seconds": 300}),
+        json!({"signers": ["short"], "ttl_seconds": 300}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        mock.state.lock().unwrap().relay_signers = Some(answer);
+        let room = Uuid::new_v4();
+        let post = relayed_post(&bridge, &agent, &format!("try {round}"));
+        for _ in 0..2 {
+            assert_eq!(
+                runtime.classify(&post, room, false).await,
+                TrustTier::Guest {
+                    requester: requester.clone()
+                },
+            );
+        }
+        let path = format!("/route/rooms/{room}/relay-signers");
+        assert_eq!(mock.seen(&path).len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn a_signer_over_the_ceiling_gets_agent_guards_and_is_never_refused() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let bridge = Keys::generate();
+    list_signers(&mock, &[&bridge]);
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let requester = bridge.public_key().to_hex();
+    let post = relayed_post(&bridge, &agent, "again");
+    for _ in 0..crate::relay_signers::RELAYED_POSTS_PER_MINUTE {
+        assert_eq!(
+            runtime.classify(&post, Uuid::nil(), false).await,
+            TrustTier::RelayedPost {
+                signer: requester.clone()
+            },
+        );
+    }
+    let over = TrustTier::Guest {
+        requester: requester.clone(),
+    };
+    assert_eq!(runtime.classify(&post, Uuid::nil(), false).await, over);
+    // Another room keeps its own count.
+    assert_eq!(
+        runtime.classify(&post, Uuid::new_v4(), false).await,
+        TrustTier::RelayedPost {
+            signer: requester.clone()
+        },
+    );
+    // It still routes, with the agent guards on: an echo drops, new words pass.
+    let own = "The deploy finished and all health checks are green in every region.";
+    runtime.record_own_output(own);
+    let echoed = relayed_post(&bridge, &agent, &format!("> {own}\nok do it again"));
+    assert_eq!(
+        runtime.check_guards(&GuardInput {
+            event: &echoed,
+            channel_id: Uuid::nil(),
+            tier: &over,
+        }),
+        GuardVerdict::Drop { guard: "echo" }
+    );
+    assert!(matches!(
+        runtime.check_guards(&GuardInput {
+            event: &relayed_post(&bridge, &agent, "something new"),
+            channel_id: Uuid::nil(),
+            tier: &over,
+        }),
+        GuardVerdict::Proceed { .. }
+    ));
+}
+
+#[tokio::test]
+async fn the_owners_key_over_the_ceiling_is_still_not_the_owner() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let owner = Keys::generate();
+    let owner_hex = owner.public_key().to_hex();
+    let runtime = runtime_owned_by(&mock, &agent, true, RespondTo::Anyone, &owner_hex);
+    let post = relayed_post(&owner, &agent, "again");
+    for _ in 0..crate::relay_signers::RELAYED_POSTS_PER_MINUTE {
+        assert_eq!(
+            runtime.classify(&post, Uuid::nil(), false).await,
+            TrustTier::RelayedPost {
+                signer: owner_hex.clone()
+            },
+        );
+    }
+    assert_eq!(
+        runtime.classify(&post, Uuid::nil(), true).await,
+        TrustTier::Guest {
+            requester: owner_hex
+        },
+    );
 }
 
 #[tokio::test]
@@ -903,7 +1066,7 @@ async fn hanging_outbox_poll_never_delays_routing() {
         "poll in flight"
     );
     let event = guest_message(&guest, &agent, "are you around?");
-    let tier = runtime.classify(&event, false).await;
+    let tier = runtime.classify(&event, Uuid::nil(), false).await;
     let started = std::time::Instant::now();
     runtime.route(event, Uuid::nil(), false, None, tier, None);
     mock.wait_for("/route/turns", 1).await;

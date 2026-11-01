@@ -103,11 +103,18 @@ indistinguishable from a message the requester signed:
     signed it, and only on the hosted guest route: a local turn (legacy local
     guest mode, a structured wake) drops it. The claimed author is a label
     only (sanitized and bounded in the prompt marker; the fourth author
-    element is at most 64 characters). When the signer may relay (a bridge
-    pinned with `BUZZ_ACP_RELAYED_POST_BRIDGES`, the owner, or an agent of
-    the same owner) it is human traffic for the guards. From any other key
-    the tags grant nothing: the key is judged on its own and every agent
-    guard applies. Either way a relayed post is deduplicated per signer,
+    element is at most 64 characters). When the signer may relay (the owner,
+    an agent of the same owner, or a key the hosted guest route lists for
+    the room) it is human traffic for the guards. The room's list comes from
+    Kiingo's server (`GET /rooms/:channelId/relay-signers`, NIP-98), never
+    from the event, and is kept at most five minutes. It says which keys
+    could sign in that room, not that a person wrote the post: a listed key
+    could tag its own traffic, so the list grants no authority and decides
+    only which guards apply. A signer past 60 relayed posts a minute in one
+    room gets every agent guard until the minute is up, and the post is
+    never refused for it. From any other key, or when the list can't be
+    read, the tags grant nothing: the key is judged on its own and every
+    agent guard applies. Either way a relayed post is deduplicated per signer,
     claimed author and event, so only a redelivered event is a duplicate.
     Either way the post keeps all the limits here. The text is wrapped
     as untrusted, only its `h`, `e` and `p` tags are shown, and it never

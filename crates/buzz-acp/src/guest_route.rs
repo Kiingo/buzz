@@ -16,6 +16,7 @@ use nostr::{Event, EventBuilder, Keys, Kind, Tag};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 /// Per-request timeout on the control lane (register, `/turns`, classify).
 pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -215,6 +216,15 @@ pub(crate) struct OutboxPage {
     /// block the rest of the outbox (see [`parse_outbox_item`]).
     #[serde(default)]
     pub(crate) items: Vec<Value>,
+}
+
+/// `GET /rooms/:channelId/relay-signers` response.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct RelaySigners {
+    /// Keys that may relay people's posts into the room (hex).
+    pub(crate) signers: Vec<String>,
+    /// How long the route says the answer holds.
+    pub(crate) ttl_seconds: u64,
 }
 
 /// Parse one raw outbox item. `Err` carries the publication id (when the
@@ -460,6 +470,25 @@ impl GuestRouteClient {
         serde_json::from_value(value).map_err(|e| RouteError {
             status: None,
             code: format!("unexpected outbox page: {e}"),
+            retry_after_ms: None,
+            never_sent: false,
+        })
+    }
+
+    /// `GET /rooms/:channelId/relay-signers`.
+    pub(crate) async fn relay_signers(&self, channel_id: Uuid) -> Result<RelaySigners, RouteError> {
+        let value = self
+            .call(
+                Lane::Control,
+                reqwest::Method::GET,
+                &format!("/rooms/{channel_id}/relay-signers"),
+                None,
+                CONTROL_TIMEOUT,
+            )
+            .await?;
+        serde_json::from_value(value).map_err(|e| RouteError {
+            status: None,
+            code: format!("unexpected relay signers: {e}"),
             retry_after_ms: None,
             never_sent: false,
         })

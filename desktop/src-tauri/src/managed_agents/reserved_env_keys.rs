@@ -52,7 +52,6 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     // gate diverge from the saved/UI-visible settings.
     "BUZZ_ACP_RESPOND_TO",
     "BUZZ_ACP_RESPOND_TO_ALLOWLIST",
-    "BUZZ_ACP_RELAYED_POST_BRIDGES",
     "BUZZ_ACP_ALLOWED_RESPOND_TO",
     "BUZZ_ACP_AGENT_OWNER",
     // Guest-turn routing: a user override could run other people's requests

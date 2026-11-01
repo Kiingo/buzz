@@ -1075,6 +1075,7 @@
         "crates/buzz-acp/src/inbound_author_gate/trust_screen.rs",
         "crates/buzz-acp/src/listener_trust.rs",
         "crates/buzz-acp/src/provenance.rs",
+        "crates/buzz-acp/src/relay_signers.rs",
         "crates/buzz-acp/src/scope.rs",
         "crates/buzz-acp/src/trust.rs",
         "crates/buzz-acp/tests/e2e_guest_routing.rs",
@@ -2396,12 +2397,29 @@
         "desktop/src/features/agent-dm/ui/AgentDelegationCards.tsx",
         "desktop/src/features/agent-dm/ui/AgentDelegationDock.tsx",
         "desktop/src/features/agent-dm/ui/AgentDelegationHeader.tsx",
+        "desktop/src/features/agent-dm/ui/AgentDelegationPlan.tsx",
         "desktop/src/features/agent-dm/ui/useAgentDelegations.ts",
         "mobile/lib/features/channels/agent_dm/agent_dm_delegation_dock.dart",
+        "mobile/lib/features/channels/agent_dm/agent_dm_delegation_dock/delegation_plan.dart",
         "mobile/lib/features/channels/agent_dm/agent_dm_delegation_dock/delegation_rows.dart",
         "mobile/lib/shared/agent_dm/agent_dm_delegation_client.dart",
         "mobile/lib/shared/agent_dm/agent_dm_delegations.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_delegations/plan.dart",
         "mobile/test/shared/agent_dm/agent_dm_delegations_test.dart"
+      ]
+    },
+    {
+      "id": "sidebar-channel-rename",
+      "classification": "retain-generic",
+      "owner": "Buzz messaging maintainers",
+      "purpose": "Rename a channel from the desktop sidebar's right-click menu, through the existing channel metadata update, matching the mobile long-press sheet.",
+      "upstreamStatus": "Generic channel management; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream ships channel rename from the sidebar.",
+      "paths": [
+        "desktop/src/features/sidebar/ui/AppSidebar.tsx",
+        "desktop/src/features/sidebar/ui/ChannelContextMenu.tsx",
+        "desktop/src/features/sidebar/ui/CustomChannelSection.tsx",
+        "desktop/src/features/sidebar/ui/RenameChannelDialog.tsx"
       ]
     }
   ],

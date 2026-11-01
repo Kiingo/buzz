@@ -300,7 +300,11 @@ pub(crate) async fn admit(
             is_owner_or_sibling(screen.effective_author(), env.owner_cache, &ctx.rest_client).await;
         let tier = env
             .guest_runtime
-            .classify(&screen.event().event, owner_or_sibling)
+            .classify(
+                &screen.event().event,
+                screen.event().channel_id,
+                owner_or_sibling,
+            )
             .await;
         if is_invocation && !tier.is_owner_equivalent() {
             // Structured wakes are never routed: local only under the

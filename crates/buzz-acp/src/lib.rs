@@ -28,6 +28,7 @@ mod provenance;
 mod queue;
 mod recovery_wake;
 mod relay;
+mod relay_signers;
 mod respond_allowlist_file;
 mod run_task;
 mod runtime;
@@ -3169,7 +3170,6 @@ async fn run_harness(
             respond_to: config.respond_to.clone(),
             static_allowlist: config.respond_to_allowlist.clone(),
             guest_instructions: config.guest_instructions.clone(),
-            relayed_post_bridges: config.relayed_post_bridges.clone(),
         },
         relay.rest_client(),
         config.keys.clone(),
@@ -10337,7 +10337,6 @@ mod build_mcp_servers_tests {
             permission_mode: config::PermissionMode::BypassPermissions,
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: std::collections::HashSet::new(),
-            relayed_post_bridges: std::collections::HashSet::new(),
             allowed_respond_to: vec![],
             allowlist_in_dms: false,
             guest_turns: crate::trust::GuestTurns::Local,
@@ -11501,7 +11500,6 @@ mod error_outcome_emission_tests {
             permission_mode: config::PermissionMode::BypassPermissions,
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: HashSet::new(),
-            relayed_post_bridges: HashSet::new(),
             allowed_respond_to: vec![],
             allowlist_in_dms: false,
             guest_turns: crate::trust::GuestTurns::Local,
