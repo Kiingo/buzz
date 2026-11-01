@@ -13,16 +13,17 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use nostr::EventId;
 use uuid::Uuid;
 
 use crate::guest_route::{RelaySigners, RouteError};
 
 /// Longest an answer is kept, whatever the route says.
 const MAX_ANSWER_TTL: Duration = Duration::from_secs(300);
-/// How long a failed or empty answer is kept, so an outage can't stall the
-/// listener on every tagged post and a newly linked room starts working soon.
+/// How long a failed or empty answer is kept, so an outage isn't asked about on
+/// every tagged post and a newly linked room starts working soon.
 const NEGATIVE_TTL: Duration = Duration::from_secs(30);
-/// Bound for one lookup. Matches the other admission lookups on the listener.
+/// Bound for one lookup, which runs off the listener.
 const LOOKUP_TIMEOUT: Duration = Duration::from_millis(2_000);
 /// Most rooms kept at once.
 const MAX_ROOMS: usize = 1_024;
@@ -30,7 +31,7 @@ const MAX_ROOMS: usize = 1_024;
 /// Relayed posts one signer may send in one room per minute before they count
 /// as agent traffic. One a second, sustained, is well above how fast people
 /// post, and a listed key could otherwise tag its own loop traffic.
-pub(crate) const RELAYED_POSTS_PER_MINUTE: u32 = 60;
+pub(crate) const RELAYED_POSTS_PER_MINUTE: usize = 60;
 const CEILING_WINDOW: Duration = Duration::from_secs(60);
 /// Most (signer, room) counts kept at once.
 const MAX_CEILING_KEYS: usize = 4_096;
@@ -40,90 +41,130 @@ struct CachedAnswer {
     expires_at: Instant,
 }
 
-/// One room's answer. The lock is held across the lookup, so a burst in one
-/// room makes one request and the rest read its answer.
 #[derive(Default)]
-struct RoomSlot(tokio::sync::Mutex<Option<CachedAnswer>>);
-
-impl RoomSlot {
-    /// The answer's expiry. The outer `None` means a lookup holds the slot;
-    /// the inner `None` means it has no answer yet.
-    fn expiry(&self) -> Option<Option<Instant>> {
-        let answer = self.0.try_lock().ok()?;
-        Some(answer.as_ref().map(|answer| answer.expires_at))
-    }
+struct Room {
+    answer: Option<CachedAnswer>,
+    /// The lookup in flight. Only that lookup may write the answer, so one
+    /// that outlives its room's eviction can't put the room back.
+    refreshing: Option<u64>,
 }
 
-/// Bounded per-room cache of the route's answers.
+#[derive(Default)]
+struct Rooms {
+    rooms: HashMap<Uuid, Room>,
+    next_refresh: u64,
+}
+
+/// What the cache holds for a room right now.
+pub(crate) struct RoomRead {
+    pub(crate) signers: Arc<HashSet<String>>,
+    /// Set when the caller must run [`RoomSignerCache::refresh`] with this id.
+    /// One room runs one lookup at a time.
+    pub(crate) refresh: Option<u64>,
+}
+
+/// Bounded per-room cache of the route's answers. Reads never wait: they run
+/// on the listener, and a hung route must not delay another room or a control
+/// command.
 #[derive(Default)]
 pub(crate) struct RoomSignerCache {
-    rooms: Mutex<HashMap<Uuid, Arc<RoomSlot>>>,
+    state: Mutex<Rooms>,
 }
 
 impl RoomSignerCache {
-    /// The room's signers, from the cache or one bounded `lookup`.
-    pub(crate) async fn signers<Lookup, LookupFut>(
+    /// The room's signers as of now. No answer, or an expired one, reads as an
+    /// empty list: the post keeps its agent guards while a refresh runs.
+    pub(crate) fn read(&self, channel_id: Uuid) -> RoomRead {
+        let now = Instant::now();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Rooms {
+            rooms,
+            next_refresh,
+        } = &mut *state;
+        if rooms.len() >= MAX_ROOMS && !rooms.contains_key(&channel_id) {
+            evict(rooms, now);
+        }
+        let room = rooms.entry(channel_id).or_default();
+        if let Some(cached) = room
+            .answer
+            .as_ref()
+            .filter(|cached| cached.expires_at > now)
+        {
+            return RoomRead {
+                signers: cached.signers.clone(),
+                refresh: None,
+            };
+        }
+        let refresh = room.refreshing.is_none().then_some(*next_refresh);
+        if refresh.is_some() {
+            room.refreshing = refresh;
+            *next_refresh = next_refresh.wrapping_add(1);
+        }
+        RoomRead {
+            signers: Arc::default(),
+            refresh,
+        }
+    }
+
+    /// Run one bounded `lookup` and store its answer, unless the room left the
+    /// cache meanwhile.
+    pub(crate) async fn refresh<Lookup, LookupFut>(
         &self,
         channel_id: Uuid,
+        refresh: u64,
         lookup: Lookup,
-    ) -> Arc<HashSet<String>>
-    where
+    ) where
         Lookup: FnOnce() -> LookupFut,
         LookupFut: Future<Output = Result<RelaySigners, RouteError>>,
     {
-        let slot = self.slot(channel_id);
-        let mut answer = slot.0.lock().await;
-        if let Some(cached) = answer
-            .as_ref()
-            .filter(|cached| cached.expires_at > Instant::now())
-        {
-            return cached.signers.clone();
-        }
         let (signers, ttl) = match tokio::time::timeout(LOOKUP_TIMEOUT, lookup()).await {
             Ok(Ok(found)) => parse_answer(channel_id, found),
             Ok(Err(error)) => failed(channel_id, error.status, failure_code(&error)),
             Err(_) => failed(channel_id, None, "timeout"),
         };
-        let signers = Arc::new(signers);
-        *answer = Some(CachedAnswer {
-            signers: signers.clone(),
-            expires_at: Instant::now() + ttl,
-        });
-        signers
-    }
-
-    fn slot(&self, channel_id: Uuid) -> Arc<RoomSlot> {
-        let mut rooms = self
-            .rooms
+        let mut state = self
+            .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(slot) = rooms.get(&channel_id) {
-            return slot.clone();
-        }
-        if rooms.len() >= MAX_ROOMS {
-            evict(&mut rooms, Instant::now());
-        }
-        let slot = Arc::new(RoomSlot::default());
-        rooms.insert(channel_id, slot.clone());
-        slot
+        let Some(room) = state
+            .rooms
+            .get_mut(&channel_id)
+            .filter(|room| room.refreshing == Some(refresh))
+        else {
+            return;
+        };
+        room.refreshing = None;
+        room.answer = Some(CachedAnswer {
+            signers: Arc::new(signers),
+            expires_at: Instant::now() + ttl,
+        });
     }
 }
 
 /// Drop expired rooms, then, if none had expired, the one closest to expiry.
 /// A room mid-lookup goes last.
-fn evict(rooms: &mut HashMap<Uuid, Arc<RoomSlot>>, now: Instant) {
-    rooms.retain(|_, slot| match slot.expiry() {
-        None => true,
-        Some(None) => false,
-        Some(Some(expires_at)) => expires_at > now,
+fn evict(rooms: &mut HashMap<Uuid, Room>, now: Instant) {
+    rooms.retain(|_, room| {
+        room.refreshing.is_some()
+            || room
+                .answer
+                .as_ref()
+                .is_some_and(|answer| answer.expires_at > now)
     });
     if rooms.len() < MAX_ROOMS {
         return;
     }
-    let last = now + MAX_ANSWER_TTL + NEGATIVE_TTL;
     let soonest = rooms
         .iter()
-        .min_by_key(|(_, slot)| slot.expiry().flatten().unwrap_or(last))
+        .min_by_key(|(_, room)| {
+            (
+                room.refreshing.is_some(),
+                room.answer.as_ref().map(|answer| answer.expires_at),
+            )
+        })
         .map(|(channel_id, _)| *channel_id);
     if let Some(channel_id) = soonest {
         rooms.remove(&channel_id);
@@ -173,7 +214,8 @@ fn failure_code(error: &RouteError) -> &'static str {
 
 struct CeilingWindow {
     started_at: Instant,
-    posts: u32,
+    /// The posts counted so far, never more than the ceiling.
+    posts: HashSet<EventId>,
 }
 
 /// Counts relayed posts per signer per room, per minute.
@@ -183,22 +225,35 @@ pub(crate) struct RelayedPostCeiling {
 }
 
 impl RelayedPostCeiling {
-    /// Count one post. False once this signer is over the ceiling in this room.
-    pub(crate) fn admit(&mut self, signer: &str, channel_id: Uuid, now: Instant) -> bool {
+    /// Count one post, once however often it is redelivered. False once this
+    /// signer is over the ceiling in this room.
+    pub(crate) fn admit(
+        &mut self,
+        signer: &str,
+        channel_id: Uuid,
+        event_id: EventId,
+        now: Instant,
+    ) -> bool {
         let key = (signer.to_string(), channel_id);
         if self.windows.len() >= MAX_CEILING_KEYS && !self.windows.contains_key(&key) {
             self.make_room(now);
         }
-        let window = self.windows.entry(key).or_insert(CeilingWindow {
+        let window = self.windows.entry(key).or_insert_with(|| CeilingWindow {
             started_at: now,
-            posts: 0,
+            posts: HashSet::new(),
         });
         if now.duration_since(window.started_at) >= CEILING_WINDOW {
             window.started_at = now;
-            window.posts = 0;
+            window.posts.clear();
         }
-        window.posts = window.posts.saturating_add(1);
-        window.posts <= RELAYED_POSTS_PER_MINUTE
+        if window.posts.contains(&event_id) {
+            return true;
+        }
+        if window.posts.len() >= RELAYED_POSTS_PER_MINUTE {
+            return false;
+        }
+        window.posts.insert(event_id);
+        true
     }
 
     fn make_room(&mut self, now: Instant) {
@@ -221,7 +276,6 @@ impl RelayedPostCeiling {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn answer(signers: Vec<String>, ttl_seconds: u64) -> RelaySigners {
         RelaySigners {
@@ -278,53 +332,112 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn concurrent_callers_share_one_lookup_per_room() {
-        let cache = RoomSignerCache::default();
-        let calls = AtomicUsize::new(0);
-        let key = "ab".repeat(32);
-        let lookup = || async {
-            calls.fetch_add(1, Ordering::SeqCst);
-            tokio::task::yield_now().await;
-            Ok(answer(vec![key.clone()], 300))
-        };
-        let room = Uuid::new_v4();
-        let (first, second, third) = tokio::join!(
-            cache.signers(room, lookup),
-            cache.signers(room, lookup),
-            cache.signers(room, lookup)
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(first.contains(&key) && second.contains(&key) && third.contains(&key));
-
-        cache.signers(Uuid::new_v4(), lookup).await;
-        assert_eq!(calls.load(Ordering::SeqCst), 2, "each room asks for itself");
+    fn stored(cache: &RoomSignerCache, room: Uuid, signer: &str) -> bool {
+        cache.read(room).signers.contains(signer)
     }
 
     #[tokio::test]
-    async fn the_cache_never_holds_more_rooms_than_its_bound() {
+    async fn a_read_never_waits_and_a_room_runs_one_lookup() {
         let cache = RoomSignerCache::default();
         let key = "ab".repeat(32);
-        for _ in 0..(MAX_ROOMS + 16) {
-            cache
-                .signers(Uuid::new_v4(), || async {
-                    Ok(answer(vec![key.clone()], 300))
+        let room = Uuid::new_v4();
+
+        let first = cache.read(room);
+        assert!(first.signers.is_empty(), "a miss reads as unlisted");
+        let refresh = first.refresh.expect("the first read starts the lookup");
+        assert_eq!(cache.read(room).refresh, None, "one lookup at a time");
+
+        cache
+            .refresh(room, refresh, || async {
+                Ok(answer(vec![key.clone()], 300))
+            })
+            .await;
+        let read = cache.read(room);
+        assert!(read.signers.contains(&key));
+        assert_eq!(read.refresh, None, "a fresh answer needs no lookup");
+        assert!(
+            cache.read(Uuid::new_v4()).refresh.is_some(),
+            "each room asks for itself"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_lookup_is_kept_and_an_expired_answer_reads_as_unlisted() {
+        let cache = RoomSignerCache::default();
+        let key = "ab".repeat(32);
+        let room = Uuid::new_v4();
+        let refresh = cache.read(room).refresh.expect("lookup");
+        cache
+            .refresh(room, refresh, || async {
+                Err(RouteError {
+                    status: Some(503),
+                    code: "down".into(),
+                    retry_after_ms: None,
+                    never_sent: false,
                 })
-                .await;
+            })
+            .await;
+        assert_eq!(cache.read(room).refresh, None, "not repeated at once");
+
+        cache.state.lock().unwrap().rooms.insert(
+            room,
+            Room {
+                answer: Some(CachedAnswer {
+                    signers: Arc::new(HashSet::from([key.clone()])),
+                    expires_at: Instant::now() - Duration::from_secs(1),
+                }),
+                refreshing: None,
+            },
+        );
+        let read = cache.read(room);
+        assert!(!read.signers.contains(&key));
+        assert!(read.refresh.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_lookup_that_outlives_its_room_writes_nothing() {
+        let cache = RoomSignerCache::default();
+        let key = "ab".repeat(32);
+        let room = Uuid::new_v4();
+        let stale = cache.read(room).refresh.expect("lookup");
+        cache.state.lock().unwrap().rooms.remove(&room);
+        let current = cache.read(room).refresh.expect("a new lookup");
+        assert_ne!(stale, current);
+
+        cache
+            .refresh(room, stale, || async { Ok(answer(vec![key.clone()], 300)) })
+            .await;
+        assert!(!stored(&cache, room, &key));
+
+        cache.state.lock().unwrap().rooms.remove(&room);
+        cache
+            .refresh(room, current, || async {
+                Ok(answer(vec![key.clone()], 300))
+            })
+            .await;
+        assert!(cache.state.lock().unwrap().rooms.is_empty());
+    }
+
+    #[test]
+    fn the_cache_never_holds_more_rooms_than_its_bound() {
+        let cache = RoomSignerCache::default();
+        for _ in 0..(MAX_ROOMS + 16) {
+            cache.read(Uuid::new_v4());
         }
-        assert_eq!(cache.rooms.lock().unwrap().len(), MAX_ROOMS);
+        assert_eq!(cache.state.lock().unwrap().rooms.len(), MAX_ROOMS);
     }
 
     #[test]
     fn eviction_drops_expired_rooms_first_and_spares_a_lookup() {
         let now = Instant::now();
-        let room = |expires_at| {
-            Arc::new(RoomSlot(tokio::sync::Mutex::new(Some(CachedAnswer {
+        let room = |expires_at| Room {
+            answer: Some(CachedAnswer {
                 signers: Arc::new(HashSet::new()),
                 expires_at,
-            }))))
+            }),
+            refreshing: None,
         };
-        let mut rooms: HashMap<Uuid, Arc<RoomSlot>> = (0..MAX_ROOMS - 1)
+        let mut rooms: HashMap<Uuid, Room> = (0..MAX_ROOMS - 1)
             .map(|i| {
                 (
                     Uuid::new_v4(),
@@ -343,9 +456,9 @@ mod tests {
         let soonest = Uuid::new_v4();
         rooms.insert(soonest, room(now + Duration::from_secs(1)));
         let busy = Uuid::new_v4();
-        let slot = room(now + Duration::from_millis(1));
-        rooms.insert(busy, slot.clone());
-        let held = slot.0.try_lock().unwrap();
+        let mut looking_up = room(now + Duration::from_millis(1));
+        looking_up.refreshing = Some(1);
+        rooms.insert(busy, looking_up);
         let spare = rooms
             .keys()
             .copied()
@@ -353,9 +466,12 @@ mod tests {
             .unwrap();
         rooms.remove(&spare);
         evict(&mut rooms, now);
-        drop(held);
         assert!(rooms.contains_key(&busy));
         assert!(!rooms.contains_key(&soonest));
+    }
+
+    fn event_id(post: usize) -> EventId {
+        EventId::from_hex(&format!("{post:064x}")).unwrap()
     }
 
     #[test]
@@ -363,13 +479,30 @@ mod tests {
         let mut ceiling = RelayedPostCeiling::default();
         let now = Instant::now();
         let room = Uuid::new_v4();
-        for _ in 0..RELAYED_POSTS_PER_MINUTE {
-            assert!(ceiling.admit("signer", room, now));
+        for post in 0..RELAYED_POSTS_PER_MINUTE {
+            assert!(ceiling.admit("signer", room, event_id(post), now));
         }
-        assert!(!ceiling.admit("signer", room, now));
-        assert!(ceiling.admit("other", room, now));
-        assert!(ceiling.admit("signer", Uuid::new_v4(), now));
-        assert!(ceiling.admit("signer", room, now + CEILING_WINDOW));
+        let over = event_id(RELAYED_POSTS_PER_MINUTE);
+        assert!(!ceiling.admit("signer", room, over, now));
+        assert!(ceiling.admit("other", room, over, now));
+        assert!(ceiling.admit("signer", Uuid::new_v4(), over, now));
+        assert!(ceiling.admit("signer", room, over, now + CEILING_WINDOW));
+    }
+
+    #[test]
+    fn a_redelivered_post_counts_once() {
+        let mut ceiling = RelayedPostCeiling::default();
+        let now = Instant::now();
+        let room = Uuid::new_v4();
+        for _ in 0..(RELAYED_POSTS_PER_MINUTE * 2) {
+            assert!(ceiling.admit("signer", room, event_id(0), now));
+        }
+        for post in 1..RELAYED_POSTS_PER_MINUTE {
+            assert!(ceiling.admit("signer", room, event_id(post), now));
+        }
+        // A post counted before the ceiling stays under it when redelivered.
+        assert!(ceiling.admit("signer", room, event_id(0), now));
+        assert!(!ceiling.admit("signer", room, event_id(RELAYED_POSTS_PER_MINUTE), now));
     }
 
     #[test]
@@ -377,7 +510,7 @@ mod tests {
         let mut ceiling = RelayedPostCeiling::default();
         let now = Instant::now();
         for _ in 0..(MAX_CEILING_KEYS + 16) {
-            ceiling.admit("signer", Uuid::new_v4(), now);
+            ceiling.admit("signer", Uuid::new_v4(), event_id(0), now);
         }
         assert_eq!(ceiling.windows.len(), MAX_CEILING_KEYS);
     }

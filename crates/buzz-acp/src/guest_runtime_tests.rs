@@ -40,6 +40,8 @@ struct MockState {
     outbox_max_in_flight: usize,
     /// Answers `GET /route/rooms/:id/relay-signers`; default: an empty list.
     relay_signers: Option<Value>,
+    /// Hold every room-list answer back this long.
+    relay_signers_delay: Option<Duration>,
 }
 
 struct Mock {
@@ -218,6 +220,12 @@ async fn mock() -> Mock {
                 };
                 if is_outbox_poll && state.lock().unwrap().outbox_hang {
                     tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+                let relay_signers_delay = state.lock().unwrap().relay_signers_delay;
+                if let (true, Some(delay)) =
+                    (path.starts_with("/route/rooms/"), relay_signers_delay)
+                {
+                    tokio::time::sleep(delay).await;
                 }
                 let body = match response {
                     Some(body) => body.to_string(),
@@ -569,6 +577,21 @@ fn list_signers(mock: &Mock, signers: &[&Keys]) {
         Some(json!({"signers": signers, "ttl_seconds": 300}));
 }
 
+/// Wait for the room's list to land. The probe counts as one post in the room.
+async fn wait_for_listing(runtime: &GuestRuntime, signer: &Keys, agent: &Keys, room: Uuid) {
+    let probe = relayed_post_from(signer, agent, "probe", "probe");
+    for _ in 0..200 {
+        if matches!(
+            runtime.classify(&probe, room, false).await,
+            TrustTier::RelayedPost { .. }
+        ) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("the room's list never arrived");
+}
+
 #[tokio::test]
 async fn only_a_key_that_may_relay_gets_relayed_post_handling() {
     let mock = mock().await;
@@ -577,6 +600,7 @@ async fn only_a_key_that_may_relay_gets_relayed_post_handling() {
     let stranger = Keys::generate();
     list_signers(&mock, &[&bridge]);
     let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    wait_for_listing(&runtime, &bridge, &agent, Uuid::nil()).await;
 
     for signer in [&bridge, &agent] {
         let post = relayed_post(signer, &agent, "please do it");
@@ -601,31 +625,62 @@ async fn only_a_key_that_may_relay_gets_relayed_post_handling() {
 }
 
 #[tokio::test]
-async fn the_room_list_is_asked_for_once_with_a_signed_request() {
+async fn a_miss_keeps_agent_guards_and_asks_once_with_a_signed_request() {
     let mock = mock().await;
     let agent = Keys::generate();
     let bridge = Keys::generate();
     list_signers(&mock, &[&bridge]);
+    mock.state.lock().unwrap().relay_signers_delay = Some(Duration::from_millis(100));
     let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
     let post = relayed_post(&bridge, &agent, "one");
     let room = Uuid::new_v4();
+    let requester = bridge.public_key().to_hex();
 
     let (first, second) = tokio::join!(
         runtime.classify(&post, room, false),
         runtime.classify(&post, room, false)
     );
-    let expected = TrustTier::RelayedPost {
-        signer: bridge.public_key().to_hex(),
+    let unlisted = TrustTier::Guest {
+        requester: requester.clone(),
     };
-    assert_eq!(first, expected);
-    assert_eq!(second, expected);
-    assert_eq!(runtime.classify(&post, room, false).await, expected);
+    assert_eq!(first, unlisted);
+    assert_eq!(second, unlisted);
 
+    wait_for_listing(&runtime, &bridge, &agent, room).await;
+    assert_eq!(
+        runtime.classify(&post, room, false).await,
+        TrustTier::RelayedPost { signer: requester },
+    );
     let path = format!("/route/rooms/{room}/relay-signers");
     let seen = mock.seen(&path);
     assert_eq!(seen.len(), 1, "one lookup for a burst in one room");
     assert_eq!(seen[0].method, "GET");
     verify_nip98(&seen[0], &mock.base_url, &agent);
+}
+
+#[tokio::test]
+async fn a_hung_route_holds_up_no_post() {
+    let mock = mock().await;
+    let agent = Keys::generate();
+    let bridge = Keys::generate();
+    list_signers(&mock, &[&bridge]);
+    mock.state.lock().unwrap().relay_signers_delay = Some(Duration::from_secs(60));
+    let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
+    let post = relayed_post(&bridge, &agent, "one");
+
+    // Well under the lookup's own two second bound.
+    let classified = tokio::time::timeout(
+        Duration::from_millis(500),
+        runtime.classify(&post, Uuid::new_v4(), false),
+    )
+    .await
+    .expect("classify must not wait for the route");
+    assert_eq!(
+        classified,
+        TrustTier::Guest {
+            requester: bridge.public_key().to_hex()
+        },
+    );
 }
 
 #[tokio::test]
@@ -662,15 +717,17 @@ async fn a_failed_lookup_means_agent_guards_and_is_not_repeated_at_once() {
         mock.state.lock().unwrap().relay_signers = Some(answer);
         let room = Uuid::new_v4();
         let post = relayed_post(&bridge, &agent, &format!("try {round}"));
-        for _ in 0..2 {
-            assert_eq!(
-                runtime.classify(&post, room, false).await,
-                TrustTier::Guest {
-                    requester: requester.clone()
-                },
-            );
-        }
         let path = format!("/route/rooms/{room}/relay-signers");
+        let classify = || runtime.classify(&post, room, false);
+        let unlisted = TrustTier::Guest {
+            requester: requester.clone(),
+        };
+        assert_eq!(classify().await, unlisted);
+        mock.wait_for(&path, 1).await;
+        for _ in 0..8 {
+            assert_eq!(classify().await, unlisted);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
         assert_eq!(mock.seen(&path).len(), 1);
     }
 }
@@ -683,22 +740,33 @@ async fn a_signer_over_the_ceiling_gets_agent_guards_and_is_never_refused() {
     list_signers(&mock, &[&bridge]);
     let runtime = runtime(&mock, &agent, true, RespondTo::Anyone);
     let requester = bridge.public_key().to_hex();
-    let post = relayed_post(&bridge, &agent, "again");
-    for _ in 0..crate::relay_signers::RELAYED_POSTS_PER_MINUTE {
+    wait_for_listing(&runtime, &bridge, &agent, Uuid::nil()).await;
+    let post = |number: usize| relayed_post_from(&bridge, &agent, "again", &number.to_string());
+    for number in 1..crate::relay_signers::RELAYED_POSTS_PER_MINUTE {
         assert_eq!(
-            runtime.classify(&post, Uuid::nil(), false).await,
+            runtime.classify(&post(number), Uuid::nil(), false).await,
             TrustTier::RelayedPost {
                 signer: requester.clone()
             },
         );
     }
+    // Redelivering a counted post spends nothing and keeps its handling.
+    assert_eq!(
+        runtime.classify(&post(1), Uuid::nil(), false).await,
+        TrustTier::RelayedPost {
+            signer: requester.clone()
+        },
+    );
     let over = TrustTier::Guest {
         requester: requester.clone(),
     };
-    assert_eq!(runtime.classify(&post, Uuid::nil(), false).await, over);
+    let last = post(crate::relay_signers::RELAYED_POSTS_PER_MINUTE);
+    assert_eq!(runtime.classify(&last, Uuid::nil(), false).await, over);
     // Another room keeps its own count.
+    let other_room = Uuid::new_v4();
+    wait_for_listing(&runtime, &bridge, &agent, other_room).await;
     assert_eq!(
-        runtime.classify(&post, Uuid::new_v4(), false).await,
+        runtime.classify(&last, other_room, false).await,
         TrustTier::RelayedPost {
             signer: requester.clone()
         },
@@ -732,17 +800,18 @@ async fn the_owners_key_over_the_ceiling_is_still_not_the_owner() {
     let owner = Keys::generate();
     let owner_hex = owner.public_key().to_hex();
     let runtime = runtime_owned_by(&mock, &agent, true, RespondTo::Anyone, &owner_hex);
-    let post = relayed_post(&owner, &agent, "again");
-    for _ in 0..crate::relay_signers::RELAYED_POSTS_PER_MINUTE {
+    let post = |number: usize| relayed_post_from(&owner, &agent, "again", &number.to_string());
+    for number in 0..crate::relay_signers::RELAYED_POSTS_PER_MINUTE {
         assert_eq!(
-            runtime.classify(&post, Uuid::nil(), false).await,
+            runtime.classify(&post(number), Uuid::nil(), false).await,
             TrustTier::RelayedPost {
                 signer: owner_hex.clone()
             },
         );
     }
+    let last = post(crate::relay_signers::RELAYED_POSTS_PER_MINUTE);
     assert_eq!(
-        runtime.classify(&post, Uuid::nil(), true).await,
+        runtime.classify(&last, Uuid::nil(), true).await,
         TrustTier::Guest {
             requester: owner_hex
         },

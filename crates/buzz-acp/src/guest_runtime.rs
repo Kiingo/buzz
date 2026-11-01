@@ -276,7 +276,7 @@ pub(crate) struct GuestRuntime {
     respond_to: RespondTo,
     static_allowlist: HashSet<String>,
     guest_instructions: Option<String>,
-    room_signers: RoomSignerCache,
+    room_signers: Arc<RoomSignerCache>,
     relayed_ceiling: Mutex<RelayedPostCeiling>,
     relay_url: String,
     profiles: ProfileDirectory,
@@ -333,7 +333,7 @@ impl GuestRuntime {
             respond_to: config.respond_to,
             static_allowlist: config.static_allowlist,
             guest_instructions: config.guest_instructions,
-            room_signers: RoomSignerCache::default(),
+            room_signers: Arc::default(),
             relayed_ceiling: Mutex::default(),
             relay_url: config.relay_url,
             profiles: ProfileDirectory::default(),
@@ -379,7 +379,9 @@ impl GuestRuntime {
     /// route lists for the room. The list comes from the server, never the
     /// event. It decides only which loop guards apply: it says who could
     /// sign, not that a person wrote the post. A profile or a list that
-    /// cannot be read proves nothing, so that signer may not.
+    /// cannot be read proves nothing, so that signer may not. The list is read
+    /// without waiting: this runs on the listener, ahead of `!shutdown` and
+    /// `!cancel`. Until a lookup answers, the post keeps its agent guards.
     async fn may_relay(&self, signer: &str, channel_id: Uuid) -> bool {
         if self.is_owner_equivalent_author(signer).await {
             return true;
@@ -387,11 +389,17 @@ impl GuestRuntime {
         let Some(client) = self.client.as_ref() else {
             return false;
         };
-        let signers = self
-            .room_signers
-            .signers(channel_id, || client.relay_signers(channel_id))
-            .await;
-        let listed = signers.contains(signer);
+        let room = self.room_signers.read(channel_id);
+        if let Some(refresh) = room.refresh {
+            let cache = self.room_signers.clone();
+            let client = client.clone();
+            tokio::spawn(async move {
+                cache
+                    .refresh(channel_id, refresh, || client.relay_signers(channel_id))
+                    .await;
+            });
+        }
+        let listed = room.signers.contains(signer);
         if !listed {
             tracing::info!(
                 channel_id = %channel_id,
@@ -434,7 +442,7 @@ impl GuestRuntime {
                 .relayed_ceiling
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .admit(&author, channel_id, Instant::now());
+                .admit(&author, channel_id, event.id, Instant::now());
             if !within_ceiling {
                 // Faster than people post, so treat it as a loop: a guest
                 // with every agent guard, never refused here. `tier_from_parts`
