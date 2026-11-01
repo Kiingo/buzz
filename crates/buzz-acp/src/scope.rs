@@ -111,6 +111,11 @@ impl SessionScope {
         }
     }
 
+    /// True on a non-owner requester's lane (see `crate::trust`).
+    pub fn is_guest(&self) -> bool {
+        matches!(self, Self::Guest { .. })
+    }
+
     /// True when this scope is thread-scoped (not conversation-scoped).
     pub fn is_thread(&self) -> bool {
         self.root_event_id().is_some()

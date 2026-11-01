@@ -477,6 +477,8 @@ pub struct CliArgs {
     /// `bypassPermissions` id for claude-agent-acp, or the mode tagged
     /// `_meta.kind == "full_access"` (`agent-full-access`) for codex-acp.
     /// Set to `default` (or another mode) to keep the agent sandboxed.
+    /// Applies to the owner's sessions only: a session on a non-owner
+    /// requester's lane never takes it.
     #[arg(
         long,
         env = "BUZZ_ACP_PERMISSION_MODE",
@@ -962,6 +964,29 @@ pub const CODEX_INITIAL_MODE_ENV: &str = "INITIAL_AGENT_MODE";
 /// codex-acp's unrestricted mode: `danger-full-access` sandbox (full disk and
 /// network) with approval policy `never`.
 pub const CODEX_FULL_ACCESS_MODE: &str = "agent-full-access";
+
+/// True when `agent_command` reads a start-up setting of its own that runs every
+/// session without asking. `env` looks a name up in the child's environment.
+///
+/// The harness's own permission mode is not one of these: it reaches an adapter
+/// only as a session mode (or `INITIAL_AGENT_MODE`), so an adapter with no session
+/// modes never receives it.
+pub(crate) fn adapter_starts_unattended(
+    agent_command: &str,
+    env: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> bool {
+    match normalize_agent_command_identity(agent_command).as_str() {
+        "codex" | "codex-acp" => {
+            env(CODEX_INITIAL_MODE_ENV).is_some_and(|mode| mode == CODEX_FULL_ACCESS_MODE)
+        }
+        // goose runs in `auto` unless told otherwise.
+        "goose" => env("GOOSE_MODE").is_none_or(|mode| mode.eq_ignore_ascii_case("auto")),
+        "hermes" | "hermes-agent" | "hermes-acp" => {
+            env("HERMES_YOLO_MODE").is_some_and(|value| !value.is_empty())
+        }
+        _ => false,
+    }
+}
 
 /// Build `INITIAL_AGENT_MODE=agent-full-access` for Codex agents configured
 /// with [`PermissionMode::BypassPermissions`].
@@ -2051,6 +2076,50 @@ mod tests {
         assert!(codex_network_env("goose", "wss://relay.example.com").is_none());
         assert!(codex_network_env("claude-agent-acp", "wss://relay.example.com").is_none());
         assert!(codex_network_env("buzz-agent", "wss://relay.example.com").is_none());
+    }
+
+    #[test]
+    fn adapter_starts_unattended_reads_each_adapter_s_own_setting() {
+        fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+            let pairs: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect();
+            move |name| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.into())
+            }
+        }
+        let full_access = [(CODEX_INITIAL_MODE_ENV, CODEX_FULL_ACCESS_MODE)];
+        assert!(adapter_starts_unattended("codex-acp", env(&full_access)));
+        assert!(!adapter_starts_unattended(
+            "codex-acp",
+            env(&[(CODEX_INITIAL_MODE_ENV, "agent")])
+        ));
+        assert!(!adapter_starts_unattended("codex-acp", env(&[])));
+
+        assert!(adapter_starts_unattended("goose", env(&[])));
+        assert!(adapter_starts_unattended(
+            "goose",
+            env(&[("GOOSE_MODE", "AUTO")])
+        ));
+        assert!(!adapter_starts_unattended(
+            "goose",
+            env(&[("GOOSE_MODE", "approve")])
+        ));
+
+        assert!(adapter_starts_unattended(
+            "hermes",
+            env(&[("HERMES_YOLO_MODE", "1")])
+        ));
+        assert!(!adapter_starts_unattended("hermes", env(&[])));
+
+        assert!(!adapter_starts_unattended(
+            "kiingo-compute-acp",
+            env(&full_access)
+        ));
     }
 
     #[test]

@@ -32,10 +32,13 @@ use uuid::Uuid;
 
 use crate::acp::{
     extract_model_config_options, extract_model_state, extract_thought_level_config_id,
-    model_in_catalog, resolve_model_switch_method, AcpClient, AcpError, EnvVar, McpServer,
-    ModelSwitchMethod, StopReason, SystemPromptTransport, BUZZ_PI_ACP_NAME,
+    is_mode_option, model_in_catalog, reported_mode, resolve_model_switch_method, AcpClient,
+    AcpError, EnvVar, McpServer, ModelSwitchMethod, SessionLane, StopReason, SystemPromptTransport,
+    BUZZ_PI_ACP_NAME,
 };
-use crate::config::{compose_scoped_session_title, DedupMode, PermissionMode};
+use crate::config::{
+    compose_scoped_session_title, DedupMode, PermissionMode, CODEX_FULL_ACCESS_MODE,
+};
 use crate::observer;
 use crate::prompt_project::{pick_authoritative_project_home, PromptProjectInfo};
 use crate::queue::{
@@ -1651,6 +1654,17 @@ async fn create_session_and_apply_model(
         )
         .await?;
 
+    // Heartbeats and scheduled tasks have no scope and are the owner's own work.
+    let guest_lane = channel.scope.is_some_and(SessionScope::is_guest);
+    agent.acp.record_session_lane(
+        &resp.session_id,
+        if guest_lane {
+            SessionLane::Guest
+        } else {
+            SessionLane::Owner
+        },
+    );
+
     if is_goose && agent.goose_system_prompt_supported != Some(false) {
         if let Some(prompt) = combined_system_prompt.as_deref() {
             match agent
@@ -1851,7 +1865,14 @@ async fn create_session_and_apply_model(
     // mode (e.g., goose crashes on unrecognized set_config_option values) are
     // skipped with a warning — the harness auto-approves via
     // handle_permission_request.
-    if !ctx.permission_mode.is_default() {
+    //
+    // The configured mode is the owner's choice for the owner's work. A guest-lane
+    // session never takes it, and goes to a mode where the agent asks first if the
+    // adapter has modes.
+    if guest_lane {
+        restrict_guest_session(&mut agent.acp, &resp.raw, &resp.session_id).await?;
+    }
+    if !guest_lane && !ctx.permission_mode.is_default() {
         match resolve_advertised_mode(&resp.raw, ctx.permission_mode) {
             Some(mode_id) => {
                 apply_permission_mode(&mut agent.acp, &resp.session_id, &mode_id).await?;
@@ -2198,6 +2219,9 @@ fn patch_config_option_current_value(
 /// (codex-acp `agent-full-access`, claude-agent-acp `bypassPermissions`).
 const FULL_ACCESS_MODE_KIND: &str = "full_access";
 
+/// `_meta.kind` of a mode where a model, not a person, answers approvals.
+const AUTO_REVIEW_MODE_KIND: &str = "auto_review";
+
 /// Advertised session modes from a `session/new` response
 /// (`result.modes.availableModes`), or `None` when the field is absent.
 fn advertised_modes(session_new_result: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
@@ -2240,6 +2264,152 @@ fn resolve_advertised_mode(
             .and_then(id_of);
     }
     None
+}
+
+/// What a new guest-lane session needs done to its permission mode.
+#[derive(Debug, PartialEq, Eq)]
+enum GuestSessionMode {
+    /// It is already in that mode, or the adapter has no modes to choose from.
+    /// That is not a claim that such an adapter asks first: a hosted compute
+    /// runtime has none, and its sandbox and credentials are its only protection.
+    Keep,
+    /// Move it to this mode.
+    Set(String),
+    /// A guest turn cannot run here: nothing can make the agent ask first.
+    Refuse,
+}
+
+/// The session's current mode and the modes on offer, from a `session/new`
+/// response: `modes`, or a `mode` entry in `configOptions`.
+fn mode_catalog(
+    session_new_result: &serde_json::Value,
+) -> Option<(Option<&str>, &Vec<serde_json::Value>)> {
+    if let Some(modes) = advertised_modes(session_new_result).filter(|m| !m.is_empty()) {
+        let current = session_new_result
+            .pointer("/modes/currentModeId")
+            .and_then(|v| v.as_str());
+        return Some((current, modes));
+    }
+    let option = session_new_result
+        .get("configOptions")?
+        .as_array()?
+        .iter()
+        .find(|option| is_mode_option(option))?;
+    let options = option["options"].as_array().filter(|o| !o.is_empty())?;
+    Some((option["currentValue"].as_str(), options))
+}
+
+fn catalog_mode_id(mode: &serde_json::Value) -> Option<&str> {
+    mode.get("id")
+        .or_else(|| mode.get("value"))
+        .and_then(|v| v.as_str())
+}
+
+/// True for a mode that acts without asking anyone, or asks a model instead of a
+/// person: claude-agent-acp's `auto` and `bypassPermissions`, codex-acp's `agent`
+/// and `agent-full-access`, goose's `auto`.
+fn runs_unattended(mode: &serde_json::Value) -> bool {
+    let id = catalog_mode_id(mode);
+    id == Some(PermissionMode::BypassPermissions.as_wire_str())
+        || id == Some(PermissionMode::Auto.as_wire_str())
+        || id == Some(CODEX_FULL_ACCESS_MODE)
+        || matches!(
+            mode.pointer("/_meta/kind").and_then(|k| k.as_str()),
+            Some(FULL_ACCESS_MODE_KIND | AUTO_REVIEW_MODE_KIND)
+        )
+}
+
+/// The modes a guest session may be in, in the adapter's order.
+fn restricted_modes(session_new_result: &serde_json::Value) -> Vec<String> {
+    mode_catalog(session_new_result)
+        .map(|(_, modes)| modes.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .filter(|mode| !runs_unattended(mode))
+        .filter_map(catalog_mode_id)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Decide a guest-lane session's mode from its `session/new` response.
+///
+/// Skipping the configured mode is not enough: `INITIAL_AGENT_MODE` starts every
+/// codex-acp session on the process in full access, and claude-agent-acp takes
+/// `permissions.defaultMode` from the operator's settings. Such a session never
+/// asks permission, so nothing else would stop it.
+///
+/// An adapter with no session modes can't be restricted here, so it runs as it
+/// is unless it was started with a known full-access setting, which
+/// `started_unattended` reports. That doesn't make it safe: a hosted compute
+/// runtime has no modes and runs in full access, behind its own sandbox.
+fn guest_session_mode(
+    session_new_result: &serde_json::Value,
+    started_unattended: bool,
+) -> GuestSessionMode {
+    let Some((current, _)) = mode_catalog(session_new_result) else {
+        return if started_unattended {
+            GuestSessionMode::Refuse
+        } else {
+            GuestSessionMode::Keep
+        };
+    };
+    let restricted = restricted_modes(session_new_result);
+    let default = PermissionMode::Default.as_wire_str();
+    match restricted
+        .iter()
+        .find(|id| id.as_str() == default)
+        .or(restricted.first())
+    {
+        None => GuestSessionMode::Refuse,
+        Some(target) if current == Some(target.as_str()) => GuestSessionMode::Keep,
+        Some(target) => GuestSessionMode::Set(target.clone()),
+    }
+}
+
+/// Put a guest-lane session in a restricted mode and hold it there. Unlike
+/// [`apply_permission_mode`], every failure is fatal to the session, and the mode
+/// is read back before the session is returned, so no guest prompt reaches a
+/// session whose mode is unconfirmed.
+///
+/// `create_session_and_apply_model` is the only way a session starts: the harness
+/// neither loads nor resumes one.
+async fn restrict_guest_session(
+    acp: &mut AcpClient,
+    session_new_result: &serde_json::Value,
+    session_id: &str,
+) -> Result<(), AcpError> {
+    let refused = |message: String| AcpError::AgentError {
+        code: -32603,
+        message,
+    };
+    match guest_session_mode(session_new_result, acp.started_unattended()) {
+        GuestSessionMode::Keep => {}
+        GuestSessionMode::Refuse => {
+            return Err(refused(format!(
+                "guest session {session_id}: the adapter offers no mode that asks first"
+            )));
+        }
+        GuestSessionMode::Set(mode_id) => {
+            let response = timeout(
+                PERMISSION_MODE_TIMEOUT,
+                acp.session_set_config_option(session_id, "mode", &mode_id),
+            )
+            .await
+            .map_err(|_| AcpError::Timeout(PERMISSION_MODE_TIMEOUT))??;
+            let reported = reported_mode(&response["configOptions"]);
+            if reported != Some(mode_id.as_str()) {
+                return Err(refused(format!(
+                    "guest session {session_id}: set mode {mode_id:?}, adapter reports {reported:?}"
+                )));
+            }
+            tracing::info!(
+                target: "pool::permission",
+                "moved guest-lane session {session_id} to mode {mode_id:?}"
+            );
+        }
+    }
+    acp.record_guest_modes(session_id, restricted_modes(session_new_result));
+    Ok(())
 }
 
 /// Set the session permission mode via `session/set_config_option`.
@@ -13337,6 +13507,303 @@ done"#
             cap["configOptions"].is_null(),
             "an optionless switch caches the target's (empty) options, never the pre-switch model-a options with a patched effort"
         );
+    }
+}
+
+#[cfg(test)]
+mod guest_lane_tests {
+    use super::*;
+    use crate::trust::{TrustLane, TrustTier};
+    use serde_json::json;
+    use std::path::Path;
+    use tests::make_prompt_context_no_owner;
+
+    /// claude-agent-acp 0.81.2's catalog, as `session/new` reports it.
+    fn claude_modes(current: &str) -> String {
+        format!(
+            r#","modes":{{"currentModeId":"{current}","availableModes":[{{"id":"default","_meta":{{"kind":"standard"}}}},{{"id":"acceptEdits","_meta":{{"kind":"standard"}}}},{{"id":"plan","_meta":{{"kind":"plan"}}}},{{"id":"auto","_meta":{{"kind":"auto_review"}}}},{{"id":"bypassPermissions","_meta":{{"kind":"full_access"}}}}]}}"#
+        )
+    }
+
+    /// codex-acp 1.13.1's catalog, as `session/new` reports it.
+    fn codex_modes(current: &str) -> String {
+        format!(
+            r#","modes":{{"currentModeId":"{current}","availableModes":[{{"id":"read-only","_meta":{{"kind":"standard"}}}},{{"id":"agent","_meta":{{"kind":"auto_review"}}}},{{"id":"agent-full-access","_meta":{{"kind":"full_access"}}}}]}}"#
+        )
+    }
+
+    const BYPASS_ONLY: &str = r#","modes":{"currentModeId":"bypassPermissions","availableModes":[{"id":"bypassPermissions"}]}"#;
+    const NO_MODES: &str = "";
+
+    /// The answer real adapters give to a mode change.
+    fn reads_back(mode: &str) -> String {
+        format!(
+            r#""result":{{"configOptions":[{{"id":"mode","category":"mode","currentValue":"{mode}"}}]}}"#
+        )
+    }
+
+    const EMPTY: &str = r#""result":{}"#;
+
+    /// An agent that writes every request to `log`, adds `modes` to its
+    /// `session/new` answer, and answers everything else with `reply`.
+    async fn spawn_mode_acp(modes: &str, reply: &str, log: &Path) -> OwnedAgent {
+        let log = log.display();
+        let script = format!(
+            r#"count=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{log}'
+  count=$((count + 1))
+  id=$((count - 1))
+  if [ "$count" -eq 1 ]; then
+    printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"sessionId":"sess-1"{modes}}}}}'
+  else
+    printf '%s\n' '{{"jsonrpc":"2.0","id":'"$id"',{reply}}}'
+  fi
+done"#
+        );
+        let acp = AcpClient::spawn("bash", &["-c".to_string(), script], &[], false)
+            .await
+            .expect("spawn mode ACP script");
+        OwnedAgent {
+            index: 0,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "mode-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 2,
+        }
+    }
+
+    async fn create_session(
+        agent: &mut OwnedAgent,
+        scope: Option<&SessionScope>,
+    ) -> Result<String, AcpError> {
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.permission_mode = PermissionMode::BypassPermissions;
+        create_session_and_apply_model(
+            agent,
+            &ctx,
+            None,
+            NewSessionChannelContext {
+                huddle_instructions: None,
+                canvas: None,
+                name: None,
+                scope,
+                channel_type: None,
+            },
+        )
+        .await
+    }
+
+    /// Create a guest session on an agent with `modes` that answers `reply`, and
+    /// return the result and the modes the harness set.
+    async fn guest_session(
+        modes: &str,
+        reply: &str,
+        started_unattended: bool,
+    ) -> (Result<String, AcpError>, Vec<String>, OwnedAgent) {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("requests");
+        let mut agent = spawn_mode_acp(modes, reply, &log).await;
+        agent.acp.set_started_unattended(started_unattended);
+        let result = create_session(&mut agent, Some(&guest_scope())).await;
+        (result, modes_set(&log), agent)
+    }
+
+    /// The `mode` values the harness set, in order.
+    fn modes_set(log: &Path) -> Vec<String> {
+        std::fs::read_to_string(log)
+            .expect("the agent logged its requests")
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("a JSON request"))
+            .filter(|request| request["method"] == "session/set_config_option")
+            .map(|request| request["params"]["value"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    fn conversation() -> SessionScope {
+        SessionScope::Conversation {
+            channel_id: Uuid::nil(),
+        }
+    }
+
+    fn guest_scope() -> SessionScope {
+        conversation().in_lane(&TrustLane::Guest("alice".into()))
+    }
+
+    #[tokio::test]
+    async fn guest_session_in_a_restricted_mode_takes_no_mode() {
+        let (result, set, agent) = guest_session(&claude_modes("default"), EMPTY, false).await;
+        let sid = result.expect("session creation succeeds");
+        assert_eq!(set, Vec::<String>::new());
+        assert_eq!(agent.acp.session_lane(&sid), Some(SessionLane::Guest));
+    }
+
+    #[tokio::test]
+    async fn codex_started_in_full_access_is_moved_and_read_back() {
+        // INITIAL_AGENT_MODE=agent-full-access starts every session here.
+        let reply = reads_back("read-only");
+        let (result, set, _) = guest_session(&codex_modes("agent-full-access"), &reply, true).await;
+        result.expect("session creation succeeds");
+        assert_eq!(set, ["read-only"]);
+    }
+
+    #[tokio::test]
+    async fn codex_default_mode_answers_to_a_model_so_it_is_moved_too() {
+        let reply = reads_back("read-only");
+        let (result, set, _) = guest_session(&codex_modes("agent"), &reply, false).await;
+        result.expect("session creation succeeds");
+        assert_eq!(set, ["read-only"]);
+    }
+
+    #[tokio::test]
+    async fn claude_with_an_operator_bypass_default_is_moved_and_read_back() {
+        let reply = reads_back("default");
+        let (result, set, _) =
+            guest_session(&claude_modes("bypassPermissions"), &reply, false).await;
+        result.expect("session creation succeeds");
+        assert_eq!(set, ["default"]);
+    }
+
+    #[tokio::test]
+    async fn no_restricted_mode_on_offer_fails_creation() {
+        let (result, set, _) = guest_session(BYPASS_ONLY, EMPTY, false).await;
+        assert!(result.is_err());
+        assert_eq!(set, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_failed_set_fails_creation() {
+        let refused = r#""error":{"code":-32602,"message":"no"}"#;
+        let (result, _, _) = guest_session(&codex_modes("agent-full-access"), refused, true).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_read_back_mismatch_fails_creation() {
+        let modes = codex_modes("agent-full-access");
+        for reply in [reads_back("agent-full-access"), EMPTY.to_owned()] {
+            let (result, set, _) = guest_session(&modes, &reply, true).await;
+            assert!(result.is_err(), "{reply}");
+            assert_eq!(set, ["read-only"], "{reply}");
+        }
+    }
+
+    #[tokio::test]
+    async fn adapter_with_no_modes_is_refused_only_if_it_started_in_full_access() {
+        let (result, set, _) = guest_session(NO_MODES, EMPTY, false).await;
+        result.expect("session creation succeeds");
+        assert_eq!(set, Vec::<String>::new());
+
+        let (result, set, _) = guest_session(NO_MODES, EMPTY, true).await;
+        assert!(result.is_err());
+        assert_eq!(set, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn owner_session_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, scope) in [
+            (
+                "owner",
+                Some(conversation().in_lane(&TrustTier::Owner.lane())),
+            ),
+            (
+                "sibling",
+                Some(conversation().in_lane(&TrustTier::Sibling.lane())),
+            ),
+            ("no-scope", None),
+        ] {
+            let log = dir.path().join(name);
+            let mut agent = spawn_mode_acp(&claude_modes("default"), EMPTY, &log).await;
+            agent.acp.set_started_unattended(true);
+            let sid = create_session(&mut agent, scope.as_ref())
+                .await
+                .expect("session creation succeeds");
+            assert_eq!(modes_set(&log), ["bypassPermissions"], "{name}");
+            assert_eq!(
+                agent.acp.session_lane(&sid),
+                Some(SessionLane::Owner),
+                "{name}"
+            );
+
+            let log = dir.path().join(format!("{name}-no-modes"));
+            let mut agent = spawn_mode_acp(NO_MODES, EMPTY, &log).await;
+            agent.acp.set_started_unattended(true);
+            create_session(&mut agent, scope.as_ref())
+                .await
+                .expect("an owner session never fails on its mode");
+        }
+    }
+
+    #[test]
+    fn guest_session_mode_decisions() {
+        let decide =
+            |modes: serde_json::Value| guest_session_mode(&json!({ "modes": modes }), false);
+        assert_eq!(
+            guest_session_mode(&json!({ "sessionId": "sess-1" }), false),
+            GuestSessionMode::Keep
+        );
+        assert_eq!(
+            decide(json!({ "availableModes": [] })),
+            GuestSessionMode::Keep
+        );
+        // acceptEdits acts without asking, so it is not where a guest stays.
+        assert_eq!(
+            decide(json!({
+                "currentModeId": "acceptEdits",
+                "availableModes": [{ "id": "acceptEdits" }, { "id": "default" }],
+            })),
+            GuestSessionMode::Set("default".into())
+        );
+        // goose reports no kinds; `auto` is known by its id.
+        assert_eq!(
+            decide(json!({
+                "currentModeId": "auto",
+                "availableModes": [{ "id": "auto" }, { "id": "approve" }, { "id": "chat" }],
+            })),
+            GuestSessionMode::Set("approve".into())
+        );
+        // A current mode the adapter does not list, or none, is not trusted.
+        for modes in [
+            json!({ "currentModeId": "mystery", "availableModes": [{ "id": "read-only" }] }),
+            json!({ "availableModes": [{ "id": "read-only" }] }),
+        ] {
+            assert_eq!(decide(modes), GuestSessionMode::Set("read-only".into()));
+        }
+        assert_eq!(
+            decide(json!({
+                "currentModeId": "yolo",
+                "availableModes": [{ "id": "yolo", "_meta": { "kind": "full_access" } }],
+            })),
+            GuestSessionMode::Refuse
+        );
+    }
+
+    #[test]
+    fn modes_offered_only_as_a_config_option_count() {
+        let result = json!({
+            "configOptions": [{
+                "id": "mode",
+                "category": "mode",
+                "currentValue": "agent-full-access",
+                "options": [
+                    { "value": "read-only" },
+                    { "value": "agent-full-access", "_meta": { "kind": "full_access" } },
+                ],
+            }],
+        });
+        assert_eq!(
+            guest_session_mode(&result, false),
+            GuestSessionMode::Set("read-only".into())
+        );
+        assert_eq!(restricted_modes(&result), ["read-only"]);
     }
 }
 

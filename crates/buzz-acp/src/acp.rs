@@ -150,6 +150,29 @@ fn build_initialize_params() -> serde_json::Value {
     })
 }
 
+/// Whose authority a session runs on, recorded when the pool creates it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionLane {
+    /// The agent's owner, a same-owner sibling, or the owner's own scheduled work.
+    Owner,
+    /// A non-owner requester's lane.
+    Guest,
+}
+
+/// True for the entry of a `configOptions` list that holds the session mode.
+pub(crate) fn is_mode_option(option: &serde_json::Value) -> bool {
+    option["category"] == "mode" || option["id"] == "mode"
+}
+
+/// The session mode a `configOptions` list reports.
+pub(crate) fn reported_mode(config_options: &serde_json::Value) -> Option<&str> {
+    config_options
+        .as_array()?
+        .iter()
+        .find(|option| is_mode_option(option))?["currentValue"]
+        .as_str()
+}
+
 /// ACP client that owns an agent subprocess and communicates over its stdio.
 ///
 /// One `AcpClient` per agent process. Multiple sessions can be created on the
@@ -172,6 +195,16 @@ pub struct AcpClient {
     /// Used by [`cancel_with_cleanup`](AcpClient::cancel_with_cleanup) to send
     /// a `cancelled` outcome before the agent returns from `session/prompt`.
     pending_permission_id: Option<serde_json::Value>,
+    /// The lane of each session the pool created on this connection. A guest
+    /// session is never auto-approved; see
+    /// [`handle_permission_request`](AcpClient::handle_permission_request).
+    session_lanes: std::collections::HashMap<String, SessionLane>,
+    /// The modes each guest session may report. Anything else ends its turn.
+    guest_modes: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    /// Set when a guest session reports a mode outside `guest_modes`.
+    guest_mode_left: Option<String>,
+    /// The agent process was started with a full-access setting of its own.
+    started_unattended: bool,
     /// Whether we have already sent a response to the pending permission request.
     /// Guards against double-response if a timeout fires after the allow_once
     /// response was written but before `pending_permission_id` was cleared.
@@ -694,6 +727,8 @@ impl AcpClient {
         }
         cmd.envs(launch_env.iter().cloned());
         cmd.env_remove(launch::PREFIX_ENV);
+        let started_unattended =
+            crate::config::adapter_starts_unattended(command, |name| child_env(&cmd, name));
         let claude_thinking_summaries = standard_adapter == Some(StandardAdapterKind::Claude)
             && !launch_prefixed
             && claude_cli_accepts_thinking_display(&cmd).await;
@@ -719,6 +754,10 @@ impl AcpClient {
             reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
             next_id: 0,
             pending_permission_id: None,
+            session_lanes: std::collections::HashMap::new(),
+            guest_modes: std::collections::HashMap::new(),
+            guest_mode_left: None,
+            started_unattended,
             permission_responded: false,
             last_prompt_id: None,
             current_hard_deadline: None,
@@ -969,6 +1008,34 @@ impl AcpClient {
             "value": value,
         });
         self.send_request("session/set_config_option", params).await
+    }
+
+    /// Record whose lane a session runs on. The pool calls this for every
+    /// session it creates, before the session can prompt.
+    pub(crate) fn record_session_lane(&mut self, session_id: &str, lane: SessionLane) {
+        self.session_lanes.insert(session_id.to_owned(), lane);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn session_lane(&self, session_id: &str) -> Option<SessionLane> {
+        self.session_lanes.get(session_id).copied()
+    }
+
+    /// Hold a guest session to `modes` from here on.
+    pub(crate) fn record_guest_modes(&mut self, session_id: &str, modes: Vec<String>) {
+        self.guest_modes
+            .insert(session_id.to_owned(), modes.into_iter().collect());
+    }
+
+    /// True when the agent process was started with a full-access setting of its
+    /// own, whether or not it reports session modes.
+    pub(crate) fn started_unattended(&self) -> bool {
+        self.started_unattended
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_started_unattended(&mut self, started_unattended: bool) {
+        self.started_unattended = started_unattended;
     }
 
     /// Send `session/set_model` (unstable ACP path).
@@ -1453,7 +1520,8 @@ impl AcpClient {
     ///
     /// While waiting, handles:
     /// - `session/update` notifications → logged via tracing
-    /// - `session/request_permission` requests → auto-approved with `allow_once`
+    /// - `session/request_permission` requests → `allow_once`, refused on a guest
+    ///   session (see [`handle_permission_request`](AcpClient::handle_permission_request))
     /// - Any other messages → debug-logged and ignored; if they carry an `id`
     ///   (i.e. they are requests, not notifications), a JSON-RPC -32601 error is sent.
     ///
@@ -1521,6 +1589,7 @@ impl AcpClient {
                 match method {
                     "session/update" => {
                         let _ = self.handle_session_update(&msg);
+                        self.fail_if_guest_left_its_modes()?;
                     }
                     "_goose/unstable/session/update" => {
                         self.handle_goose_usage_update(&msg);
@@ -1967,6 +2036,7 @@ impl AcpClient {
                                     last_activity_at = activity_now;
                                     tracing::debug!("idle clock reset: tool call started");
                                 }
+                                self.fail_if_guest_left_its_modes()?;
                             }
                             "_goose/unstable/session/update" => {
                                 self.handle_goose_usage_update(&msg);
@@ -2012,6 +2082,7 @@ impl AcpClient {
     /// leave it `None` and are steered via `_session/steering` instead, which
     /// needs no run id.
     fn handle_session_update(&mut self, msg: &serde_json::Value) -> bool {
+        self.watch_guest_mode(msg);
         let update = &msg["params"]["update"];
         let update_type = update
             .get("sessionUpdate")
@@ -2211,10 +2282,61 @@ impl AcpClient {
         }
     }
 
-    /// Auto-approve a `session/request_permission` request from the agent.
+    /// Note a guest session reporting a mode it is not held to.
+    fn watch_guest_mode(&mut self, msg: &serde_json::Value) {
+        let update = &msg["params"]["update"];
+        let reported = match update["sessionUpdate"].as_str() {
+            Some("current_mode_update") => update["currentModeId"].as_str(),
+            Some("config_option_update") => reported_mode(&update["configOptions"]),
+            _ => None,
+        };
+        let session_id = msg["params"]["sessionId"].as_str();
+        let (Some(mode), Some(session_id)) = (reported, session_id) else {
+            return;
+        };
+        let Some(modes) = self.guest_modes.get(session_id) else {
+            return;
+        };
+        if !modes.contains(mode) {
+            tracing::error!(
+                target: "acp::permission",
+                "guest session {session_id} reported mode {mode:?}; failing its turn"
+            );
+            self.observe(
+                "permission_refused",
+                serde_json::json!({
+                    "reason": "guest_mode_left",
+                    "sessionId": session_id,
+                    "mode": mode,
+                }),
+            );
+            self.guest_mode_left =
+                Some(format!("guest session {session_id} moved to mode {mode:?}"));
+        }
+    }
+
+    /// End the turn if a guest session has left its modes. A protocol error makes
+    /// the pool respawn the agent, so nothing that session started carries on.
+    fn fail_if_guest_left_its_modes(&mut self) -> Result<(), AcpError> {
+        match self.guest_mode_left.take() {
+            Some(detail) => Err(AcpError::Protocol(detail)),
+            None => Ok(()),
+        }
+    }
+
+    /// Answer a `session/request_permission` request from the agent.
     ///
-    /// Finds the option with `kind == "allow_once"` and responds with its `optionId`.
-    /// If no `allow_once` option exists, falls back to `reject_once`.
+    /// On an owner-lane session, finds the option with `kind == "allow_once"` and
+    /// responds with its `optionId`. If no `allow_once` option exists, falls back
+    /// to `reject_once`.
+    ///
+    /// A guest session is refused: the owner never saw this request, and no card
+    /// reaches a non-owner here, so nobody with authority can approve it.
+    ///
+    /// A `sessionId` the pool did not create is refused the same way while this
+    /// connection holds a guest session, so a guest's ask can't pass as unknown.
+    /// With no guest on the connection it can only be the owner's own: codex-acp
+    /// asks for a subagent under the child thread's id.
     ///
     /// **Critical:** Never hardcode `optionId` — always find it dynamically by `kind`.
     ///
@@ -2231,6 +2353,35 @@ impl AcpClient {
         self.pending_permission_id = Some(id.clone());
         // Mark as not yet responded — guards against double-response race.
         self.permission_responded = false;
+
+        let session_id = msg["params"]["sessionId"].as_str();
+        let refusal = match session_id.and_then(|sid| self.session_lanes.get(sid)) {
+            Some(SessionLane::Owner) => None,
+            Some(SessionLane::Guest) => Some("guest_lane"),
+            None if self
+                .session_lanes
+                .values()
+                .any(|l| *l == SessionLane::Guest) =>
+            {
+                Some("unknown_session")
+            }
+            None => None,
+        };
+        if let Some(reason) = refusal {
+            tracing::warn!(
+                target: "acp::permission",
+                "refusing permission request id={id} on session {session_id:?}: {reason}"
+            );
+            self.write_ndjson(&permission_response_refused(&id, &msg["params"]))
+                .await?;
+            self.permission_responded = true;
+            self.pending_permission_id = None;
+            self.observe(
+                "permission_refused",
+                serde_json::json!({ "reason": reason, "sessionId": session_id }),
+            );
+            return Ok(());
+        }
 
         let options = msg["params"]["options"]
             .as_array()
@@ -2428,6 +2579,34 @@ fn permission_response_selected(id: &serde_json::Value, option_id: &str) -> serd
         "id": id,
         "result": { "outcome": { "outcome": "selected", "optionId": option_id } }
     })
+}
+
+/// Look `name` up in the environment `cmd` will give its child.
+fn child_env(cmd: &tokio::process::Command, name: &str) -> Option<std::ffi::OsString> {
+    let name = std::ffi::OsStr::new(name);
+    match cmd.as_std().get_envs().find(|(key, _)| *key == name) {
+        Some((_, value)) => value.map(std::ffi::OsStr::to_owned),
+        None => std::env::var_os(name),
+    }
+}
+
+/// Build the answer to a request nobody here can approve: the agent's
+/// `reject_once` option, else `cancelled`. Never an allow, and never
+/// `reject_always`, which would outlive this one request.
+fn permission_response_refused(
+    id: &serde_json::Value,
+    params: &serde_json::Value,
+) -> serde_json::Value {
+    let reject_once = params["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|opt| opt["kind"].as_str() == Some("reject_once"))
+        .and_then(|opt| opt["optionId"].as_str());
+    match reject_once {
+        Some(option_id) => permission_response_selected(id, option_id),
+        None => permission_response_cancelled(id),
+    }
 }
 
 /// Build a JSON-RPC permission response with `outcome: "cancelled"`.
@@ -2811,6 +2990,228 @@ mod tests {
             Some(StopReason::MaxTurnRequests)
         );
         assert_eq!(StopReason::from_str("Refusal"), Some(StopReason::Refusal));
+    }
+
+    /// An agent that writes back every line the harness sends it.
+    async fn echoing_client() -> AcpClient {
+        spawn_script(r#"while IFS= read -r line; do printf '%s\n' "$line"; done"#).await
+    }
+
+    fn permission_options() -> serde_json::Value {
+        serde_json::json!([
+            { "optionId": "opt-always", "name": "Always allow", "kind": "allow_always" },
+            { "optionId": "opt-allow", "name": "Allow", "kind": "allow_once" },
+            { "optionId": "opt-reject", "name": "Reject", "kind": "reject_once" },
+            { "optionId": "opt-never", "name": "Always reject", "kind": "reject_always" },
+        ])
+    }
+
+    /// Put a permission request to `client` and return what it wrote back.
+    async fn permission_answer(
+        client: &mut AcpClient,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "permission-1",
+            "method": "session/request_permission",
+            "params": params,
+        });
+        client
+            .handle_permission_request(&msg)
+            .await
+            .expect("the request is answered");
+        let line = tokio::time::timeout(std::time::Duration::from_secs(10), client.reader.next())
+            .await
+            .expect("the answer arrives")
+            .expect("the agent is still running")
+            .expect("the answer is one line");
+        serde_json::from_str(&line).expect("the answer is JSON")
+    }
+
+    fn selected_option(answer: &serde_json::Value) -> Option<&str> {
+        assert_eq!(answer["id"], "permission-1");
+        answer["result"]["outcome"]["optionId"].as_str()
+    }
+
+    fn was_cancelled(answer: &serde_json::Value) -> bool {
+        assert_eq!(answer["id"], "permission-1");
+        answer["result"]["outcome"]["outcome"] == "cancelled"
+    }
+
+    #[tokio::test]
+    async fn owner_session_keeps_allow_once() {
+        let mut client = echoing_client().await;
+        client.record_session_lane("owner-1", SessionLane::Owner);
+        let answer = permission_answer(
+            &mut client,
+            serde_json::json!({ "sessionId": "owner-1", "options": permission_options() }),
+        )
+        .await;
+        assert_eq!(selected_option(&answer), Some("opt-allow"));
+    }
+
+    #[tokio::test]
+    async fn guest_session_answers_reject_once() {
+        let mut client = echoing_client().await;
+        client.record_session_lane("owner-1", SessionLane::Owner);
+        client.record_session_lane("guest-1", SessionLane::Guest);
+        let answer = permission_answer(
+            &mut client,
+            serde_json::json!({ "sessionId": "guest-1", "options": permission_options() }),
+        )
+        .await;
+        assert_eq!(selected_option(&answer), Some("opt-reject"));
+        assert!(client.permission_responded);
+        assert!(client.pending_permission_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_session_keeps_allow_once_with_no_guest_on_the_connection() {
+        let mut client = echoing_client().await;
+        client.record_session_lane("owner-1", SessionLane::Owner);
+        for params in [
+            serde_json::json!({ "sessionId": "child-thread", "options": permission_options() }),
+            serde_json::json!({ "options": permission_options() }),
+        ] {
+            let answer = permission_answer(&mut client, params.clone()).await;
+            assert_eq!(selected_option(&answer), Some("opt-allow"), "{params}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_session_is_refused_with_a_guest_on_the_connection() {
+        let mut client = echoing_client().await;
+        client.record_session_lane("owner-1", SessionLane::Owner);
+        client.record_session_lane("guest-1", SessionLane::Guest);
+        for params in [
+            serde_json::json!({ "sessionId": "never-created", "options": permission_options() }),
+            serde_json::json!({ "options": permission_options() }),
+            serde_json::json!({ "sessionId": 7, "options": permission_options() }),
+            serde_json::json!({ "sessionId": null, "options": permission_options() }),
+        ] {
+            let answer = permission_answer(&mut client, params.clone()).await;
+            assert_eq!(selected_option(&answer), Some("opt-reject"), "{params}");
+        }
+    }
+
+    #[tokio::test]
+    async fn refusal_without_reject_once_is_cancelled() {
+        let mut client = echoing_client().await;
+        client.record_session_lane("guest-1", SessionLane::Guest);
+        for params in [
+            serde_json::json!({ "sessionId": "guest-1", "options": [
+                { "optionId": "opt-allow", "name": "Allow", "kind": "allow_once" },
+                { "optionId": "opt-always", "name": "Always allow", "kind": "allow_always" },
+                { "optionId": "opt-never", "name": "Always reject", "kind": "reject_always" },
+            ] }),
+            serde_json::json!({ "sessionId": "guest-1", "options": [
+                { "name": "Reject with no id", "kind": "reject_once" },
+            ] }),
+            serde_json::json!({ "sessionId": "guest-1", "options": [] }),
+            serde_json::json!({ "sessionId": "guest-1" }),
+        ] {
+            let answer = permission_answer(&mut client, params.clone()).await;
+            assert!(was_cancelled(&answer), "{params}");
+        }
+    }
+
+    #[tokio::test]
+    async fn refusal_reaches_the_observer_with_its_reason() {
+        let mut client = echoing_client().await;
+        let observer = ObserverHandle::in_process();
+        client.set_observer(Some(observer.clone()), 0);
+        client.record_session_lane("guest-1", SessionLane::Guest);
+        for session_id in ["guest-1", "never-created"] {
+            permission_answer(
+                &mut client,
+                serde_json::json!({ "sessionId": session_id, "options": permission_options() }),
+            )
+            .await;
+        }
+        let refusals: Vec<_> = observer
+            .snapshot()
+            .into_iter()
+            .filter(|frame| frame.kind == "permission_refused")
+            .map(|frame| frame.payload)
+            .collect();
+        assert_eq!(
+            refusals,
+            [
+                serde_json::json!({ "reason": "guest_lane", "sessionId": "guest-1" }),
+                serde_json::json!({ "reason": "unknown_session", "sessionId": "never-created" }),
+            ]
+        );
+    }
+
+    /// A prompt during which the agent reports `update` for `guest-1`.
+    async fn prompt_reporting(
+        client_setup: Option<&[&str]>,
+        update: &str,
+    ) -> Result<StopReason, AcpError> {
+        let script = format!(
+            r#"read -r _
+printf '%s\n' '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"guest-1","update":{update}}}}}'
+printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'
+sleep 5"#
+        );
+        let mut client = spawn_script(&script).await;
+        if let Some(modes) = client_setup {
+            client.record_session_lane("guest-1", SessionLane::Guest);
+            client.record_guest_modes(
+                "guest-1",
+                modes.iter().map(|mode| (*mode).to_owned()).collect(),
+            );
+        }
+        let timeout = std::time::Duration::from_secs(10);
+        client
+            .session_prompt_with_idle_timeout("guest-1", "hello", timeout, timeout)
+            .await
+    }
+
+    const RESTRICTED: &[&str] = &["default", "acceptEdits", "plan"];
+
+    #[tokio::test]
+    async fn guest_session_reporting_full_access_fails_its_turn() {
+        for update in [
+            r#"{"sessionUpdate":"current_mode_update","currentModeId":"bypassPermissions"}"#,
+            r#"{"sessionUpdate":"config_option_update","configOptions":[{"id":"mode","category":"mode","currentValue":"bypassPermissions"}]}"#,
+            r#"{"sessionUpdate":"current_mode_update","currentModeId":"a-mode-it-never-listed"}"#,
+        ] {
+            let result = prompt_reporting(Some(RESTRICTED), update).await;
+            assert!(matches!(result, Err(AcpError::Protocol(_))), "{update}");
+        }
+    }
+
+    #[tokio::test]
+    async fn guest_session_may_move_between_restricted_modes() {
+        let update = r#"{"sessionUpdate":"current_mode_update","currentModeId":"plan"}"#;
+        let result = prompt_reporting(Some(RESTRICTED), update).await;
+        assert!(matches!(result, Ok(StopReason::EndTurn)));
+    }
+
+    #[tokio::test]
+    async fn other_sessions_may_report_any_mode() {
+        let update =
+            r#"{"sessionUpdate":"current_mode_update","currentModeId":"bypassPermissions"}"#;
+        let result = prompt_reporting(None, update).await;
+        assert!(matches!(result, Ok(StopReason::EndTurn)));
+    }
+
+    #[tokio::test]
+    async fn guest_session_reporting_full_access_outside_a_prompt_fails_the_request() {
+        let mut client = spawn_script(
+            r#"read -r _
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"guest-1","update":{"sessionUpdate":"current_mode_update","currentModeId":"bypassPermissions"}}}'
+printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{}}'
+sleep 5"#,
+        )
+        .await;
+        client.record_guest_modes("guest-1", vec!["default".to_owned()]);
+        let result = client
+            .session_set_config_option("other", "fast", "on")
+            .await;
+        assert!(matches!(result, Err(AcpError::Protocol(_))));
     }
 
     #[test]
