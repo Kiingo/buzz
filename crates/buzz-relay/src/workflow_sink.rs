@@ -294,6 +294,9 @@ impl ActionSink for RelayActionSink {
             //    - `buzz:workflow` tag prevents recursive workflow triggering
             //    - `buzz:workflow-owner` lets harnesses apply the owner's
             //      inbound-author policy after verifying the relay signature
+            //    - `buzz:workflow-template` carries the owner's stored step
+            //      template, so a harness can tell the owner's words from text
+            //      a substitution rendered into this message
             //    - one `p` tag for every resolved mention in the rendered output,
             //      preserving legacy wake/feed behavior
             //    - one `buzz:workflow-mention` tag only when the same target was
@@ -309,6 +312,9 @@ impl ActionSink for RelayActionSink {
                     .map_err(|e| ActionSinkError::EventBuild(format!("workflow tag: {e}")))?,
                 Tag::parse(["buzz:workflow-owner", &author_pubkey_hex])
                     .map_err(|e| ActionSinkError::EventBuild(format!("workflow owner tag: {e}")))?,
+                Tag::parse(["buzz:workflow-template", &authored_text]).map_err(|e| {
+                    ActionSinkError::EventBuild(format!("workflow template tag: {e}"))
+                })?,
             ];
 
             // Resolve thread ancestry when this is a threaded reply, so the
@@ -1032,6 +1038,16 @@ mod postgres_tests {
             tag_values(&explicit, "buzz:workflow-mention"),
             vec![agent_hex.clone()],
             "relay-authenticated workflow mention must identify the explicitly named member"
+        );
+        assert_eq!(
+            tag_values(&explicit, "buzz:workflow-template"),
+            vec!["heads up @Robby — please take a look".to_string()],
+            "a message with no substitution carries its own text as its template"
+        );
+        assert_eq!(
+            tag_values(&injected, "buzz:workflow-template"),
+            vec!["echo: {{trigger.text}}".to_string()],
+            "the stored template, not the rendered text, tells harnesses what the owner wrote"
         );
 
         let injected_p_tags = tag_values(&injected, "p");
