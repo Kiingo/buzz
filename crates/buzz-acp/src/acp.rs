@@ -234,8 +234,10 @@ pub struct AcpClient {
     /// after the turn ends. Consumed once per prompt result.
     external_indicator_event_ids: Vec<String>,
     /// Optional, explicitly enabled publisher for the local ACP extension.
-    /// It holds the Buzz signer in this parent process; the child only emits
-    /// validated publication intents and never receives private key material.
+    /// It holds the Buzz signer in this parent process, and the child only
+    /// emits validated publication intents through it. This path hands the
+    /// child no key, but others still do: its inherited and managed env, and
+    /// the `session/new` mcpServers env.
     local_publication_publisher: Option<LocalPublicationPublisher>,
     /// Structured Buzz envelope attached to the next `session/prompt` as a
     /// namespaced ACP extension. Custom agents can consume this instead of
