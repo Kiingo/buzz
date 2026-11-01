@@ -2,14 +2,15 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use nostr::{Event, Keys, Tag};
+use nostr::{Event, Tag};
 use serde_json::{json, Value};
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::debug;
 
 use crate::error::WsClientError;
-use crate::message::{build_auth_event, parse_relay_message, OkResponse, RelayMessage};
+use crate::message::AuthSigner;
+use crate::message::{parse_relay_message, OkResponse, RelayMessage};
 
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -36,7 +37,7 @@ impl NostrWsConnection {
     /// Pass `auth_tag` to include a NIP-OA authorization tag in the AUTH event.
     pub async fn connect_authenticated(
         url: &str,
-        keys: &Keys,
+        keys: &impl AuthSigner,
         auth_tag: Option<&Tag>,
     ) -> Result<Self, WsClientError> {
         let mut conn = Self::connect(url).await?;
@@ -69,14 +70,14 @@ impl NostrWsConnection {
     /// Pass `auth_tag` to include a NIP-OA authorization tag in the AUTH event.
     pub async fn authenticate(
         &mut self,
-        keys: &Keys,
+        keys: &impl AuthSigner,
         auth_tag: Option<&Tag>,
     ) -> Result<(), WsClientError> {
         let challenge = self
             .wait_for_auth_challenge(Duration::from_secs(AUTH_CHALLENGE_TIMEOUT_SECS))
             .await?;
 
-        let auth_event = build_auth_event(&challenge, &self.relay_url, keys, auth_tag)?;
+        let auth_event = keys.sign_auth(&challenge, &self.relay_url, auth_tag)?;
         let event_id = auth_event.id.to_hex();
 
         self.send_raw(&json!(["AUTH", auth_event])).await?;
@@ -277,7 +278,7 @@ impl NostrWsConnection {
 pub async fn publish_event(
     relay_url: &str,
     event: Event,
-    keys: &Keys,
+    keys: &impl AuthSigner,
     auth_tag: Option<&Tag>,
     timeout_secs: u64,
 ) -> Result<OkResponse, WsClientError> {

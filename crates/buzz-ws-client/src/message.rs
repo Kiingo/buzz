@@ -188,3 +188,25 @@ pub fn build_auth_event(
         .sign_with_keys(keys)
         .map_err(|e| WsClientError::EventBuilder(e.to_string()))
 }
+
+/// Who answers a relay's NIP-42 challenge: a key held here, or a remote signer.
+pub trait AuthSigner: Sync {
+    /// Signs the kind 22242 event for `challenge`.
+    fn sign_auth(
+        &self,
+        challenge: &str,
+        relay_url: &str,
+        auth_tag: Option<&Tag>,
+    ) -> Result<Event, WsClientError>;
+}
+
+impl AuthSigner for Keys {
+    fn sign_auth(
+        &self,
+        challenge: &str,
+        relay_url: &str,
+        auth_tag: Option<&Tag>,
+    ) -> Result<Event, WsClientError> {
+        build_auth_event(challenge, relay_url, self, auth_tag)
+    }
+}

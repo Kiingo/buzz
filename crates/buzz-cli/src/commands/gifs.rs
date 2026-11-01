@@ -71,6 +71,18 @@ fn customer_id(secret_key_bytes: &[u8], relay_url: &str) -> String {
     hex::encode(&hash[..16]) // 16 bytes → 32 hex chars
 }
 
+/// [`customer_id`] for this client. A signer computes it, since it holds the
+/// key.
+fn client_customer_id(client: &BuzzClient) -> Result<String, CliError> {
+    match client.keys().local() {
+        Some(keys) => Ok(customer_id(
+            keys.secret_key().as_secret_bytes(),
+            client.relay_url(),
+        )),
+        None => client.keys().socket_gif_customer_id(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Locale
 // ---------------------------------------------------------------------------
@@ -336,10 +348,7 @@ pub(crate) async fn search_entries(
     locale: Option<&str>,
 ) -> Result<Vec<GifEntry>, CliError> {
     let (search_path, _) = resolve_gif_descriptor(client).await?;
-    let cid = customer_id(
-        client.keys().secret_key().as_secret_bytes(),
-        client.relay_url(),
-    );
+    let cid = client_customer_id(client)?;
     let locale = locale.map(|l| l.to_string()).unwrap_or_else(default_locale);
 
     let body = serde_json::json!({
@@ -358,10 +367,7 @@ pub(crate) async fn search_entries(
 /// `{"accepted": true}` on success.
 pub async fn cmd_share(client: &BuzzClient, slug: &str) -> Result<(), CliError> {
     let (_, share_path) = resolve_gif_descriptor(client).await?;
-    let cid = customer_id(
-        client.keys().secret_key().as_secret_bytes(),
-        client.relay_url(),
-    );
+    let cid = client_customer_id(client)?;
 
     let body = serde_json::json!({
         "slug": slug,

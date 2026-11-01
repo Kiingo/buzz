@@ -37,6 +37,9 @@ pub enum Op {
         url: String,
         method: String,
         payload_hash: Option<String>,
+        /// Git auth carries the NIP-OA tag in the event. The CLI sends it in a
+        /// header instead.
+        owner_tag: bool,
     },
     /// Build and sign a Blossom `get` event for a media URL.
     BlossomGet { media_url: String },
@@ -57,6 +60,9 @@ pub enum Op {
     ObserverEncrypt { payload: String },
     /// Sign a git object. The signer supplies the domain prefix, `t` and `oa`.
     GitSign { payload_b64: String },
+    /// The stable GIF customer id for this agent and relay. It's derived from
+    /// the key, so only the signer can compute it.
+    GifCustomerId,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +82,7 @@ pub enum Output {
     Body(String),
     Ciphertext(String),
     GitSignature(GitSignature),
+    CustomerId(String),
 }
 
 /// The fields of a NIP-GS envelope, which git-sign-nostr armors.

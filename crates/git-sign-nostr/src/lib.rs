@@ -940,7 +940,86 @@ fn armor(json_bytes: &[u8]) -> String {
     format!("{ARMOR_BEGIN}\n{b64}\n{ARMOR_END}\n")
 }
 
+/// Writes the armored signature and GnuPG status lines git reads.
+fn emit_signature(
+    json: &str,
+    t: u64,
+    pk_hex: &str,
+    status: &mut StatusWriter,
+) -> Result<(), Error> {
+    let armored = armor(json.as_bytes());
+
+    // Write signature to stdout — errors are fatal because git reads
+    // the signature from our stdout. Use write_all (not print!) to avoid
+    // panicking on broken pipe.
+    io::stdout()
+        .write_all(armored.as_bytes())
+        .and_then(|_| io::stdout().flush())
+        .map_err(|e| Error::Fatal(format!("failed to write signature to stdout: {e}")))?;
+
+    // Write GnuPG status lines:
+    // - SIG_CREATED: D=detached, 8=algo(EdDSA placeholder), 1=hash(SHA256),
+    //   00=class, timestamp, fingerprint
+    status.write_line("BEGIN_SIGNING");
+    status.write_line(&format!("SIG_CREATED D 8 1 00 {t} {pk_hex}"));
+    Ok(())
+}
+
+/// Verify a key matches the -u argument. Fail closed: if the key_id is
+/// non-empty and in a recognized format, it MUST match the key. If the format
+/// is unrecognized, we also fail — better to reject than to silently sign with
+/// the wrong key.
+fn check_key_id(key_id: &str, pk_hex: &str) -> Result<(), Error> {
+    if key_id.is_empty() {
+        return Ok(());
+    }
+    match normalize_key_id(key_id) {
+        Some(expected_hex) if expected_hex == pk_hex => Ok(()),
+        Some(_) => Err(Error::Fatal(format!(
+            "signing key argument ({key_id}) does not match loaded key ({pk_hex})"
+        ))),
+        None => Err(Error::Fatal(format!(
+            "signing key argument ({key_id}) is not a recognized key format \
+             (expected 64-char hex or npub1...)"
+        ))),
+    }
+}
+
+/// Signs through buzz-acp's socket. The child sends object bytes; the signer
+/// supplies the domain prefix, `t` and `oa` and keeps the key.
+fn sign_through_socket(
+    client: &buzz_signer::Client,
+    key_id: &str,
+    status: &mut StatusWriter,
+) -> Result<(), Error> {
+    use base64::Engine as _;
+    let fatal = |e: buzz_signer::ClientError| Error::Fatal(e.to_string());
+    let pk_hex = client.pubkey().map_err(fatal)?;
+    check_key_id(key_id, &pk_hex)?;
+    let payload = read_payload_stdin()?;
+    let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload);
+    let reply = client
+        .call(buzz_signer::Op::GitSign { payload_b64 })
+        .map_err(fatal)?;
+    let buzz_signer::Output::GitSignature(signature) = reply else {
+        return Err(Error::Fatal(
+            "signer returned an unexpected reply".to_string(),
+        ));
+    };
+    let json = build_envelope(
+        &signature.pubkey,
+        &signature.sig,
+        signature.t,
+        signature.oa.as_ref(),
+    );
+    emit_signature(&json, signature.t, &signature.pubkey, status)
+}
+
 fn do_sign(key_id: &str, status: &mut StatusWriter) -> Result<(), Error> {
+    if let Some(client) = buzz_signer::Client::from_env() {
+        return sign_through_socket(&client, key_id, status);
+    }
+
     // Load key (zeroized on drop)
     let mut raw_key = load_key()?;
 
@@ -974,27 +1053,7 @@ fn do_sign(key_id: &str, status: &mut StatusWriter) -> Result<(), Error> {
     let (xonly_pk, _parity) = keypair.inner().x_only_public_key();
     let pk_hex = hex::encode(xonly_pk.serialize());
 
-    // Verify key matches the -u argument. Fail closed: if the key_id is
-    // non-empty and in a recognized format, it MUST match the loaded key.
-    // If the format is unrecognized, we also fail — better to reject than
-    // to silently sign with the wrong key.
-    if !key_id.is_empty() {
-        match normalize_key_id(key_id) {
-            Some(expected_hex) => {
-                if expected_hex != pk_hex {
-                    return Err(Error::Fatal(format!(
-                        "signing key argument ({key_id}) does not match loaded key ({pk_hex})"
-                    )));
-                }
-            }
-            None => {
-                return Err(Error::Fatal(format!(
-                    "signing key argument ({key_id}) is not a recognized key format \
-                     (expected 64-char hex or npub1...)"
-                )));
-            }
-        }
-    }
+    check_key_id(key_id, &pk_hex)?;
 
     // Read payload from stdin (bounded)
     let payload = read_payload_stdin()?;
@@ -1060,23 +1119,7 @@ fn do_sign(key_id: &str, status: &mut StatusWriter) -> Result<(), Error> {
 
     // Build envelope and armor
     let json = build_envelope(&pk_hex, &sig_hex, t, oa.as_ref());
-    let armored = armor(json.as_bytes());
-
-    // Write signature to stdout — errors are fatal because git reads
-    // the signature from our stdout. Use write_all (not print!) to avoid
-    // panicking on broken pipe.
-    io::stdout()
-        .write_all(armored.as_bytes())
-        .and_then(|_| io::stdout().flush())
-        .map_err(|e| Error::Fatal(format!("failed to write signature to stdout: {e}")))?;
-
-    // Write GnuPG status lines:
-    // - SIG_CREATED: D=detached, 8=algo(EdDSA placeholder), 1=hash(SHA256),
-    //   00=class, timestamp, fingerprint
-    status.write_line("BEGIN_SIGNING");
-    status.write_line(&format!("SIG_CREATED D 8 1 00 {t} {pk_hex}"));
-
-    Ok(())
+    emit_signature(&json, t, &pk_hex, status)
 }
 
 /// Best-effort extraction of the pk field from raw JSON, for ERRSIG reporting

@@ -205,6 +205,22 @@ pub fn run() -> i32 {
         .unwrap_or(path);
     let url = format!("{protocol}://{host}/{repo_path}");
 
+    // Under a harness buzz-acp holds the key, and scopes this to its own relay.
+    if let Some(client) = buzz_signer::Client::from_env() {
+        return match client.event(buzz_signer::Op::Nip98 {
+            url,
+            method: method.to_string(),
+            payload_hash: None,
+            owner_tag: true,
+        }) {
+            Ok(json) => print_credential(&json),
+            Err(e) => {
+                eprintln!("error: {e}");
+                1
+            }
+        };
+    }
+
     let mut raw_key = match load_key() {
         Ok(k) => k,
         Err(e) => {
@@ -253,6 +269,11 @@ pub fn run() -> i32 {
         }
     };
 
+    print_credential(&json)
+}
+
+/// Answers git with a signed event as an ephemeral Nostr credential.
+fn print_credential(json: &str) -> i32 {
     let credential = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
 
     println!("capability[]=authtype");

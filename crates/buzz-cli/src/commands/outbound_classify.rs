@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use nostr::{Event, EventBuilder, Kind, Tag};
+use nostr::Event;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -247,14 +247,9 @@ async fn post_classify(
 ) -> Result<Value, String> {
     let url = format!("{}/classify", route.url.trim_end_matches('/'));
     let bytes = serde_json::to_vec(body).map_err(|e| e.to_string())?;
-    let event = EventBuilder::new(Kind::HttpAuth, "")
-        .tags([
-            Tag::parse(["u", &url]).map_err(|e| e.to_string())?,
-            Tag::parse(["method", "POST"]).map_err(|e| e.to_string())?,
-            Tag::parse(["payload", &hex::encode(Sha256::digest(&bytes))])
-                .map_err(|e| e.to_string())?,
-        ])
-        .sign_with_keys(client.keys())
+    let event = client
+        .keys()
+        .sign_nip98("POST", &url, Some(&bytes))
         .map_err(|e| e.to_string())?;
     let auth = format!(
         "Nostr {}",

@@ -19,9 +19,7 @@ use std::time::SystemTime;
 
 use sha2::{Digest, Sha256};
 
-use buzz_core::engram::{
-    self, conversation_key, d_tag, normalize_slug, select_head, validate_and_decrypt, Body, Listing,
-};
+use buzz_core::engram::{self, normalize_slug, select_head, Body, Listing};
 use buzz_core::kind::KIND_AGENT_ENGRAM;
 use nostr::PublicKey;
 
@@ -32,8 +30,17 @@ use crate::error::CliError;
 /// fall back to the NIP-OA `auth_tag` (which carries owner pubkey in slot 1).
 fn resolve_owner(client: &BuzzClient, owner_flag: Option<&str>) -> Result<PublicKey, CliError> {
     if let Some(s) = owner_flag {
-        return PublicKey::from_hex(s)
-            .map_err(|e| CliError::Usage(format!("--owner must be a 64-hex pubkey: {e}")));
+        let owner = PublicKey::from_hex(s)
+            .map_err(|e| CliError::Usage(format!("--owner must be a 64-hex pubkey: {e}")))?;
+        // A signer's memory ops always use its own owner, so a different
+        // --owner would quietly read or write the wrong pair.
+        let held_owner = client.auth_tag_owner_hex();
+        if client.keys().local().is_none() && held_owner.as_deref() != Some(s) {
+            return Err(CliError::Usage(
+                "--owner must match the signer's owner".into(),
+            ));
+        }
+        return Ok(owner);
     }
     let tag = client.auth_tag_owner_hex().ok_or_else(|| {
         CliError::Usage(
@@ -68,6 +75,11 @@ fn resolve_reader(
             return Err(CliError::Usage(
                 "--agent must differ from the CLI identity; omit --agent for agent-side reads"
                     .into(),
+            ));
+        }
+        if client.keys().local().is_none() {
+            return Err(CliError::Usage(
+                "--agent reads as the owner, which needs a key this CLI holds".into(),
             ));
         }
         return Ok((agent, client.keys().public_key(), agent));
@@ -144,8 +156,7 @@ async fn fetch_head(
     } else {
         agent
     };
-    let k_c = conversation_key(client.keys().secret_key(), their_pubkey);
-    let d = d_tag(&k_c, slug);
+    let d = client.keys().mem_d_tag(their_pubkey, slug)?;
 
     let filter = serde_json::json!({
         "kinds": [KIND_AGENT_ENGRAM],
@@ -164,7 +175,7 @@ async fn fetch_head(
         if ev.verify().is_err() {
             continue;
         }
-        match validate_and_decrypt(&ev, agent, owner, client.keys().secret_key(), their_pubkey) {
+        match client.keys().mem_open(&ev, agent, owner, their_pubkey) {
             Ok(body) => valid_with_body.push((ev, body)),
             Err(_) => continue,
         }
@@ -219,13 +230,7 @@ pub async fn cmd_ls(
         else {
             continue;
         };
-        let body = match validate_and_decrypt(
-            &ev,
-            &agent,
-            &owner,
-            client.keys().secret_key(),
-            &their_pubkey,
-        ) {
+        let body = match client.keys().mem_open(&ev, &agent, &owner, &their_pubkey) {
             Ok(b) => b,
             Err(_) => continue,
         };
@@ -362,9 +367,7 @@ pub async fn cmd_set(
     let prior_created_at = head.map(|e| e.created_at.as_secs());
     let created_at = engram::monotonic_created_at(now_secs(), prior_created_at);
 
-    let agent = client.keys();
-    let event = engram::build_event(agent, &owner, &body, created_at)
-        .map_err(|e| CliError::Other(format!("build event failed: {e}")))?;
+    let event = client.keys().mem_event(&owner, &body, created_at)?;
     let id = event.id.to_hex();
     submit_engram(client, event).await?;
     eprintln!("wrote {slug} (event {id}, created_at {created_at})");
@@ -688,9 +691,7 @@ pub async fn cmd_patch(
     let prior_created_at = Some(head.created_at.as_secs());
     let created_at = engram::monotonic_created_at(now_secs(), prior_created_at);
 
-    let agent = client.keys();
-    let event = engram::build_event(agent, &owner, &body, created_at)
-        .map_err(|e| CliError::Other(format!("build event failed: {e}")))?;
+    let event = client.keys().mem_event(&owner, &body, created_at)?;
     let id = event.id.to_hex();
     submit_engram(client, event).await?;
     eprintln!("wrote {slug} (event {id}, created_at {created_at}, sha256 {new_hash})");
@@ -725,9 +726,7 @@ pub async fn cmd_rm(
     let prior_created_at = head.map(|e| e.created_at.as_secs());
     let created_at = engram::monotonic_created_at(now_secs(), prior_created_at);
 
-    let agent = client.keys();
-    let event = engram::build_event(agent, &owner, &body, created_at)
-        .map_err(|e| CliError::Other(format!("build event failed: {e}")))?;
+    let event = client.keys().mem_event(&owner, &body, created_at)?;
     let id = event.id.to_hex();
     submit_engram(client, event).await?;
     eprintln!("tombstoned {slug} (event {id}, created_at {created_at})");

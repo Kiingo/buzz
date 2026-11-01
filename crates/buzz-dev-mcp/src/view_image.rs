@@ -296,6 +296,20 @@ fn relay_media_get_auth(url: &reqwest::Url) -> Option<String> {
     if !is_relay_media_url(url, &relay) {
         return None;
     }
+    if let Some(client) = buzz_signer::Client::from_env() {
+        return match client.event(buzz_signer::Op::BlossomGet {
+            media_url: url.to_string(),
+        }) {
+            Ok(json) => Some(format!(
+                "Nostr {}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json.as_bytes())
+            )),
+            Err(e) => {
+                tracing::warn!("media get auth signing failed; fetching unauthenticated: {e}");
+                None
+            }
+        };
+    }
     let key = std::env::var("BUZZ_PRIVATE_KEY").ok()?;
     let keys = match nostr::Keys::parse(&key) {
         Ok(k) => k,

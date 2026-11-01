@@ -153,6 +153,7 @@ fn op_facts(op: &Op) -> (&'static str, Option<u16>) {
         Op::MemRead { .. } => ("mem_read", None),
         Op::ObserverEncrypt { .. } => ("observer_encrypt", None),
         Op::GitSign { .. } => ("git_sign", None),
+        Op::GifCustomerId => ("gif_customer_id", None),
     }
 }
 

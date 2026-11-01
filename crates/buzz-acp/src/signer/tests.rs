@@ -121,6 +121,7 @@ fn nip98_stays_on_the_configured_origins() {
                 url: url.into(),
                 method: "GET".into(),
                 payload_hash: None,
+                owner_tag: false,
             },
             NOW,
         ));
@@ -139,6 +140,7 @@ fn nip98_stays_on_the_configured_origins() {
                     url: url.into(),
                     method: "GET".into(),
                     payload_hash: None,
+                    owner_tag: false,
                 },
                 NOW,
             )),
@@ -158,6 +160,7 @@ fn nip98_refuses_a_bad_method_or_payload_hash() {
                 url: url.clone(),
                 method: "get\nx".into(),
                 payload_hash: None,
+                owner_tag: false,
             },
             NOW,
         )),
@@ -169,6 +172,7 @@ fn nip98_refuses_a_bad_method_or_payload_hash() {
                 url,
                 method: "POST".into(),
                 payload_hash: Some("zz".into()),
+                owner_tag: false,
             },
             NOW,
         )),
@@ -405,4 +409,34 @@ fn unsigned_events_keep_their_fields_through_the_op() {
     ));
     assert_eq!(event.content, "hello");
     assert!(event.tags.iter().any(|tag| tag.as_slice()[0] == "h"));
+}
+
+#[test]
+fn nip98_carries_the_owner_tag_only_when_git_asks() {
+    let f = fixture();
+    let has_auth = |owner_tag| {
+        let op = Op::Nip98 {
+            url: "https://relay.example/git/o/r".into(),
+            method: "GET".into(),
+            payload_hash: None,
+            owner_tag,
+        };
+        signed_event(f.signer.handle(op, NOW))
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice()[0] == "auth")
+    };
+    assert!(has_auth(true));
+    assert!(!has_auth(false));
+}
+
+#[test]
+fn the_gif_id_is_stable_and_shows_nothing_of_the_key() {
+    let f = fixture();
+    let first = f.signer.handle(Op::GifCustomerId, NOW).unwrap();
+    assert_eq!(first, f.signer.handle(Op::GifCustomerId, NOW).unwrap());
+    let Output::CustomerId(id) = first else {
+        panic!("not a customer id");
+    };
+    assert_eq!(id.len(), 32);
 }

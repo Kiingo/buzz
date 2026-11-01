@@ -26,6 +26,9 @@ base64 = "0.22"
 # Hex encoding for BIP-340 signatures and public keys.
 hex = { workspace = true }
 
+# The socket client: under a harness buzz-acp holds the key and signs here.
+buzz-signer = { workspace = true }
+
 # Secret key zeroization on drop.
 zeroize = { workspace = true, features = ["derive"] }
 

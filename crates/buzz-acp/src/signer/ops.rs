@@ -102,7 +102,8 @@ impl Signer {
                 url,
                 method,
                 payload_hash,
-            } => self.nip98(&url, &method, payload_hash.as_deref()),
+                owner_tag,
+            } => self.nip98(&url, &method, payload_hash.as_deref(), owner_tag),
             Op::BlossomGet { media_url } => self.blossom_get(&media_url, now),
             Op::BlossomUpload { sha256, url } => self.blossom_upload(&sha256, &url, now),
             Op::RelayAuth { challenge } => self.relay_auth(&challenge),
@@ -114,6 +115,7 @@ impl Signer {
             Op::MemRead { event_json } => self.mem_read(&event_json),
             Op::ObserverEncrypt { payload } => self.observer_encrypt(&payload),
             Op::GitSign { payload_b64 } => self.git_sign(&payload_b64, now),
+            Op::GifCustomerId => Ok(self.gif_customer_id()),
         }
     }
 
@@ -166,6 +168,7 @@ impl Signer {
         url: &str,
         method: &str,
         payload_hash: Option<&str>,
+        owner_tag: bool,
     ) -> Result<Output, Refusal> {
         self.check_origin(url)?;
         policy::check_method(method)?;
@@ -181,7 +184,10 @@ impl Signer {
             }
             rows.push(vec!["payload", hash]);
         }
-        let tags = parse_tags(rows)?;
+        let mut tags = parse_tags(rows)?;
+        if owner_tag {
+            tags.extend(self.auth_tag.clone());
+        }
         self.signed(EventBuilder::new(Kind::Custom(27235), "").tags(tags))
     }
 
@@ -301,6 +307,19 @@ impl Signer {
             t: now,
             oa: self.oa.clone(),
         }))
+    }
+}
+
+impl Signer {
+    /// `SHA-256(key || 0 || relay)`, truncated to 16 bytes. Same derivation the
+    /// CLI uses with a key of its own.
+    fn gif_customer_id(&self) -> Output {
+        use sha2::{Digest as _, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(self.keys.secret_key().as_secret_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.relay_url.as_str().as_bytes());
+        Output::CustomerId(hex::encode(&hasher.finalize()[..16]))
     }
 }
 

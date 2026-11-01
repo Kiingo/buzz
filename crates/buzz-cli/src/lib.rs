@@ -1,3 +1,4 @@
+pub mod agent_key;
 pub mod agent_management;
 mod client;
 mod commands;
@@ -2224,11 +2225,20 @@ async fn run(cli: Cli) -> Result<(), CliError> {
 
     // Auth: private key is required for all relay operations.
     // The keypair IS the identity — no tokens, no other auth.
-    let private_key_str = cli.private_key.ok_or_else(|| {
-        CliError::Auth("BUZZ_PRIVATE_KEY is required (use --private-key or set env var)".into())
-    })?;
-    let keys = Keys::parse(&private_key_str)
-        .map_err(|e| CliError::Key(format!("invalid BUZZ_PRIVATE_KEY: {e}")))?;
+    // Under a harness the signer socket stands in for the key.
+    let keys = match agent_key::AgentKey::from_signer_env()? {
+        Some(key) => key,
+        None => {
+            let private_key_str = cli.private_key.ok_or_else(|| {
+                CliError::Auth(
+                    "BUZZ_PRIVATE_KEY is required (use --private-key or set env var)".into(),
+                )
+            })?;
+            Keys::parse(&private_key_str)
+                .map_err(|e| CliError::Key(format!("invalid BUZZ_PRIVATE_KEY: {e}")))?
+                .into()
+        }
+    };
 
     // NIP-OA: parse and verify the auth tag if provided.
     //

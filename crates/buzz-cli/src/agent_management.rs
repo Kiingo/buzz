@@ -1,9 +1,10 @@
 //! Owner-reviewed agent draft requests published through Buzz observer frames.
 
-use buzz_core::observer::{encrypt_observer_payload, OBSERVER_FRAME_TELEMETRY};
-use nostr::{Event, Keys, PublicKey};
+use buzz_core::observer::OBSERVER_FRAME_TELEMETRY;
+use nostr::{Event, PublicKey};
 use serde::Serialize;
 
+use crate::agent_key::AgentKey;
 use crate::error::CliError;
 
 const AGENT_REQUEST_KIND: &str = "agent_management_request";
@@ -100,7 +101,7 @@ fn optional(value: Option<String>, label: &str) -> Result<Option<String>, CliErr
 }
 
 fn build<T: Serialize>(
-    keys: &Keys,
+    keys: &AgentKey,
     owner: &PublicKey,
     channel_id: String,
     request_kind: &'static str,
@@ -123,17 +124,15 @@ fn build<T: Serialize>(
             request,
         },
     };
-    let encrypted = encrypt_observer_payload(keys, owner, &payload)
-        .map_err(|error| CliError::Other(format!("could not encrypt draft request: {error}")))?;
-    let event = buzz_sdk::build_agent_observer_frame(
+    let encrypted = keys.observer_encrypt(owner, &payload)?;
+    let builder = buzz_sdk::build_agent_observer_frame(
         &owner.to_hex(),
         &keys.public_key().to_hex(),
         OBSERVER_FRAME_TELEMETRY,
         &encrypted,
     )
-    .map_err(|error| CliError::Other(format!("could not build draft request: {error}")))?
-    .sign_with_keys(keys)
-    .map_err(|error| CliError::Other(format!("could not sign draft request: {error}")))?;
+    .map_err(|error| CliError::Other(format!("could not build draft request: {error}")))?;
+    let event = keys.sign(builder)?;
     Ok(BuiltDraftRequest {
         event,
         request_id,
@@ -142,7 +141,7 @@ fn build<T: Serialize>(
 }
 
 pub fn build_create(
-    keys: &Keys,
+    keys: &AgentKey,
     owner: &PublicKey,
     draft: CreateAgentDraft,
 ) -> Result<BuiltDraftRequest, CliError> {
@@ -165,7 +164,7 @@ pub fn build_create(
 }
 
 pub fn build_update(
-    keys: &Keys,
+    keys: &AgentKey,
     owner: &PublicKey,
     draft: UpdateAgentDraft,
 ) -> Result<BuiltDraftRequest, CliError> {
@@ -216,7 +215,7 @@ pub fn build_update(
 }
 
 pub fn build_project_channel(
-    keys: &Keys,
+    keys: &AgentKey,
     owner: &PublicKey,
     draft: CreateProjectChannelDraft,
 ) -> Result<BuiltDraftRequest, CliError> {
@@ -309,8 +308,8 @@ mod tests {
     #[test]
     fn update_requires_a_change() {
         let error = build_update(
-            &Keys::generate(),
-            &Keys::generate().public_key(),
+            &nostr::Keys::generate().into(),
+            &nostr::Keys::generate().public_key(),
             UpdateAgentDraft {
                 channel_id: CHANNEL.into(),
                 agent_name: "Scout".into(),
@@ -329,8 +328,8 @@ mod tests {
     #[test]
     fn create_rejects_invalid_channel() {
         let error = build_create(
-            &Keys::generate(),
-            &Keys::generate().public_key(),
+            &nostr::Keys::generate().into(),
+            &nostr::Keys::generate().public_key(),
             CreateAgentDraft {
                 channel_id: "general".into(),
                 display_name: "Scout".into(),

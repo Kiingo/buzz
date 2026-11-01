@@ -75,6 +75,7 @@ dirs = "6"
 
 # WebSocket client — ephemeral event publish (kind:20001 is WS-only on the relay)
 buzz-ws-client = { path = "../buzz-ws-client" }
+buzz-signer = { workspace = true }
 
 # Explicit rustls dep with ring provider — required to install the process-level
 # CryptoProvider at startup. Without this the standalone `buzz` binary panics when

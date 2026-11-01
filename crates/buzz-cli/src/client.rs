@@ -1,11 +1,11 @@
 use std::future::Future;
 use std::time::Duration;
 
-use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use nostr::{EventBuilder, JsonUtil, Keys, Kind, Tag};
+use nostr::{EventBuilder, JsonUtil, Kind, Tag};
 use sha2::{Digest, Sha256};
 
+use crate::agent_key::{nip98_header, AgentKey};
 use crate::error::CliError;
 
 /// Descriptor returned by the relay after a successful upload.
@@ -82,31 +82,12 @@ const MAX_VIDEO_BYTES: u64 = 500 * 1024 * 1024;
 /// - `method` tag: HTTP method (GET, POST, PUT, DELETE)
 /// - `payload` tag: SHA-256 hex of the request body (if present)
 fn sign_nip98(
-    keys: &Keys,
+    keys: &AgentKey,
     method: &str,
     url: &str,
     body: Option<&[u8]>,
 ) -> Result<String, CliError> {
-    let mut tags = vec![
-        Tag::parse(["u", url]).map_err(|e| CliError::Other(format!("tag error: {e}")))?,
-        Tag::parse(["method", method]).map_err(|e| CliError::Other(format!("tag error: {e}")))?,
-        // Nonce prevents replay rejection for rapid-fire requests with identical bodies.
-        Tag::parse(["nonce", &uuid::Uuid::new_v4().to_string()])
-            .map_err(|e| CliError::Other(format!("tag error: {e}")))?,
-    ];
-    if let Some(b) = body {
-        let hash = hex::encode(Sha256::digest(b));
-        tags.push(
-            Tag::parse(["payload", &hash])
-                .map_err(|e| CliError::Other(format!("tag error: {e}")))?,
-        );
-    }
-    let event = EventBuilder::new(Kind::Custom(27235), "")
-        .tags(tags)
-        .sign_with_keys(keys)
-        .map_err(|e| CliError::Other(format!("NIP-98 signing failed: {e}")))?;
-    let json = event.as_json();
-    Ok(format!("Nostr {}", B64.encode(json.as_bytes())))
+    Ok(nip98_header(&keys.sign_nip98(method, url, body)?))
 }
 
 fn relay_server_tag(relay_url: &str) -> Option<String> {
@@ -322,10 +303,13 @@ fn media_url_from_input(relay_url: &str, input: &str) -> Result<String, CliError
     ))
 }
 
-fn sign_blossom_get(keys: &Keys, media_url: &str) -> Result<String, CliError> {
+fn sign_blossom_get(key: &AgentKey, media_url: &str) -> Result<String, CliError> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use nostr::Timestamp;
 
+    let Some(keys) = key.local() else {
+        return key.socket_blossom_get(media_url);
+    };
     let now = Timestamp::now().as_secs();
     let exp_str = (now + 60).to_string();
     let domain = relay_server_tag(media_url)
@@ -348,7 +332,7 @@ fn sign_blossom_get(keys: &Keys, media_url: &str) -> Result<String, CliError> {
 }
 
 fn sign_blossom_upload(
-    keys: &Keys,
+    key: &AgentKey,
     sha256: &str,
     _mime: &str,
     relay_url: &str,
@@ -356,6 +340,9 @@ fn sign_blossom_upload(
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use nostr::Timestamp;
 
+    let Some(keys) = key.local() else {
+        return key.socket_blossom_upload(sha256, relay_url);
+    };
     let now = Timestamp::now().as_secs();
     let exp_str = (now + 60).to_string();
     let domain = relay_server_tag(relay_url)
@@ -516,7 +503,7 @@ fn advance_query_cursor(
 pub struct BuzzClient {
     http: reqwest::Client,
     relay_url: String, // base URL, no trailing slash, e.g. "https://relay.buzz.place"
-    keys: Keys,
+    keys: AgentKey,
     /// Optional NIP-OA auth tag injected into every signed event.
     auth_tag: Option<Tag>,
     /// Raw JSON of the auth tag for the `x-auth-tag` HTTP header.
@@ -535,7 +522,7 @@ impl BuzzClient {
     /// A value of zero for either variable is treated as invalid and falls back to the default.
     pub fn new(
         relay_url: String,
-        keys: Keys,
+        keys: impl Into<AgentKey>,
         auth_tag: Option<Tag>,
         auth_tag_json: Option<String>,
     ) -> Result<Self, CliError> {
@@ -547,14 +534,14 @@ impl BuzzClient {
         Ok(Self {
             http,
             relay_url,
-            keys,
+            keys: keys.into(),
             auth_tag,
             auth_tag_json,
         })
     }
 
-    /// Get the keypair.
-    pub fn keys(&self) -> &Keys {
+    /// The signing identity: a key held here, or the signer socket.
+    pub fn keys(&self) -> &AgentKey {
         &self.keys
     }
 
@@ -581,14 +568,12 @@ impl BuzzClient {
     /// auth tag injection. Callers MUST NOT add `auth` tags to the builder
     /// before calling this method.
     pub fn sign_event(&self, builder: EventBuilder) -> Result<nostr::Event, CliError> {
-        let builder = if let Some(ref tag) = self.auth_tag {
-            builder.tags([tag.clone()])
-        } else {
-            builder
+        // On a socket the signer injects the tag itself.
+        let builder = match (&self.auth_tag, self.keys.local()) {
+            (Some(tag), Some(_)) => builder.tags([tag.clone()]),
+            _ => builder,
         };
-        let event = builder
-            .sign_with_keys(&self.keys)
-            .map_err(|e| CliError::Other(format!("signing failed: {e}")))?;
+        let event = self.keys.sign(builder)?;
 
         // Enforce: auth tags may only come from self.auth_tag injection.
         let auth_count = event
@@ -757,9 +742,7 @@ impl BuzzClient {
     /// silently drop the caller's owner attestation or double up an
     /// unrelated tag.
     pub fn sign_event_unchecked(&self, builder: EventBuilder) -> Result<nostr::Event, CliError> {
-        builder
-            .sign_with_keys(&self.keys)
-            .map_err(|e| CliError::Other(format!("signing failed: {e}")))
+        self.keys.sign(builder)
     }
 
     /// GET a public, unauthenticated relay endpoint (e.g. the NIP-11 `/info`
@@ -1786,7 +1769,7 @@ mod retry_policy_tests {
         })
         .await;
         let client = test_client(&url);
-        let event = make_moderation_event(client.keys(), 9040);
+        let event = make_moderation_event(client.keys().local().unwrap(), 9040);
         let err = client.submit_event(event).await.unwrap_err();
         assert!(
             matches!(err, CliError::DeliveryUnknown(_)),
@@ -1826,7 +1809,7 @@ mod retry_policy_tests {
         })
         .await;
         let client = test_client(&url);
-        let event = make_moderation_event(client.keys(), 9041);
+        let event = make_moderation_event(client.keys().local().unwrap(), 9041);
         let t0 = std::time::Instant::now();
         let result = client.submit_event(event).await;
         let elapsed = t0.elapsed();
@@ -1859,7 +1842,7 @@ mod retry_policy_tests {
         })
         .await;
         let client = test_client(&url);
-        let event = make_moderation_event(client.keys(), 9040);
+        let event = make_moderation_event(client.keys().local().unwrap(), 9040);
         let err = client.submit_event(event).await.unwrap_err();
 
         // Must be Relay(429), not DeliveryUnknown.
@@ -1887,7 +1870,7 @@ mod retry_policy_tests {
         let (url, attempts) =
             test_server(|_n| (StatusCode::BAD_GATEWAY, "bad gateway".to_string())).await;
         let client = test_client(&url);
-        let event = make_moderation_event(client.keys(), 9042);
+        let event = make_moderation_event(client.keys().local().unwrap(), 9042);
         let err = client.submit_event(event).await.unwrap_err();
         assert!(
             matches!(err, CliError::DeliveryUnknown(_)),
@@ -1915,7 +1898,7 @@ mod retry_policy_tests {
 
         let base = format!("http://{addr}");
         let client = test_client(&base);
-        let event = make_moderation_event(client.keys(), 9040);
+        let event = make_moderation_event(client.keys().local().unwrap(), 9040);
         let err = client.submit_event(event).await.unwrap_err();
         // Must be Network (retryable), not DeliveryUnknown (retryable:false).
         assert!(
@@ -1946,7 +1929,7 @@ mod retry_policy_tests {
         })
         .await;
         let client = test_client(&url);
-        let event = make_stored_event(client.keys());
+        let event = make_stored_event(client.keys().local().unwrap());
         let result = client.submit_event(event).await;
         assert!(
             result.is_ok(),
@@ -2206,7 +2189,7 @@ mod retry_policy_tests {
 
         let base = format!("http://{addr}");
         let client = test_client(&base);
-        let event = make_stored_event(client.keys());
+        let event = make_stored_event(client.keys().local().unwrap());
         let result = client.submit_event(event).await;
         assert!(
             result.is_ok(),
@@ -2368,7 +2351,7 @@ mod retry_policy_tests {
 
         let base = format!("http://{addr}");
         let client = test_client(&base);
-        let event = make_stored_event(client.keys());
+        let event = make_stored_event(client.keys().local().unwrap());
         let err = client.submit_event(event).await.unwrap_err();
 
         // Final error must be DeliveryUnknown — relay may have accepted any attempt.
@@ -2400,7 +2383,7 @@ mod retry_policy_tests {
         let (url, attempts) =
             test_server(|_n| (StatusCode::BAD_GATEWAY, "bad gateway".to_string())).await;
         let client = test_client(&url);
-        let event = make_stored_event(client.keys());
+        let event = make_stored_event(client.keys().local().unwrap());
         let err = client.submit_event(event).await.unwrap_err();
 
         assert!(
