@@ -52,10 +52,10 @@ pub(crate) struct LocalAdmission {
 /// The trust screen of an edit (79 M-1): an edit takes its trust from what
 /// it edits. An edit of a relayed person post or a quiet marker is never a
 /// prompt from its signer, who may be the owner's own agent; when the
-/// original cannot be fetched and verified it is dropped, except for the
-/// owner's (who never signs relayed words). Run only after the author screen
-/// and the rule match (79 LOW-1), so unwanted edits cost no lookup. `None`
-/// drops the event; `Some` carries the original's routing (one fetch).
+/// original cannot be fetched, verified and matched to the edit's signer the
+/// edit is dropped, whoever signed it. Run only after the author screen and
+/// the rule match (79 LOW-1), so unwanted edits cost no lookup. `None` drops
+/// the event; `Some` carries the original's routing (one fetch).
 async fn screen_edit(
     event: &nostr::Event,
     channel_id: uuid::Uuid,
@@ -66,16 +66,7 @@ async fn screen_edit(
     }
     let (origin, resolved) =
         crate::edit_routing::classify_edit(event, channel_id, &env.ctx.rest_client).await;
-    let from_owner = env
-        .owner_cache
-        .get()
-        .is_some_and(|owner| owner.eq_ignore_ascii_case(&event.pubkey.to_hex()));
-    let drop = match origin {
-        crate::edit_routing::EditOrigin::Marker => true,
-        crate::edit_routing::EditOrigin::Unknown => !from_owner,
-        crate::edit_routing::EditOrigin::Plain | crate::edit_routing::EditOrigin::NotEdit => false,
-    };
-    if drop {
+    if edit_is_dropped(origin) {
         tracing::info!(
             channel_id = %channel_id,
             origin = ?origin,
@@ -84,6 +75,16 @@ async fn screen_edit(
         return None;
     }
     Some(resolved)
+}
+
+/// Only an event that is no edit, or an edit of a verified ordinary message
+/// of its signer's, goes on. A failed lookup never passes.
+fn edit_is_dropped(origin: crate::edit_routing::EditOrigin) -> bool {
+    use crate::edit_routing::EditOrigin;
+    match origin {
+        EditOrigin::Marker | EditOrigin::Unknown => true,
+        EditOrigin::Plain | EditOrigin::NotEdit => false,
+    }
 }
 
 fn is_invocation_event(event: &nostr::Event) -> bool {
@@ -479,6 +480,15 @@ mod tests {
             .tags(tags)
             .sign_with_keys(&Keys::generate())
             .unwrap()
+    }
+
+    #[test]
+    fn a_failed_original_lookup_drops_the_edit() {
+        use crate::edit_routing::EditOrigin;
+        assert!(edit_is_dropped(EditOrigin::Unknown));
+        assert!(edit_is_dropped(EditOrigin::Marker));
+        assert!(!edit_is_dropped(EditOrigin::Plain));
+        assert!(!edit_is_dropped(EditOrigin::NotEdit));
     }
 
     #[test]

@@ -124,8 +124,8 @@ indistinguishable from a message the requester signed:
     relayed post still never enters another turn's context.
   - An edit (kind 40003) takes its trust from the message it edits: an edit
     whose original is a mirror (a relayed post included) or any other quiet
-    marker is dropped, and so is an edit whose original cannot be fetched
-    and verified, unless the owner signed it. Kiingo puts the same
+    marker is dropped, and so is an edit whose original cannot be fetched,
+    verified and matched to the edit's signer, whoever signed it. Kiingo puts the same
     `buzz-mirror` and `buzz-mirror-author` tags on its edits of relayed
     posts, so those edits are quiet markers too.
     So the agent's own replies homed on another surface (agent-role mirrors,

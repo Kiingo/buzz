@@ -60,7 +60,8 @@ pub(crate) enum EditOrigin {
     /// relayed for someone else, so its edit is never a prompt from the
     /// signer (79 M-1, 2026-10-28).
     Marker,
-    /// The original could not be fetched and verified.
+    /// The original could not be fetched and verified, or is not the edit
+    /// signer's own message.
     Unknown,
 }
 
@@ -124,7 +125,10 @@ where
     }
 }
 
-/// The verified original message an edit targets, or `None`.
+/// The verified original message an edit targets, or `None`. It must be the
+/// edit signer's own: the relay's ownership check is not relied on here, so
+/// an edit of a relay-signed message (attributed to its author by tags, which
+/// this lookup cannot check) resolves to nothing.
 async fn fetch_original_with<Query, QueryFut>(
     event: &Event,
     channel_id: Uuid,
@@ -165,9 +169,15 @@ where
         return None;
     };
     match serde_json::from_value::<Event>(raw.clone()) {
-        Ok(original) if original.id == target_id && original.verify().is_ok() => Some(original),
+        Ok(original)
+            if original.id == target_id
+                && original.pubkey == event.pubkey
+                && original.verify().is_ok() =>
+        {
+            Some(original)
+        }
         Ok(_) => {
-            tracing::warn!(edit_event_id = %event.id, target_event_id, "edit routing: original event failed id/signature verification");
+            tracing::warn!(edit_event_id = %event.id, target_event_id, "edit routing: original event failed id/author/signature verification");
             None
         }
         Err(error) => {
@@ -183,6 +193,11 @@ pub(crate) mod test_support {
 
     /// Signed kind:40003 edit targeting `target` with optional extra tags.
     pub(crate) fn edit_event(target: &str, extra: &[[&str; 2]]) -> Event {
+        edit_event_by(&Keys::generate(), target, extra)
+    }
+
+    /// [`edit_event`] signed by `signer`.
+    pub(crate) fn edit_event_by(signer: &Keys, target: &str, extra: &[[&str; 2]]) -> Event {
         let mut tags = vec![Tag::parse(["e", target]).expect("edit target")];
         tags.extend(extra.iter().map(|t| Tag::parse(*t).expect("tag")));
         EventBuilder::new(
@@ -190,12 +205,17 @@ pub(crate) mod test_support {
             "edited mention",
         )
         .tags(tags)
-        .sign_with_keys(&Keys::generate())
+        .sign_with_keys(signer)
         .expect("signed edit")
     }
 
     /// Signed kind:9 message, threaded under `root` when given.
     pub(crate) fn message(root: Option<&str>) -> Event {
+        message_by(&Keys::generate(), root)
+    }
+
+    /// [`message`] signed by `signer`.
+    pub(crate) fn message_by(signer: &Keys, root: Option<&str>) -> Event {
         let tags: Vec<Tag> = root
             .map(|root| vec![Tag::parse(["e", root, "", "reply"]).expect("reply tag")])
             .unwrap_or_default();
@@ -204,22 +224,23 @@ pub(crate) mod test_support {
             "original",
         )
         .tags(tags)
-        .sign_with_keys(&Keys::generate())
+        .sign_with_keys(signer)
         .expect("signed message")
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{edit_event, message};
+    use super::test_support::{edit_event, edit_event_by, message, message_by};
     use super::*;
     use serde_json::json;
 
     #[tokio::test]
     async fn resolves_threaded_original_with_scoped_filter() {
         let root = "aa".repeat(32);
-        let original = message(Some(&root));
-        let edit = edit_event(&original.id.to_hex(), &[]);
+        let author = nostr::Keys::generate();
+        let original = message_by(&author, Some(&root));
+        let edit = edit_event_by(&author, &original.id.to_hex(), &[]);
         let channel = Uuid::new_v4();
         let returned = original.clone();
         let resolved = resolve_edit_with(&edit, channel, |filters| async move {
@@ -240,9 +261,10 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_a_returned_event_that_is_not_the_target() {
-        let target = message(None);
-        let impostor = message(None);
-        let edit = edit_event(&target.id.to_hex(), &[]);
+        let author = nostr::Keys::generate();
+        let target = message_by(&author, None);
+        let impostor = message_by(&author, Some(&"bb".repeat(32)));
+        let edit = edit_event_by(&author, &target.id.to_hex(), &[]);
         let resolved =
             resolve_edit_with(
                 &edit,
@@ -250,6 +272,22 @@ mod tests {
                 |_| async move { Ok(json!([impostor])) },
             )
             .await;
+        assert!(resolved.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_edit_of_someone_elses_message_is_unknown() {
+        let original = message(None);
+        let edit = edit_event(&original.id.to_hex(), &[]);
+        let returned = original.clone();
+        let (origin, resolved) =
+            classify_edit_with(
+                &edit,
+                Uuid::new_v4(),
+                |_| async move { Ok(json!([returned])) },
+            )
+            .await;
+        assert_eq!(origin, EditOrigin::Unknown);
         assert!(resolved.is_none());
     }
 
@@ -266,7 +304,7 @@ mod tests {
         ])
         .sign_with_keys(&keys)
         .unwrap();
-        let edit = edit_event(&relayed.id.to_hex(), &[]);
+        let edit = edit_event_by(&keys, &relayed.id.to_hex(), &[]);
         let returned = relayed.clone();
         let origin = edit_origin_with(
             &edit,
@@ -276,8 +314,8 @@ mod tests {
         .await;
         assert_eq!(origin, EditOrigin::Marker);
 
-        let plain = message(None);
-        let edit = edit_event(&plain.id.to_hex(), &[]);
+        let plain = message_by(&keys, None);
+        let edit = edit_event_by(&keys, &plain.id.to_hex(), &[]);
         let origin =
             edit_origin_with(&edit, Uuid::new_v4(), |_| async move { Ok(json!([plain])) }).await;
         assert_eq!(origin, EditOrigin::Plain);

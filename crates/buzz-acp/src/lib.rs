@@ -13601,8 +13601,10 @@ mod error_outcome_emission_tests {
     #[tokio::test]
     async fn failure_notice_retries_unresolved_edit_lookup() {
         let root = "aa".repeat(32);
-        let original = crate::edit_routing::test_support::message(Some(&root));
-        let edit = crate::edit_routing::test_support::edit_event(&original.id.to_hex(), &[]);
+        let author = nostr::Keys::generate();
+        let original = crate::edit_routing::test_support::message_by(&author, Some(&root));
+        let edit =
+            crate::edit_routing::test_support::edit_event_by(&author, &original.id.to_hex(), &[]);
         let (notice, _, _) = capture_model_not_found_notice_with_lookup(
             edit.clone(),
             None,
