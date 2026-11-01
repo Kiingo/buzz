@@ -218,6 +218,19 @@ export function parseResultPreview(
     : null;
 }
 
+/**
+ * A linkable preview URL's label with its host, "PR (github.com)", so the
+ * owner sees where a worker-reported link goes before opening it.
+ */
+export function previewLinkLabel(label: string, url: string): string {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host ? `${label} (${host})` : label;
+  } catch {
+    return label;
+  }
+}
+
 /** "12 files · +340 −20": the preview's one-line diff summary, or null. */
 export function previewDiffText(
   preview: DelegationResultPreview,

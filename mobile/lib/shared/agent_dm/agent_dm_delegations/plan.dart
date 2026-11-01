@@ -90,6 +90,13 @@ class DelegationResultPreview {
   }
 }
 
+/// A linkable preview URL's label with its host, "PR (github.com)", so the
+/// owner sees where a worker-reported link goes before opening it.
+String delegationPreviewLinkLabel(String label, String url) {
+  final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+  return host.isEmpty ? label : '$label ($host)';
+}
+
 enum DelegationJournalKind {
   decision('Decided'),
   waiting('Waiting on'),

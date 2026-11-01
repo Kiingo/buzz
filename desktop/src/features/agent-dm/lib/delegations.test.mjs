@@ -28,6 +28,7 @@ import {
   parseGroupNotes,
   parseJournal,
   previewDiffText,
+  previewLinkLabel,
   sessionLink,
   stateLabel,
   taskLink,
@@ -439,6 +440,8 @@ test("a done card carries its results preview; links only when linkable", () => 
   assert.deepEqual(preview.filesChanged, ["a.ts", "b.ts"]);
   assert.equal(previewDiffText(preview), "12 files · +340 −20");
   assert.equal(preview.prUrlLinkable, true);
+  assert.equal(previewLinkLabel("PR", preview.prUrl), "PR (github.com)");
+  assert.equal(previewLinkLabel("PR", "not a url"), "PR");
   // Not https: shown as text, never a link, whatever the host said.
   assert.equal(preview.testReceiptUrlLinkable, false);
   const bare = parseDelegationCard(

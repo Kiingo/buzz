@@ -13,6 +13,7 @@ import {
   JOURNAL_KIND_LABELS,
   type JournalEntry,
   previewDiffText,
+  previewLinkLabel,
 } from "../lib/delegations";
 
 type Loaded<T> =
@@ -230,7 +231,7 @@ function PreviewLink({
   }
   return (
     <button
-      aria-label={`Open the ${label}`}
+      aria-label={`Open the ${previewLinkLabel(label, url)}`}
       className="shrink-0 underline-offset-2 hover:text-foreground hover:underline"
       onClick={() =>
         void openUrl(url).catch(() => toast.error("Couldn’t open that link."))
@@ -238,7 +239,7 @@ function PreviewLink({
       title={url}
       type="button"
     >
-      {label}
+      {previewLinkLabel(label, url)}
     </button>
   );
 }

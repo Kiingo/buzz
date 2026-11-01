@@ -177,12 +177,15 @@ class _ResultPreview extends StatelessWidget {
     Widget link(String label, String url, bool linkable) => linkable
         ? Semantics(
             button: true,
-            label: 'Open the $label',
+            label: 'Open the ${delegationPreviewLinkLabel(label, url)}',
             excludeSemantics: true,
             onTap: () => onOpen(url),
             child: InkWell(
               onTap: () => onOpen(url),
-              child: Text(label, style: style?.copyWith(color: colors.primary)),
+              child: Text(
+                delegationPreviewLinkLabel(label, url),
+                style: style?.copyWith(color: colors.primary),
+              ),
             ),
           )
         : Flexible(

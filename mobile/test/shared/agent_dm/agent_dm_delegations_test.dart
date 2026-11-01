@@ -666,6 +666,10 @@ void main() {
       expect(preview.filesChanged, ['a.ts', 'b.ts']);
       expect(preview.diffText, '12 files · +340 −20');
       expect(preview.prUrlLinkable, isTrue);
+      expect(
+        delegationPreviewLinkLabel('PR', preview.prUrl!),
+        'PR (github.com)',
+      );
       expect(preview.testReceiptUrlLinkable, isFalse);
       expect(DelegationResultPreview.tryParse(const {}), isNull);
     });
