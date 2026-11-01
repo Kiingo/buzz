@@ -24,13 +24,19 @@ import {
   type DelegationPage,
   type DelegationPendingAck,
   type DelegationSince,
+  type GroupNote,
+  type JournalEntry,
   delegationChatPath,
+  delegationGroupNotesPath,
+  delegationJournalPath,
   delegationSeenPath,
   delegationSincePath,
   delegationsPath,
   parseDelegationAsks,
   parseDelegationPoll,
   parseDelegationSince,
+  parseGroupNotes,
+  parseJournal,
   parsePendingAck,
   undoStopPath,
 } from "./delegations";
@@ -423,6 +429,27 @@ export async function cancelAllDelegations(
   );
   await refreshNow(agentPubkey);
   return Array.isArray(result?.cancelledIds) ? result.cancelledIds.length : 0;
+}
+
+/** The agent's Plan (orchestration journal), newest first. */
+export async function loadDelegationJournal(
+  agentPubkey: string,
+): Promise<JournalEntry[]> {
+  const agentId = readyAgentId(agentPubkey);
+  return parseJournal(
+    await request<unknown>("GET", delegationJournalPath(agentId)),
+  );
+}
+
+/** One parallel group's shared notes, oldest first. */
+export async function loadDelegationGroupNotes(
+  agentPubkey: string,
+  group: string,
+): Promise<GroupNote[]> {
+  const agentId = readyAgentId(agentPubkey);
+  return parseGroupNotes(
+    await request<unknown>("GET", delegationGroupNotesPath(agentId, group)),
+  );
 }
 
 /** Community switch: every board and loop goes. */

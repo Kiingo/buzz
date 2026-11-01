@@ -18,6 +18,7 @@ import {
   stateLabel,
   taskLink,
 } from "../lib/delegations";
+import { DelegationResultPreviewView } from "./AgentDelegationPlan";
 
 const open = (url: string) => {
   void openUrl(url).catch(() => toast.error("Couldn’t open that link."));
@@ -181,28 +182,30 @@ export function DoneSummaryRow({
       </div>
       <ul className="mt-0.5 flex flex-col gap-0.5">
         {summary.workers.map((card) => (
-          <li
-            className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted-foreground"
-            key={card.delegationId}
-          >
-            <span className="shrink-0 font-medium text-foreground">
-              {card.title}
-            </span>
-            <span className="min-w-0 flex-1 line-clamp-2">
-              {card.result?.summary ??
-                (card.state === "cancelled" ? "Stopped." : stateLabel(card))}
-            </span>
-            {appOrigin && card.workerSessionId ? (
-              <button
-                aria-label={`Open the session for ${card.title}`}
-                className="shrink-0 underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() =>
-                  open(sessionLink(appOrigin, card.workerSessionId ?? ""))
-                }
-                type="button"
-              >
-                Session
-              </button>
+          <li className="min-w-0" key={card.delegationId}>
+            <div className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted-foreground">
+              <span className="shrink-0 font-medium text-foreground">
+                {card.title}
+              </span>
+              <span className="min-w-0 flex-1 line-clamp-2">
+                {card.result?.summary ??
+                  (card.state === "cancelled" ? "Stopped." : stateLabel(card))}
+              </span>
+              {appOrigin && card.workerSessionId ? (
+                <button
+                  aria-label={`Open the session for ${card.title}`}
+                  className="shrink-0 underline-offset-2 hover:text-foreground hover:underline"
+                  onClick={() =>
+                    open(sessionLink(appOrigin, card.workerSessionId ?? ""))
+                  }
+                  type="button"
+                >
+                  Session
+                </button>
+              ) : null}
+            </div>
+            {card.result?.preview ? (
+              <DelegationResultPreviewView preview={card.result.preview} />
             ) : null}
           </li>
         ))}

@@ -165,6 +165,18 @@ class DelegationClient {
     {'reason': 'Stopped by the owner from Buzz.'},
   );
 
+  /// The agent's Plan (orchestration journal), newest first.
+  Future<List<DelegationJournalEntry>> journal(String agentId) async =>
+      parseDelegationJournal(await send('GET', delegationJournalPath(agentId)));
+
+  /// One parallel group's shared notes, oldest first.
+  Future<List<DelegationGroupNote>> groupNotes(
+    String agentId,
+    String group,
+  ) async => parseDelegationGroupNotes(
+    await send('GET', delegationGroupNotesPath(agentId, group)),
+  );
+
   /// "Stop all": the number of workers stopped.
   Future<int> cancelAll(String agentId) async {
     final body = await send('POST', 'agents/$agentId/delegations/cancel-all', {
@@ -516,6 +528,18 @@ class DelegationBoardNotifier extends Notifier<DelegationBoardState> {
     final (client, agentId) = _ready();
     await client.cancel(agentId, delegationId);
     await _refresh(client);
+  }
+
+  /// The agent's Plan (orchestration journal), newest first.
+  Future<List<DelegationJournalEntry>> journal() async {
+    final (client, agentId) = _ready();
+    return client.journal(agentId);
+  }
+
+  /// One parallel group's shared notes, oldest first.
+  Future<List<DelegationGroupNote>> groupNotes(String group) async {
+    final (client, agentId) = _ready();
+    return client.groupNotes(agentId, group);
   }
 
   /// "Stop all": every running delegation of this agent; sessions are kept.

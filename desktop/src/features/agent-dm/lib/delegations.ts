@@ -40,10 +40,26 @@ export const DELEGATION_FOLD_AT = 3;
 
 export type DelegationHarness = "claude_code" | "codex";
 
+/**
+ * The done card's results preview (IDelegationResultPreview): files, diff
+ * stat, PR and test receipt as the worker reported them. A URL the host
+ * did not mark linkable shows as plain text, never a link.
+ */
+export type DelegationResultPreview = {
+  filesChanged: string[];
+  filesChangedCount: number | null;
+  diffStat: { files: number; insertions: number; deletions: number } | null;
+  prUrl: string | null;
+  prUrlLinkable: boolean;
+  testReceiptUrl: string | null;
+  testReceiptUrlLinkable: boolean;
+};
+
 export type DelegationCardResult = {
   summary: string;
   at: string;
   outcome: "done" | "failed" | "cancelled";
+  preview: DelegationResultPreview | null;
 };
 
 export type DelegationCard = {
@@ -61,6 +77,8 @@ export type DelegationCard = {
   elapsedSeconds: number | null;
   costUsd: number | null;
   doneWhen: string | null;
+  /** The parallel group whose shared notes this worker reads (§16.5). */
+  parallelGroup: string | null;
   /** Interim only; never shown as a result (§16.4). */
   lastProgressLine: string | null;
   result: DelegationCardResult | null;
@@ -139,7 +157,82 @@ function parseResult(value: unknown): DelegationCardResult | null {
   ) {
     return null;
   }
-  return { summary, at: str(record.at) ?? "", outcome };
+  return {
+    summary,
+    at: str(record.at) ?? "",
+    outcome,
+    preview: parseResultPreview(record.preview),
+  };
+}
+
+/** A URL the preview may open: https only (the host also marks it). */
+const httpsUrl = (value: unknown): string | null => {
+  const url = str(value)?.trim() ?? null;
+  return url && /^https:\/\/[^\s]+$/iu.test(url) ? url : null;
+};
+
+/** The preview, or null when it carries nothing to show. */
+export function parseResultPreview(
+  value: unknown,
+): DelegationResultPreview | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const filesChanged = Array.isArray(record.filesChanged)
+    ? record.filesChanged
+        .map((path) => str(path)?.trim())
+        .filter((path): path is string => Boolean(path))
+    : [];
+  const stat = asRecord(record.diffStat);
+  const diffStat =
+    stat &&
+    num(stat.files) !== null &&
+    num(stat.insertions) !== null &&
+    num(stat.deletions) !== null
+      ? {
+          files: count(stat.files),
+          insertions: count(stat.insertions),
+          deletions: count(stat.deletions),
+        }
+      : null;
+  const prUrl = str(record.prUrl)?.trim() ?? null;
+  const testReceiptUrl = str(record.testReceiptUrl)?.trim() ?? null;
+  const filesChangedCount = num(record.filesChangedCount);
+  const preview: DelegationResultPreview = {
+    filesChanged,
+    filesChangedCount:
+      filesChangedCount === null ? null : count(filesChangedCount),
+    diffStat,
+    prUrl,
+    prUrlLinkable: record.prUrlLinkable === true && httpsUrl(prUrl) !== null,
+    testReceiptUrl,
+    testReceiptUrlLinkable:
+      record.testReceiptUrlLinkable === true &&
+      httpsUrl(testReceiptUrl) !== null,
+  };
+  return filesChanged.length > 0 ||
+    preview.filesChangedCount ||
+    diffStat ||
+    prUrl ||
+    testReceiptUrl
+    ? preview
+    : null;
+}
+
+/** "12 files · +340 −20": the preview's one-line diff summary, or null. */
+export function previewDiffText(
+  preview: DelegationResultPreview,
+): string | null {
+  const files =
+    preview.diffStat?.files ??
+    preview.filesChangedCount ??
+    (preview.filesChanged.length || null);
+  const parts = [
+    files ? `${files} ${files === 1 ? "file" : "files"}` : null,
+    preview.diffStat
+      ? `+${preview.diffStat.insertions} −${preview.diffStat.deletions}`
+      : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 export function parseDelegationCard(value: unknown): DelegationCard | null {
@@ -170,6 +263,7 @@ export function parseDelegationCard(value: unknown): DelegationCard | null {
     elapsedSeconds: num(record.elapsedSeconds),
     costUsd: num(asRecord(record.cost)?.costUsd),
     doneWhen: str(record.doneWhen)?.trim() ?? null,
+    parallelGroup: str(record.parallelGroup)?.trim() ?? null,
     lastProgressLine: str(record.lastProgressLine)?.trim() ?? null,
     // A result belongs to a finished card only.
     result: ACTIVE.has(state) ? null : parseResult(record.result),
@@ -610,4 +704,92 @@ export function parseDelegationSince(value: unknown): DelegationSince | null {
     n("started") ? `${n("started")} started` : null,
   ].filter((part): part is string => part !== null);
   return parts.length > 0 ? { latestAt, text: parts.join(" · ") } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Plan (the orchestration journal, §16.6) and group notes (§16.5), owner-only
+// reads beside the board. Read when the owner opens them; never transcripts.
+// ---------------------------------------------------------------------------
+
+export const JOURNAL_KINDS = ["decision", "waiting", "next", "note"] as const;
+export type JournalKind = (typeof JOURNAL_KINDS)[number];
+
+export const JOURNAL_KIND_LABELS: Record<JournalKind, string> = {
+  decision: "Decided",
+  waiting: "Waiting on",
+  next: "Next",
+  note: "Note",
+};
+
+export type JournalEntry = {
+  id: string;
+  kind: JournalKind;
+  body: string;
+  createdAt: string;
+};
+
+export type GroupNote = {
+  id: string;
+  authorRole: "orchestrator" | "worker";
+  delegationId: string | null;
+  body: string;
+  createdAt: string;
+};
+
+export const delegationJournalPath = (agentId: string) =>
+  `agents/${agentId.toLowerCase()}/delegations/journal?limit=50`;
+
+export const delegationGroupNotesPath = (agentId: string, group: string) =>
+  `agents/${agentId.toLowerCase()}/delegations/groups/${encodeRev(
+    group,
+  )}/notes?limit=200`;
+
+/** IOrchestrationJournalPage, newest first; malformed entries dropped. */
+export function parseJournal(value: unknown): JournalEntry[] {
+  const raw = asRecord(value)?.entries;
+  if (!Array.isArray(raw)) return [];
+  const entries: JournalEntry[] = [];
+  for (const item of raw) {
+    const record = asRecord(item);
+    const id = uuidOrNull(record?.id);
+    const body = str(record?.body)?.trim();
+    const kind = record?.kind as JournalKind;
+    if (!record || !id || !body || !JOURNAL_KINDS.includes(kind)) continue;
+    entries.push({ id, kind, body, createdAt: str(record.createdAt) ?? "" });
+  }
+  return entries;
+}
+
+/** IDelegationGroupNotesPage, oldest first; malformed notes dropped. */
+export function parseGroupNotes(value: unknown): GroupNote[] {
+  const raw = asRecord(value)?.notes;
+  if (!Array.isArray(raw)) return [];
+  const notes: GroupNote[] = [];
+  for (const item of raw) {
+    const record = asRecord(item);
+    const id = uuidOrNull(record?.id);
+    const body = str(record?.body)?.trim();
+    const role = record?.authorRole;
+    if (!record || !id || !body) continue;
+    if (role !== "orchestrator" && role !== "worker") continue;
+    notes.push({
+      id,
+      authorRole: role,
+      delegationId: uuidOrNull(record.delegationId),
+      body,
+      createdAt: str(record.createdAt) ?? "",
+    });
+  }
+  return notes;
+}
+
+/** The parallel groups on the board, in the order their cards appear. */
+export function boardGroups(cards: readonly DelegationCard[]): string[] {
+  return [
+    ...new Set(
+      cards
+        .map((card) => card.parallelGroup)
+        .filter((group): group is string => Boolean(group)),
+    ),
+  ];
 }

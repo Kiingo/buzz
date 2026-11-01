@@ -12,6 +12,7 @@ import '../../../shared/theme/buzz_icons.dart';
 import '../../../shared/theme/theme.dart';
 import 'agent_dm_question_card.dart';
 
+part 'agent_dm_delegation_dock/delegation_plan.dart';
 part 'agent_dm_delegation_dock/delegation_rows.dart';
 
 /// Hidden done summaries, per viewer (a convenience; not shared).
@@ -79,11 +80,13 @@ class AgentDmDelegationDock extends HookConsumerWidget {
       ready.page.serverNow,
       now.value,
     );
+    // The Plan stays reachable whenever the agent has delegated anything.
     if (ack == null &&
         since == null &&
         undoable.isEmpty &&
         view.isEmpty &&
-        header == null) {
+        header == null &&
+        ready.page.cards.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -264,6 +267,12 @@ class AgentDmDelegationDock extends HookConsumerWidget {
                     onOpen: open,
                     onHide: () => hide(summary.key),
                   ),
+                _planSection(notifier, ready.page.rev),
+                for (final group in delegationBoardGroups(ready.page.cards))
+                  _groupNotesSection(notifier, group, ready.page.rev, {
+                    for (final card in ready.page.cards)
+                      card.delegationId: card.title,
+                  }),
               ],
             ),
           ),

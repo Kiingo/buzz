@@ -639,4 +639,62 @@ void main() {
       expect(delegationSeenPath(_agent), 'agents/$_agent/delegations/seen');
     });
   });
+
+  group('Plan, group notes and the results preview', () {
+    test('a done card carries its preview; links only when linkable', () {
+      final card = DelegationCard.tryParse(
+        _card(1, {
+          'state': 'done',
+          'parallelGroup': ' ui ',
+          'result': {
+            'summary': 'Merged',
+            'outcome': 'done',
+            'preview': {
+              'filesChanged': ['a.ts', ' ', 'b.ts'],
+              'filesChangedCount': 12,
+              'diffStat': {'files': 12, 'insertions': 340, 'deletions': 20},
+              'prUrl': 'https://github.com/x/y/pull/1',
+              'prUrlLinkable': true,
+              'testReceiptUrl': 'javascript:alert(1)',
+              'testReceiptUrlLinkable': true,
+            },
+          },
+        }),
+      )!;
+      expect(card.parallelGroup, 'ui');
+      final preview = card.result!.preview!;
+      expect(preview.filesChanged, ['a.ts', 'b.ts']);
+      expect(preview.diffText, '12 files · +340 −20');
+      expect(preview.prUrlLinkable, isTrue);
+      expect(preview.testReceiptUrlLinkable, isFalse);
+      expect(DelegationResultPreview.tryParse(const {}), isNull);
+    });
+
+    test('Plan and notes fail closed; paths encode the group', () {
+      expect(
+        delegationGroupNotesPath(_agent, 'ui (v2)'),
+        'agents/$_agent/delegations/groups/ui%20%28v2%29/notes?limit=200',
+      );
+      final plan = parseDelegationJournal({
+        'entries': [
+          {'id': _id(1), 'kind': 'decision', 'body': ' Use Postgres '},
+          {'id': _id(2), 'kind': 'bogus', 'body': 'x'},
+        ],
+      });
+      expect(plan.single.kind, DelegationJournalKind.decision);
+      expect(plan.single.body, 'Use Postgres');
+      final notes = parseDelegationGroupNotes({
+        'notes': [
+          {'id': _id(3), 'authorRole': 'worker', 'body': 'sha abc'},
+          {'id': _id(4), 'authorRole': 'someone', 'body': 'x'},
+        ],
+      });
+      expect(notes.single.byOrchestrator, isFalse);
+      final cards = [
+        for (final (n, group) in [(5, 'b'), (6, 'a'), (7, 'b'), (8, null)])
+          DelegationCard.tryParse(_card(n, {'parallelGroup': group}))!,
+      ];
+      expect(delegationBoardGroups(cards), ['b', 'a']);
+    });
+  });
 }

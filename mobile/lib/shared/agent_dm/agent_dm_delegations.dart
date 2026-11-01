@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+part 'agent_dm_delegations/plan.dart';
+
 /// The owner's delegation board in a 1:1 agent DM (delegation-driven agents
 /// §10.1, Kiingo `delegation-views.interface.ts`): an agent hands work to
 /// worker sessions, and the DM shows them as quiet cards that update in
@@ -72,12 +74,19 @@ Map<String, Object?>? _map(Object? value) =>
 
 @immutable
 class DelegationResult {
-  const DelegationResult({required this.summary, required this.outcome});
+  const DelegationResult({
+    required this.summary,
+    required this.outcome,
+    this.preview,
+  });
 
   final String summary;
 
   /// `done`, `failed` or `cancelled`.
   final String outcome;
+
+  /// Files, diff stat, PR and test receipt (§10.1), or null.
+  final DelegationResultPreview? preview;
 }
 
 @immutable
@@ -96,6 +105,7 @@ class DelegationCard {
     this.elapsedSeconds,
     this.costUsd,
     this.doneWhen,
+    this.parallelGroup,
     this.lastProgressLine,
     this.result,
     this.pendingAsksCount = 0,
@@ -117,6 +127,9 @@ class DelegationCard {
   final double? elapsedSeconds;
   final double? costUsd;
   final String? doneWhen;
+
+  /// The parallel group whose shared notes this worker reads (§16.5).
+  final String? parallelGroup;
 
   /// Interim only; never shown as a result (§16.4).
   final String? lastProgressLine;
@@ -147,7 +160,11 @@ class DelegationCard {
     if (!state.isActive &&
         summary != null &&
         (outcome == 'done' || outcome == 'failed' || outcome == 'cancelled')) {
-      result = DelegationResult(summary: summary, outcome: outcome as String);
+      result = DelegationResult(
+        summary: summary,
+        outcome: outcome as String,
+        preview: DelegationResultPreview.tryParse(rawResult?['preview']),
+      );
     }
     return DelegationCard(
       delegationId: id,
@@ -165,6 +182,7 @@ class DelegationCard {
       elapsedSeconds: _number(record['elapsedSeconds']),
       costUsd: _number(_map(record['cost'])?['costUsd']),
       doneWhen: _text(record['doneWhen']),
+      parallelGroup: _text(record['parallelGroup']),
       lastProgressLine: _text(record['lastProgressLine']),
       result: result,
       pendingAsksCount: _count(record['pendingAsksCount']),

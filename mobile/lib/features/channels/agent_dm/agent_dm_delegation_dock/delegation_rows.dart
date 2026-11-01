@@ -272,7 +272,7 @@ class _DoneSummaryRow extends StatelessWidget {
               ),
             ],
           ),
-          for (final card in summary.workers)
+          for (final card in summary.workers) ...[
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -314,6 +314,9 @@ class _DoneSummaryRow extends StatelessWidget {
                   ),
               ],
             ),
+            if (card.result?.preview case final preview?)
+              _ResultPreview(preview: preview, onOpen: onOpen),
+          ],
         ],
       ),
     );

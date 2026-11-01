@@ -14,6 +14,7 @@ import {
   type DelegationCard,
   appOriginFor,
   askAsQuestion,
+  boardGroups,
   delegationBoard,
   fromWorkerLabel,
   undoableCards,
@@ -26,6 +27,10 @@ import {
   SinceChip,
   UndoStopRow,
 } from "./AgentDelegationCards";
+import {
+  DelegationGroupNotesSection,
+  DelegationPlanSection,
+} from "./AgentDelegationPlan";
 import { QuestionCardView } from "./AgentQuestionCard";
 import { useAgentDelegations } from "./useAgentDelegations";
 
@@ -119,13 +124,19 @@ export function AgentDelegationDock({
   if (board.status !== "ready" || !view || !agentPubkey) return null;
   const { page, asks, ack, since } = board;
   const undoable = undoableCards(page.cards, page.serverNow, now);
+  const groups = boardGroups(page.cards);
+  const workerTitles = new Map(
+    page.cards.map((card) => [card.delegationId, card.title] as const),
+  );
+  // The Plan stays reachable whenever the agent has delegated anything.
   if (
     !ack &&
     !since &&
     undoable.length === 0 &&
     view.needsYou.length === 0 &&
     view.running.length === 0 &&
-    view.done.length === 0
+    view.done.length === 0 &&
+    page.cards.length === 0
   ) {
     return null;
   }
@@ -224,6 +235,18 @@ export function AgentDelegationDock({
           ))}
         </ul>
       ) : null}
+      <div className="border-t border-border/60">
+        <DelegationPlanSection agentPubkey={agentPubkey} revision={page.rev} />
+        {groups.map((group) => (
+          <DelegationGroupNotesSection
+            agentPubkey={agentPubkey}
+            group={group}
+            key={group}
+            revision={page.rev}
+            workerTitles={workerTitles}
+          />
+        ))}
+      </div>
     </section>
   );
 }

@@ -5,7 +5,10 @@ import {
   DELEGATION_FOLD_AT,
   appOriginFor,
   askAsQuestion,
+  boardGroups,
   delegationBoard,
+  delegationGroupNotesPath,
+  delegationJournalPath,
   delegationDmAgent,
   delegationChatPath,
   delegationSeenPath,
@@ -22,6 +25,9 @@ import {
   parsePendingAck,
   parseDelegationPoll,
   parseDelegationSince,
+  parseGroupNotes,
+  parseJournal,
+  previewDiffText,
   sessionLink,
   stateLabel,
   taskLink,
@@ -405,4 +411,92 @@ test("since you last looked reads as one chip, or none", () => {
   assert.equal(parseDelegationSince({}), null);
   assert.equal(delegationSincePath(AGENT), `agents/${AGENT}/delegations/since`);
   assert.equal(delegationSeenPath(AGENT), `agents/${AGENT}/delegations/seen`);
+});
+
+test("a done card carries its results preview; links only when linkable", () => {
+  const done = parseDelegationCard(
+    card(20, {
+      state: "done",
+      parallelGroup: "  ui  ",
+      result: {
+        summary: "Merged",
+        at: "t",
+        outcome: "done",
+        preview: {
+          filesChanged: ["a.ts", " ", "b.ts"],
+          filesChangedCount: 12,
+          diffStat: { files: 12, insertions: 340, deletions: 20 },
+          prUrl: "https://github.com/x/y/pull/1",
+          prUrlLinkable: true,
+          testReceiptUrl: "javascript:alert(1)",
+          testReceiptUrlLinkable: true,
+        },
+      },
+    }),
+  );
+  assert.equal(done.parallelGroup, "ui");
+  const preview = done.result.preview;
+  assert.deepEqual(preview.filesChanged, ["a.ts", "b.ts"]);
+  assert.equal(previewDiffText(preview), "12 files · +340 −20");
+  assert.equal(preview.prUrlLinkable, true);
+  // Not https: shown as text, never a link, whatever the host said.
+  assert.equal(preview.testReceiptUrlLinkable, false);
+  const bare = parseDelegationCard(
+    card(21, {
+      state: "done",
+      result: { summary: "x", at: "t", outcome: "done", preview: {} },
+    }),
+  );
+  assert.equal(bare.result.preview, null);
+});
+
+test("Plan and group notes parse fail closed and paths encode the group", () => {
+  assert.equal(
+    delegationJournalPath(AGENT.toUpperCase()),
+    `agents/${AGENT}/delegations/journal?limit=50`,
+  );
+  assert.equal(
+    delegationGroupNotesPath(AGENT, "ui (v2)"),
+    `agents/${AGENT}/delegations/groups/ui%20%28v2%29/notes?limit=200`,
+  );
+  assert.deepEqual(
+    parseJournal({
+      entries: [
+        { id: id(1), kind: "decision", body: " Use Postgres ", createdAt: "t" },
+        { id: id(2), kind: "bogus", body: "x" },
+        { id: "nope", kind: "next", body: "x" },
+      ],
+    }),
+    [{ id: id(1), kind: "decision", body: "Use Postgres", createdAt: "t" }],
+  );
+  assert.deepEqual(parseJournal(null), []);
+  assert.deepEqual(
+    parseGroupNotes({
+      notes: [
+        {
+          id: id(3),
+          authorRole: "worker",
+          delegationId: id(9),
+          body: "sha abc",
+        },
+        { id: id(4), authorRole: "someone", body: "x" },
+      ],
+    }),
+    [
+      {
+        id: id(3),
+        authorRole: "worker",
+        delegationId: id(9),
+        body: "sha abc",
+        createdAt: "",
+      },
+    ],
+  );
+  const cards = [
+    parseDelegationCard(card(5, { parallelGroup: "b" })),
+    parseDelegationCard(card(6, { parallelGroup: "a" })),
+    parseDelegationCard(card(7, { parallelGroup: "b" })),
+    parseDelegationCard(card(8)),
+  ];
+  assert.deepEqual(boardGroups(cards), ["b", "a"]);
 });
