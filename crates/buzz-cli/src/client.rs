@@ -369,6 +369,7 @@ fn sign_blossom_upload(
 #[cfg(test)]
 mod media_download_tests {
     use super::*;
+    use nostr::Keys;
 
     #[test]
     fn media_url_from_sha_uses_relay_media_path() {
@@ -436,7 +437,7 @@ mod media_download_tests {
         let keys = Keys::generate();
         let hash = "a".repeat(64);
         let header = sign_blossom_get(
-            &keys,
+            &AgentKey::Local(keys.clone()),
             &format!("https://relay.example:443/media/{hash}.jpg"),
         )
         .unwrap();

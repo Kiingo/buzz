@@ -65,7 +65,7 @@ use config::{
 };
 use filter::SubscriptionRule;
 use futures_util::FutureExt;
-use nostr::{PublicKey, ToBech32};
+use nostr::PublicKey;
 use pool::{
     AgentPool, ControlSignal, IdleSwitchResult, OwnedAgent, PromptContext, PromptOutcome,
     PromptResult, PromptSource, SessionState, TimeoutKind,
@@ -10620,6 +10620,7 @@ mod build_mcp_servers_tests {
         for name in [buzz_signer::SOCKET_ENV, buzz_signer::TOKEN_ENV] {
             assert!(env.iter().any(|entry| entry.name == name), "{name}");
         }
+        use nostr::ToBech32 as _;
         let secret = config.keys.secret_key().to_secret_hex();
         let bech32 = config.keys.secret_key().to_bech32().unwrap();
         for entry in env {

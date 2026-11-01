@@ -253,6 +253,8 @@ pub fn build_project_channel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr::Keys;
+
     use buzz_core::observer::{decrypt_observer_payload, OBSERVER_AGENT_TAG, OBSERVER_FRAME_TAG};
 
     const CHANNEL: &str = "7c07e659-3610-42f4-9a5e-1e9973c09da9";
@@ -262,7 +264,7 @@ mod tests {
         let agent = Keys::generate();
         let owner = Keys::generate();
         let built = build_create(
-            &agent,
+            &AgentKey::Local(agent.clone()),
             &owner.public_key(),
             CreateAgentDraft {
                 channel_id: CHANNEL.into(),
@@ -345,7 +347,7 @@ mod tests {
         let agent = Keys::generate();
         let owner = Keys::generate();
         let built = build_project_channel(
-            &agent,
+            &AgentKey::Local(agent.clone()),
             &owner.public_key(),
             CreateProjectChannelDraft {
                 home_channel_id: CHANNEL.into(),

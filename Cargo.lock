@@ -936,6 +936,7 @@ dependencies = [
  "buzz-core",
  "buzz-persona",
  "buzz-sdk",
+ "buzz-signer",
  "chrono",
  "clap",
  "ed25519-dalek",
@@ -948,11 +949,13 @@ dependencies = [
  "httparse",
  "nix 0.31.3",
  "nostr 0.44.7",
+ "rand 0.10.1",
  "reqwest 0.13.4",
  "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "subtle",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -1122,6 +1125,7 @@ dependencies = [
  "buzz-core",
  "buzz-persona",
  "buzz-sdk",
+ "buzz-signer",
  "buzz-ws-client",
  "bytes",
  "chrono",
@@ -1251,6 +1255,7 @@ dependencies = [
  "base64 0.22.1",
  "buzz-cli",
  "buzz-core",
+ "buzz-signer",
  "ignore",
  "image",
  "nix 0.31.3",
@@ -1563,6 +1568,17 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "buzz-signer"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3587,6 +3603,7 @@ name = "git-credential-nostr"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "buzz-signer",
  "nostr 0.44.7",
  "serde_json",
  "zeroize",
@@ -3597,6 +3614,7 @@ name = "git-sign-nostr"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "buzz-signer",
  "chrono",
  "hex",
  "libc",

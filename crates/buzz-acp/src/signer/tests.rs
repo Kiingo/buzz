@@ -181,6 +181,91 @@ fn nip98_refuses_a_bad_method_or_payload_hash() {
 }
 
 #[test]
+fn blossom_binds_verb_hash_and_the_signers_expiry() {
+    let f = fixture();
+    let sha256 = "a".repeat(64);
+    let tag = |event: &nostr::Event, name: &str| {
+        event
+            .tags
+            .iter()
+            .find(|tag| tag.as_slice()[0] == name)
+            .map(|tag| tag.as_slice()[1].clone())
+    };
+    let upload = signed_event(f.signer.handle(
+        Op::BlossomUpload {
+            sha256: sha256.clone(),
+            url: "https://relay.example".into(),
+        },
+        NOW,
+    ));
+    assert_eq!(tag(&upload, "t").as_deref(), Some("upload"));
+    assert_eq!(tag(&upload, "x"), Some(sha256));
+    let expiration: u64 = tag(&upload, "expiration").unwrap().parse().unwrap();
+    assert!(expiration > NOW);
+    let get = signed_event(f.signer.handle(
+        Op::BlossomGet {
+            media_url: "https://relay.example/media/x".into(),
+        },
+        NOW,
+    ));
+    assert_eq!(tag(&get, "t").as_deref(), Some("get"));
+    assert_eq!(tag(&get, "x"), None);
+    assert_eq!(tag(&get, "expiration"), Some(expiration.to_string()));
+}
+
+#[test]
+fn blossom_upload_refuses_anything_but_a_sha256() {
+    let f = fixture();
+    for sha256 in [String::new(), "A".repeat(64), "a".repeat(63)] {
+        assert_eq!(
+            refused(f.signer.handle(
+                Op::BlossomUpload {
+                    sha256,
+                    url: "https://relay.example".into(),
+                },
+                NOW,
+            )),
+            "signer_payload_hash_invalid"
+        );
+    }
+}
+
+#[test]
+fn the_owner_tag_goes_only_to_the_git_origin() {
+    let f = fixture();
+    for url in [
+        "https://media.example/git/o/r",
+        "https://evil.example/git/o/r",
+    ] {
+        let op = Op::Nip98 {
+            url: url.into(),
+            method: "GET".into(),
+            payload_hash: None,
+            owner_tag: true,
+        };
+        assert!(
+            matches!(
+                refused(f.signer.handle(op, NOW)),
+                "signer_owner_tag_refused" | "signer_origin_refused"
+            ),
+            "{url}"
+        );
+    }
+    assert_eq!(
+        refused(f.signer.handle(
+            Op::Nip98 {
+                url: "https://media.example/x".into(),
+                method: "GET".into(),
+                payload_hash: None,
+                owner_tag: true,
+            },
+            NOW,
+        )),
+        "signer_owner_tag_refused"
+    );
+}
+
+#[test]
 fn blossom_stays_on_the_configured_origins() {
     let f = fixture();
     let event = signed_event(f.signer.handle(

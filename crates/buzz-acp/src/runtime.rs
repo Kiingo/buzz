@@ -21,19 +21,33 @@ pub(crate) struct AgentRuntime {
     _signer: signer::SignerServer,
 }
 
+/// The origins a signer accepts beyond its relay, fixed here at start and never
+/// taken over the socket. The guest route counts only as https. A URL that
+/// doesn't qualify just means its origin gets refused at sign time.
+fn extra_origins(canonical_relay: Option<&str>, guest_route: Option<&str>) -> Vec<String> {
+    let canonical = canonical_relay
+        .map(str::trim)
+        .filter(|url| url::Url::parse(url).is_ok());
+    let guest = guest_route
+        .map(str::trim)
+        .filter(|url| url::Url::parse(url).is_ok_and(|url| url.scheme() == "https"));
+    canonical
+        .into_iter()
+        .chain(guest)
+        .map(str::to_string)
+        .collect()
+}
+
 /// Starts this run's signer. Children sign through it and never see the key.
 fn start_signer(config: &Config) -> Result<signer::SignerServer> {
     let auth_tag = std::env::var("BUZZ_AUTH_TAG")
         .ok()
         .filter(|tag| !tag.is_empty())
         .and_then(|tag| buzz_sdk::nip_oa::parse_auth_tag(&tag).ok());
-    // A URL that doesn't parse only means its origin gets refused at sign time.
-    let origins: Vec<String> = std::env::var("BUZZ_CANONICAL_RELAY_URL")
-        .ok()
-        .into_iter()
-        .chain(config.guest_route_url.clone())
-        .filter(|url| url::Url::parse(url.trim()).is_ok())
-        .collect();
+    let origins = extra_origins(
+        std::env::var("BUZZ_CANONICAL_RELAY_URL").ok().as_deref(),
+        config.guest_route_url.as_deref(),
+    );
     let owner =
         resolve_agent_owner(config).and_then(|owner| nostr::PublicKey::from_hex(&owner).ok());
     let signer = signer::Signer::new(config.keys.clone(), auth_tag, &config.relay_url, &origins)?
@@ -148,4 +162,30 @@ fn make_prompt_context(
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
     })
+}
+
+#[cfg(test)]
+mod signer_origin_tests {
+    use super::extra_origins;
+
+    #[test]
+    fn the_guest_route_counts_only_as_https() {
+        assert_eq!(
+            extra_origins(None, Some(" https://route.example/classify ")),
+            ["https://route.example/classify"]
+        );
+        for route in ["http://route.example", "wss://route.example", "not a url"] {
+            assert!(extra_origins(None, Some(route)).is_empty(), "{route}");
+        }
+    }
+
+    #[test]
+    fn the_canonical_relay_keeps_its_websocket_url() {
+        assert_eq!(
+            extra_origins(Some("wss://chat.example"), None),
+            ["wss://chat.example"]
+        );
+        assert!(extra_origins(Some("  "), None).is_empty());
+        assert!(extra_origins(None, None).is_empty());
+    }
 }

@@ -62,13 +62,7 @@ pub(crate) fn safe_relay_path(path: &str) -> bool {
 /// The first 16 bytes (32 hex chars) give 128 bits of uniqueness, ample for
 /// KLIPY's per-installation needs.
 fn customer_id(secret_key_bytes: &[u8], relay_url: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(secret_key_bytes);
-    hasher.update(b"\0"); // domain separator
-    hasher.update(relay_url.as_bytes());
-    let hash = hasher.finalize();
-    hex::encode(&hash[..16]) // 16 bytes → 32 hex chars
+    buzz_signer::gif_customer_id(secret_key_bytes, relay_url)
 }
 
 /// [`customer_id`] for this client. A signer computes it, since it holds the

@@ -1,12 +1,11 @@
 //! The ops themselves. Every path that reaches the agent key from a child goes
 //! through [`Signer::handle`].
 
-use base64::engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use buzz_core::engram::{self, Body};
 use buzz_core::observer::encrypt_observer_payload;
 use buzz_signer::{GitSignature, Op, Output};
-use nostr::nips::nip44;
 use nostr::secp256k1::Message;
 use nostr::{Event, EventBuilder, JsonUtil as _, Keys, Kind, PublicKey, RelayUrl, Tag, Timestamp};
 
@@ -26,6 +25,9 @@ pub(crate) struct Signer {
     owner: Option<PublicKey>,
     relay_url: RelayUrl,
     origins: Vec<url::Origin>,
+    /// The only origin that may receive the owner tag on NIP-98: Git's
+    /// credential scope is the dial relay.
+    git_origin: url::Origin,
 }
 
 impl std::fmt::Debug for Signer {
@@ -59,8 +61,9 @@ impl Signer {
         origins: &[String],
     ) -> anyhow::Result<Self> {
         let parsed = url::Url::parse(relay_url)?;
-        let mut allowed =
-            vec![http_origin(&parsed).ok_or_else(|| anyhow::anyhow!("relay URL has no origin"))?];
+        let git_origin =
+            http_origin(&parsed).ok_or_else(|| anyhow::anyhow!("relay URL has no origin"))?;
+        let mut allowed = vec![git_origin.clone()];
         for origin in origins {
             allowed.push(
                 http_origin(&url::Url::parse(origin)?)
@@ -81,6 +84,7 @@ impl Signer {
             owner,
             relay_url: RelayUrl::parse(relay_url)?,
             origins: allowed,
+            git_origin,
         })
     }
 
@@ -193,6 +197,10 @@ impl Signer {
         }
         let mut tags = parse_tags(rows)?;
         if owner_tag {
+            let origin = url::Url::parse(url).ok().and_then(|url| http_origin(&url));
+            if origin.as_ref() != Some(&self.git_origin) {
+                return Err("signer_owner_tag_refused");
+            }
             tags.extend(self.auth_tag.clone());
         }
         self.signed(EventBuilder::new(Kind::Custom(27235), "").tags(tags))
@@ -231,7 +239,8 @@ impl Signer {
         self.blossom("upload", Some(sha256), url, "Upload file", now)
     }
 
-    /// The relay is always the configured one and the time always the signer's.
+    /// The relay must be one of the signer's origins. The time is always the
+    /// signer's.
     fn relay_auth(&self, challenge: &str, relay: &str) -> Result<Output, Refusal> {
         policy::check_challenge(challenge)?;
         self.check_origin(relay)?;
@@ -320,15 +329,12 @@ impl Signer {
 }
 
 impl Signer {
-    /// `SHA-256(key || 0 || relay)`, truncated to 16 bytes. Same derivation the
-    /// CLI uses with a key of its own.
+    /// The same domain-separated id the CLI makes with a key of its own.
     fn gif_customer_id(&self) -> Output {
-        use sha2::{Digest as _, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(self.keys.secret_key().as_secret_bytes());
-        hasher.update(b"\0");
-        hasher.update(self.relay_url.as_str().as_bytes());
-        Output::CustomerId(hex::encode(&hasher.finalize()[..16]))
+        Output::CustomerId(buzz_signer::gif_customer_id(
+            self.keys.secret_key().as_secret_bytes(),
+            self.relay_url.as_str(),
+        ))
     }
 }
 
@@ -341,5 +347,6 @@ fn parse_tags(rows: Vec<Vec<&str>>) -> Result<Vec<Tag>, Refusal> {
 /// The header value a CLI sends with a signed authorization event.
 #[cfg(test)]
 pub(super) fn nostr_header(event_json: &str) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     format!("Nostr {}", URL_SAFE_NO_PAD.encode(event_json.as_bytes()))
 }
