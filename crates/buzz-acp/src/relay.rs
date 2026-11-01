@@ -335,15 +335,27 @@ pub(crate) fn relay_authored_filter(
     }
 }
 
-/// Whether a relay answer event was signed by the relay's advertised key.
-/// Relays that advertise no key (or an unknown answer) impose no signer check.
+/// Whether a relay answer event really is the relay's: its `pubkey` is the
+/// advertised key and its signature verifies. A relay that advertises no key
+/// has no signer to check; an unknown answer (`None`) proves nothing.
 pub(crate) fn signed_by_relay(event: &Value, key: Option<&RelaySelfKey>) -> bool {
     match key {
         Some(RelaySelfKey::Key(hex)) => {
             event.get("pubkey").and_then(|pubkey| pubkey.as_str()) == Some(hex.as_str())
+                && serde_json::from_value::<nostr::Event>(event.clone())
+                    .is_ok_and(|event| event.verify().is_ok())
         }
-        _ => true,
+        Some(RelaySelfKey::NotAdvertised) => true,
+        None => false,
     }
+}
+
+/// The relay key that discovery reads relay-authored state with. Discovery
+/// fails rather than guess which rosters are real when the key is unknown.
+fn discovery_relay_key(key: Option<RelaySelfKey>) -> Result<RelaySelfKey, RelayError> {
+    key.ok_or_else(|| {
+        RelayError::Http("relay NIP-11 document unreadable: cannot discover channels".into())
+    })
 }
 
 /// A relay that once advertised its key never loses it to a later answer
@@ -1006,22 +1018,21 @@ impl HarnessRelay {
         // Step 1: Find all channels where agent is a member (kind:39002 with #p tag).
         let p_tag = SingleLetterTag::lowercase(Alphabet::P);
         // Rosters and metadata are relay-authored: read only what the relay key
-        // signed. An unreadable NIP-11 document leaves discovery unfiltered (it
-        // only decides the subscribe set), never fails it.
-        let relay_key = rest.relay_self_key().await;
+        // signed. An unreadable NIP-11 document fails discovery.
+        let relay_key = discovery_relay_key(rest.relay_self_key().await)?;
         let member_filter = nostr::Filter::new()
             .kind(Kind::Custom(
                 buzz_core::kind::KIND_NIP29_GROUP_MEMBERS as u16,
             ))
             .custom_tags(p_tag, [pk_hex.as_str()]);
-        let member_filter = relay_authored_filter(member_filter.clone(), relay_key.as_ref())
-            .unwrap_or(member_filter);
+        let member_filter =
+            relay_authored_filter(member_filter.clone(), Some(&relay_key)).unwrap_or(member_filter);
         let mut member_events = rest.query(&[member_filter]).await?;
 
         let member_arr = member_events
             .as_array_mut()
             .ok_or_else(|| RelayError::Http("expected JSON array from /query (members)".into()))?;
-        member_arr.retain(|event| signed_by_relay(event, relay_key.as_ref()));
+        member_arr.retain(|event| signed_by_relay(event, Some(&relay_key)));
         let member_arr = &*member_arr;
 
         // Extract channel UUIDs from #d tags.
@@ -1056,10 +1067,10 @@ impl HarnessRelay {
             ))
             .custom_tags(d_tag, d_values);
         let meta_filter =
-            relay_authored_filter(meta_filter.clone(), relay_key.as_ref()).unwrap_or(meta_filter);
+            relay_authored_filter(meta_filter.clone(), Some(&relay_key)).unwrap_or(meta_filter);
         let mut meta_events = rest.query(&[meta_filter]).await?;
         if let Some(events) = meta_events.as_array_mut() {
-            events.retain(|event| signed_by_relay(event, relay_key.as_ref()));
+            events.retain(|event| signed_by_relay(event, Some(&relay_key)));
         }
 
         // Step 3: Build the final subscribe set, skipping archived channels.
@@ -4573,18 +4584,42 @@ mod tests {
 
     #[test]
     fn relay_authored_state_must_be_signed_by_the_advertised_key() {
-        let relay = RelaySelfKey::Key("ab".repeat(32));
-        let signed = json!({ "pubkey": "ab".repeat(32) });
-        let forged = json!({ "pubkey": "cd".repeat(32) });
+        let relay_keys = Keys::generate();
+        let relay = RelaySelfKey::Key(relay_keys.public_key().to_hex());
+        let event = |signer: &Keys| {
+            let event = nostr::EventBuilder::new(Kind::Custom(39002), "")
+                .sign_with_keys(signer)
+                .unwrap();
+            serde_json::to_value(event).unwrap()
+        };
+        let signed = event(&relay_keys);
+        let forged = event(&Keys::generate());
+        // Claims the relay's key but carries another key's id and signature.
+        let mut claimed = forged.clone();
+        claimed["pubkey"] = json!(relay_keys.public_key().to_hex());
         assert!(signed_by_relay(&signed, Some(&relay)));
         assert!(!signed_by_relay(&forged, Some(&relay)));
+        assert!(!signed_by_relay(&claimed, Some(&relay)));
         assert!(signed_by_relay(&forged, Some(&RelaySelfKey::NotAdvertised)));
+        assert!(
+            !signed_by_relay(&signed, None),
+            "an unknown key proves nothing"
+        );
         assert!(relay_authored_filter(nostr::Filter::new(), Some(&relay)).is_some());
         assert!(relay_authored_filter(
             nostr::Filter::new(),
             Some(&RelaySelfKey::Key("zz".repeat(32)))
         )
         .is_none());
+    }
+
+    #[test]
+    fn discovery_fails_without_a_relay_key_answer() {
+        assert!(discovery_relay_key(None).is_err());
+        assert_eq!(
+            discovery_relay_key(Some(RelaySelfKey::NotAdvertised)).unwrap(),
+            RelaySelfKey::NotAdvertised
+        );
     }
 
     #[test]
