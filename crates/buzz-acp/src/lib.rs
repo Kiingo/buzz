@@ -3007,6 +3007,10 @@ async fn run_harness(
         .filter(|s| !s.is_empty())
         .and_then(|s| buzz_sdk::nip_oa::parse_auth_tag(&s).ok());
 
+    if config.guest_route_url.is_some() {
+        relay::require_relay_key();
+    }
+
     let mut relay =
         HarnessRelay::connect(&config.relay_url, &config.keys, &pubkey_hex, relay_auth_tag)
             .await

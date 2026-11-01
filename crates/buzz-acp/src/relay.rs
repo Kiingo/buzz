@@ -22,6 +22,7 @@
 //! channel. `next_event()` reads from the event receiver.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Default capacity of the event channel from background task to harness.
@@ -315,6 +316,9 @@ pub enum RelaySelfKey {
 
 /// How long a NIP-11 `self` answer is reused before it is read again.
 const RELAY_SELF_KEY_TTL: Duration = Duration::from_secs(10 * 60);
+/// Bound for one read of the relay's NIP-11 document.
+const RELAY_DOCUMENT_TIMEOUT: Duration = Duration::from_secs(5);
+static RELAY_KEY_REQUIRED: AtomicBool = AtomicBool::new(false);
 
 /// Per-relay NIP-11 `self` answers with the time they were read. Answers are
 /// refreshed after [`RELAY_SELF_KEY_TTL`]; when a refresh cannot read the
@@ -350,6 +354,22 @@ pub(crate) fn signed_by_relay(event: &Value, key: Option<&RelaySelfKey>) -> bool
     }
 }
 
+/// Refuse relay-authored state from a relay with no key, once told to. A relay
+/// run with a stable key advertises it, and a hosted harness keeps no pin
+/// across a restart, so one that sees no key can't tell a downgrade from a
+/// relay that never had one.
+fn accepted_relay_key(key: RelaySelfKey, required: bool) -> Option<RelaySelfKey> {
+    match key {
+        RelaySelfKey::NotAdvertised if required => None,
+        key => Some(key),
+    }
+}
+
+/// Call at startup on a harness with a hosted guest route.
+pub(crate) fn require_relay_key() {
+    RELAY_KEY_REQUIRED.store(true, Ordering::Relaxed);
+}
+
 /// The relay key that discovery reads relay-authored state with. Discovery
 /// fails rather than guess which rosters are real when the key is unknown.
 fn discovery_relay_key(key: Option<RelaySelfKey>) -> Result<RelaySelfKey, RelayError> {
@@ -374,11 +394,9 @@ pub(crate) fn merge_relay_self_key(
 pub(crate) fn relay_self_key_from_nip11(document: &Value) -> Option<RelaySelfKey> {
     match document.get("self") {
         None | Some(Value::Null) => Some(RelaySelfKey::NotAdvertised),
-        Some(Value::String(key)) => {
-            let key = key.trim().to_ascii_lowercase();
-            (key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
-                .then_some(RelaySelfKey::Key(key))
-        }
+        Some(Value::String(key)) => nostr::PublicKey::from_hex(key.trim())
+            .ok()
+            .map(|key| RelaySelfKey::Key(key.to_hex())),
         Some(_) => None,
     }
 }
@@ -402,11 +420,12 @@ impl RestClient {
             .map(|value| canonical_relay_authority(value.trim()))
             .transpose()?;
         for path in ["/", "/info"] {
-            let url = format!("{}{path}", self.base_url);
+            let url = format!("{}{path}", self.base_url.trim_end_matches('/'));
             let request = self
                 .http
                 .get(&url)
-                .header(reqwest::header::ACCEPT, "application/nostr+json");
+                .header(reqwest::header::ACCEPT, "application/nostr+json")
+                .timeout(RELAY_DOCUMENT_TIMEOUT);
             let response = match with_canonical_http_host(request, canonical_authority.as_deref())
                 .send()
                 .await
@@ -430,24 +449,11 @@ impl RestClient {
                     continue;
                 }
             };
-            let Some(relay_self) = document.get("self") else {
-                saw_document_without_self = true;
-                continue;
-            };
-            let Some(relay_self) = relay_self.as_str() else {
-                failures.push(format!("GET {path} returned a non-string NIP-11 self key"));
-                continue;
-            };
-            let relay_self = match nostr::PublicKey::from_hex(relay_self) {
-                Ok(pubkey) => pubkey.to_hex(),
-                Err(error) => {
-                    failures.push(format!(
-                        "GET {path} returned an invalid NIP-11 self key: {error}"
-                    ));
-                    continue;
-                }
-            };
-            return Ok(Some(relay_self));
+            match relay_self_key_from_nip11(&document) {
+                Some(RelaySelfKey::Key(key)) => return Ok(Some(key)),
+                Some(RelaySelfKey::NotAdvertised) => saw_document_without_self = true,
+                None => failures.push(format!("GET {path} returned a malformed NIP-11 self key")),
+            }
         }
 
         if saw_document_without_self {
@@ -464,6 +470,11 @@ impl RestClient {
     /// `Accept: application/nostr+json`). `None` when the document cannot be
     /// read or its `self` field is malformed: callers must then fail closed.
     pub async fn relay_self_key(&self) -> Option<RelaySelfKey> {
+        let key = self.known_relay_self_key().await?;
+        accepted_relay_key(key, RELAY_KEY_REQUIRED.load(Ordering::Relaxed))
+    }
+
+    async fn known_relay_self_key(&self) -> Option<RelaySelfKey> {
         let cache = RELAY_SELF_KEYS.get_or_init(Default::default);
         let known = cache
             .lock()
@@ -480,6 +491,14 @@ impl RestClient {
             return stale;
         };
         let fresh = merge_relay_self_key(fresh, stale);
+        if fresh == RelaySelfKey::NotAdvertised {
+            // The pin lasts as long as this process, so this may be a relay
+            // that advertised a key before a restart.
+            tracing::warn!(
+                code = "relay_key_not_advertised",
+                "relay advertises no signing key; relay-authored state can't be checked"
+            );
+        }
         if let Ok(mut known) = cache.lock() {
             known.insert(
                 self.base_url.clone(),
@@ -490,29 +509,11 @@ impl RestClient {
     }
 
     async fn read_relay_self_key(&self) -> Option<RelaySelfKey> {
-        let canonical_authority = std::env::var("BUZZ_CANONICAL_RELAY_URL")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(canonical_relay_authority)
-            .transpose()
-            .ok()?;
-        let url = format!("{}/", self.base_url.trim_end_matches('/'));
-        let request = self
-            .http
-            .get(&url)
-            .header("Accept", "application/nostr+json")
-            .timeout(Duration::from_secs(5));
-        let response = with_canonical_http_host(request, canonical_authority.as_deref())
-            .send()
-            .await
-            .ok()?;
-        if !response.status().is_success() {
-            return None;
+        match self.relay_self().await {
+            Ok(Some(key)) => Some(RelaySelfKey::Key(key)),
+            Ok(None) => Some(RelaySelfKey::NotAdvertised),
+            Err(_) => None,
         }
-        let document: Value = response.json().await.ok()?;
-        relay_self_key_from_nip11(&document)
     }
 
     /// Sign a NIP-98 HTTP Auth event (kind:27235) for the given method/URL/body.
@@ -4611,6 +4612,29 @@ mod tests {
             Some(&RelaySelfKey::Key("zz".repeat(32)))
         )
         .is_none());
+    }
+
+    #[test]
+    fn a_hosted_harness_refuses_a_relay_with_no_key() {
+        let key = RelaySelfKey::Key("ab".repeat(32));
+        assert_eq!(accepted_relay_key(key.clone(), true), Some(key.clone()));
+        assert_eq!(accepted_relay_key(key.clone(), false), Some(key));
+        assert_eq!(accepted_relay_key(RelaySelfKey::NotAdvertised, true), None);
+        assert_eq!(
+            accepted_relay_key(RelaySelfKey::NotAdvertised, false),
+            Some(RelaySelfKey::NotAdvertised)
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_self_treats_a_null_key_as_not_advertised() {
+        let responses = HashMap::from([(
+            "/".to_string(),
+            (200, serde_json::json!({ "self": null }).to_string()),
+        )]);
+        let (client, _requests, server) = nip11_test_client(responses).await;
+        assert_eq!(client.relay_self().await.expect("a document"), None);
+        server.abort();
     }
 
     #[test]
