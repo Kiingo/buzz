@@ -2117,7 +2117,7 @@ mod tests {
         assert!(!adapter_starts_unattended("hermes", env(&[])));
 
         assert!(!adapter_starts_unattended(
-            "kiingo-compute-acp",
+            "hosted-compute-acp",
             env(&full_access)
         ));
     }
