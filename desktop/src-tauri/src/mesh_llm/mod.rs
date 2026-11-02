@@ -343,7 +343,13 @@ async fn ensure_model_downloaded(model: &str) -> anyhow::Result<()> {
 impl DesktopMeshRuntime {
     pub async fn start(mut request: StartMeshNodeRequest) -> anyhow::Result<Self> {
         sanitize_no_leak_request(&mut request)?;
-        initialize_mesh_native_runtime().await?;
+        // Only a serving node runs native inference. Client mode never loads
+        // the native runtime: the SDK's embedded startup skips it for clients
+        // (mesh-llm-host-runtime sdk/embedded_startup.rs), and the embedded
+        // runtime initializes its own logging (runtime/run_auto.rs).
+        if request.mode == MeshNodeMode::Serve {
+            initialize_mesh_native_runtime().await?;
+        }
         let model_id = request
             .model_id
             .clone()
