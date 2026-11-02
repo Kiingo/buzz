@@ -27,6 +27,13 @@ jobs:
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
       - name: Dependency policy
         run: cargo-deny check
+      # The desktop crate is its own workspace with its own lockfile, which the
+      # root check above never reads. Bans, licenses and sources use the shared
+      # root policy; advisories use the desktop's own ignore list.
+      - name: Desktop dependency policy
+        run: |
+          cargo-deny --manifest-path desktop/src-tauri/Cargo.toml --all-features check --config deny.toml bans licenses sources
+          cargo-deny --manifest-path desktop/src-tauri/Cargo.toml --all-features check --config desktop/src-tauri/deny.toml advisories
 
 
   results:

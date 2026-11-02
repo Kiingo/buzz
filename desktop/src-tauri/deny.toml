@@ -1,0 +1,85 @@
+# Advisory policy for the desktop lockfile (desktop/src-tauri/Cargo.lock).
+# The desktop crate is its own workspace, excluded from the root one, so the
+# root `cargo-deny check` never sees this lockfile. CI checks it twice:
+# bans/licenses/sources against the shared root deny.toml, and advisories
+# against this file. The root's advisory ignores are argued for the root
+# lockfile; each entry here is argued for the shipped desktop graph
+# (`--all-features`, i.e. the release `mesh-llm` feature included).
+[advisories]
+ignore = [
+    # instant 0.1.13: unmaintained, not a vulnerability. Via nostr 0.44
+    # (buzz-core, buzz-sdk). Clears when nostr drops it. Revisit 2027-02-01.
+    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained, not vulnerable; transitive via nostr; no upstream fix; revisit 2027-02-01" },
+    # paste 1.0.15: unmaintained, not a vulnerability; a proc-macro (build time
+    # only). Via tokenizers 0.22 (buzz-voice) on every target and
+    # netlink-packet-* (iroh, mesh-llm) on Linux. Revisit 2027-02-01.
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained, not vulnerable; build-time proc-macro via tokenizers and iroh netlink; no upstream fix; revisit 2027-02-01" },
+    # unsafe-libyaml 0.2.11: unmaintained, not a vulnerability. Via the
+    # deprecated serde_yaml (desktop, buzz-agent, buzz-persona). Removal needs
+    # the YAML parser migration tracked for the root. Revisit 2027-02-01.
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained, not vulnerable; via serde_yaml; removal needs a YAML parser migration; revisit 2027-02-01" },
+    # quick-xml 0.38.4 (0194 quadratic duplicate-attribute check, 0195
+    # NsReader allocation): dev-only here. Reached only through buzz-media, a
+    # desktop [dev-dependencies] entry (`cargo tree -i quick-xml -e
+    # normal,build --target all` prints nothing). Revisit 2026-12-01.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.38.4 dev-only in desktop (buzz-media dev-dependency, rust-s3); revisit 2026-12-01" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.38.4 dev-only in desktop (buzz-media dev-dependency, rust-s3); revisit 2026-12-01" },
+    # ringbuf 0.3.3: declared by the audited, exactly pinned neteq =0.8.3
+    # (buzz-audio-client) whose published sources never reference ringbuf, so
+    # Consumer::skip/clear are unreachable. The root bans.deny wrapper rule
+    # (checked against this lockfile too) forbids every other consumer.
+    # Revisit when neteq drops or updates the dependency, or by 2027-02-01.
+    { id = "RUSTSEC-2026-0293", reason = "unused dependency of audited, exactly pinned neteq 0.8.3; no Rust references to ringbuf; other consumers forbidden by bans.deny; revisit 2027-02-01" },
+    # zip < 9 (0367 SUID/SGID kept, 0368 symlinks outside the destination,
+    # 0369 permissions through symlinks, 0429 abort on a huge symlink size):
+    # all four are in ZipArchive/ZipStreamReader::extract().
+    # - zip 8.6.0 ships (direct `zip = "8"`, and mesh-llm v0.76.2 under the
+    #   release `mesh-llm` feature) but nothing calls extract(). Every zip
+    #   call site walks entries itself: enclosed_name() name check, directories
+    #   via create_dir_all, regular files via File::create + io::copy; no
+    #   unix_mode, set_permissions or symlink creation:
+    #   - Buzz desktop src/commands/agent_discovery/managed_node.rs
+    #     extract_managed_node_zip :500-532 (enclosed_name :508,
+    #     File::create :525, io::copy :527)
+    #   - mesh-llm v0.76.2 (a0c1e66b) mesh-llm-plugin-manager src/archive.rs
+    #     extract_zip :328-352 (enclosed_name :335, File::create :347,
+    #     io::copy :349)
+    #   - mesh-llm v0.76.2 mesh-llm-system src/autoupdate/release_fetch.rs
+    #     extract_zip_archive :503-539 (enclosed_name :511-513,
+    #     File::create :532, io::copy :534)
+    #   mesh-llm pins zip ^8.6 and no tag ships zip 9.
+    # - zip 4.6.1 ships on Windows only, via tauri-plugin-updater 2.10.1. It
+    #   calls extract() only for a zip update payload, and only after download()
+    #   has verified the payload's minisign signature against the
+    #   BUZZ_UPDATER_PUBLIC_KEY baked into release builds. The first updater
+    #   on zip 9 (2.14.1) needs tauri ^2.12; desktop is locked at 2.11.5.
+    # Revisit by 2026-12-01, at a mesh-llm tag on zip >= 9, or with tauri 2.12.
+    { id = "RUSTSEC-2026-0367", reason = "zip 8.6.0 never extract()ed: entries walked with enclosed_name, regular files only, no modes/symlinks (Buzz managed_node.rs:500-532; mesh-llm v0.76.2 plugin-manager archive.rs:328-352, system release_fetch.rs:503-539); zip 4.6.1 extract() only on minisign-verified Windows update payloads; revisit 2026-12-01" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 8.6.0 never extract()ed: entries walked with enclosed_name, regular files only, no modes/symlinks (Buzz managed_node.rs:500-532; mesh-llm v0.76.2 plugin-manager archive.rs:328-352, system release_fetch.rs:503-539); zip 4.6.1 extract() only on minisign-verified Windows update payloads; revisit 2026-12-01" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 8.6.0 never extract()ed: entries walked with enclosed_name, regular files only, no modes/symlinks (Buzz managed_node.rs:500-532; mesh-llm v0.76.2 plugin-manager archive.rs:328-352, system release_fetch.rs:503-539); zip 4.6.1 extract() only on minisign-verified Windows update payloads; revisit 2026-12-01" },
+    { id = "RUSTSEC-2026-0429", reason = "zip 8.6.0 never extract()ed: entries walked with enclosed_name, regular files only, no modes/symlinks (Buzz managed_node.rs:500-532; mesh-llm v0.76.2 plugin-manager archive.rs:328-352, system release_fetch.rs:503-539); zip 4.6.1 extract() only on minisign-verified Windows update payloads; revisit 2026-12-01" },
+    # zvariant, zbus_names, zvariant_derive: unmaintained (merged into zbus 6),
+    # not vulnerabilities. Linux only, via zbus 5.17 (notify-rust, keyring's
+    # secret-service, tauri-plugin-opener/single-instance). No compatible
+    # upgrade until those move to zbus 6. Revisit 2027-02-01.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); Linux only via zbus 5.17; no compatible upgrade yet; revisit 2027-02-01" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); Linux only via zbus 5.17; no compatible upgrade yet; revisit 2027-02-01" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); Linux only via zbus 5.17; no compatible upgrade yet; revisit 2027-02-01" },
+    # mach 0.1.2 and 0.3.2: unmaintained (successor mach2), not a
+    # vulnerability. macOS only, via user-idle 0.6.0 (its latest release) and
+    # its CoreFoundation-sys/IOKit-sys 0.1 deps. Removal means replacing
+    # user-idle. Revisit 2027-02-01.
+    { id = "RUSTSEC-2020-0168", reason = "mach unmaintained, not vulnerable; macOS only via user-idle 0.6.0 (latest); no compatible upgrade; revisit 2027-02-01" },
+    # proc-macro-error 1.0.4: unmaintained, not a vulnerability. A Linux
+    # build-time proc-macro via glib-macros 0.18 in tauri 2's gtk-rs 0.18
+    # stack. Clears when tauri leaves gtk 0.18. Revisit 2027-02-01.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, not vulnerable; Linux build-time proc-macro via glib-macros 0.18 (tauri gtk stack); revisit 2027-02-01" },
+    # unic-* 0.9.0: unmaintained, not vulnerabilities. Via urlpattern 0.3.0
+    # in tauri-utils 2.9.3; tauri-utils 2.10 moves to urlpattern 0.6
+    # (icu_properties) and arrives with the tauri 2.12 bump. Revisit 2027-02-01.
+    { id = "RUSTSEC-2025-0075", reason = "unic-char-range unmaintained, not vulnerable; via urlpattern 0.3 in tauri-utils 2.9; clears with tauri 2.12; revisit 2027-02-01" },
+    { id = "RUSTSEC-2025-0080", reason = "unic-common unmaintained, not vulnerable; via urlpattern 0.3 in tauri-utils 2.9; clears with tauri 2.12; revisit 2027-02-01" },
+    { id = "RUSTSEC-2025-0081", reason = "unic-char-property unmaintained, not vulnerable; via urlpattern 0.3 in tauri-utils 2.9; clears with tauri 2.12; revisit 2027-02-01" },
+    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version unmaintained, not vulnerable; via urlpattern 0.3 in tauri-utils 2.9; clears with tauri 2.12; revisit 2027-02-01" },
+    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident unmaintained, not vulnerable; via urlpattern 0.3 in tauri-utils 2.9; clears with tauri 2.12; revisit 2027-02-01" },
+]
