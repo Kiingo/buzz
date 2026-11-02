@@ -1,0 +1,76 @@
+# Dependabot version updates (Ross, 2026-11-02): weekly, one grouped PR per
+# ecosystem. benchmarks/ is excluded everywhere: its uv.lock files pin the
+# Harbor benchmark harness, not anything Buzz ships.
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories:
+      - /
+      - /desktop/src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    exclude-paths: ["benchmarks/**"]
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  # pnpm workspace (desktop, web, admin-web) through the root lockfile.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    exclude-paths: ["benchmarks/**"]
+    groups:
+      npm:
+        patterns: ["*"]
+
+  - package-ecosystem: pub
+    directory: /mobile
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    exclude-paths: ["benchmarks/**"]
+    groups:
+      pub:
+        patterns: ["*"]
+
+  - package-ecosystem: gradle
+    directory: /mobile/android
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    exclude-paths: ["benchmarks/**"]
+    groups:
+      gradle:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /.github/ci/minio
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    exclude-paths: ["benchmarks/**"]
+    groups:
+      docker:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    exclude-paths: ["benchmarks/**"]
+    groups:
+      github-actions:
+        patterns: ["*"]
