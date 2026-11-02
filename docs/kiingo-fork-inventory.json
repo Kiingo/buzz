@@ -2486,6 +2486,17 @@
         "mobile/test/features/channels/agent_dm/agent_dm_session_row_test.dart",
         "mobile/test/shared/agent_dm/agent_dm_session_setup_test.dart"
       ]
+    },
+    {
+      "id": "desktop-advisory-policy",
+      "classification": "retain-generic",
+      "owner": "Buzz security maintainers",
+      "purpose": "The desktop Tauri workspace has its own Cargo.lock, which the root cargo-deny run never saw. CI Security now checks it: bans, licenses and sources against the root deny.toml, and advisories against this file, which holds only desktop advisory ignores, each with its call-site reason and a revisit date.",
+      "upstreamStatus": "Generic supply-chain policy; not yet submitted to block/buzz.",
+      "removalCondition": "Drop when upstream checks the desktop lockfile in CI with an equivalent advisory policy, or when every ignore here is fixed and the root policy covers the desktop workspace.",
+      "paths": [
+        "desktop/src-tauri/deny.toml"
+      ]
     }
   ],
   "budgetAmendments": [
