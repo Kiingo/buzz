@@ -14,7 +14,9 @@
 //!   stop, answers and the per-ask routes, preferences, the voice provider
 //!   settings and a Gemini call's stream-token) and the owner's delegation
 //!   board (cards and their long-poll, one delegation, a worker ask's
-//!   answer, stop one, stop all), nothing else; the
+//!   answer, stop one, stop all) and the reader's own session with the agent
+//!   (its setup, read and change, and stopping its running turn), nothing
+//!   else; the
 //!   request URL is parsed once, its normalised path checked, and that same
 //!   URL is signed and sent;
 //! - answers are capped at 2 MiB (declared length first, then while read);
@@ -184,6 +186,9 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         ["agents", _, "delegations"] => is_delegation_list(&parts, get),
         // The newest owner chat page, for the pending ack (§10.1).
         ["agents", agent, "chat"] => get && is_uuid(agent),
+        // The reader's own session: its setup and vitals, and Stop.
+        ["agents", agent, "session-setup"] => (get || method == "PUT") && is_uuid(agent),
+        ["agents", agent, "chat", "stop"] => post && is_uuid(agent),
         ["agents", agent, "delegations", "cancel-all"] => post && is_uuid(agent),
         // "Since you last looked" and the owner's own seen marker.
         ["agents", agent, "delegations", "since"] => get && is_uuid(agent),
@@ -450,6 +455,24 @@ mod tests {
         assert!(allowed_path("GET", "calls/not-a-call/feed").is_none());
         assert!(allowed_path("GET", &format!("calls/{CALL}/feed?rev=a b")).is_none());
         assert!(allowed_path("POST", "owner/agents/list").is_none());
+    }
+
+    #[test]
+    fn only_the_readers_session_routes_are_reachable() {
+        let setup = format!("agents/{CALL}/session-setup");
+        assert_eq!(allowed_path("GET", &setup), Some(setup.clone()));
+        assert_eq!(allowed_path("PUT", &setup), Some(setup.clone()));
+        let stop = format!("agents/{CALL}/chat/stop");
+        assert_eq!(allowed_path("POST", &stop), Some(stop.clone()));
+        // Other methods, ids, queries and routes stay closed.
+        assert!(allowed_path("POST", &setup).is_none());
+        assert!(allowed_path("DELETE", &setup).is_none());
+        assert!(allowed_path("GET", &stop).is_none());
+        assert!(allowed_path("GET", "agents/not-an-id/session-setup").is_none());
+        assert!(allowed_path("POST", "agents/not-an-id/chat/stop").is_none());
+        assert!(allowed_path("GET", &format!("{setup}?x=1")).is_none());
+        assert!(allowed_path("POST", &format!("agents/{CALL}/chat/send")).is_none());
+        assert!(allowed_path("GET", &format!("{setup}/options")).is_none());
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import 'agent_dm/agent_dm_relayed_frame.dart';
 import 'agent_dm/agent_dm_scope.dart';
 import 'agent_dm/agent_dm_delegation_dock.dart';
+import 'agent_dm/agent_dm_session_row.dart';
 import 'agent_dm/agent_dm_sessions_button.dart';
 import '../agent_call/agent_call_screen.dart';
 import '../../shared/agent_commands/agent_prewarm.dart';
@@ -978,6 +979,13 @@ class _ResolvedChannelDetailPage extends HookConsumerWidget {
                                 entries: typingEntries,
                               ),
                       ),
+                      if (dmAgent != null)
+                        AgentDmSessionRow(
+                          agentPubkey: dmAgent,
+                          working: typingEntries.any(
+                            (entry) => entry.pubkey.toLowerCase() == dmAgent,
+                          ),
+                        ),
                       if (dmAgent != null)
                         AgentDmDelegationDock(agentPubkey: dmAgent),
                       ?assistant.pendingNotice,

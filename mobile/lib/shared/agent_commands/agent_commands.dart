@@ -153,7 +153,7 @@ List<AgentCommand>? parseAgentCommands(
     if (name is! String || !_namePattern.hasMatch(name)) continue;
     switch (entry['kind']) {
       case 'session':
-        if (name != 'new' && name != 'sessions') continue;
+        if (name != 'new' && name != 'compact' && name != 'sessions') continue;
         commands.add(
           AgentCommand.session(
             name: name,

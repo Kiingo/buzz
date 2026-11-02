@@ -33,6 +33,8 @@ export type AgentSummarySession = {
 };
 
 export type AgentSummary = {
+  /** The agent's id on its host. */
+  agentId: string | null;
   name: string;
   description: string | null;
   status: string;
@@ -97,6 +99,7 @@ export function parseAgentSummary(
   const harness = text(execution?.harness);
   const sessionId = text(session?.session_id);
   return {
+    agentId: text(agent.id),
     name,
     description: text(agent.description),
     status: text(agent.status) ?? "enabled",

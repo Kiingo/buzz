@@ -15,6 +15,7 @@ import {
   scaleProfileAvatarStatusGeometry,
 } from "@/features/profile/ui/ProfileAvatarWithStatus";
 import { AgentManagementMarker } from "@/features/agents/ui/OtherSetupAgentMarker";
+import { AgentSessionChip } from "@/features/agent-dm/ui/AgentSessionChip";
 import { AgentSessionsPicker } from "@/features/agent-dm/ui/AgentSessionsPicker";
 import { AgentDelegationHeader } from "@/features/agent-dm/ui/AgentDelegationHeader";
 import { AgentDmPrewarm } from "@/features/agent-dm/ui/AgentDmPrewarm";
@@ -139,6 +140,10 @@ export function ChannelScreenHeader({
           currentPubkey={currentPubkey}
         />
         <AgentDmPrewarm
+          agentPubkey={activeDmParticipant.pubkey}
+          isAgentHint={activeDmParticipant.isAgent === true}
+        />
+        <AgentSessionChip
           agentPubkey={activeDmParticipant.pubkey}
           isAgentHint={activeDmParticipant.isAgent === true}
         />

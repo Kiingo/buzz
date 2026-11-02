@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 
+import { AgentDmStopButton } from "@/features/agent-dm/ui/AgentDmStopButton";
 import { CardMintComposerChip } from "@/features/agents/ui/CardMintComposerChip";
 import { useCardMintJobs } from "@/features/agents/cardMintStore";
 import { BotActivityComposerAction } from "@/features/channels/ui/BotActivityBar";
@@ -70,6 +71,11 @@ export function ChannelComposerActivityAccessory({
             typingPubkeys={typingPubkeys}
           />
         ) : null}
+        <AgentDmStopButton
+          channel={channel ?? null}
+          currentPubkey={currentPubkey}
+          workingPubkeys={[...typingPubkeys, ...workingBotPubkeys]}
+        />
       </div>
     </ComposerActivityAccessory>
   );

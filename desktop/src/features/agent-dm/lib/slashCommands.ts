@@ -18,7 +18,18 @@ import { invokeTauri } from "@/shared/api/tauri";
 
 export type AgentSessionCommand = {
   kind: "session";
-  name: "new" | "sessions";
+  /** `new`, `compact` and `sessions` come from the server and go as text;
+   * the rest are this client's own (sessionSetup.ts). */
+  name:
+    | "new"
+    | "compact"
+    | "sessions"
+    | "model"
+    | "effort"
+    | "status"
+    | "usage"
+    | "context"
+    | "cost";
   description: string;
   usage: string | null;
 };
@@ -47,6 +58,11 @@ const MAX_QUERY_CHARS = 64;
 export const COMMANDS_REVALIDATE_MS = 60_000;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const HEX64_RE = /^[0-9a-f]{64}$/;
+const SERVER_SESSION_COMMANDS: ReadonlySet<unknown> = new Set([
+  "new",
+  "compact",
+  "sessions",
+]);
 
 function optionalText(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -58,7 +74,7 @@ function optionalText(value: unknown, max: number): string | null {
  * Validate a commands body for `agentPublicKey`. Returns null when the body
  * as a whole is unusable; malformed or duplicate entries are dropped. A
  * skill whose name collides with a session command is dropped so that a
- * chosen `/new` or `/sessions` always means the session command.
+ * chosen `/new`, `/compact` or `/sessions` always means the session command.
  */
 export function parseAgentCommandsBody(
   body: unknown,
@@ -81,12 +97,13 @@ export function parseAgentCommandsBody(
     if (!raw || typeof raw !== "object") continue;
     const entry = raw as Record<string, unknown>;
     if (entry.kind === "session") {
-      if (entry.name !== "new" && entry.name !== "sessions") continue;
-      if (seen.has(entry.name)) continue;
-      seen.add(entry.name);
+      if (!SERVER_SESSION_COMMANDS.has(entry.name)) continue;
+      const name = entry.name as AgentSessionCommand["name"];
+      if (seen.has(name)) continue;
+      seen.add(name);
       sessions.push({
         kind: "session",
-        name: entry.name,
+        name,
         description: optionalText(entry.description, 300) ?? "",
         usage: optionalText(entry.usage, 200),
       });

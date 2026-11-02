@@ -104,6 +104,17 @@ test("bodies are validated and malformed entries dropped", () => {
   );
 });
 
+test("/compact is listed with the other session commands", () => {
+  const parsed = parseAgentCommandsBody(
+    body([{ kind: "session", name: "compact", description: "Compact." }]),
+    AGENT,
+  );
+  assert.deepEqual(
+    parsed.map((command) => `${command.kind}:${command.name}`),
+    ["session:compact"],
+  );
+});
+
 test("registry skills keep their source and display name", () => {
   const [registry] = parseAgentCommandsBody(
     body([

@@ -1,0 +1,194 @@
+import * as React from "react";
+import { Check } from "lucide-react";
+import { toast } from "sonner";
+
+import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
+import { normalizePubkey } from "@/shared/lib/pubkey";
+import { cn } from "@/shared/lib/cn";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+
+import {
+  changeSessionSetup,
+  currentModelEfforts,
+  effortLabel,
+  ensureSessionSetup,
+  getSessionSetup,
+  getSessionSetupVersion,
+  setupChangeErrorSentence,
+  setupChipText,
+  subscribeSessionSetup,
+  takeSetupPickerRequest,
+  vitalsLines,
+  type SessionSetupPanel,
+  type SetupChoice,
+} from "../lib/sessionSetup";
+
+/** The header re-reads the panel this often while the DM shows. */
+const REFRESH_MS = 60_000;
+
+function ChoiceRow({
+  disabled,
+  label,
+  onChoose,
+  selected,
+  testId,
+}: {
+  disabled: boolean;
+  label: string;
+  onChoose: () => void;
+  selected: boolean;
+  testId: string;
+}) {
+  return (
+    <button
+      aria-pressed={selected}
+      className={cn(
+        "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-sm",
+        "hover:bg-accent focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
+        "disabled:pointer-events-none disabled:opacity-60",
+      )}
+      data-testid={testId}
+      disabled={disabled || selected}
+      onClick={onChoose}
+      type="button"
+    >
+      <span className="min-w-0 truncate">{label}</span>
+      {selected ? <Check aria-hidden className="h-3.5 w-3.5 shrink-0" /> : null}
+    </button>
+  );
+}
+
+function SetupPanelBody({
+  agentPubkey,
+  panel,
+}: {
+  agentPubkey: string;
+  panel: SessionSetupPanel;
+}) {
+  const [saving, setSaving] = React.useState(false);
+  const choose = async (choice: SetupChoice) => {
+    setSaving(true);
+    try {
+      await changeSessionSetup(agentPubkey, choice);
+    } catch (error) {
+      toast.error(setupChangeErrorSentence(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const efforts = currentModelEfforts(panel);
+  const lines = panel.vitals ? vitalsLines(panel.vitals) : [];
+  return (
+    <div className="flex flex-col gap-3" data-testid="agent-session-panel">
+      <p className="text-sm font-medium">{panel.label}</p>
+      {panel.canChangeModel && panel.models.length > 0 ? (
+        <section aria-label="Model" className="flex flex-col gap-0.5">
+          <h3 className="px-2 text-xs text-muted-foreground">Model</h3>
+          {panel.models.map((model) => (
+            <ChoiceRow
+              disabled={saving}
+              key={model.id}
+              label={model.label}
+              onChoose={() => void choose({ model: model.id })}
+              selected={model.id === panel.model}
+              testId={`agent-session-model-${model.id}`}
+            />
+          ))}
+        </section>
+      ) : null}
+      {panel.canChangeEffort && efforts.length > 0 ? (
+        <section aria-label="Reasoning" className="flex flex-col gap-0.5">
+          <h3 className="px-2 text-xs text-muted-foreground">Reasoning</h3>
+          {efforts.map((effort) => (
+            <ChoiceRow
+              disabled={saving}
+              key={effort}
+              label={effortLabel(panel, effort)}
+              onChoose={() => void choose({ effort })}
+              selected={effort === panel.effort}
+              testId={`agent-session-effort-${effort}`}
+            />
+          ))}
+        </section>
+      ) : null}
+      {panel.canChangeModel || panel.canChangeEffort ? (
+        <p className="px-2 text-xs text-muted-foreground">
+          A change applies from the next turn.
+        </p>
+      ) : null}
+      {lines.length > 0 ? (
+        <ul
+          className="flex flex-col gap-0.5 border-t border-border px-2 pt-2 text-xs text-muted-foreground"
+          data-testid="agent-session-vitals"
+        >
+          {lines.map((line) => (
+            <li className="break-words" key={line}>
+              {line}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The DM header's line for the reader's session with a hosted agent, for
+ * example "Claude Code · Opus 5.5 · High · 25%". It opens the session's
+ * vitals and the model and reasoning picks; `/model`, `/effort` and the
+ * vitals commands open it too. Nothing shows for an agent with no host.
+ */
+export function AgentSessionChip({
+  agentPubkey,
+  isAgentHint,
+}: {
+  agentPubkey: string;
+  isAgentHint: boolean;
+}) {
+  const knownAgents = useKnownAgentPubkeys();
+  const isAgent = isAgentHint || knownAgents.has(normalizePubkey(agentPubkey));
+  React.useSyncExternalStore(
+    subscribeSessionSetup,
+    getSessionSetupVersion,
+    getSessionSetupVersion,
+  );
+  const [open, setOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!isAgent) return;
+    void ensureSessionSetup(agentPubkey);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void ensureSessionSetup(agentPubkey);
+      }
+    }, REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [agentPubkey, isAgent]);
+
+  const panel = isAgent ? getSessionSetup(agentPubkey) : null;
+  // A `/model` or `/status` from the composer opens this panel.
+  React.useEffect(() => {
+    if (panel && takeSetupPickerRequest(agentPubkey)) setOpen(true);
+  });
+  if (!panel) return null;
+
+  const text = setupChipText(panel);
+  return (
+    <Popover onOpenChange={setOpen} open={open}>
+      <PopoverTrigger asChild>
+        <button
+          aria-label={`Session: ${text}`}
+          className="max-w-56 truncate rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+          data-testid="agent-session-chip"
+          title={text}
+          type="button"
+        >
+          {text}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 p-2">
+        <SetupPanelBody agentPubkey={agentPubkey} panel={panel} />
+      </PopoverContent>
+    </Popover>
+  );
+}

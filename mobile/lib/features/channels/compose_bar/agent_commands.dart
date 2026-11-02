@@ -110,6 +110,7 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
   required TextEditingController controller,
   required FocusNode focusNode,
   required Future<bool> Function(String? agentName) confirmNewSession,
+  required ValueChanged<String> openSession,
   required VoidCallback submit,
 }) {
   final query = useState<String?>(null);
@@ -196,9 +197,17 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
                 .value ??
             const <AgentCommand>[]
       : const <AgentCommand>[];
-  final commands = searched.isEmpty
+  final merged = searched.isEmpty
       ? listed
       : mergeAgentCommands(searched, listed);
+  final commands = withAgentDmSetupCommands(
+    merged,
+    listOpen && !groupMode
+        ? ref
+              .watch(agentDmSessionSetupProvider(commandAgent.toLowerCase()))
+              .value
+        : null,
+  );
   final List<AgentCommand> suggestions;
   if (listOpen) {
     // Session commands are the whole message: only a leading "/" with
@@ -333,6 +342,18 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     final text = controller.text;
     if (command.kind == AgentCommandKind.session && command.name == 'new') {
       unawaited(startNewSession(commandAgent, targetLabel));
+      return;
+    }
+    // This session's own commands open its panel, and never go as a message.
+    if (!groupMode &&
+        commandAgent != null &&
+        command.kind == AgentCommandKind.session &&
+        isAgentDmSetupCommandName(command.name)) {
+      final dm = findAgentCommandQuery(text, controller.selection.baseOffset);
+      if (dm == null) return;
+      final next = replaceToken(text, dm.tokenStart, dm.tokenEnd, '');
+      setText(next.text, next.caret);
+      openSession(commandAgent.toLowerCase());
       return;
     }
     if (!groupMode || open == null) {

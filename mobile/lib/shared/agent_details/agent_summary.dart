@@ -66,6 +66,7 @@ class AgentSummarySession {
 @immutable
 class AgentSummary {
   const AgentSummary({
+    this.agentId,
     required this.name,
     this.description,
     required this.status,
@@ -81,6 +82,8 @@ class AgentSummary {
     this.editUrl,
   });
 
+  /// The agent's id on its host.
+  final String? agentId;
   final String name;
   final String? description;
   final String status;
@@ -124,6 +127,7 @@ AgentSummary? parseAgentSummary(
   final tools = body['tools'];
   final editUrl = Uri.tryParse(_text(body['edit_url']) ?? '');
   return AgentSummary(
+    agentId: _text(agent['id']),
     name: name,
     description: _text(agent['description']),
     status: _text(agent['status']) ?? 'enabled',

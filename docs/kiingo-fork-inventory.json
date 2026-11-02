@@ -2468,6 +2468,24 @@
       "paths": [
         "crates/buzz-relay/src/api/git/binding.rs"
       ]
+    },
+    {
+      "id": "agent-dm-session-setup-and-stop",
+      "classification": "retain-generic",
+      "owner": "Buzz agent access maintainers",
+      "purpose": "The reader's 1:1 DM with a hosted agent shows its session: the model, level and vitals from the host's session-setup panel, the /model, /effort, /status, /usage, /context and /cost commands, and Stop while the agent works. Clients read the same chat routes as the other apps on the Buzz mount; a change applies from the next turn. /compact joins the listed session commands.",
+      "upstreamStatus": "Depends on the hosted-agent routes; not proposed upstream.",
+      "removalCondition": "Drop when upstream Buzz offers session setup, vitals and turn Stop for hosted-agent DMs.",
+      "paths": [
+        "desktop/src/features/agent-dm/lib/sessionSetup.ts",
+        "desktop/src/features/agent-dm/lib/sessionSetup.test.mjs",
+        "desktop/src/features/agent-dm/ui/AgentDmStopButton.tsx",
+        "desktop/src/features/agent-dm/ui/AgentSessionChip.tsx",
+        "mobile/lib/features/channels/agent_dm/agent_dm_session_row.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_session_setup.dart",
+        "mobile/test/features/channels/agent_dm/agent_dm_session_row_test.dart",
+        "mobile/test/shared/agent_dm/agent_dm_session_setup_test.dart"
+      ]
     }
   ],
   "budgetAmendments": [

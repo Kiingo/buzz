@@ -446,6 +446,8 @@ class ComposeBar extends HookConsumerWidget {
       agentPubkey: commandAgentPubkey,
       confirmNewSession: (agentName) =>
           _confirmNewAgentSession(context, agentName),
+      openSession: (agent) =>
+          unawaited(showAgentDmSessionSheet(context, agent)),
       submit: () => submitDraft.value?.call(),
       group: groupAgentCommands && commandAgentPubkey == null
           ? _GroupAgentCommandContext(
@@ -577,6 +579,37 @@ class ComposeBar extends HookConsumerWidget {
       // Resolved before any await: see
       // `_reportSendCancelledByCommunitySwitch`.
       final messenger = ScaffoldMessenger.maybeOf(context);
+
+      // Session commands never reach the model. An agent with no panel (no
+      // host) has none of them, so its `/model` stays an ordinary message.
+      final setupAgent = commandAgentPubkey;
+      final setupCommand = setupAgent == null || hasAttachments
+          ? null
+          : parseAgentDmSetupCommand(text);
+      if (setupAgent != null && setupCommand != null) {
+        isSending.value = true;
+        final AgentDmSessionSetup? setup;
+        try {
+          setup = await ref.read(
+            agentDmSessionSetupProvider(setupAgent.toLowerCase()).future,
+          );
+        } finally {
+          isSending.value = false;
+        }
+        if (setup != null) {
+          clearComposer();
+          if (context.mounted) {
+            await runAgentDmSetupCommand(
+              context,
+              ref,
+              setupAgent.toLowerCase(),
+              setup,
+              setupCommand,
+            );
+          }
+          return;
+        }
+      }
 
       // Extract pubkeys for mentions present in the final text.
       List<MentionCandidate> selectedMentions;

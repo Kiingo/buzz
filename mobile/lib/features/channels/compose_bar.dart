@@ -20,6 +20,7 @@ import 'package:nostr/nostr.dart' as nostr;
 
 import '../../shared/agent_commands/agent_commands.dart';
 import '../../shared/agent_commands/group_agent_commands.dart';
+import '../../shared/agent_dm/agent_dm_session_setup.dart';
 import '../../shared/mentions/agent_identity_provider.dart';
 import '../../shared/mentions/mention_bindings.dart';
 import '../../shared/mentions/mention_rules.dart';
@@ -40,6 +41,7 @@ import '../../shared/custom_emoji/custom_emoji.dart';
 import '../../shared/custom_emoji/custom_emoji_provider.dart';
 import '../../shared/deeplink/deep_link.dart';
 import '../activity/compose_drafts_provider.dart';
+import 'agent_dm/agent_dm_session_row.dart';
 import 'camera_capture_cleanup.dart';
 import 'channel.dart';
 import 'channel_management_provider.dart';

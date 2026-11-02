@@ -46,6 +46,19 @@ void main() {
       ]);
     });
 
+    test('lists /compact with the other session commands', () {
+      final commands = parseAgentCommands(
+        _body([
+          {'kind': 'session', 'name': 'compact', 'description': 'Compact.'},
+          {'kind': 'session', 'name': 'reset', 'description': 'Not ours.'},
+        ]),
+        agentPublicKey: _agent,
+      );
+      expect(commands, [
+        const AgentCommand.session(name: 'compact', description: 'Compact.'),
+      ]);
+    });
+
     test('rejects another contract or another agent', () {
       expect(
         parseAgentCommands({'contract_version': 2}, agentPublicKey: _agent),

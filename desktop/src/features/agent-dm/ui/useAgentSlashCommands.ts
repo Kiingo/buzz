@@ -38,6 +38,22 @@ import {
   type SlashAudience,
 } from "../lib/slashCommands";
 import {
+  changeSessionSetup,
+  effortLabel,
+  ensureSessionSetup,
+  getSessionSetup,
+  getSessionSetupVersion,
+  parseSetupCommand,
+  requestSetupPicker,
+  resolveEffortArg,
+  resolveModelArg,
+  setupChangeErrorSentence,
+  setupCommandEntries,
+  subscribeSessionSetup,
+  type SessionSetupPanel,
+  type SetupCommand,
+} from "../lib/sessionSetup";
+import {
   agentDmPeer,
   argumentHintFor,
   buildSkillMessage,
@@ -145,6 +161,66 @@ function mergeCommands(
 }
 
 /**
+ * The list with this session's own commands after the server's: they lead a
+ * skill of the same name, so a chosen `/model` always means the command.
+ */
+function withSetupCommands(
+  commands: readonly AgentSlashCommand[],
+  panel: SessionSetupPanel,
+): AgentSlashCommand[] {
+  const entries = setupCommandEntries(panel);
+  const names = new Set<string>(entries.map((entry) => entry.name));
+  const others = commands.filter((command) => !names.has(command.name));
+  return [
+    ...others.filter((command) => command.kind === "session"),
+    ...entries.map(
+      (entry): AgentSlashCommand => ({
+        kind: "session",
+        name: entry.name,
+        description: entry.description,
+        usage: `/${entry.name}`,
+      }),
+    ),
+    ...others.filter((command) => command.kind !== "session"),
+  ];
+}
+
+/** Carry out a session command; a pick that isn't clear opens the panel. */
+async function runSetupCommand(
+  agentPubkey: string,
+  panel: SessionSetupPanel,
+  command: SetupCommand,
+): Promise<void> {
+  if (command.name !== "model" && command.name !== "effort") {
+    requestSetupPicker(agentPubkey);
+    return;
+  }
+  const arg =
+    command.arg === null
+      ? "ask"
+      : command.name === "model"
+        ? resolveModelArg(panel, command.arg)
+        : resolveEffortArg(panel, command.arg);
+  if (arg === "ask") {
+    requestSetupPicker(agentPubkey);
+    return;
+  }
+  try {
+    const next = await changeSessionSetup(agentPubkey, {
+      [command.name]: arg.pick,
+    });
+    const shown =
+      command.name === "model"
+        ? (next.models.find((model) => model.id === next.model)?.label ??
+          next.model)
+        : effortLabel(next, next.effort);
+    toast.success(`${shown} applies from the next turn.`);
+  } catch (error) {
+    toast.error(setupChangeErrorSentence(error));
+  }
+}
+
+/**
  * The composer's "/" menu. In a 1:1 agent DM it lists that agent's session
  * commands and skills and sends a chosen skill with its `buzz-skill` tag. In
  * a channel or thread (with `group`) the "/" is for an agent mentioned before
@@ -215,6 +291,11 @@ export function useAgentSlashCommands({
     getAgentCommandsVersion,
     getAgentCommandsVersion,
   );
+  React.useSyncExternalStore(
+    subscribeSessionSetup,
+    getSessionSetupVersion,
+    getSessionSetupVersion,
+  );
 
   const [slashQuery, setSlashQuery] = React.useState<GroupSlashQuery | null>(
     null,
@@ -271,10 +352,11 @@ export function useAgentSlashCommands({
     agentPubkey && slashQuery?.query.trim()
       ? getAgentCommandSearch(agentPubkey, audience, slashQuery.query)
       : null;
-  const commands = React.useMemo(
-    () => (searched ? mergeCommands(searched, listed) : listed),
-    [listed, searched],
-  );
+  const setupPanel = mode === "dm" && dmPeer ? getSessionSetup(dmPeer) : null;
+  const commands = React.useMemo(() => {
+    const merged = searched ? mergeCommands(searched, listed) : listed;
+    return setupPanel ? withSetupCommands(merged, setupPanel) : merged;
+  }, [listed, searched, setupPanel]);
   /** What a send is checked against: the list, plus skills picked from a
    * search. */
   const sendable = React.useCallback(
@@ -359,6 +441,7 @@ export function useAgentSlashCommands({
         mode === "dm" && dmPeer
           ? ({ kind: "agent", pubkey: dmPeer } as const)
           : groupTargetFor(nextText, next.tokenStart);
+      if (mode === "dm" && dmPeer) void ensureSessionSetup(dmPeer);
       if (nextTarget?.kind === "agent") {
         void refreshAgentCommands(nextTarget.pubkey, audience).then(() =>
           refreshAgentCommandSearch(nextTarget.pubkey, audience, next.query),
@@ -538,6 +621,18 @@ export function useAgentSlashCommands({
   const sendSkillIfInvoked = React.useCallback(
     async (plainText: string, onSent: () => void): Promise<boolean> => {
       if (mode !== "dm" || !dmPeer || !channelId) return false;
+      // Session commands never reach the model. An agent with no panel (no
+      // host) has none of them, so its `/model` stays an ordinary message.
+      const setupCommand = parseSetupCommand(plainText);
+      if (setupCommand) {
+        await ensureSessionSetup(dmPeer);
+        const panel = getSessionSetup(dmPeer);
+        if (panel) {
+          onSent();
+          await runSetupCommand(dmPeer, panel, setupCommand);
+          return true;
+        }
+      }
       const invocation = parseSkillInvocation(
         plainText,
         sendable(commands),
