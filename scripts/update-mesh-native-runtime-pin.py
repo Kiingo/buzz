@@ -27,6 +27,12 @@ pin.json by exact path and sha256 (`archive_extras`); Buzz refuses anything else
 
 The archives are a few GB in total; this streams them and keeps none on disk.
 The reviewer of the bump PR is the trust point: check this script's output.
+
+After a bump, re-check that the embedded node still cannot load a native
+serving plugin: in the new tag's mesh-llm checkout, `grep -n native_serving_plugin
+crates/mesh-llm-host-runtime/src/runtime/run_auto.rs crates/mesh-llm-host-runtime/src/sdk.rs`
+must print nothing, and `cargo tree --manifest-path desktop/src-tauri/Cargo.toml
+--features mesh-llm -i mesh-llm-cli` must match no package.
 """
 
 import hashlib
