@@ -89,6 +89,7 @@ jobs:
               - 'pnpm-lock.yaml'
             desktop-rust:
               - 'desktop/src-tauri/**'
+              - 'scripts/check-mesh-native-runtime-pin.py'
             web:
               - 'web/**'
               - 'pnpm-lock.yaml'

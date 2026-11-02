@@ -29,6 +29,8 @@ mod media_proxy;
 mod mesh_llm;
 #[cfg(not(feature = "mesh-llm"))]
 mod mesh_llm_stubs;
+#[cfg(feature = "mesh-llm")]
+pub mod mesh_native_runtime_env;
 mod migration;
 #[cfg(test)]
 mod model_tests;

@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "tag": "v0.76.2",
+  "git_rev": "a0c1e66b0ac037dd56544b9e2d94969ea43d694f",
+  "mesh_version": "0.76.2",
+  "skippy_abi": "0.1.53",
+  "manifest_sha256": "a030d08fea8f4038c2e8c5ef9d7214d4a7d7d04a4f554b9932b0cef9a1dda2f9",
+  "release_url_prefix": "https://github.com/Mesh-LLM/mesh-llm/releases/download/v0.76.2/",
+  "archive_extras": {
+    "meshllm-native-runtime-darwin-aarch64-metal": {
+      "README.md": "bb2cb1af23d944101ce42c143a7a50cd7a6962d6b253a2865156e3771c0e8468"
+    },
+    "meshllm-native-runtime-linux-aarch64-cpu": {
+      "README.md": "9651bfa67287877bd299fdffff4bb87bf144f4a0a64612a67d92708899629816"
+    },
+    "meshllm-native-runtime-linux-aarch64-cuda12": {
+      "README.md": "acac6ecf2b5456edbba60f0b6dcf23f88fbbb0bb7520fea0a8937129e68170d1"
+    },
+    "meshllm-native-runtime-linux-aarch64-cuda13": {
+      "README.md": "71550801b8b97a1807d68d751f8aa15793d8716b3e2110cd1fb52ba3de9bd369"
+    },
+    "meshllm-native-runtime-linux-x86_64-cpu": {
+      "README.md": "108cbfd92e4ec41a6f0512b40279690485bd7791d11752b17af0984ca4dfbeed"
+    },
+    "meshllm-native-runtime-linux-x86_64-cuda12": {
+      "README.md": "45e06701d69683c8f9f337c23525741fec91bb79ffd8b052e59750fce0a5b930"
+    },
+    "meshllm-native-runtime-linux-x86_64-cuda13": {
+      "README.md": "34c201f4a0f9985b9d848c2e2a776ccdae32b0a9953090fb52e61f0be3a7d77f"
+    },
+    "meshllm-native-runtime-linux-x86_64-rocm": {
+      "README.md": "f33e56f352b979446edf060fd1c42ec2d9699ea5b9a4ee042012fb63d13f8e68"
+    },
+    "meshllm-native-runtime-linux-x86_64-vulkan": {
+      "README.md": "87e543e67f641c617a9d8ac6b74ae03036406224caf939565aafc0ea4248c4ab"
+    },
+    "meshllm-native-runtime-windows-x86_64-cpu": {
+      "README.md": "cfe6da8416e7a6d2f3557da90f87b8ae70dba5cc09a4b1091bc45c1b3bab7ead"
+    },
+    "meshllm-native-runtime-windows-x86_64-cuda12": {
+      "README.md": "3ae10bb642ffdb9a862c81a0adb5efcf23062dd846b0d4b987c5a9fdfb5d5e4d",
+      "tools/mesh-llm-gpu-benchmark.exp": "cb6a0d1e5e46424dd6f8c3942cf3313a51c3cae9bcd05d18d4ff839fc5d6ecd8",
+      "tools/mesh-llm-gpu-benchmark.lib": "66164874064aa49696efe1b68c64a97e360f4e2d2c790d3b119c4bc719465bdc"
+    },
+    "meshllm-native-runtime-windows-x86_64-rocm": {
+      "README.md": "0f2a1ade2b676222d90d56f4746b10fec1cd71dc8c665c3ac78debc44250d87b"
+    },
+    "meshllm-native-runtime-windows-x86_64-vulkan": {
+      "README.md": "d0c66bd38a1a2f4a6e18cd31dcbb7e263c6c5e43467514557ccac6eaae34e354"
+    }
+  }
+}

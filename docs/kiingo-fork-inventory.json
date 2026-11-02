@@ -2497,6 +2497,25 @@
       "paths": [
         "desktop/src-tauri/deny.toml"
       ]
+    },
+    {
+      "id": "desktop-pinned-native-runtime",
+      "classification": "retain-generic",
+      "owner": "Buzz security maintainers",
+      "purpose": "The desktop build seals in the exact MeshLLM native-runtimes.json for its locked mesh-llm tag, with every archive and per-file sha256, and installs only that runtime into a cache Buzz owns before anything native loads. Archives are extracted by Buzz's own walker, which refuses links, devices, unsafe paths and unpinned files. Release builds ignore the manifest URL and bundle overrides and disable the host runtime's own download. A static check fails CI and the release when a mesh-llm bump leaves the pin behind.",
+      "upstreamStatus": "Generic supply-chain hardening; not yet submitted to block/buzz. Upstream MeshLLM runtimes are checksummed but not signed.",
+      "removalCondition": "Drop when upstream Buzz pins or signature-verifies the MeshLLM native runtime it loads, or when MeshLLM ships signed runtimes the SDK verifies against a pinned key with downloads that a host can disable.",
+      "paths": [
+        "desktop/src-tauri/mesh-native-runtime/native-runtimes.json",
+        "desktop/src-tauri/mesh-native-runtime/pin.json",
+        "desktop/src-tauri/src/main.rs",
+        "desktop/src-tauri/src/mesh_llm/mod.rs",
+        "desktop/src-tauri/src/mesh_llm/pinned_runtime.rs",
+        "desktop/src-tauri/src/mesh_llm/pinned_runtime_tests.rs",
+        "desktop/src-tauri/src/mesh_native_runtime_env.rs",
+        "scripts/check-mesh-native-runtime-pin.py",
+        "scripts/update-mesh-native-runtime-pin.py"
+      ]
     }
   ],
   "budgetAmendments": [

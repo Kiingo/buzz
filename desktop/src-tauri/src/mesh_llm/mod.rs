@@ -33,6 +33,8 @@ pub(crate) use recovery::{
 mod usage;
 pub use usage::{serving_usage_from_payload, MeshServingUsage};
 
+mod pinned_runtime;
+
 mod transport_policy;
 use transport_policy::{iroh_relay_mode, sdk_iroh_relay_config, validate_advertised_endpoint};
 #[cfg(test)]
@@ -287,10 +289,12 @@ pub struct DesktopMeshRuntime {
 }
 
 async fn initialize_mesh_native_runtime() -> anyhow::Result<()> {
-    // The dynamic host runtime installs the recommended signed runtime on first
-    // use when no compatible version is cached. Keep that SDK-owned path intact
-    // so release builds work on clean machines without bundling llama.cpp or
-    // requiring a separate `mesh-llm runtime install` command.
+    // Install or confirm, before anything native is loaded, the one runtime
+    // whose archive and per-file sha256s are pinned in this Buzz build
+    // (mesh-native-runtime/pin.json). Upstream runtimes are checksummed but not
+    // signed. The host runtime then loads that cached runtime; in release
+    // builds its own download path is disabled (mesh_native_runtime_env).
+    pinned_runtime::ensure_pinned_native_runtime().await?;
     mesh_llm_host_runtime::initialize_host_runtime()
         .await
         .map_err(|error| {

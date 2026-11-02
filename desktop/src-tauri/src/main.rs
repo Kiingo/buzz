@@ -16,5 +16,10 @@ fn main() {
         std::process::exit(1);
     }
 
+    // Same single-threaded window: pin where the MeshLLM native runtime comes
+    // from before any thread can read the environment.
+    #[cfg(feature = "mesh-llm")]
+    buzz_lib::mesh_native_runtime_env::apply();
+
     buzz_lib::run()
 }
