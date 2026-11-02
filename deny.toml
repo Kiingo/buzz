@@ -42,6 +42,17 @@ ignore = [
     { id = "RUSTSEC-2026-0367", reason = "zip 8.6.0 via mesh-llm v0.76.2 only; extract() is never called (entries written as plain files); needs mesh-llm on zip >= 9" },
     { id = "RUSTSEC-2026-0368", reason = "zip 8.6.0 via mesh-llm v0.76.2 only; extract() is never called and no symlinks are created; needs mesh-llm on zip >= 9" },
     { id = "RUSTSEC-2026-0369", reason = "zip 8.6.0 via mesh-llm v0.76.2 only; extract() is never called and no permissions are applied; needs mesh-llm on zip >= 9" },
+    # zip < 9: ZipArchive::extract() aborts the process (DoS only, no memory
+    # unsafety) on a symlink entry with a huge declared size. In this lockfile
+    # zip 8.6.0 is reached only through the dev-dependency edge of the
+    # examples-only buzz-mesh-smoke (`cargo tree --workspace --all-features
+    # -i zip -e normal,build --target all` prints nothing). mesh-llm v0.76.2
+    # requires zip ^8.6 and no mesh-llm release ships zip 9 yet (v0.78.1 is
+    # still on 8.6; zip 9 is on mesh-llm main since Mesh-LLM/mesh-llm#2471).
+    # Neither mesh-llm (plugin-manager archive.rs, system release_fetch.rs)
+    # nor Buzz calls extract(): both walk entries and copy plain files.
+    # Revisit by 2026-12-01 or at the next mesh-llm tag on zip >= 9.
+    { id = "RUSTSEC-2026-0429", reason = "zip 8.6.0 dev-only here (buzz-mesh-smoke examples via mesh-llm v0.76.2, which pins zip ^8.6); extract() never called; revisit 2026-12-01 or when mesh-llm tags zip >= 9" },
     # zvariant, zbus_names and zvariant_derive 5.x/4.x: unmaintained notices
     # (merged into zbus 6), not vulnerabilities. Pulled only by zbus 5.19 via
     # secret-service / zbus-secret-service-keyring-store (desktop Linux
