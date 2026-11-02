@@ -193,8 +193,14 @@ fn a_pinned_archive_extracts_pinned_files_only_with_buzz_modes() {
         assert_eq!(mode("tools/bench"), 0o755);
     }
     let installed = NativeRuntimeManifest::read_from_dir(&root).expect("bundle manifest");
-    verify_installed_dir(&root, &installed, &artifact_fixture(), &extras_fixture())
-        .expect("extracted tree verifies");
+    verify_installed_dir(
+        &root,
+        &installed,
+        &artifact_fixture(),
+        &extras_fixture(),
+        Modes::Private,
+    )
+    .expect("extracted tree verifies");
 }
 
 #[test]
@@ -301,10 +307,11 @@ fn installed_runtime_check_refuses_tampering_extras_and_links() {
     let installed = NativeRuntimeManifest::read_from_dir(&root).expect("bundle manifest");
 
     fs::write(root.join("README.md"), README).expect("upstream-style extra");
-    verify_installed_dir(&root, &installed, &artifact, &extras).expect("listed extra is allowed");
+    verify_installed_dir(&root, &installed, &artifact, &extras, Modes::Private)
+        .expect("listed extra is allowed");
 
     fs::write(root.join("lib/unexpected.so"), LIB).expect("write");
-    assert!(verify_installed_dir(&root, &installed, &artifact, &extras).is_err());
+    assert!(verify_installed_dir(&root, &installed, &artifact, &extras, Modes::Private).is_err());
     fs::remove_file(root.join("lib/unexpected.so")).expect("remove");
 
     #[cfg(unix)]
@@ -312,7 +319,8 @@ fn installed_runtime_check_refuses_tampering_extras_and_links() {
         std::os::unix::fs::symlink("/etc/hosts", root.join("lib/link")).expect("symlink");
         let message = format!(
             "{:#}",
-            verify_installed_dir(&root, &installed, &artifact, &extras).expect_err("link")
+            verify_installed_dir(&root, &installed, &artifact, &extras, Modes::Private)
+                .expect_err("link")
         );
         assert!(message.contains("is a link or device"), "{message}");
         fs::remove_file(root.join("lib/link")).expect("remove link");
@@ -320,10 +328,10 @@ fn installed_runtime_check_refuses_tampering_extras_and_links() {
 
     let mut other = artifact.clone();
     other.rank += 1;
-    assert!(verify_installed_dir(&root, &installed, &other, &extras).is_err());
+    assert!(verify_installed_dir(&root, &installed, &other, &extras, Modes::Private).is_err());
 
     fs::write(root.join("lib/libtest.so"), b"swapped").expect("tamper");
-    assert!(verify_installed_dir(&root, &installed, &artifact, &extras).is_err());
+    assert!(verify_installed_dir(&root, &installed, &artifact, &extras, Modes::Private).is_err());
 }
 
 #[test]
@@ -335,4 +343,126 @@ fn cache_removal_stays_inside_the_cache_root() {
     assert!(remove_inside(&root, &root).is_err());
     remove_inside(&root, &root.join("0.76.2/x")).expect("inside");
     assert!(!root.join("0.76.2/x").exists());
+}
+
+#[cfg(unix)]
+fn mode_of(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::symlink_metadata(path)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777
+}
+
+#[cfg(unix)]
+fn chmod(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("chmod");
+}
+
+/// A pinned runtime laid out the way an upstream install leaves it under
+/// `<root>/<mesh version>/<id>`, every entry world-writable.
+#[cfg(unix)]
+fn world_writable_install(root: &Path, artifact: &NativeRuntimeArtifact) -> PathBuf {
+    let mesh_version = artifact.mesh_version.clone().expect("fixture mesh_version");
+    let dir = root.join(mesh_version).join(&artifact.id);
+    fs::create_dir_all(dir.join("lib")).expect("mkdir lib");
+    fs::create_dir_all(dir.join("tools")).expect("mkdir tools");
+    fs::write(dir.join("lib/libtest.so"), LIB).expect("lib");
+    fs::write(dir.join("tools/bench"), TOOL).expect("tool");
+    fs::write(dir.join("README.md"), README).expect("readme");
+    fs::write(dir.join("manifest.json"), bundle_manifest(artifact)).expect("manifest");
+    for path in [
+        "lib/libtest.so",
+        "tools/bench",
+        "README.md",
+        "manifest.json",
+        "lib",
+        "tools",
+        "",
+    ] {
+        chmod(&dir.join(path), 0o777);
+    }
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn a_world_writable_shared_cache_copy_gets_buzz_modes_before_it_counts() {
+    let work = tempfile::tempdir().expect("tempdir");
+    let artifact = artifact_fixture();
+    let extras = extras_fixture();
+    let mesh_version = artifact.mesh_version.clone().expect("fixture mesh_version");
+    let shared_root = work.path().join("shared");
+    let source = world_writable_install(&shared_root, &artifact);
+    let cache = NativeRuntimeCache::new(work.path().join("buzz"));
+
+    assert!(adopt_from(&cache, &shared_root, &artifact, &extras, &mesh_version).expect("adopt"));
+
+    let installed = cache.runtime_dir(&mesh_version, &artifact.id);
+    assert_eq!(mode_of(&installed.join("lib/libtest.so")), 0o644);
+    assert_eq!(mode_of(&installed.join("tools/bench")), 0o755);
+    assert_eq!(mode_of(&installed.join("README.md")), 0o644);
+    for dir in [
+        installed.clone(),
+        installed.join("lib"),
+        installed.join(".."),
+        cache.root().to_path_buf(),
+    ] {
+        assert_eq!(mode_of(&dir), 0o755, "{}", dir.display());
+    }
+    assert_eq!(
+        mode_of(&source.join("lib/libtest.so")),
+        0o777,
+        "the source is left alone"
+    );
+    assert!(audit_cache(&cache, &artifact, &extras, &mesh_version).expect("audit"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_writable_runtime_in_buzz_cache_is_refused_and_removed() {
+    let work = tempfile::tempdir().expect("tempdir");
+    let artifact = artifact_fixture();
+    let extras = extras_fixture();
+    let mesh_version = artifact.mesh_version.clone().expect("fixture mesh_version");
+    let cache = NativeRuntimeCache::new(work.path().join("buzz"));
+    let dir = world_writable_install(cache.root(), &artifact);
+    let manifest = NativeRuntimeManifest::read_from_dir(&dir).expect("manifest");
+
+    verify_installed_dir(&dir, &manifest, &artifact, &extras, Modes::Ignore)
+        .expect("contents are pinned");
+    let message = format!(
+        "{:#}",
+        verify_installed_dir(&dir, &manifest, &artifact, &extras, Modes::Private)
+            .expect_err("writable")
+    );
+    assert!(message.contains("writable by other users"), "{message}");
+
+    assert!(!audit_cache(&cache, &artifact, &extras, &mesh_version).expect("audit"));
+    assert!(!dir.exists(), "a writable runtime is removed, never loaded");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_writable_cache_ancestor_refuses_the_runtime() {
+    let work = tempfile::tempdir().expect("tempdir");
+    let artifact = artifact_fixture();
+    let cache = NativeRuntimeCache::new(work.path().join("buzz"));
+    let dir = world_writable_install(cache.root(), &artifact);
+    set_buzz_modes(cache.root(), &dir, &artifact).expect("modes");
+    require_private_ancestors(cache.root(), &dir, &artifact.id).expect("private");
+    chmod(cache.root(), 0o777);
+    assert!(require_private_ancestors(cache.root(), &dir, &artifact.id).is_err());
+}
+
+#[test]
+fn serving_needs_buzz_own_cache_directory() {
+    let message = require_buzz_cache(None, Path::new("/tmp/mesh"))
+        .expect_err("no per-user cache")
+        .to_string();
+    assert!(message.contains("private cache folder"), "{message}");
+    assert!(require_buzz_cache(Some(Path::new("/a/Buzz")), Path::new("/tmp/mesh")).is_err());
+    require_buzz_cache(Some(Path::new("/a/Buzz")), Path::new("/a/Buzz")).expect("same cache");
 }

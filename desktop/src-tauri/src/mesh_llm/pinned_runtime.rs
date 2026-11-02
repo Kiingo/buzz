@@ -17,7 +17,10 @@
 //! 4. a missing runtime is downloaded from the pinned release, its archive
 //!    sha256 checked before extraction, and extracted by [`extract_pinned_archive`],
 //!    which refuses links, devices, unsafe paths and any file the pin does not
-//!    name.
+//!    name;
+//! 5. every copy into the cache gets Buzz's own modes, and nothing another
+//!    local user could write (group or other write, here or in the cache
+//!    ancestors) is accepted. The cache must be the per-user one `main` set.
 //!
 //! The host runtime then loads that cached runtime. In release builds its own
 //! download path is disabled (`crate::mesh_native_runtime_env`).
@@ -33,9 +36,9 @@ use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use mesh_llm_host_runtime::sdk::native_runtime::{
     current_skippy_abi_version, default_native_runtime_cache, host_runtime_profile,
-    native_runtime_cache, select_native_runtime, NativeRuntimeArtifact, NativeRuntimeCache,
-    NativeRuntimeManifest, NativeRuntimeReleaseManifest, RuntimeSelection, CURRENT_MESH_VERSION,
-    NATIVE_RUNTIME_MANIFEST_FILE,
+    native_runtime_cache, select_native_runtime, InstalledNativeRuntime, NativeRuntimeArtifact,
+    NativeRuntimeCache, NativeRuntimeManifest, NativeRuntimeReleaseManifest, RuntimeSelection,
+    CURRENT_MESH_VERSION, NATIVE_RUNTIME_MANIFEST_FILE,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -97,6 +100,10 @@ pub(super) async fn ensure_pinned_native_runtime() -> Result<()> {
         .cloned()
         .unwrap_or_default();
     let cache = default_native_runtime_cache()?;
+    require_buzz_cache(
+        crate::mesh_native_runtime_env::buzz_runtime_cache_dir().as_deref(),
+        cache.root(),
+    )?;
     let mesh_version = sealed.pin.mesh_version.clone();
 
     let present = {
@@ -115,6 +122,25 @@ pub(super) async fn ensure_pinned_native_runtime() -> Result<()> {
     }
     *verified = true;
     Ok(())
+}
+
+/// The host runtime must be using Buzz's own cache (set in `main`); with no
+/// per-user cache directory there is nowhere private to put a runtime.
+fn require_buzz_cache(expected: Option<&Path>, actual: &Path) -> Result<()> {
+    match expected {
+        None => Err(anyhow!(
+            "Share compute is unavailable: Buzz cannot find a private cache folder for the MeshLLM native runtime on this machine."
+        )),
+        Some(expected) if expected != actual => {
+            eprintln!(
+                "buzz-mesh: native runtime cache is {}, expected {}",
+                actual.display(),
+                expected.display()
+            );
+            Err(anyhow!("{INTEGRITY_ERROR}"))
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 fn sealed() -> Result<&'static Sealed> {
@@ -246,7 +272,15 @@ fn audit_cache(
         let verdict = if runtime.path != expected_dir {
             Err(anyhow!("not the pinned runtime"))
         } else {
-            verify_installed_dir(&runtime.path, &runtime.manifest, artifact, extras)
+            require_private_ancestors(root, &runtime.path, &artifact.id).and_then(|()| {
+                verify_installed_dir(
+                    &runtime.path,
+                    &runtime.manifest,
+                    artifact,
+                    extras,
+                    Modes::Private,
+                )
+            })
         };
         match verdict {
             Ok(()) => present = true,
@@ -277,19 +311,34 @@ fn adopt_from_shared_cache(
     else {
         return Ok(false);
     };
+    adopt_from(cache, &shared_root, artifact, extras, mesh_version)
+}
+
+/// [`adopt_from_shared_cache`] for a given shared cache root. The source may
+/// carry any modes (upstream copies archive modes, some 0666/0777); its copy in
+/// Buzz's cache gets Buzz's modes and is verified again before it counts.
+fn adopt_from(
+    cache: &NativeRuntimeCache,
+    shared_root: &Path,
+    artifact: &NativeRuntimeArtifact,
+    extras: &BTreeMap<String, String>,
+    mesh_version: &str,
+) -> Result<bool> {
     if shared_root == cache.root() {
         return Ok(false);
     }
-    let shared = native_runtime_cache(Some(&shared_root))?;
+    let shared = native_runtime_cache(Some(shared_root))?;
     let source = shared.runtime_dir(mesh_version, &artifact.id);
     if !source.join(NATIVE_RUNTIME_MANIFEST_FILE).is_file() {
         return Ok(false);
     }
     let adopted = NativeRuntimeManifest::read_from_dir(&source)
-        .and_then(|manifest| verify_installed_dir(&source, &manifest, artifact, extras))
+        .and_then(|manifest| {
+            verify_installed_dir(&source, &manifest, artifact, extras, Modes::Ignore)
+        })
         .and_then(|()| cache.install_from_dir(&source))
         .and_then(|installed| {
-            verify_installed_dir(&installed.path, &installed.manifest, artifact, extras)?;
+            seal_installed(cache, &installed, artifact, extras)?;
             Ok(installed)
         });
     match adopted {
@@ -367,11 +416,9 @@ async fn download_and_install(
         let bundle = staged.join(&artifact.id);
         let manifest = NativeRuntimeManifest::read_from_dir(&bundle)
             .map_err(|error| manifest_mismatch(&artifact.id, error))?;
-        verify_installed_dir(&bundle, &manifest, &artifact, &extras)?;
+        verify_installed_dir(&bundle, &manifest, &artifact, &extras, Modes::Private)?;
         let installed = cache.install_from_dir(&bundle)?;
-        if let Err(error) =
-            verify_installed_dir(&installed.path, &installed.manifest, &artifact, &extras)
-        {
+        if let Err(error) = seal_installed(&cache, &installed, &artifact, &extras) {
             remove_inside(cache.root(), &installed.path)?;
             return Err(error);
         }
@@ -379,6 +426,25 @@ async fn download_and_install(
     })
     .await
     .context("native runtime install stopped")?
+}
+
+/// Give a freshly copied runtime Buzz's modes, then verify it as Buzz will
+/// load it.
+fn seal_installed(
+    cache: &NativeRuntimeCache,
+    installed: &InstalledNativeRuntime,
+    artifact: &NativeRuntimeArtifact,
+    extras: &BTreeMap<String, String>,
+) -> Result<()> {
+    set_buzz_modes(cache.root(), &installed.path, artifact)?;
+    require_private_ancestors(cache.root(), &installed.path, &artifact.id)?;
+    verify_installed_dir(
+        &installed.path,
+        &installed.manifest,
+        artifact,
+        extras,
+        Modes::Private,
+    )
 }
 
 /// Stream `url` to `path`, returning the sha256 of the bytes. Errors leave the
@@ -508,18 +574,32 @@ fn archive_relative_path(path: &Path, root: &str) -> Option<Option<PathBuf>> {
     Some((!relative.as_os_str().is_empty()).then_some(relative))
 }
 
+/// Whether [`verify_installed_dir`] also requires Buzz's own modes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Modes {
+    /// Anything Buzz will load: nothing group- or other-writable.
+    Private,
+    /// A copy source outside Buzz's cache; its copy is fixed and checked again.
+    Ignore,
+}
+
 /// Check an installed runtime directory against the sealed artifact: the same
 /// manifest, every pinned file with its pinned sha256, listed archive extras
 /// (upstream installs copy them) with theirs, and nothing else: no links, no
-/// unpinned files.
+/// unpinned files and, with [`Modes::Private`], nothing another local user
+/// could write.
 fn verify_installed_dir(
     dir: &Path,
     manifest: &NativeRuntimeManifest,
     artifact: &NativeRuntimeArtifact,
     extras: &BTreeMap<String, String>,
+    modes: Modes,
 ) -> Result<()> {
     if release_view(&manifest.runtime) != release_view(artifact) {
         return Err(manifest_mismatch(&artifact.id, anyhow!("manifest differs")));
+    }
+    if modes == Modes::Private && others_can_write(&fs::symlink_metadata(dir)?) {
+        return Err(file_error(&artifact.id, ".", FileProblem::Writable));
     }
     let mut seen = BTreeSet::new();
     let mut pending = vec![PathBuf::new()];
@@ -529,6 +609,9 @@ fn verify_installed_dir(
             let child = relative.join(entry.file_name());
             let key = path_key(&child);
             let kind = entry.file_type()?;
+            if modes == Modes::Private && others_can_write(&entry.metadata()?) {
+                return Err(file_error(&artifact.id, &key, FileProblem::Writable));
+            }
             if kind.is_dir() {
                 pending.push(child);
             } else if !kind.is_file() {
@@ -552,6 +635,82 @@ fn verify_installed_dir(
         if !seen.contains(key) {
             return Err(file_error(&artifact.id, key, FileProblem::Missing));
         }
+    }
+    Ok(())
+}
+
+/// Group or other write permission (unix); a file another local user could
+/// swap between the check and the load.
+fn others_can_write(metadata: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o022 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
+/// Give an installed runtime Buzz's own modes, whatever its source carried:
+/// 0755 for directories (the runtime, its version directory and the cache
+/// root) and tools, 0644 for every other file. `install_from_dir` copies
+/// source modes and creates directories under the process umask.
+fn set_buzz_modes(cache_root: &Path, dir: &Path, artifact: &NativeRuntimeArtifact) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let set = |path: &Path, mode: u32| {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode))
+                .with_context(|| format!("set mode {mode:o} on {}", path.display()))
+        };
+        anyhow::ensure!(
+            dir.starts_with(cache_root),
+            "{} is outside the native runtime cache",
+            dir.display()
+        );
+        let mut ancestor = Some(dir);
+        while let Some(path) = ancestor.filter(|path| path.starts_with(cache_root)) {
+            set(path, 0o755)?;
+            ancestor = path.parent();
+        }
+        let mut pending = vec![PathBuf::new()];
+        while let Some(relative) = pending.pop() {
+            for entry in fs::read_dir(dir.join(&relative))? {
+                let entry = entry?;
+                let child = relative.join(entry.file_name());
+                let kind = entry.file_type()?;
+                if kind.is_dir() {
+                    set(&dir.join(&child), 0o755)?;
+                    pending.push(child);
+                } else if kind.is_file() {
+                    let tool = artifact.tools.contains_key(&path_key(&child));
+                    set(&dir.join(&child), if tool { 0o755 } else { 0o644 })?;
+                }
+                // Links are never followed here; verification refuses them.
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (cache_root, dir, artifact);
+    Ok(())
+}
+
+/// Refuse a runtime whose cache ancestors another local user could write:
+/// they could swap the runtime directory itself.
+fn require_private_ancestors(cache_root: &Path, dir: &Path, id: &str) -> Result<()> {
+    let mut ancestor = dir.parent();
+    while let Some(path) = ancestor.filter(|path| path.starts_with(cache_root)) {
+        if others_can_write(&fs::symlink_metadata(path)?) {
+            return Err(file_error(
+                id,
+                &path.display().to_string(),
+                FileProblem::Writable,
+            ));
+        }
+        ancestor = path.parent();
     }
     Ok(())
 }
@@ -681,6 +840,7 @@ enum FileProblem {
     Mismatch,
     Missing,
     NotRegular,
+    Writable,
 }
 
 fn file_error(id: &str, path: &str, problem: FileProblem) -> anyhow::Error {
@@ -696,6 +856,9 @@ fn file_error(id: &str, path: &str, problem: FileProblem) -> anyhow::Error {
         ),
         FileProblem::NotRegular => anyhow!(
             "Share compute stopped: {path} in the MeshLLM native runtime {id} is a link or device, which Buzz does not install. Nothing was installed."
+        ),
+        FileProblem::Writable => anyhow!(
+            "Share compute stopped: {path} in the MeshLLM native runtime {id} is writable by other users, which Buzz does not load. Nothing was installed."
         ),
     }
 }
