@@ -1,10 +1,11 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at e844e7df8658a992914407c2fb79a121b85e1f96; do not edit here.
 import type { ComponentType as ReactComponentType } from "react";
 import {
   childKey,
   isVisible,
   MAX_DEPTH,
   MAX_SURFACE_NODES,
+  emailSendUnknown,
   sentEmailOf,
   type ChildRef,
   type ComponentType,
@@ -188,6 +189,28 @@ export const Node = ({
   if (!isVisible(component.visibleWhen, context.data, scope)) {
     return null;
   }
+  // This is a separate server-owned payload, never component props or agent
+  // HTML. The signature package validator permits raster data images only.
+  if (
+    componentId === "mailbox_signature_preview" &&
+    context.surface.template === "email_draft" &&
+    context.surface.emailSignaturePreview
+  ) {
+    const preview = context.surface.emailSignaturePreview;
+    const document = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline';"><style>body{margin:0;padding:12px;font:14px Arial;overflow-wrap:anywhere}img{max-width:100%}</style></head><body>${preview.html}</body></html>`;
+    return (
+      <section aria-label="Approved sending signature" className="space-y-1">
+        <p className="text-xs text-muted-foreground">Approved signature</p>
+        <iframe
+          title="Complete approved email signature"
+          sandbox=""
+          referrerPolicy="no-referrer"
+          srcDoc={document}
+          className="h-80 w-full rounded border bg-white"
+        />
+      </section>
+    );
+  }
   // At most MAX_SURFACE_NODES distinct nodes per surface snapshot (79 W8):
   // past it one "too large" row, and nothing more is drawn. Counted by node
   // key, so a redraw (a tab or modal toggled) never counts a node twice.
@@ -205,6 +228,17 @@ export const Node = ({
   // A sent email card is a read-only record of what went out (Ross,
   // 2026-10-31): no Send, Revise or Discard, no chips or menus.
   if (SENT_HIDDEN_TYPES.has(component.type) && sentEmailOf(context.surface)) {
+    return null;
+  }
+  // A send Outlook hasn't confirmed may be out (M-4916): the card's Send (on
+  // the card since 2026-11-02; inside its sheet on older cards) is not
+  // offered while that's open. The footer says so.
+  if (
+    (component.type === "Modal" ||
+      (component.type === "Button" &&
+        component.props.action === "send_confirmed")) &&
+    emailSendUnknown(context.surface)
+  ) {
     return null;
   }
   const View = component.known

@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at e844e7df8658a992914407c2fb79a121b85e1f96; do not edit here.
 import {
   Component,
   useCallback,
@@ -12,6 +12,8 @@ import {
   isOver,
   acceptsEdits,
   acceptsTaps,
+  CHECK_EMAIL_SEND_BUSY_ID,
+  emailSendUnknown,
   openableUrl,
   ROOT,
   sentEmailIsPlain,
@@ -410,6 +412,11 @@ const Footer = ({
     !controller.editsDisabled
       ? status.actionId
       : undefined;
+  const canCheckSend =
+    !sent &&
+    emailSendUnknown(surface) &&
+    acceptsTaps(surface) &&
+    !controller.editsDisabled;
   const line = saveLine(snapshot, controller.editedNote);
   if (!status && !snapshot.notice && !line && !editsDisabled) {
     return null;
@@ -435,6 +442,18 @@ const Footer = ({
               onClick={() => onRetry(retry)}
             >
               Retry
+            </SurfaceButton>
+          ) : null}
+          {canCheckSend ? (
+            <SurfaceButton
+              variant="plain"
+              className="text-xs"
+              disabled={snapshot.busyActionId !== undefined}
+              onClick={() => void controller.checkEmailSend()}
+            >
+              {snapshot.busyActionId === CHECK_EMAIL_SEND_BUSY_ID
+                ? "Checking…"
+                : "Check again"}
             </SurfaceButton>
           ) : null}
         </div>

@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at e844e7df8658a992914407c2fb79a121b85e1f96; do not edit here.
 import { useId } from "react";
 import {
   acceptsTaps,
@@ -17,6 +17,7 @@ import {
 } from "../core";
 import { cn } from "./cn";
 import { useNodeContext, type NodeProps } from "./context";
+import { FeedbackBox } from "./feedback";
 import { catalogIcon } from "./icons";
 import { QuoteBox, Spinner, SurfaceButton, SurfaceMenu } from "./ui";
 
@@ -128,7 +129,7 @@ export const ButtonView = ({ component, scope }: NodeProps) => {
     return null;
   }
   const style = context.string(component, "style") as ActionStyle | undefined;
-  return (
+  const button = (
     <ActionButton
       action={action}
       scope={scope}
@@ -136,6 +137,15 @@ export const ButtonView = ({ component, scope }: NodeProps) => {
       icon={context.string(component, "icon")}
       fullWidth={context.flag(component, "fullWidth", scope)}
     />
+  );
+  // An ask_agent with `feedback` opens its text box right under it.
+  return action.feedback ? (
+    <div className="flex w-full flex-col items-start gap-2">
+      {button}
+      <FeedbackBox actions={[action]} />
+    </div>
+  ) : (
+    button
   );
 };
 
@@ -219,7 +229,7 @@ export const ActionBarView = ({ component, scope }: NodeProps) => {
   const shown = [...head, ...tail.filter(showsWords)];
   const more = tail.filter((action) => !showsWords(action));
   const align = context.string(component, "align") ?? "start";
-  return (
+  const bar = (
     <div
       className={cn(
         "flex flex-wrap items-start gap-2",
@@ -235,6 +245,16 @@ export const ActionBarView = ({ component, scope }: NodeProps) => {
       ) : null}
     </div>
   );
+  // An ask_agent with `feedback` (Ask agent to revise) opens its text box
+  // under the bar, inside the card.
+  return listed.some((action) => action.feedback) ? (
+    <div className="flex w-full flex-col gap-2">
+      {bar}
+      <FeedbackBox actions={listed} />
+    </div>
+  ) : (
+    bar
+  );
 };
 
 export const MenuView = ({ component, scope }: NodeProps) => {
@@ -246,12 +266,20 @@ export const MenuView = ({ component, scope }: NodeProps) => {
   if (actions.length === 0) {
     return null;
   }
-  return (
+  const menu = (
     <MenuOf
       actions={actions}
       scope={scope}
       title={context.text(component, "label", scope, 80) ?? "More"}
     />
+  );
+  return actions.some((action) => action.feedback) ? (
+    <div className="flex w-full flex-col items-start gap-2">
+      {menu}
+      <FeedbackBox actions={actions} />
+    </div>
+  ) : (
+    menu
   );
 };
 
