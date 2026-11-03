@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at e844e7df8658a992914407c2fb79a121b85e1f96; do not edit here.
+// Generated from the Kiingo surface renderer packages at c3d3e03fd280ea26da45c1b0efba091a18018ce5; do not edit here.
 import type { ComponentType as ReactComponentType } from "react";
 import {
   childKey,
@@ -197,7 +197,7 @@ export const Node = ({
     context.surface.emailSignaturePreview
   ) {
     const preview = context.surface.emailSignaturePreview;
-    const document = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline';"><style>body{margin:0;padding:12px;font:14px Arial;overflow-wrap:anywhere}img{max-width:100%}</style></head><body>${preview.html}</body></html>`;
+    const document = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline';"><style>body{margin:0;padding:12px;font:14px Arial;overflow-wrap:anywhere}img{max-width:100%!important;height:auto!important}</style></head><body>${preview.html}</body></html>`;
     return (
       <section aria-label="Approved sending signature" className="space-y-1">
         <p className="text-xs text-muted-foreground">Approved signature</p>
@@ -206,7 +206,7 @@ export const Node = ({
           sandbox=""
           referrerPolicy="no-referrer"
           srcDoc={document}
-          className="h-80 w-full rounded border bg-white"
+          className="h-[32rem] w-full rounded border bg-white"
         />
       </section>
     );
