@@ -1,6 +1,7 @@
 import 'package:buzz/shared/agent_commands/agent_commands.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_delegation_client.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_session_setup.dart';
+import 'package:buzz/shared/agent_dm/agent_dm_turn_steps.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, Object?> _panel({Object? vitals}) => {
@@ -347,5 +348,140 @@ void main() {
       AgentDmStopOutcome.notRunning,
     );
     expect(parseAgentDmStopOutcome(null), AgentDmStopOutcome.notRunning);
+  });
+
+  group('a reply\'s steps line (B2)', () {
+    const run = '0192a6b0-0000-7000-8000-0000000000b1';
+    const you = '0192a6b0-0000-7000-8000-0000000000c1';
+    const reply = '0192a6b0-0000-7000-8000-0000000000d1';
+    const later = '0192a6b0-0000-7000-8000-0000000000d2';
+    final page = {
+      'entries': [
+        {'id': you, 'role': 'you', 'at': '2026-11-04T10:00:00Z', 'runId': run},
+        {
+          'id': reply,
+          'role': 'agent',
+          'at': '2026-11-04T10:00:40Z',
+          'runId': run,
+          'turnId': you,
+          'activity': {
+            'turnId': you,
+            'state': 'done',
+            'tools': 6,
+            'durationMs': 41000,
+          },
+          'memory': {'turnId': you, 'label': 'Recalled 2 memories'},
+        },
+        {
+          'id': later,
+          'role': 'agent',
+          'at': '2026-11-04T10:05:00Z',
+          'runId': run,
+        },
+      ],
+    };
+    int ms(String iso) => DateTime.parse(iso).millisecondsSinceEpoch;
+
+    test('a reply names its Run, or its entry when mirrored', () {
+      expect(
+        readAgentDmReplyKey([
+          ['kiingo-mission', run.toUpperCase()],
+        ], 100),
+        const AgentDmReplyKey(runId: run, atMs: 100000),
+      );
+      expect(
+        readAgentDmReplyKey([
+          ['buzz-mirror', 'web', '$reply#part-2', '100'],
+          ['buzz-mirror-author', 'agent', '', ''],
+        ], 100),
+        const AgentDmReplyKey(entryId: reply, atMs: 100000),
+      );
+      expect(
+        readAgentDmReplyKey([
+          ['buzz-mirror', 'web', reply, '100'],
+          ['buzz-mirror-author', 'requester', '', ''],
+        ], 100),
+        isNull,
+      );
+      expect(
+        readAgentDmReplyKey([
+          ['kiingo-mission', 'not-a-uuid'],
+        ], 100),
+        isNull,
+      );
+    });
+
+    test('the page ties a reply to the turn the other apps open', () {
+      final replies = parseAgentDmChatReplies(page);
+      expect(replies.map((r) => r.id), [reply, later]);
+      final first = findAgentDmReply(
+        replies,
+        AgentDmReplyKey(runId: run, atMs: ms('2026-11-04T10:00:41Z')),
+      )!;
+      expect(first.turnId, you);
+      expect(first.line, 'Recalled 2 memories · Used 6 tools · 41 s');
+      final second = findAgentDmReply(
+        replies,
+        AgentDmReplyKey(runId: run, atMs: ms('2026-11-04T10:04:58Z')),
+      )!;
+      expect(second.turnId, later);
+      expect(second.line, agentDmStepsLineUnknown);
+      expect(
+        findAgentDmReply(
+          replies,
+          const AgentDmReplyKey(entryId: later, atMs: 0),
+        )?.id,
+        later,
+      );
+      expect(
+        findAgentDmReply(
+          replies,
+          const AgentDmReplyKey(
+            runId: '0192a6b0-0000-7000-8000-0000000000ff',
+            atMs: 0,
+          ),
+        ),
+        isNull,
+      );
+      expect(agentDmTurnPagePath('a'), 'agents/a/chat?contract=2&limit=50');
+    });
+
+    test('steps parse as plain fields and drop bad links', () {
+      final steps = parseAgentDmTurnSteps({
+        'turnId': you,
+        'state': 'done',
+        'durationMs': 41000,
+        'omitted': 2,
+        'items': [
+          {
+            'id': 's1',
+            'line': 'Ran the tests',
+            'action': 'Bash',
+            'state': 'failed',
+            'args': 'pnpm test',
+            'link': {'url': 'javascript:alert(1)'},
+          },
+          {'id': 's2', 'type': 'reasoning', 'text': 'Thinking\nabout it'},
+          {'id': 's3'},
+          {
+            'id': 's4',
+            'type': 'note',
+            'line': 'Opened the doc',
+            'link': {'url': 'https://example.com/doc', 'title': 'Doc'},
+          },
+        ],
+      })!;
+      expect(steps.omitted, 2);
+      expect(steps.items.map((step) => step.id), ['s1', 's2', 's4']);
+      expect(steps.items[0].action, 'Bash');
+      expect(steps.items[0].state, AgentDmStepState.failed);
+      expect(steps.items[0].linkUrl, isNull);
+      expect(steps.items[1].line, 'Thinking about it');
+      expect(steps.items[2].linkUrl.toString(), 'https://example.com/doc');
+      expect(parseAgentDmTurnSteps({'turnId': 'x'}), isNull);
+      expect(agentDmStepsDuration(185000), '3 min 5 s');
+      expect(agentDmStepsDuration(3720000), '1 h 2 min');
+      expect(agentDmActivityLine({'tools': 1}), 'Used 1 tool');
+    });
   });
 }

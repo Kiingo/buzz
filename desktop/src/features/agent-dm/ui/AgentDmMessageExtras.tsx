@@ -1,4 +1,4 @@
-import type * as React from "react";
+import * as React from "react";
 
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { useChannelMembersQuery } from "@/features/channels/hooks";
@@ -8,12 +8,14 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 
 import { surfaceCardAllowed } from "../lib/surfaceCardGate";
 import { agentDmMessageKinds } from "../lib/timeline";
+import { replyKey } from "../lib/turnSteps";
 import { AgentActionButtons } from "./AgentActionButtons";
 import { AgentCallCard } from "./AgentCallCard";
 import { AgentMirrorMarker } from "./AgentMirrorMarker";
 import { AgentQuestionCard } from "./AgentQuestionCard";
 import { AgentSessionsListing } from "./AgentSessionsListing";
 import { AgentSurfaceCard } from "./AgentSurfaceCard";
+import { AgentTurnSteps } from "./AgentTurnSteps";
 
 /** S6: a surface card only in a 1:1 DM with the viewer's own verified agent. */
 function useSurfaceCardAllowed(
@@ -63,13 +65,34 @@ export function AgentDmMessageExtras({
     message,
     kinds.includes("surface") && agentSigned,
   );
-  if (kinds.length === 0) return null;
+  // The reply's Run or mirrored entry, for its steps line (B2).
+  const stepsKey = React.useMemo(
+    () => replyKey(message.tags, message.createdAt),
+    [message.tags, message.createdAt],
+  );
+  const steps =
+    channelId && stepsKey && agentSigned ? (
+      <AgentTurnSteps
+        channelId={channelId}
+        message={message}
+        replyKey={stepsKey}
+      />
+    ) : null;
+  if (kinds.length === 0) return steps;
   // A call card shows its own title and direction in the body.
   if (kinds.includes("call")) return null;
-  if (kinds.includes("mirror")) return <AgentMirrorMarker message={message} />;
+  if (kinds.includes("mirror")) {
+    return (
+      <>
+        <AgentMirrorMarker message={message} />
+        {steps}
+      </>
+    );
+  }
   if (!channelId || !agentSigned) return null;
   return (
     <>
+      {steps}
       {kinds.includes("question") ? (
         <AgentQuestionCard channelId={channelId} message={message} />
       ) : null}

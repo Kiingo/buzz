@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../../../shared/agent_dm/agent_dm_markers.dart';
 import '../../../shared/agent_dm/agent_dm_mirror_display.dart';
+import '../../../shared/agent_dm/agent_dm_turn_steps.dart';
 import '../../../shared/mentions/agent_identity_provider.dart';
 import '../../../shared/relay/relay.dart';
 import '../channel.dart';
@@ -183,12 +184,17 @@ class AgentDmScope extends InheritedWidget {
   ) =>
       maybeOf(context, listen: false)?.timeline.mirrorDisplayOf(message, names);
 
-  /// The agent card, question card and action buttons under [message], or
-  /// null.
+  /// The steps line, agent card, question card and action buttons under
+  /// [message], or null.
   static Widget? footerFor(BuildContext context, TimelineMessage message) {
     final timeline = maybeOf(context)?.timeline;
     if (timeline == null) return null;
-    if (timeline.questionOf(message.id) == null &&
+    final stepsAgent = timeline.oneToOneAgentOf(message.id);
+    final stepsKey = stepsAgent == null
+        ? null
+        : readAgentDmReplyKey(message.tags, message.createdAt);
+    if (stepsKey == null &&
+        timeline.questionOf(message.id) == null &&
         timeline.actionsOf(message.id).isEmpty &&
         timeline.surfaceOf(message.id) == null) {
       return null;
@@ -196,6 +202,8 @@ class AgentDmScope extends InheritedWidget {
     return AgentDmMessageFooter(
       key: ValueKey('agent-dm-footer-${message.id}'),
       messageId: message.id,
+      stepsAgent: stepsKey == null ? null : stepsAgent,
+      stepsKey: stepsKey,
     );
   }
 

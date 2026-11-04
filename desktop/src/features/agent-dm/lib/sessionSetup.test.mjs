@@ -26,6 +26,20 @@ import {
   takeSetupPickerRequest,
   vitalsLines,
 } from "./sessionSetup.ts";
+import {
+  activityLine,
+  ensureReplyTurn,
+  findReply,
+  getReplyTurn,
+  loadTurnSteps,
+  parseChatReplies,
+  parseTurnSteps,
+  replyKey,
+  replyLine,
+  resetTurnStepsCache,
+  setTurnStepsClockForTests,
+  stepsDuration,
+} from "./turnSteps.ts";
 
 const AGENT = "a".repeat(64);
 const AGENT_ID = "0192a6b0-0000-7000-8000-0000000000aa";
@@ -143,6 +157,7 @@ const restores = [];
 afterEach(() => {
   for (const restore of restores.splice(0)) restore();
   resetSessionSetupCache();
+  resetTurnStepsCache();
   resetAgentSummaryCache();
 });
 
@@ -504,4 +519,231 @@ test("a community switch retires a read in flight", async () => {
   release();
   await reading;
   assert.equal(getSessionSetup(AGENT), null);
+});
+
+// ── B2: a reply's steps line ──────────────────────────────────────────────
+
+const RUN = "0192a6b0-0000-7000-8000-0000000000b1";
+const OTHER_RUN = "0192a6b0-0000-7000-8000-0000000000b2";
+const YOU = "0192a6b0-0000-7000-8000-0000000000c1";
+const REPLY = "0192a6b0-0000-7000-8000-0000000000d1";
+const LATER = "0192a6b0-0000-7000-8000-0000000000d2";
+
+function chatPage() {
+  return {
+    entries: [
+      { id: YOU, role: "you", at: "2026-11-04T10:00:00Z", runId: RUN },
+      {
+        id: REPLY,
+        role: "agent",
+        at: "2026-11-04T10:00:40Z",
+        runId: RUN,
+        turnId: YOU,
+        activity: { turnId: YOU, state: "done", tools: 6, durationMs: 41_000 },
+        memory: { turnId: YOU, label: "Recalled 2 memories" },
+      },
+      {
+        id: LATER,
+        role: "agent",
+        at: "2026-11-04T10:05:00Z",
+        runId: RUN,
+      },
+      {
+        id: "0192a6b0-0000-7000-8000-0000000000d3",
+        role: "agent",
+        at: "2026-11-04T10:06:00Z",
+        runId: OTHER_RUN,
+      },
+    ],
+  };
+}
+
+const atSeconds = (iso) => Date.parse(iso) / 1000;
+
+test("a reply names its Run, or its entry when mirrored", () => {
+  assert.deepEqual(replyKey([["kiingo-mission", RUN.toUpperCase()]], 100), {
+    runId: RUN,
+    entryId: null,
+    atMs: 100_000,
+  });
+  assert.deepEqual(
+    replyKey(
+      [
+        ["buzz-mirror", "web", `${REPLY}#part-2`, "100"],
+        ["buzz-mirror-author", "agent", "", ""],
+      ],
+      100,
+    ),
+    { runId: null, entryId: REPLY, atMs: 100_000 },
+  );
+  // A requester's mirrored words, a bad id or no tag: no line.
+  assert.equal(
+    replyKey(
+      [
+        ["buzz-mirror", "web", REPLY, "100"],
+        ["buzz-mirror-author", "requester", "", ""],
+      ],
+      100,
+    ),
+    null,
+  );
+  assert.equal(replyKey([["kiingo-mission", "not-a-uuid"]], 100), null);
+  assert.equal(replyKey([], 100), null);
+});
+
+test("the page ties a reply to the turn the other apps open", () => {
+  const replies = parseChatReplies(chatPage());
+  assert.deepEqual(
+    replies.map((reply) => reply.id),
+    [REPLY, LATER, "0192a6b0-0000-7000-8000-0000000000d3"],
+  );
+  const first = findReply(replies, {
+    runId: RUN,
+    entryId: null,
+    atMs: Date.parse("2026-11-04T10:00:41Z"),
+  });
+  assert.equal(first.turnId, YOU);
+  assert.equal(first.line, "Recalled 2 memories · Used 6 tools · 41 s");
+  // The Run's reply nearest the Buzz reply's time; a reply no turn names
+  // opens itself, with the unknown line.
+  const later = findReply(replies, {
+    runId: RUN,
+    entryId: null,
+    atMs: Date.parse("2026-11-04T10:04:58Z"),
+  });
+  assert.equal(later.turnId, LATER);
+  assert.equal(later.line, "Steps");
+  assert.equal(
+    findReply(replies, { runId: null, entryId: LATER, atMs: 0 }).id,
+    LATER,
+  );
+  assert.equal(
+    findReply(replies, {
+      runId: "0192a6b0-0000-7000-8000-0000000000ff",
+      entryId: null,
+      atMs: 0,
+    }),
+    null,
+  );
+  assert.deepEqual(parseChatReplies({ entries: "x" }), []);
+});
+
+test("the line uses the server's label, else the other apps' words", () => {
+  assert.equal(
+    activityLine({ label: "Used 3 tools · 9 s", tools: 1 }),
+    "Used 3 tools · 9 s",
+  );
+  assert.equal(activityLine({ tools: 1 }), "Used 1 tool");
+  assert.equal(activityLine({ tools: 0, reasoning: 0 }), null);
+  assert.equal(replyLine(null, null), "Steps");
+  assert.equal(stepsDuration(185_000), "3 min 5 s");
+  assert.equal(stepsDuration(3_720_000), "1 h 2 min");
+  assert.equal(stepsDuration(120_000), "2 min");
+});
+
+test("steps parse as plain fields; a bad link or a step without words drops", () => {
+  const steps = parseTurnSteps({
+    turnId: YOU,
+    state: "done",
+    durationMs: 41_000,
+    omitted: 2,
+    items: [
+      {
+        id: "s1",
+        type: "tool",
+        line: "Ran the tests",
+        action: "Bash",
+        state: "failed",
+        args: "pnpm test",
+        result: "1 failed",
+        link: { url: "javascript:alert(1)" },
+      },
+      { id: "s2", type: "reasoning", text: "Thinking\nabout it" },
+      { id: "s3", type: "tool" },
+      {
+        id: "s4",
+        type: "note",
+        line: "Opened the doc",
+        link: { url: "https://example.com/doc", title: "Doc" },
+      },
+    ],
+  });
+  assert.equal(steps.omitted, 2);
+  assert.deepEqual(
+    steps.items.map((step) => [step.id, step.line, step.action, step.state]),
+    [
+      ["s1", "Ran the tests", "Bash", "failed"],
+      ["s2", "Thinking about it", null, "done"],
+      ["s4", "Opened the doc", null, "done"],
+    ],
+  );
+  assert.equal(steps.items[0].link, null);
+  assert.equal(steps.items[0].args, "pnpm test");
+  assert.deepEqual(steps.items[2].link, {
+    url: "https://example.com/doc",
+    title: "Doc",
+  });
+  assert.equal(parseTurnSteps({ turnId: "x" }), null);
+});
+
+test("one page read serves every reply; the steps read is the turn's", async () => {
+  const calls = installHost((_method, path) => {
+    if (path.startsWith(`agents/${AGENT_ID}/chat?`)) {
+      return { status: 200, body: chatPage() };
+    }
+    if (path === `agents/${AGENT_ID}/chat/turns/${YOU}/activity`) {
+      return {
+        status: 200,
+        body: {
+          turnId: YOU,
+          state: "done",
+          items: [{ id: "s1", line: "Read a file" }],
+        },
+      };
+    }
+    return { status: 404, body: { error: "not_found" } };
+  });
+  restores.push(
+    setTurnStepsClockForTests(() => Date.parse("2026-11-04T10:10:00Z")),
+  );
+  const key = replyKey(
+    [["kiingo-mission", RUN]],
+    atSeconds("2026-11-04T10:00:41Z"),
+  );
+  await Promise.all([ensureReplyTurn(AGENT, key), ensureReplyTurn(AGENT, key)]);
+  await ensureReplyTurn(AGENT, key);
+  assert.equal(getReplyTurn(AGENT, key).turnId, YOU);
+  const steps = await loadTurnSteps(AGENT, YOU);
+  assert.equal(steps.items[0].line, "Read a file");
+  await loadTurnSteps(AGENT, YOU);
+  assert.deepEqual(
+    calls.map((call) => `${call.method} ${call.path}`),
+    [
+      `GET agents/${AGENT_ID}/chat?contract=2&limit=50`,
+      `GET agents/${AGENT_ID}/chat/turns/${YOU}/activity`,
+    ],
+  );
+});
+
+test("a reply newer than the last page read asks again; a failed steps read throws", async () => {
+  let now = Date.parse("2026-11-04T10:01:00Z");
+  restores.push(setTurnStepsClockForTests(() => now));
+  const calls = installHost((_method, path) =>
+    path.includes("/activity")
+      ? { status: 500, body: { error: "internal" } }
+      : { status: 200, body: chatPage() },
+  );
+  const old = replyKey(
+    [["kiingo-mission", RUN]],
+    atSeconds("2026-11-04T10:00:41Z"),
+  );
+  await ensureReplyTurn(AGENT, old);
+  const newer = replyKey(
+    [["kiingo-mission", "0192a6b0-0000-7000-8000-0000000000b3"]],
+    atSeconds("2026-11-04T10:06:01Z"),
+  );
+  now = Date.parse("2026-11-04T10:01:05Z");
+  await ensureReplyTurn(AGENT, newer);
+  assert.equal(calls.length, 2);
+  await assert.rejects(loadTurnSteps(AGENT, YOU));
 });

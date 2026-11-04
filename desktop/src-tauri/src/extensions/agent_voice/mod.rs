@@ -145,12 +145,23 @@ fn is_since_query(query: &str) -> bool {
     matches!(query.split_once('='), Some(("threadId", id)) if is_uuid(id))
 }
 
-/// The owner chat head the pending ack rides on: `limit=<n>` alone.
+/// The owner chat head: `limit=<n>` (the pending ack), and `contract=2` for
+/// the page whose replies name their turns (a reply's steps). Each once,
+/// `limit` required.
 fn is_chat_head_query(query: &str) -> bool {
-    match query.split_once('=') {
-        Some(("limit", n)) => (1..=2).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit()),
+    let mut limit = false;
+    let mut contract = false;
+    query.split('&').all(|pair| match pair.split_once('=') {
+        Some(("limit", n)) if !limit => {
+            limit = true;
+            (1..=2).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit())
+        }
+        Some(("contract", "2")) if !contract => {
+            contract = true;
+            true
+        }
         _ => false,
-    }
+    }) && limit
 }
 
 /// The call route `path` (relative to the mount) if it is one this command
@@ -189,6 +200,10 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         // The reader's own session: its setup and vitals, and Stop.
         ["agents", agent, "session-setup"] => (get || method == "PUT") && is_uuid(agent),
         ["agents", agent, "chat", "stop"] => post && is_uuid(agent),
+        // One turn's steps under a reply in the reader's own chat.
+        ["agents", agent, "chat", "turns", turn, "activity"] => {
+            get && is_uuid(agent) && is_uuid(turn)
+        }
         ["agents", agent, "delegations", "cancel-all"] => post && is_uuid(agent),
         // "Since you last looked" and the owner's own seen marker.
         ["agents", agent, "delegations", "since"] => get && is_uuid(agent),
@@ -552,6 +567,30 @@ mod tests {
         assert!(allowed_path("GET", &format!("agents/{agent}/chat?after=x")).is_none());
         assert!(allowed_path("GET", &format!("agents/{agent}/chat?limit=1&x=1")).is_none());
         assert!(allowed_path("GET", "agents/-/chat?limit=1").is_none());
+        // The v2 page and one turn's steps (a reply's line).
+        let v2 = format!("agents/{agent}/chat?contract=2&limit=50");
+        assert_eq!(allowed_path("GET", &v2), Some(v2.clone()));
+        let v2_swapped = format!("agents/{agent}/chat?limit=50&contract=2");
+        assert_eq!(allowed_path("GET", &v2_swapped), Some(v2_swapped.clone()));
+        assert!(allowed_path("GET", &format!("agents/{agent}/chat?contract=2")).is_none());
+        assert!(allowed_path("GET", &format!("agents/{agent}/chat?contract=1&limit=5")).is_none());
+        assert!(allowed_path(
+            "GET",
+            &format!("agents/{agent}/chat?contract=2&contract=2&limit=5")
+        )
+        .is_none());
+        assert!(allowed_path("GET", &format!("agents/{agent}/chat?limit=5&limit=6")).is_none());
+        let steps = format!("agents/{agent}/chat/turns/{id}/activity");
+        assert_eq!(allowed_path("GET", &steps), Some(steps.clone()));
+        assert!(allowed_path("POST", &steps).is_none());
+        assert!(allowed_path("GET", &format!("{steps}?x=1")).is_none());
+        assert!(allowed_path(
+            "GET",
+            &format!("agents/{agent}/chat/turns/not-an-id/activity")
+        )
+        .is_none());
+        assert!(allowed_path("GET", &format!("agents/-/chat/turns/{id}/activity")).is_none());
+        assert!(allowed_path("GET", &format!("agents/{agent}/chat/turns/{id}/memory")).is_none());
         assert!(allowed_path("POST", &format!("agents/{agent}/chat/messages")).is_none());
         assert!(allowed_path("GET", &format!("agents/{agent}/ledger")).is_none());
         assert!(allowed_path("GET", &format!("{list}/../../calls")).is_none());

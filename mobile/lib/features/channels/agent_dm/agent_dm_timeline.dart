@@ -262,6 +262,16 @@ class AgentDmTimeline {
   /// Who signed message [id] (lowercase), when it is indexed.
   String? signerOf(String id) => _signers[id];
 
+  /// The agent that signed message [id] in the reader's own 1:1 DM with it,
+  /// or null: a reply's steps line shows only there.
+  String? oneToOneAgentOf(String id) {
+    final signer = _signers[id];
+    final viewer = _viewer;
+    if (signer == null || viewer == null || signer == viewer) return null;
+    if (_members.length != 2 || !_members.contains(viewer)) return null;
+    return _agents.contains(signer) ? signer : null;
+  }
+
   /// The newest revision any loaded message names for [surfaceId], so every
   /// message showing that card reads the same, latest copy.
   int? newestSurfaceRevision(String surfaceId) => _surfaceRevisions[surfaceId];

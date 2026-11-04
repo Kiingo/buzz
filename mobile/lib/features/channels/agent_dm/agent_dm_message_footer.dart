@@ -5,12 +5,14 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../../../shared/agent_dm/agent_dm_answers.dart';
 import '../../../shared/agent_dm/agent_dm_markers.dart';
+import '../../../shared/agent_dm/agent_dm_turn_steps.dart';
 import 'agent_dm_action_buttons.dart';
 import 'agent_dm_question_card.dart';
 import 'agent_dm_scope.dart';
 import 'agent_dm_sent_provider.dart';
 import 'agent_dm_surface_card.dart';
 import 'agent_dm_timeline.dart';
+import 'agent_dm_turn_steps_row.dart';
 
 /// The card state from the loaded events and this client's own sends.
 /// Answered wins over closed; a send in flight pauses an open card.
@@ -27,13 +29,24 @@ AgentDmCardState agentDmCardState(
   return AgentDmCardState.open;
 }
 
-/// The agent card, question card and action buttons under one agent
-/// message, wired to the DM's send path.
+/// The steps line, agent card, question card and action buttons under one
+/// agent message, wired to the DM's send path.
 class AgentDmMessageFooter extends ConsumerWidget {
   /// The agent message.
   final String messageId;
 
-  const AgentDmMessageFooter({super.key, required this.messageId});
+  /// The DM's agent, when the reply's steps line shows.
+  final String? stepsAgent;
+
+  /// The reply's Run or mirrored entry, for its steps line.
+  final AgentDmReplyKey? stepsKey;
+
+  const AgentDmMessageFooter({
+    super.key,
+    required this.messageId,
+    this.stepsAgent,
+    this.stepsKey,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -86,6 +99,8 @@ class AgentDmMessageFooter extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (stepsAgent != null && stepsKey != null)
+          AgentDmTurnStepsRow(agentPubkey: stepsAgent!, replyKey: stepsKey!),
         if (surface != null && signer != null)
           AgentDmSurfaceCard(surface: surface, signer: signer),
         if (card != null && answerKey != null)
