@@ -118,7 +118,7 @@ class AgentDmSessionRow extends HookConsumerWidget {
   }
 }
 
-/// Opens the session's panel: its vitals and the model and level picks.
+/// Opens the session's panel: its vitals and the model, level and mode picks.
 Future<void> showAgentDmSessionSheet(
   BuildContext context,
   String agentPubkey,
@@ -231,6 +231,10 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
         ? const <String>[]
         : agentDmVitalsLines(vitals);
     final efforts = setup.currentEfforts;
+    final modes = setup.canChangeMode
+        ? setup.availableModes
+        : const <AgentDmSessionMode>[];
+    final modeNote = setup.modeNote;
     return SafeArea(
       child: ListView(
         key: const ValueKey('agent-dm-session-sheet'),
@@ -258,7 +262,27 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
                 () => unawaited(choose({'effort': effort})),
               ),
           ],
-          if (setup.canChangeModel || setup.canChangeEffort)
+          if (modes.isNotEmpty) ...[
+            heading('Mode'),
+            for (final mode in modes)
+              choice(
+                mode.label,
+                mode.id == setup.mode,
+                () => unawaited(choose({'mode': mode.id})),
+              ),
+          ],
+          if (modeNote != null)
+            Padding(
+              key: const ValueKey('agent-dm-session-mode-note'),
+              padding: const EdgeInsets.fromLTRB(Grid.xs, Grid.xxs, Grid.xs, 0),
+              child: Text(
+                modeNote,
+                style: context.textTheme.bodySmall?.copyWith(
+                  color: context.colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          if (setup.canChangeModel || setup.canChangeEffort || modes.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(Grid.xs, Grid.xxs, Grid.xs, 0),
               child: Text(

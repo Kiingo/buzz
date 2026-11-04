@@ -8,12 +8,14 @@ import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
 import {
+  availableModes,
   changeSessionSetup,
   currentModelEfforts,
   effortLabel,
   ensureSessionSetup,
   getSessionSetup,
   getSessionSetupVersion,
+  modeNote,
   setupChangeErrorSentence,
   setupChipText,
   subscribeSessionSetup,
@@ -77,6 +79,8 @@ function SetupPanelBody({
     }
   };
   const efforts = currentModelEfforts(panel);
+  const modes = panel.canChangeMode ? availableModes(panel) : [];
+  const note = modeNote(panel);
   const lines = panel.vitals ? vitalsLines(panel.vitals) : [];
   return (
     <div className="flex flex-col gap-3" data-testid="agent-session-panel">
@@ -111,7 +115,30 @@ function SetupPanelBody({
           ))}
         </section>
       ) : null}
-      {panel.canChangeModel || panel.canChangeEffort ? (
+      {modes.length > 0 ? (
+        <section aria-label="Mode" className="flex flex-col gap-0.5">
+          <h3 className="px-2 text-xs text-muted-foreground">Mode</h3>
+          {modes.map((mode) => (
+            <ChoiceRow
+              disabled={saving}
+              key={mode.id}
+              label={mode.label}
+              onChoose={() => void choose({ mode: mode.id })}
+              selected={mode.id === panel.mode}
+              testId={`agent-session-mode-${mode.id}`}
+            />
+          ))}
+        </section>
+      ) : null}
+      {note ? (
+        <p
+          className="px-2 text-xs text-muted-foreground"
+          data-testid="agent-session-mode-note"
+        >
+          {note}
+        </p>
+      ) : null}
+      {panel.canChangeModel || panel.canChangeEffort || modes.length > 0 ? (
         <p className="px-2 text-xs text-muted-foreground">
           A change applies from the next turn.
         </p>
@@ -135,7 +162,7 @@ function SetupPanelBody({
 /**
  * The DM header's line for the reader's session with a hosted agent, for
  * example "Claude Code · Opus 5.5 · High · 25%". It opens the session's
- * vitals and the model and reasoning picks; `/model`, `/effort` and the
+ * vitals and the model, reasoning and mode picks; `/model`, `/effort` and the
  * vitals commands open it too. Nothing shows for an agent with no host.
  */
 export function AgentSessionChip({

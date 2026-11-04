@@ -64,6 +64,36 @@ Map<String, Object?> _vitals() => {
   'location': {'cwd': '/work/kiingo/', 'branch': 'main'},
 };
 
+Map<String, Object?> _mode(
+  String id,
+  String label, {
+  bool available = true,
+}) => {
+  'id': id,
+  'label': label,
+  'description': '$label does this',
+  'isDefault': id == 'ceiling',
+  'available': available,
+  'unavailableReason': available ? null : 'harness',
+};
+
+final _modes = [
+  _mode('ceiling', 'Full'),
+  _mode('ask', 'Ask'),
+  _mode('plan', 'Plan', available: false),
+];
+
+Map<String, Object?> _modePanel({
+  bool canChange = true,
+  List<Object?>? modes,
+}) {
+  final panel = _panel();
+  (panel['current'] as Map)['mode'] = 'ask';
+  (panel['options'] as Map)['modes'] = modes ?? _modes;
+  (panel['canChange'] as Map)['mode'] = canChange;
+  return panel;
+}
+
 void main() {
   group('parseAgentDmSessionSetup', () {
     test('reads the current harness models, levels and rights', () {
@@ -88,6 +118,46 @@ void main() {
     test('adds the context to the short line when it has vitals', () {
       final setup = parseAgentDmSessionSetup(_panel(vitals: _vitals()))!;
       expect(setup.shortText, 'Claude Code · Opus 5.5 · High · 25%');
+    });
+
+    test('offers only the modes the host marks available', () {
+      final setup = parseAgentDmSessionSetup(_modePanel())!;
+      expect(setup.mode, 'ask');
+      expect(setup.canChangeMode, isTrue);
+      expect(setup.availableModes.map((mode) => mode.id), ['ceiling', 'ask']);
+      expect(
+        setup.modeNote,
+        "Ask: Ask does this. Plan isn't available on this harness.",
+      );
+    });
+
+    test("no mode picks without the host's leave, or from an older host", () {
+      expect(
+        parseAgentDmSessionSetup(_modePanel(canChange: false))!.canChangeMode,
+        isFalse,
+      );
+      final older = parseAgentDmSessionSetup(_panel())!;
+      expect(older.modes, isEmpty);
+      expect(older.canChangeMode, isFalse);
+      expect(older.modeNote, isNull);
+    });
+
+    test('a terminal session says it keeps its own mode', () {
+      final setup = parseAgentDmSessionSetup(
+        _modePanel(
+          modes: [
+            {
+              ..._mode('ceiling', 'Full', available: false),
+              'unavailableReason': 'use_terminal_mode',
+            },
+          ],
+        ),
+      )!;
+      expect(setup.availableModes, isEmpty);
+      expect(
+        setup.modeNote,
+        'This terminal session keeps its own mode. Change it in the terminal.',
+      );
     });
   });
 
@@ -250,6 +320,12 @@ void main() {
         const DelegationApiException(409, 'session_setup_revision_conflict'),
       ),
       "This session's setup just changed. Look at it again and choose.",
+    );
+    expect(
+      agentDmSetupChangeErrorSentence(
+        const DelegationApiException(422, 'session_setup_mode_not_supported'),
+      ),
+      "This session can't run that mode.",
     );
     expect(
       agentDmSetupChangeErrorSentence(StateError('x')),

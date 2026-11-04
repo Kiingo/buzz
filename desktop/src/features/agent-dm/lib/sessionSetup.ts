@@ -56,16 +56,37 @@ export type SessionVitals = {
   folder: string | null;
 };
 
+/**
+ * One way the session may work (the host's `options.modes`, widest first):
+ * Full, Accept edits, Ask or Plan, in the host's words. Only the host decides
+ * which can run; this client offers just the ones it marks available.
+ */
+export type SessionModeOption = {
+  id: string;
+  label: string;
+  description: string;
+  available: boolean;
+  /** `use_terminal_mode`: a terminal session keeps its own mode. */
+  unavailableReason: string | null;
+};
+
 export type SessionSetupPanel = {
   revision: number;
   model: string;
   effort: string;
+  /** The session's mode now (`ceiling`, Full, when none is picked). */
+  mode: string | null;
+  /** In Plan: the mode an approved plan returns to. */
+  modeBeforePlan: string | null;
   /** Server-rendered: "Claude Code · Opus 5.5 · High". */
   label: string;
   models: SessionSetupModel[];
   effortLabels: Record<string, string>;
   canChangeModel: boolean;
   canChangeEffort: boolean;
+  /** Empty from a host that has no modes. */
+  modes: SessionModeOption[];
+  canChangeMode: boolean;
   vitals: SessionVitals | null;
 };
 
@@ -188,15 +209,35 @@ export function parseSessionSetupPanel(
     const name = text(value);
     if (name) effortLabels[key] = name;
   }
+  const modes = (Array.isArray(options?.modes) ? options.modes : []).flatMap(
+    (raw): SessionModeOption[] => {
+      const option = record(raw);
+      const id = text(option?.id);
+      if (!id) return [];
+      return [
+        {
+          id,
+          label: text(option?.label) ?? id,
+          description: text(option?.description) ?? "",
+          available: option?.available === true,
+          unavailableReason: text(option?.unavailableReason),
+        },
+      ];
+    },
+  );
   return {
     revision,
     model,
     effort,
+    mode: text(current?.mode),
+    modeBeforePlan: text(current?.modeBeforePlan),
     label,
     models,
     effortLabels,
     canChangeModel: canChange?.model === true,
     canChangeEffort: canChange?.effort === true,
+    modes,
+    canChangeMode: canChange?.mode === true && modes.length > 0,
     vitals: parseVitals(root?.vitals),
   };
 }
@@ -272,6 +313,39 @@ export function setupChipText(panel: SessionSetupPanel): string {
 
 export function effortLabel(panel: SessionSetupPanel, effort: string): string {
   return panel.effortLabels[effort] ?? effort;
+}
+
+/** The modes the host says this session can run: the only ones offered. */
+export function availableModes(panel: SessionSetupPanel): SessionModeOption[] {
+  return panel.modes.filter((mode) => mode.available);
+}
+
+/**
+ * The words under the mode picks, from the host's own list: what the current
+ * mode does, where an approved plan returns, and what this harness lacks. A
+ * terminal session keeps its own mode, so it says where to change it.
+ */
+export function modeNote(panel: SessionSetupPanel): string | null {
+  if (
+    panel.modes.some((mode) => mode.unavailableReason === "use_terminal_mode")
+  ) {
+    return "This terminal session keeps its own mode. Change it in the terminal.";
+  }
+  const current = panel.modes.find((mode) => mode.id === panel.mode);
+  if (!current) return null;
+  const returnsTo = panel.modes.find(
+    (mode) => mode.id === panel.modeBeforePlan,
+  )?.label;
+  const missing = panel.modes.filter((mode) => !mode.available);
+  return [
+    current.description ? `${current.label}: ${current.description}.` : null,
+    returnsTo ? `An approved plan returns to ${returnsTo}.` : null,
+    missing.length > 0
+      ? `${missing.map((mode) => mode.label).join(", ")} isn't available on this harness.`
+      : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" ");
 }
 
 /** The levels the current model allows, low to high. */
@@ -493,7 +567,12 @@ export function takeSetupPickerRequest(agentPublicKey: string): boolean {
   return key ? pickerRequests.delete(key) : false;
 }
 
-export type SetupChoice = { model?: string | null; effort?: string | null };
+export type SetupChoice = {
+  model?: string | null;
+  effort?: string | null;
+  /** Sent only on an explicit pick; the host refuses a mode it won't run. */
+  mode?: string;
+};
 
 const CHANGE_ERROR_SENTENCES: Record<string, string> = {
   session_setup_revision_conflict:
@@ -505,6 +584,7 @@ const CHANGE_ERROR_SENTENCES: Record<string, string> = {
   session_setup_off: "Choosing a model isn't available for this agent.",
   session_setup_not_supported:
     "Choosing a model isn't available for this agent.",
+  session_setup_mode_not_supported: "This session can't run that mode.",
 };
 
 /** The plain sentence for a failed change. */
@@ -517,9 +597,9 @@ export function setupChangeErrorSentence(error: unknown): string {
 }
 
 /**
- * Change the model or effort; it applies from the next turn. Throws when the
- * host refuses (`setupChangeErrorSentence`); a revision conflict re-reads the
- * panel first, so what shows is current.
+ * Change the model, effort or mode; it applies from the next turn. Throws
+ * when the host refuses (`setupChangeErrorSentence`); a revision conflict
+ * re-reads the panel first, so what shows is current.
  */
 export async function changeSessionSetup(
   agentPublicKey: string,

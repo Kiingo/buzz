@@ -37,6 +37,28 @@ class AgentDmSetupModel {
   final List<String> efforts;
 }
 
+/// One way the session may work (the host's `options.modes`, widest first):
+/// Full, Accept edits, Ask or Plan, in the host's words. Only the host decides
+/// which can run; this client offers just the ones it marks available.
+@immutable
+class AgentDmSessionMode {
+  const AgentDmSessionMode({
+    required this.id,
+    required this.label,
+    required this.description,
+    required this.available,
+    this.unavailableReason,
+  });
+
+  final String id;
+  final String label;
+  final String description;
+  final bool available;
+
+  /// `use_terminal_mode`: a terminal session keeps its own mode.
+  final String? unavailableReason;
+}
+
 @immutable
 class AgentDmUsageWindow {
   const AgentDmUsageWindow({
@@ -92,6 +114,10 @@ class AgentDmSessionSetup {
     required this.effortLabels,
     required this.canChangeModel,
     required this.canChangeEffort,
+    this.mode,
+    this.modeBeforePlan,
+    this.modes = const [],
+    this.canChangeMode = false,
     this.vitals,
   });
 
@@ -105,7 +131,52 @@ class AgentDmSessionSetup {
   final Map<String, String> effortLabels;
   final bool canChangeModel;
   final bool canChangeEffort;
+
+  /// The session's mode now (`ceiling`, Full, when none is picked).
+  final String? mode;
+
+  /// In Plan: the mode an approved plan returns to.
+  final String? modeBeforePlan;
+
+  /// Empty from a host that has no modes.
+  final List<AgentDmSessionMode> modes;
+  final bool canChangeMode;
   final AgentDmSessionVitals? vitals;
+
+  /// The modes the host says this session can run: the only ones offered.
+  List<AgentDmSessionMode> get availableModes => [
+    for (final option in modes)
+      if (option.available) option,
+  ];
+
+  /// The words under the mode picks, from the host's own list: what the
+  /// current mode does, where an approved plan returns, and what this
+  /// harness lacks. A terminal session keeps its own mode, so it says where
+  /// to change it.
+  String? get modeNote {
+    if (modes.any(
+      (option) => option.unavailableReason == 'use_terminal_mode',
+    )) {
+      return 'This terminal session keeps its own mode. Change it in the terminal.';
+    }
+    final current = modes.where((option) => option.id == mode).firstOrNull;
+    if (current == null) return null;
+    final returnsTo = modes
+        .where((option) => option.id == modeBeforePlan)
+        .firstOrNull
+        ?.label;
+    final missing = [
+      for (final option in modes)
+        if (!option.available) option.label,
+    ];
+    return [
+      if (current.description.isNotEmpty)
+        '${current.label}: ${current.description}.',
+      if (returnsTo != null) 'An approved plan returns to $returnsTo.',
+      if (missing.isNotEmpty)
+        "${missing.join(', ')} isn't available on this harness.",
+    ].join(' ');
+  }
 
   String effortLabel(String effort) => effortLabels[effort] ?? effort;
 
@@ -223,6 +294,18 @@ AgentDmSessionSetup? parseAgentDmSessionSetup(Object? body) {
             ],
           ),
   ];
+  final modes = <AgentDmSessionMode>[
+    if (options['modes'] case final List list)
+      for (final raw in list)
+        if (raw is Map && _text(raw['id']) != null)
+          AgentDmSessionMode(
+            id: _text(raw['id'])!,
+            label: _text(raw['label']) ?? _text(raw['id'])!,
+            description: _text(raw['description']) ?? '',
+            available: raw['available'] == true,
+            unavailableReason: _text(raw['unavailableReason']),
+          ),
+  ];
   return AgentDmSessionSetup(
     revision: revision,
     model: model,
@@ -237,6 +320,10 @@ AgentDmSessionSetup? parseAgentDmSessionSetup(Object? body) {
     },
     canChangeModel: canChange['model'] == true,
     canChangeEffort: canChange['effort'] == true,
+    mode: _text(current['mode']),
+    modeBeforePlan: _text(current['modeBeforePlan']),
+    modes: modes,
+    canChangeMode: canChange['mode'] == true && modes.isNotEmpty,
     vitals: _parseVitals(body['vitals']),
   );
 }
@@ -470,6 +557,7 @@ const _changeErrorSentences = {
   'session_setup_off': "Choosing a model isn't available for this agent.",
   'session_setup_not_supported':
       "Choosing a model isn't available for this agent.",
+  'session_setup_mode_not_supported': "This session can't run that mode.",
 };
 
 /// The plain sentence for a failed change.
@@ -494,9 +582,10 @@ class AgentDmSessionActions {
 
   final Ref _ref;
 
-  /// Change the model or effort: `{'model': id}` or `{'effort': id}`, a null
-  /// id resetting it to the default. It applies from the next turn. Throws
-  /// when the host refuses; the panel re-reads either way.
+  /// Change the model, effort or mode: `{'model': id}`, `{'effort': id}` or
+  /// `{'mode': id}`, a null model or effort resetting it to the default; a
+  /// mode is sent only on an explicit pick. It applies from the next turn.
+  /// Throws when the host refuses; the panel re-reads either way.
   Future<AgentDmSessionSetup> change(
     String agentPubkey,
     AgentDmSessionSetup? before,

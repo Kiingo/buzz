@@ -7,10 +7,12 @@ import {
   setAgentSummaryLookupForTests,
 } from "./agentSummary.ts";
 import {
+  availableModes,
   changeSessionSetup,
   contextLine,
   ensureSessionSetup,
   getSessionSetup,
+  modeNote,
   parseSessionSetupPanel,
   parseSetupCommand,
   requestSetupPicker,
@@ -56,6 +58,43 @@ function panelBody(overrides = {}) {
     canChange: { harness: false, model: true, effort: true, speed: true },
     changes: [],
     ...overrides,
+  };
+}
+
+const MODES = [
+  {
+    id: "ceiling",
+    label: "Full",
+    description: "Runs with the agent's own access",
+    isDefault: true,
+    available: true,
+    unavailableReason: null,
+  },
+  {
+    id: "ask",
+    label: "Ask",
+    description: "Asks before edits, commands and other tools",
+    isDefault: false,
+    available: true,
+    unavailableReason: null,
+  },
+  {
+    id: "plan",
+    label: "Plan",
+    description: "Stops file edits",
+    isDefault: false,
+    available: false,
+    unavailableReason: "harness",
+  },
+];
+
+function modeBody(overrides = {}) {
+  const body = panelBody(overrides);
+  return {
+    ...body,
+    current: { ...body.current, mode: "ask", modeBeforePlan: null },
+    options: { ...body.options, modes: MODES },
+    canChange: { ...body.canChange, mode: true },
   };
 }
 
@@ -294,6 +333,82 @@ test("a change sends the revision and takes the host's answer", async () => {
   assert.equal(put.body.expectedRevision, 3);
   assert.ok(put.body.idempotencyKey);
   assert.equal(getSessionSetup(AGENT).model, "sonnet");
+});
+
+test("modes offered are only the ones the host marks available", () => {
+  const panel = parseSessionSetupPanel(modeBody());
+  assert.equal(panel.mode, "ask");
+  assert.equal(panel.canChangeMode, true);
+  assert.deepEqual(
+    availableModes(panel).map((mode) => mode.id),
+    ["ceiling", "ask"],
+  );
+  assert.equal(
+    modeNote(panel),
+    "Ask: Asks before edits, commands and other tools. Plan isn't available on this harness.",
+  );
+});
+
+test("no mode picks without the host's leave, or from an older host", () => {
+  const body = modeBody();
+  const refused = parseSessionSetupPanel({
+    ...body,
+    canChange: { ...body.canChange, mode: false },
+  });
+  assert.equal(refused.canChangeMode, false);
+  const older = parseSessionSetupPanel(panelBody());
+  assert.deepEqual(older.modes, []);
+  assert.equal(older.canChangeMode, false);
+  assert.equal(modeNote(older), null);
+});
+
+test("a terminal session says it keeps its own mode", () => {
+  const body = modeBody();
+  const panel = parseSessionSetupPanel({
+    ...body,
+    options: {
+      ...body.options,
+      modes: MODES.map((mode) => ({
+        ...mode,
+        available: false,
+        unavailableReason: "use_terminal_mode",
+      })),
+    },
+  });
+  assert.deepEqual(availableModes(panel), []);
+  assert.equal(
+    modeNote(panel),
+    "This terminal session keeps its own mode. Change it in the terminal.",
+  );
+});
+
+test("a mode pick sends only the mode", async () => {
+  const calls = installHost((method) =>
+    method === "GET"
+      ? { status: 200, body: modeBody() }
+      : { status: 200, body: { setup: modeBody(), changed: true } },
+  );
+  await ensureSessionSetup(AGENT);
+  await changeSessionSetup(AGENT, { mode: "ceiling" });
+  const put = calls.find((call) => call.method === "PUT");
+  assert.deepEqual(put.body.choice, { mode: "ceiling" });
+  assert.equal(put.body.expectedRevision, 3);
+});
+
+test("a mode the host won't run reads in words", async () => {
+  installHost((method) =>
+    method === "PUT"
+      ? { status: 422, body: { error: "session_setup_mode_not_supported" } }
+      : { status: 200, body: modeBody() },
+  );
+  await ensureSessionSetup(AGENT);
+  const refused = await changeSessionSetup(AGENT, { mode: "plan" }).catch(
+    (error) => error,
+  );
+  assert.equal(
+    setupChangeErrorSentence(refused),
+    "This session can't run that mode.",
+  );
 });
 
 test("a read begun before a change can't undo it", async () => {
