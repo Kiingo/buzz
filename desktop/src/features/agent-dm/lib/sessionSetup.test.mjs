@@ -1,7 +1,23 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
 
 import { setAgentCallSendForTests } from "../../agent-call/lib/agentCallApi.ts";
+import {
+  AGENT_REF_COMMANDS,
+  addPickedAgentRef,
+  agentRefLabel,
+  agentRefTags,
+  agentRefTypeFor,
+  agentRefsErrorSentence,
+  clearPickedAgentRefs,
+  getPickedAgentRefs,
+  parseAgentRefs,
+  requestAgentRefPicker,
+  resetAgentRefs,
+  searchAgentRefs,
+  takeAgentRefPickerRequest,
+} from "./agentRefs.ts";
 import {
   resetAgentSummaryCache,
   setAgentSummaryLookupForTests,
@@ -175,6 +191,7 @@ afterEach(() => {
   resetSessionViewsCache();
   resetTurnStepsCache();
   resetAgentSummaryCache();
+  resetAgentRefs();
 });
 
 test("parses the panel for the current harness only", () => {
@@ -969,4 +986,158 @@ test("a view open is asked once", () => {
   requestSessionView(AGENT, { kind: "queued" });
   assert.deepEqual(takeSessionViewRequest(AGENT), { kind: "queued" });
   assert.equal(takeSessionViewRequest(AGENT), null);
+});
+
+// ---- BUZZPARITY B5: task and project references ----
+
+const TASK_ID = "0192a6b0-0000-7000-8000-0000000000b1";
+const PROJECT_ID = "0192a6b0-0000-7000-8000-0000000000c2";
+
+test("references read only well-formed task and project rows", () => {
+  assert.equal(parseAgentRefs(null), null);
+  assert.equal(parseAgentRefs([]), null);
+  assert.deepEqual(
+    parseAgentRefs({
+      results: [
+        {
+          type: "task",
+          id: TASK_ID.toUpperCase(),
+          title: "Fix login",
+          subtitle: "In your queue with Scout",
+        },
+        { type: "project", id: PROJECT_ID, title: "Launch" },
+        { type: "comment", id: TASK_ID, title: "not offered" },
+        { type: "task", id: "not-an-id", title: "drops" },
+        { type: "task", id: TASK_ID },
+      ],
+    }),
+    [
+      {
+        type: "task",
+        id: TASK_ID,
+        title: "Fix login",
+        subtitle: "In your queue with Scout",
+      },
+      { type: "project", id: PROJECT_ID, title: "Launch", subtitle: null },
+    ],
+  );
+});
+
+test("a reference search asks the host for what the reader can read", async () => {
+  const calls = installHost(() => ({
+    status: 200,
+    body: { results: [{ type: "task", id: TASK_ID, title: "Fix login" }] },
+  }));
+  const found = await searchAgentRefs(AGENT, "task", " fix login ");
+  assert.equal(found.length, 1);
+  assert.equal(calls[0].method, "GET");
+  assert.equal(
+    calls[0].path,
+    `agents/${AGENT_ID}/chat/refs?types=task&q=fix%20login&limit=20`,
+  );
+  await searchAgentRefs(AGENT, "project", "");
+  assert.equal(
+    calls[1].path,
+    `agents/${AGENT_ID}/chat/refs?types=project&limit=20`,
+  );
+  const error = await searchAgentRefs("not-a-key", "task", "").catch(
+    (caught) => caught,
+  );
+  assert.match(agentRefsErrorSentence(error), /no host/);
+});
+
+test("only the reference rows open the picker, never a same-named command", () => {
+  assert.equal(agentRefTypeFor(AGENT_REF_COMMANDS[0]), "task");
+  assert.equal(agentRefTypeFor(AGENT_REF_COMMANDS[1]), "project");
+  assert.equal(agentRefTypeFor({ ...AGENT_REF_COMMANDS[0] }), null);
+  assert.equal(
+    agentRefTypeFor({ kind: "skill", name: "task", description: "" }),
+    null,
+  );
+});
+
+test("a send tags each picked reference whose label is still there, once, with no count limit", () => {
+  const picks = Array.from({ length: 30 }, (_, index) => ({
+    type: "task",
+    id: `0192a6b0-0000-7000-8000-${String(index).padStart(12, "0")}`,
+    title: `Task ${String(index).padStart(2, "0")}`,
+    subtitle: null,
+  }));
+  for (const pick of picks) addPickedAgentRef(AGENT, pick);
+  addPickedAgentRef(AGENT, picks[0]);
+  addPickedAgentRef(AGENT, {
+    type: "project",
+    id: PROJECT_ID,
+    title: "  Launch\n plan ",
+    subtitle: null,
+  });
+  assert.equal(
+    agentRefLabel({ type: "project", title: "" }),
+    "project: untitled",
+  );
+  const text = `${picks.map((pick) => agentRefLabel(pick)).join(" and ")} for project: Launch plan`;
+  const tags = agentRefTags(getPickedAgentRefs(AGENT), text);
+  assert.equal(tags.length, 31);
+  assert.deepEqual(tags[0], ["buzz-ref", "task", picks[0].id]);
+  assert.deepEqual(tags.at(-1), ["buzz-ref", "project", PROJECT_ID]);
+  // A label the person deleted sends nothing.
+  assert.deepEqual(
+    agentRefTags(getPickedAgentRefs(AGENT), "task: Task 03 only"),
+    [["buzz-ref", "task", picks[3].id]],
+  );
+  // Picks are per agent, and go after a send or a cleared draft.
+  assert.deepEqual(getPickedAgentRefs("b".repeat(64)), []);
+  clearPickedAgentRefs(AGENT);
+  assert.deepEqual(getPickedAgentRefs(AGENT), []);
+});
+
+test("a picker open is asked once, and a community switch forgets picks", () => {
+  const onPick = () => {};
+  requestAgentRefPicker(AGENT, { type: "project", onPick });
+  assert.deepEqual(takeAgentRefPickerRequest(AGENT), {
+    type: "project",
+    onPick,
+  });
+  assert.equal(takeAgentRefPickerRequest(AGENT), null);
+  addPickedAgentRef(AGENT, {
+    type: "task",
+    id: TASK_ID,
+    title: "Fix login",
+    subtitle: null,
+  });
+  requestAgentRefPicker(AGENT, { type: "task", onPick });
+  resetAgentRefs();
+  assert.deepEqual(getPickedAgentRefs(AGENT), []);
+  assert.equal(takeAgentRefPickerRequest(AGENT), null);
+  const init = readFileSync(
+    new URL("../../communities/useCommunityInit.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(init, /resetAgentRefs\(\);/);
+});
+
+test("both DM sends carry the reference tags, and the rows are DM-only", () => {
+  const hook = readFileSync(
+    new URL("../ui/useAgentSlashCommands.ts", import.meta.url),
+    "utf8",
+  );
+  const composer = readFileSync(
+    new URL("../../messages/ui/MessageComposer.tsx", import.meta.url),
+    "utf8",
+  );
+  // The skill send adds them to its own tags.
+  assert.match(
+    hook,
+    /\.\.\.message\.tags,\s*\.\.\.agentRefTags\(getPickedAgentRefs\(dmPeer\), plainText\)/,
+  );
+  // The ordinary send (media included) adds them to its marker tags.
+  assert.match(
+    composer,
+    /\.\.\.agentSlash\.refMarkerTags\(richText\.getPlainTextAndCursor\(\)\.text\)/,
+  );
+  assert.match(
+    hook,
+    /mode === "dm" && dmPeer\s*\? agentRefTags\(getPickedAgentRefs\(dmPeer\), plainText\)\s*: \[\]/,
+  );
+  assert.match(hook, /useAgentSummary\(mode === "dm" \? dmPeer : null\)/);
 });

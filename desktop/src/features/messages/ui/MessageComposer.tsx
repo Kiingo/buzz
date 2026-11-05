@@ -728,7 +728,10 @@ function MessageComposerImpl({
         addressedAgentPubkeys: slashSend
           ? [...persistentAudience.pubkeys, ...slashSend.addressedAgents]
           : persistentAudience.pubkeys,
-        markerTags: slashSend?.markerTags,
+        markerTags: [
+          ...(slashSend?.markerTags ?? []),
+          ...agentSlash.refMarkerTags(richText.getPlainTextAndCursor().text),
+        ],
         capturedChannelId: channelId,
         capturedThreadContext,
         pendingImeta: currentPendingImeta,
@@ -750,6 +753,7 @@ function MessageComposerImpl({
     }
   }, [
     agentSlash.groupSend,
+    agentSlash.refMarkerTags,
     agentSlash.sendSkillIfInvoked,
     channelId,
     channelLinks.clearChannels,

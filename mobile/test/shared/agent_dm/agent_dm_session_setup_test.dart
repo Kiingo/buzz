@@ -1,5 +1,6 @@
 import 'package:buzz/shared/agent_commands/agent_commands.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_delegation_client.dart';
+import 'package:buzz/shared/agent_dm/agent_dm_refs.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_session_setup.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_session_views.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_turn_steps.dart';
@@ -66,18 +67,15 @@ Map<String, Object?> _vitals() => {
   'location': {'cwd': '/work/kiingo/', 'branch': 'main'},
 };
 
-Map<String, Object?> _mode(
-  String id,
-  String label, {
-  bool available = true,
-}) => {
-  'id': id,
-  'label': label,
-  'description': '$label does this',
-  'isDefault': id == 'ceiling',
-  'available': available,
-  'unavailableReason': available ? null : 'harness',
-};
+Map<String, Object?> _mode(String id, String label, {bool available = true}) =>
+    {
+      'id': id,
+      'label': label,
+      'description': '$label does this',
+      'isDefault': id == 'ceiling',
+      'available': available,
+      'unavailableReason': available ? null : 'harness',
+    };
 
 final _modes = [
   _mode('ceiling', 'Full'),
@@ -85,10 +83,7 @@ final _modes = [
   _mode('plan', 'Plan', available: false),
 ];
 
-Map<String, Object?> _modePanel({
-  bool canChange = true,
-  List<Object?>? modes,
-}) {
+Map<String, Object?> _modePanel({bool canChange = true, List<Object?>? modes}) {
   final panel = _panel();
   (panel['current'] as Map)['mode'] = 'ask';
   (panel['options'] as Map)['modes'] = modes ?? _modes;
@@ -537,11 +532,7 @@ void main() {
         const AgentCommand.session(name: 'new', description: 'New'),
         const AgentCommand.skill(name: 'mcp', skillId: 'x'),
       ], builtins);
-      expect(commands.map((command) => command.name), [
-        'new',
-        'diff',
-        'mcp',
-      ]);
+      expect(commands.map((command) => command.name), ['new', 'diff', 'mcp']);
       expect(
         agentDmSessionViewPath('a', const AgentDmSessionView.screen('mcp')),
         'agents/a/session/screens/mcp',
@@ -621,6 +612,112 @@ void main() {
         ),
         contains('taken over'),
       );
+    });
+  });
+
+  group('B5 references', () {
+    const taskId = '0192a6b0-0000-7000-8000-0000000000b1';
+    const projectId = '0192a6b0-0000-7000-8000-0000000000c2';
+
+    test('reads only well-formed task and project rows', () {
+      expect(parseAgentDmRefs(null), isNull);
+      expect(parseAgentDmRefs(<Object?>[]), isNull);
+      expect(
+        parseAgentDmRefs({
+          'results': [
+            {
+              'type': 'task',
+              'id': taskId.toUpperCase(),
+              'title': 'Fix login',
+              'subtitle': 'In your queue with Scout',
+            },
+            {'type': 'project', 'id': projectId, 'title': 'Launch'},
+            {'type': 'comment', 'id': taskId, 'title': 'not offered'},
+            {'type': 'task', 'id': 'not-an-id', 'title': 'drops'},
+            {'type': 'task', 'id': taskId},
+          ],
+        }),
+        const [
+          AgentDmRef(
+            type: 'task',
+            id: taskId,
+            title: 'Fix login',
+            subtitle: 'In your queue with Scout',
+          ),
+          AgentDmRef(type: 'project', id: projectId, title: 'Launch'),
+        ],
+      );
+    });
+
+    test('searches the reader\'s own refs on the Buzz mount', () {
+      expect(
+        agentDmRefsPath(taskId, 'task', ' fix login '),
+        'agents/$taskId/chat/refs?types=task&q=fix%20login&limit=20',
+      );
+      expect(
+        agentDmRefsPath(taskId, 'project', ''),
+        'agents/$taskId/chat/refs?types=project&limit=20',
+      );
+      expect(
+        agentDmRefsErrorSentence(
+          const DelegationApiException(null, 'agent_not_hosted'),
+        ),
+        contains('no host'),
+      );
+    });
+
+    test('only the reference rows open the picker, and only when hosted', () {
+      expect(agentDmRefTypeFor(agentDmRefTaskCommand), 'task');
+      expect(agentDmRefTypeFor(agentDmRefProjectCommand), 'project');
+      expect(
+        agentDmRefTypeFor(
+          AgentCommand.session(
+            name: 'task',
+            description: 'Reference a task'.toString(),
+          ),
+        ),
+        isNull,
+      );
+      const listed = [AgentCommand.session(name: 'new', description: 'New')];
+      expect(withAgentDmRefCommands(listed, hosted: false), listed);
+      expect(
+        withAgentDmRefCommands(listed, hosted: true).skip(1).toList(),
+        agentDmRefCommands,
+      );
+    });
+
+    test('a send tags each label still there, once, with no count limit', () {
+      final picks = [
+        for (var index = 0; index < 30; index++)
+          AgentDmRef(
+            type: 'task',
+            id: '0192a6b0-0000-7000-8000-${index.toString().padLeft(12, '0')}',
+            title: 'Task ${index.toString().padLeft(2, '0')}',
+          ),
+      ];
+      final all = [
+        ...picks,
+        picks.first,
+        const AgentDmRef(
+          type: 'project',
+          id: projectId,
+          title: '  Launch\n plan ',
+        ),
+      ];
+      expect(
+        const AgentDmRef(type: 'project', id: projectId, title: '').label,
+        'project: untitled',
+      );
+      final text =
+          '${picks.map((pick) => pick.label).join(' and ')} for project: '
+          'Launch plan';
+      final tags = agentDmRefTags(all, text);
+      expect(tags, hasLength(31));
+      expect(tags.first, ['buzz-ref', 'task', picks.first.id]);
+      expect(tags.last, ['buzz-ref', 'project', projectId]);
+      expect(agentDmRefTags(all, 'task: Task 03 only'), [
+        ['buzz-ref', 'task', picks[3].id],
+      ]);
     });
   });
 }

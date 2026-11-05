@@ -24,6 +24,17 @@ import {
   type SlashListState,
   type SlashTarget,
 } from "../lib/groupSlash";
+import {
+  AGENT_REF_COMMANDS,
+  addPickedAgentRef,
+  agentRefLabel,
+  agentRefTags,
+  agentRefTypeFor,
+  clearPickedAgentRefs,
+  getPickedAgentRefs,
+  requestAgentRefPicker,
+} from "../lib/agentRefs";
+import { useAgentSummary } from "../lib/agentSummary";
 import { sendAgentDmTaggedMessage } from "../lib/send";
 import {
   getAgentCommands,
@@ -290,6 +301,8 @@ export function useAgentSlashCommands({
       ? "group"
       : null;
   const audience: SlashAudience = mode === "dm" ? "private" : "group";
+  // "/task" and "/project" (B5): a 1:1 DM with a hosted agent only.
+  const refsOffered = !!useAgentSummary(mode === "dm" ? dmPeer : null)?.agentId;
   const groupRef = React.useRef(group);
   groupRef.current = group;
   /** Skills picked from the menu, so a pick found by a server search (and
@@ -378,10 +391,11 @@ export function useAgentSlashCommands({
     mode === "dm" && dmPeer ? getSessionBuiltins(dmPeer) : null;
   const commands = React.useMemo(() => {
     const merged = searched ? mergeCommands(searched, listed) : listed;
-    return setupPanel
+    const base = setupPanel
       ? withSetupCommands(merged, setupPanel, sessionViews)
       : merged;
-  }, [listed, searched, setupPanel, sessionViews]);
+    return refsOffered ? [...base, ...AGENT_REF_COMMANDS] : base;
+  }, [listed, refsOffered, searched, setupPanel, sessionViews]);
   /** What a send is checked against: the list, plus skills picked from a
    * search. */
   const sendable = React.useCallback(
@@ -412,14 +426,17 @@ export function useAgentSlashCommands({
       return matching.length > 0 ? matching : choices;
     }
     // Session commands are the whole message: only a leading "/" with
-    // nothing after it offers them.
+    // nothing after it offers them. A reference goes anywhere.
     const wholeMessage =
       slashQuery.tokenStart === leadingSlashStart(text, mode === "group") &&
       !text.slice(slashQuery.tokenEnd).trim();
     return filterSlashCommands(
       wholeMessage
         ? commands
-        : commands.filter((command) => command.kind !== "session"),
+        : commands.filter(
+            (command) =>
+              command.kind !== "session" || agentRefTypeFor(command) !== null,
+          ),
       slashQuery.query,
     );
   }, [commands, dismissed, labelFor, mode, slashQuery, target, text]);
@@ -437,7 +454,10 @@ export function useAgentSlashCommands({
     (nextText: string, cursor: number) => {
       // Outside a menu-capable composer every setter below is a no-op bail-out.
       setText(mode ? nextText : "");
-      if (!nextText.trim()) pickedSkillsRef.current.clear();
+      if (!nextText.trim()) {
+        pickedSkillsRef.current.clear();
+        if (dmPeer) clearPickedAgentRefs(dmPeer);
+      }
       const next: GroupSlashQuery | null =
         mode === "dm"
           ? (() => {
@@ -549,6 +569,30 @@ export function useAgentSlashCommands({
         void refreshAgentCommands(item.pubkey, "group");
         return;
       }
+      // A reference: the "/" token goes, and the pick's label goes where it
+      // was. Closing the picker without a pick leaves the token out.
+      const refType = agentRefTypeFor(item);
+      if (refType) {
+        const peer = mode === "dm" ? dmPeer : null;
+        if (!peer) return;
+        actions.applyEdit({
+          replaceFromOffset: query.tokenStart,
+          replaceToOffset: query.tokenEnd,
+          insertText: "",
+        });
+        requestAgentRefPicker(peer, {
+          type: refType,
+          onPick: (ref) => {
+            addPickedAgentRef(peer, ref);
+            actions.applyEdit({
+              replaceFromOffset: query.tokenStart,
+              replaceToOffset: query.tokenStart,
+              insertText: `${agentRefLabel(ref)} `,
+            });
+          },
+        });
+        return;
+      }
       /** The skill already in the message (picked, or a listed skill the
        * message opens with): one skill per message, so this pick replaces
        * it. A name merely typed mid-message is left alone. */
@@ -622,7 +666,7 @@ export function useAgentSlashCommands({
       actions.applyEdit(edit);
       if (item.kind === "session") actions.submit();
     },
-    [agentPubkey, commands, labelFor, mode, slashQuery, text],
+    [agentPubkey, commands, dmPeer, labelFor, mode, slashQuery, text],
   );
 
   const confirmPending = React.useCallback(() => {
@@ -693,9 +737,13 @@ export function useAgentSlashCommands({
           channelId,
           senderPubkey: selfPubkey,
           content: message.content,
-          markerTags: message.tags,
+          markerTags: [
+            ...message.tags,
+            ...agentRefTags(getPickedAgentRefs(dmPeer), plainText),
+          ],
         });
         pickedSkillsRef.current.clear();
+        clearPickedAgentRefs(dmPeer);
         onSent();
       } catch (error) {
         toast.error(
@@ -756,6 +804,18 @@ export function useAgentSlashCommands({
     [groupTargetFor, mode, sendable],
   );
 
+  /**
+   * The `buzz-ref` tags for an ordinary 1:1 DM send (media included): each
+   * picked reference whose label is still in the text. Nothing elsewhere.
+   */
+  const refMarkerTags = React.useCallback(
+    (plainText: string): string[][] =>
+      mode === "dm" && dmPeer
+        ? agentRefTags(getPickedAgentRefs(dmPeer), plainText)
+        : [],
+    [dmPeer, mode],
+  );
+
   return {
     argumentHint,
     cancelPending,
@@ -763,6 +823,7 @@ export function useAgentSlashCommands({
     confirmPending,
     pendingConfirm: pendingConfirm?.command ?? null,
     groupSend,
+    refMarkerTags,
     handleKeyDown,
     isOpen,
     mode,

@@ -13,6 +13,10 @@ part of '../compose_bar.dart';
 /// the first, and a skill picked mid-message is still sent as the skill,
 /// with the rest of the message as its input. Session commands (`/new`) are
 /// the whole message, so they are offered only for a leading "/".
+///
+/// In a DM with a hosted agent, "/task" and "/project" (anywhere) open a
+/// search of what the reader can read; a pick puts its label in the draft and
+/// the send carries its `buzz-ref` tag while the label is still there (B5).
 class _AgentCommandAutocomplete {
   const _AgentCommandAutocomplete({
     required this.suggestions,
@@ -30,7 +34,8 @@ class _AgentCommandAutocomplete {
   final String? title;
   final ValueChanged<AgentCommand> select;
 
-  /// The `buzz-skill` tag for [text] when it holds a picked skill.
+  /// The `buzz-skill` tag for [text] when it holds a picked skill, and in a
+  /// DM a `buzz-ref` tag for each picked reference whose label it holds.
   final List<List<String>> Function(String text) tagsFor;
 
   /// Agents a channel session command picked from the popup is addressed to
@@ -110,6 +115,7 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
   required TextEditingController controller,
   required FocusNode focusNode,
   required Future<bool> Function(String? agentName) confirmNewSession,
+
   /// Opens the session's panel, or with a view (`/mcp`, `/diff` …) that
   /// read-only view of the session.
   required void Function(String agent, [AgentDmSessionView? view]) openSession,
@@ -117,7 +123,9 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
 }) {
   final query = useState<String?>(null);
   final groupQuery = useState<GroupAgentCommandQuery?>(null);
+  final context = useContext();
   final chosen = useRef(<String, AgentCommand>{});
+  final pickedRefs = useRef(<AgentDmRef>[]);
   final sessionTarget = useRef<({String text, String pubkey})?>(null);
   final groupMode = agentPubkey == null && group != null;
   useEffect(() {
@@ -212,14 +220,26 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
             .watch(agentDmSessionBuiltinsProvider(commandAgent!.toLowerCase()))
             .value
       : null;
-  final commands = withAgentDmSessionViewCommands(
-    withAgentDmSetupCommands(merged, setup),
-    sessionViews,
+  // References need a host, not a session panel.
+  final hosted =
+      listOpen &&
+      !groupMode &&
+      ref
+              .watch(agentSummaryProvider(commandAgent.toLowerCase()))
+              .value
+              ?.agentId !=
+          null;
+  final commands = withAgentDmRefCommands(
+    withAgentDmSessionViewCommands(
+      withAgentDmSetupCommands(merged, setup),
+      sessionViews,
+    ),
+    hosted: hosted,
   );
   final List<AgentCommand> suggestions;
   if (listOpen) {
     // Session commands are the whole message: only a leading "/" with
-    // nothing after it offers them.
+    // nothing after it offers them. A reference goes anywhere.
     final text = controller.text;
     final token = groupMode
         ? (start: open?.tokenStart, end: open?.tokenEnd)
@@ -240,7 +260,9 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
           ? commands
           : [
               for (final command in commands)
-                if (command.kind != AgentCommandKind.session) command,
+                if (command.kind != AgentCommandKind.session ||
+                    agentDmRefTypeFor(command) != null)
+                  command,
             ],
       query.value!,
     );
@@ -346,8 +368,40 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     );
   }
 
+  /// The picker for a "/task" or "/project" row; a pick's label goes where
+  /// the "/" token was ([at], in [expected]), or at the end of a draft that
+  /// changed meanwhile.
+  Future<void> pickRef(
+    String agent,
+    String type,
+    String expected,
+    int at,
+  ) async {
+    final picked = await showAgentDmRefPicker(
+      context,
+      agentPubkey: agent,
+      type: type,
+    );
+    if (picked == null || !context.mounted) return;
+    final text = controller.text;
+    final caret = text == expected ? at : text.length;
+    final insert = '${picked.label} ';
+    pickedRefs.value.add(picked);
+    setText(text.replaceRange(caret, caret, insert), caret + insert.length);
+  }
+
   void select(AgentCommand command) {
     final text = controller.text;
+    final refType = agentDmRefTypeFor(command);
+    if (refType != null) {
+      final agent = groupMode ? null : commandAgent;
+      final dm = findAgentCommandQuery(text, controller.selection.baseOffset);
+      if (agent == null || dm == null) return;
+      final next = replaceToken(text, dm.tokenStart, dm.tokenEnd, '');
+      setText(next.text, next.caret);
+      unawaited(pickRef(agent.toLowerCase(), refType, next.text, next.caret));
+      return;
+    }
     if (command.kind == AgentCommandKind.session && command.name == 'new') {
       unawaited(startNewSession(commandAgent, targetLabel));
       return;
@@ -439,7 +493,10 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     select: select,
     tagsFor: (text) => groupMode
         ? groupAgentSkillInvocationTags(text, chosen.value)
-        : agentSkillInvocationTags(text, chosen.value),
+        : [
+            ...agentSkillInvocationTags(text, chosen.value),
+            ...agentDmRefTags(pickedRefs.value, text),
+          ],
     mentionsFor: (text) {
       final target = sessionTarget.value;
       return target != null && text.trim() == target.text
@@ -448,6 +505,7 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     },
     clear: () {
       chosen.value.clear();
+      pickedRefs.value.clear();
       sessionTarget.value = null;
     },
   );

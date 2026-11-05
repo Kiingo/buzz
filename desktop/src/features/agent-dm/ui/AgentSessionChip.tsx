@@ -32,6 +32,7 @@ import {
   subscribeSessionViews,
   takeSessionViewRequest,
 } from "../lib/sessionViews";
+import { AgentRefPicker } from "./AgentRefPicker";
 import { AgentSessionView } from "./AgentSessionView";
 
 /** The header re-reads the panel this often while the DM shows. */
@@ -249,11 +250,16 @@ export function AgentSessionChip({
       setView(asked);
     }
   });
-  if (!panel) return null;
+  // "/task" and "/project" need a host, not a session panel.
+  const refPicker = isAgent ? (
+    <AgentRefPicker agentPubkey={agentPubkey} />
+  ) : null;
+  if (!panel) return refPicker;
 
   const text = setupChipText(panel);
   return (
     <>
+      {refPicker}
       <Popover onOpenChange={setOpen} open={open}>
         <PopoverTrigger asChild>
           <button

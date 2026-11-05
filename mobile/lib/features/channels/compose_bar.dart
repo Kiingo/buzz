@@ -20,6 +20,9 @@ import 'package:nostr/nostr.dart' as nostr;
 
 import '../../shared/agent_commands/agent_commands.dart';
 import '../../shared/agent_commands/group_agent_commands.dart';
+import '../../shared/agent_details/agent_summary.dart';
+import '../../shared/agent_dm/agent_dm_ref_picker.dart';
+import '../../shared/agent_dm/agent_dm_refs.dart';
 import '../../shared/agent_dm/agent_dm_session_setup.dart';
 import '../../shared/agent_dm/agent_dm_session_views.dart';
 import '../../shared/mentions/agent_identity_provider.dart';

@@ -164,9 +164,39 @@ fn is_chat_head_query(query: &str) -> bool {
     }) && limit
 }
 
+/// The reference search in the reader's own DM (BUZZPARITY B5): `types`
+/// (`task` or `project`), `q` (percent-encoded, what was typed) and `limit`
+/// (the page size), each at most once. The host answers only what the signer
+/// can read.
+fn is_chat_refs_query(query: &str) -> bool {
+    let mut seen: Vec<&str> = Vec::new();
+    query.split('&').all(|pair| {
+        let Some((key, value)) = pair.split_once('=') else {
+            return false;
+        };
+        if seen.contains(&key) {
+            return false;
+        }
+        seen.push(key);
+        match key {
+            "types" => value == "task" || value == "project",
+            "q" => value.bytes().all(|b| {
+                b.is_ascii_alphanumeric()
+                    || matches!(
+                        b,
+                        b'%' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+                    )
+            }),
+            "limit" => (1..=2).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_digit()),
+            _ => false,
+        }
+    })
+}
+
 /// The call route `path` (relative to the mount) if it is one this command
 /// may reach, else `None`. A query string is allowed only on the feed, the
-/// delegation cards long-poll, the owner chat head and the settings read.
+/// delegation cards long-poll, the owner chat head, the settings read and
+/// the reference search.
 /// The session screens the host serves read-only to the Buzz app.
 const SESSION_SCREENS: [&str; 9] = [
     "config",
@@ -230,6 +260,8 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
             post && is_uuid(agent) && is_uuid(id)
         }
         ["agents", agent, "session", "interrupt"] => post && is_uuid(agent),
+        // The tasks and projects the reader can reference (B5).
+        ["agents", agent, "chat", "refs"] => get && is_uuid(agent),
         ["agents", agent, "delegations", "cancel-all"] => post && is_uuid(agent),
         // "Since you last looked" and the owner's own seen marker.
         ["agents", agent, "delegations", "since"] => get && is_uuid(agent),
@@ -278,6 +310,12 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
             Some(format!("{route}?{query}"))
         }
         Some(query) if get && parts.as_slice() == ["settings"] && is_settings_query(query) => {
+            Some(format!("{route}?{query}"))
+        }
+        Some(query)
+            if matches!(parts.as_slice(), ["agents", _, "chat", "refs"])
+                && is_chat_refs_query(query) =>
+        {
             Some(format!("{route}?{query}"))
         }
         Some(_) => None,
@@ -549,6 +587,28 @@ mod tests {
         assert!(allowed_path("POST", "agents/not-an-id/session/interrupt").is_none());
         assert!(allowed_path("POST", &format!("agents/{CALL}/session/terminal/keys")).is_none());
         assert!(allowed_path("POST", &format!("agents/{CALL}/session/settings/patch")).is_none());
+    }
+
+    #[test]
+    fn only_the_readers_reference_search_is_reachable() {
+        let refs = format!("agents/{CALL}/chat/refs");
+        assert_eq!(allowed_path("GET", &refs), Some(refs.clone()));
+        let search = format!("{refs}?types=task&q=fix%20login&limit=20");
+        assert_eq!(allowed_path("GET", &search), Some(search.clone()));
+        assert!(allowed_path("POST", &refs).is_none());
+        assert!(allowed_path("GET", "agents/not-an-id/chat/refs").is_none());
+        for query in [
+            "types=deal",
+            "types=task&types=project",
+            "q=a b",
+            "q=a&x=1",
+            "limit=100",
+        ] {
+            assert!(
+                allowed_path("GET", &format!("{refs}?{query}")).is_none(),
+                "{query}"
+            );
+        }
     }
 
     #[test]
