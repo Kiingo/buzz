@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at c3d3e03fd280ea26da45c1b0efba091a18018ce5; do not edit here.
 import { asInt, asString, field, isObject, type JsonValue } from "./json";
 import {
   decodeSurface,
@@ -49,6 +49,13 @@ export type Confirmation = {
   outsideCount?: number;
 };
 
+/**
+ * The words of an ask_agent with `feedback` (the tap's `feedback`, trimmed,
+ * no length cap) and one id per Send, kept on a retry of a request that got
+ * no answer.
+ */
+export type TapFeedback = { text: string; requestId: string };
+
 export type TapOutcome =
   | { kind: "done"; surface?: Surface }
   | { kind: "confirm"; confirmation: Confirmation }
@@ -76,6 +83,13 @@ export type LookupItem = {
   address?: string;
 };
 
+/**
+ * What Kiingo's own read of Sent Items found for a send Outlook never
+ * confirmed. Only that read settles it as sent; `not_sent` is the owner's own
+ * answer.
+ */
+export type EmailSendCheck = "sent" | "unknown" | "not_sent";
+
 export type SurfaceApi = {
   surface(id: string): Promise<Result<Surface>>;
   surfaces(
@@ -89,13 +103,17 @@ export type SurfaceApi = {
     patch: PatchOp[],
     client: string,
   ): Promise<Result<Surface>>;
-  /** `extra` is only ever a run gate's authorization (run-gate.ts). */
+  /**
+   * `extra` is only ever a run gate's authorization (run-gate.ts);
+   * `feedback` is an ask_agent's text-box words and their request id.
+   */
   tap(
     id: string,
     actionId: string,
     revision: number,
     client: string,
     extra?: RunAuthorization,
+    feedback?: TapFeedback,
   ): Promise<TapOutcome>;
   confirm(
     id: string,
@@ -106,6 +124,12 @@ export type SurfaceApi = {
     extra?: RunAuthorization,
   ): Promise<TapOutcome>;
   dismiss(id: string, revision: number, client: string): Promise<TapOutcome>;
+  /** The card owner's "Check again". No operation id: the card's newest send. */
+  checkEmailSend(
+    id: string,
+    operationId: string | undefined,
+    client: string,
+  ): Promise<Result<EmailSendCheck>>;
   lookupRecipients(query: string): Promise<Result<LookupItem[]>>;
   lookupEntities(
     type: EntityType | undefined,
@@ -123,6 +147,7 @@ export const offSurfaceApi: SurfaceApi = {
   tap: async () => ({ kind: "off" }),
   confirm: async () => ({ kind: "off" }),
   dismiss: async () => ({ kind: "off" }),
+  checkEmailSend: async () => ({ kind: "off" }),
   lookupRecipients: async () => ({ kind: "off" }),
   lookupEntities: async () => ({ kind: "off" }),
   resolveRefs: async () => ({ kind: "off" }),
@@ -282,6 +307,26 @@ export const surfaceResult = (
   if (status >= 200 && status < 300) {
     const surface = decodeSurface(body);
     return surface ? { kind: "done", value: surface } : undefined;
+  }
+  return refusedOrOff(status, body, [400, 403, 404, 409, 410, 413, 422, 429]);
+};
+
+const EMAIL_SEND_CHECKS: ReadonlySet<string> = new Set<EmailSendCheck>([
+  "sent",
+  "unknown",
+  "not_sent",
+]);
+
+/** The answer to "Check again": `{operationId, outcome, checkedAt}`. */
+export const emailSendCheckResult = (
+  status: number,
+  body: unknown,
+): Result<EmailSendCheck> | undefined => {
+  if (status >= 200 && status < 300) {
+    const outcome = asString(field(body, "outcome"));
+    return outcome && EMAIL_SEND_CHECKS.has(outcome)
+      ? { kind: "done", value: outcome as EmailSendCheck }
+      : undefined;
   }
   return refusedOrOff(status, body, [400, 403, 404, 409, 410, 413, 422, 429]);
 };
@@ -516,12 +561,19 @@ export const createSurfaceApi = (send: HttpSend): SurfaceApi => {
       }
       return value;
     },
-    tap: async (id, actionId, revision, client, extra) =>
+    tap: async (id, actionId, revision, client, extra, feedback) =>
       await answer(
         {
           method: "POST",
           path: `${base(id)}/actions/${segment(actionId)}`,
-          body: { ...(extra?.body ?? {}), revision, client },
+          body: {
+            ...(extra?.body ?? {}),
+            revision,
+            client,
+            ...(feedback
+              ? { feedback: feedback.text, requestId: feedback.requestId }
+              : {}),
+          },
           ...(extra?.headers ? { headers: extra.headers } : {}),
         },
         (status, body) => tapResult(status, body, id, actionId, revision),
@@ -552,6 +604,15 @@ export const createSurfaceApi = (send: HttpSend): SurfaceApi => {
           body: { revision, client },
         },
         (status, body) => tapResult(status, body, id, "dismiss"),
+      ),
+    checkEmailSend: (id, operationId, client) =>
+      answer(
+        {
+          method: "POST",
+          path: `${base(id)}/send-outcome/check`,
+          body: { client, ...(operationId ? { operationId } : {}) },
+        },
+        emailSendCheckResult,
       ),
     lookupRecipients: (query) =>
       answer(

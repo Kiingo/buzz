@@ -1,10 +1,11 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at c3d3e03fd280ea26da45c1b0efba091a18018ce5; do not edit here.
 import {
   idempotencyKey,
   type Confirmation,
   type LookupItem,
   type Result,
   type SurfaceApi,
+  type TapFeedback,
   type TapOutcome,
 } from "./api";
 import { isObject, type JsonObject, type JsonValue } from "./json";
@@ -18,6 +19,7 @@ import {
   acceptsTaps,
   allowsRun,
   editedNote,
+  emailSendUnknown,
   type EntityKey,
   type EntityType,
   type Surface,
@@ -83,6 +85,13 @@ export type Intent =
   | { kind: "openEntity"; entity: EntityKey }
   | { kind: "openExpanded" };
 
+/** The busy id while "Check again" runs (never an action's id). */
+export const CHECK_EMAIL_SEND_BUSY_ID = "#checkEmailSend";
+
+/** A check that found nothing: the card stays as it is. */
+export const EMAIL_SEND_NOT_FOUND_YET =
+  "Not in Sent Items yet. Kiingo keeps checking.";
+
 export type ControllerSnapshot = {
   surface: Surface;
   /** The server's data with local edits applied: what the views draw. */
@@ -96,7 +105,52 @@ export type ControllerSnapshot = {
   confirmation?: Confirmation;
   /** The action being sent, for a spinner on its button. */
   busyActionId?: string;
+  /** The open text box of an ask_agent with `feedback` (one per surface). */
+  feedback?: FeedbackDraft;
   pendingCount: number;
+};
+
+/**
+ * The text box an ask_agent with `feedback` opens in the card (Ross,
+ * 2026-11-02: "Ask agent to revise" opens "a text box below (within the
+ * card)", and "Send Revision Request" sends it). `editing` → `sending` →
+ * `sent` or `failed` (Retry sends again).
+ */
+export type FeedbackDraft = {
+  actionId: string;
+  text: string;
+  phase: "editing" | "sending" | "sent" | "failed";
+  /** One per Send: kept for a retry that got no answer (tap-feedback.ts). */
+  requestId: string;
+  /** With `failed`: what to tell the person. */
+  error?: string;
+  /** With `sent`: the words that went, and the card's revision then. */
+  sentText?: string;
+  sentRevision?: number;
+};
+
+export const FEEDBACK_SEND_FAILED = "Couldn’t send. Try again.";
+export const FEEDBACK_DRAFT_CHANGED =
+  "The draft changed. Check it, then send again.";
+
+/** A fresh request id (one per Send). */
+export const newFeedbackRequestId = (): string => {
+  const crypto = globalThis.crypto as Crypto | undefined;
+  if (crypto && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (crypto && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
 };
 
 export type ControllerOptions = {
@@ -136,6 +190,8 @@ export class SurfaceController {
   private failures = 0;
   private mediaRefreshedAt: number | undefined;
   private disposed = false;
+  /** Words typed in a text box that was cancelled, by action. */
+  private readonly feedbackKept = new Map<string, string>();
 
   constructor(surface: Surface, options: ControllerOptions) {
     this.id = surface.id;
@@ -215,9 +271,16 @@ export class SurfaceController {
     ) {
       return;
     }
+    const feedback = this.snapshot.feedback;
     this.set({
       surface: updated,
       data: applyPatch(updated.data, this.pending),
+      // The sent row goes once the card moves on (the agent revised it).
+      ...(feedback?.phase === "sent" &&
+      feedback.sentRevision !== undefined &&
+      updated.revision > feedback.sentRevision
+        ? { feedback: undefined }
+        : {}),
     });
   }
 
@@ -597,6 +660,10 @@ export class SurfaceController {
       }
       case "run":
       case "ask_agent": {
+        if (action.kind === "ask_agent" && action.feedback) {
+          this.openFeedback(action);
+          return undefined;
+        }
         if (action.kind === "run" && !this.runAvailable) {
           this.set({ notice: RUN_UNAVAILABLE_HINT });
           return undefined;
@@ -670,6 +737,191 @@ export class SurfaceController {
         this.set({ notice: "This needs a newer version of the app." });
         return undefined;
     }
+  }
+
+  // --- An ask_agent's text box (`feedback`) -----------------------------------
+
+  /** Opens the text box of `action` in the card (a press of its button). */
+  openFeedback(action: SurfaceAction): void {
+    const surface = this.snapshot.surface;
+    if (!action.feedback) {
+      return;
+    }
+    if (this.editsDisabled) {
+      this.set({ notice: VIEW_ONLY_HINT });
+      return;
+    }
+    if (!acceptsTaps(surface)) {
+      this.set({
+        notice: surface.viewer.canAct
+          ? "This is no longer open."
+          : surfaceMessage("ui_surface_not_editor"),
+      });
+      return;
+    }
+    const open = this.snapshot.feedback;
+    if (open?.actionId === action.id && open.phase !== "sent") {
+      return;
+    }
+    this.set({
+      feedback: {
+        actionId: action.id,
+        // Words typed before a Cancel come back.
+        text:
+          open?.actionId === action.id && open.phase !== "sent"
+            ? open.text
+            : (this.feedbackKept.get(action.id) ?? ""),
+        phase: "editing",
+        requestId: newFeedbackRequestId(),
+      },
+    });
+  }
+
+  /** The person typed in the box. New words are a new request. */
+  setFeedbackText(text: string): void {
+    const open = this.snapshot.feedback;
+    if (!open || open.phase === "sending" || open.phase === "sent") {
+      return;
+    }
+    this.set({
+      feedback: {
+        ...open,
+        text,
+        ...(text !== open.text ? { requestId: newFeedbackRequestId() } : {}),
+      },
+    });
+  }
+
+  /** Cancel or Done: the box closes (typed words are kept for next time). */
+  closeFeedback(): void {
+    const open = this.snapshot.feedback;
+    if (!open || open.phase === "sending") {
+      return;
+    }
+    if (open.phase === "sent") {
+      this.feedbackKept.delete(open.actionId);
+    } else {
+      this.feedbackKept.set(open.actionId, open.text);
+    }
+    this.set({ feedback: undefined });
+  }
+
+  /** Send (or Retry): the tap with the person's words. Empty words never go. */
+  async sendFeedback(): Promise<void> {
+    const open = this.snapshot.feedback;
+    const action = open
+      ? this.snapshot.surface.actions.get(open.actionId)
+      : undefined;
+    const text = open?.text.trim() ?? "";
+    if (
+      !open ||
+      !action?.feedback ||
+      open.phase === "sending" ||
+      open.phase === "sent" ||
+      !text ||
+      this.snapshot.busyActionId
+    ) {
+      return;
+    }
+    const surface = this.snapshot.surface;
+    if (this.editsDisabled || !acceptsTaps(surface)) {
+      this.failFeedback(
+        open,
+        surface.viewer.canAct && !this.editsDisabled
+          ? "This is no longer open."
+          : VIEW_ONLY_HINT,
+        true,
+      );
+      return;
+    }
+    const sending: FeedbackDraft = {
+      ...open,
+      phase: "sending",
+      error: undefined,
+    };
+    this.set({ feedback: sending, notice: undefined });
+    if (!(await this.savedBeforeTap())) {
+      this.failFeedback(
+        sending,
+        this.snapshot.notice ?? FEEDBACK_SEND_FAILED,
+        false,
+      );
+      return;
+    }
+    const revision = this.snapshot.surface.revision;
+    const words: TapFeedback = { text, requestId: open.requestId };
+    this.set({ busyActionId: action.id });
+    let outcome: TapOutcome;
+    try {
+      outcome = await this.api.tap(
+        this.id,
+        action.id,
+        revision,
+        this.client,
+        undefined,
+        words,
+      );
+    } catch {
+      // No answer: a Retry keeps the request id, so it never sends twice.
+      this.set({ busyActionId: undefined });
+      this.failFeedback(sending, FEEDBACK_SEND_FAILED, false);
+      return;
+    }
+    this.set({ busyActionId: undefined });
+    switch (outcome.kind) {
+      case "done":
+        this.feedbackKept.delete(action.id);
+        this.set({
+          feedback: {
+            ...sending,
+            phase: "sent",
+            sentText: text,
+            sentRevision: revision,
+          },
+        });
+        if (outcome.surface) {
+          this.receive(outcome.surface);
+        } else {
+          await this.refresh();
+        }
+        return;
+      case "stale":
+        if (outcome.surface) {
+          this.receive(outcome.surface);
+        } else {
+          await this.refresh();
+        }
+        this.failFeedback(sending, FEEDBACK_DRAFT_CHANGED, true);
+        return;
+      case "refused":
+        this.failFeedback(
+          sending,
+          outcome.message ?? FEEDBACK_SEND_FAILED,
+          true,
+        );
+        return;
+      default:
+        this.failFeedback(sending, "This isn’t available here yet.", true);
+    }
+  }
+
+  /** `answered`: the server refused, so a Retry is a new request. */
+  private failFeedback(
+    draft: FeedbackDraft,
+    error: string,
+    answered: boolean,
+  ): void {
+    if (this.snapshot.feedback?.actionId !== draft.actionId) {
+      return;
+    }
+    this.set({
+      feedback: {
+        ...draft,
+        phase: "failed",
+        error,
+        ...(answered ? { requestId: newFeedbackRequestId() } : {}),
+      },
+    });
   }
 
   /** The server resolves a tap from its stored revision, so local edits go first. */
@@ -747,6 +999,47 @@ export class SurfaceController {
 
   cancelConfirmation(): void {
     this.set({ confirmation: undefined });
+  }
+
+  /**
+   * "Check again" on an email card whose send Outlook never confirmed
+   * (M-4916): Kiingo reads Sent Items again and the card then shows what the
+   * server says. Only the server's own read settles it; nothing is sent.
+   */
+  async checkEmailSend(): Promise<void> {
+    const surface = this.snapshot.surface;
+    if (!emailSendUnknown(surface) || this.snapshot.busyActionId) {
+      return;
+    }
+    this.set({
+      busyActionId: CHECK_EMAIL_SEND_BUSY_ID,
+      notice: undefined,
+    });
+    try {
+      const result = await this.api.checkEmailSend(
+        surface.id,
+        surface.status?.operationId,
+        this.client,
+      );
+      switch (result.kind) {
+        case "done":
+          await this.refresh();
+          if (result.value === "unknown") {
+            this.set({ notice: EMAIL_SEND_NOT_FOUND_YET });
+          }
+          break;
+        case "refused":
+          this.set({ notice: result.message ?? surfaceMessage(result.code) });
+          break;
+        case "off":
+          this.set({ notice: "This isn’t available here yet." });
+          break;
+      }
+    } catch {
+      this.set({ notice: "Couldn’t reach Kiingo. Try again." });
+    } finally {
+      this.set({ busyActionId: undefined });
+    }
   }
 
   private async send(
