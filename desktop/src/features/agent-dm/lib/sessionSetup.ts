@@ -581,7 +581,8 @@ export const SETUP_VIEW_COMMANDS = [
 ] as const;
 
 export type SetupCommand =
-  | { name: "model" | "effort" | "speed"; arg: string | null }
+  | { name: "model" | "effort"; arg: string | null }
+  | { name: "speed"; arg: string | null }
   | { name: "fast"; arg: null }
   | { name: (typeof SETUP_VIEW_COMMANDS)[number]; arg: null };
 
