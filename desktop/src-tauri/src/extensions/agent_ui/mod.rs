@@ -9,9 +9,16 @@
 //! - every request is NIP-98 (kind 27235, exact URL, method) signed by the
 //!   signed-in user, with `X-Buzz-Community`, so the key never reaches the
 //!   webview;
-//! - only `GET surfaces/<uuid>` is reachable for now: the desktop shows
-//!   surfaces view only, and changes happen in the host's own apps;
-//! - answers are capped at 2 MiB (declared length first, then while read);
+//! - only reads are reachable: `GET surfaces/<uuid>` (the desktop shows
+//!   surfaces view only, and changes happen in the host's own apps), and
+//!   the card's own file and WorkView reads under it (BUZZWIRE:
+//!   `files/<uuid>/card`, `files/<uuid>/image/<page>`,
+//!   `files/<uuid>/versions/<n>/image/<page>`, `files/<uuid>/model`,
+//!   `workview/threads/<uuid>`), which the host answers only for the
+//!   surface's owner and only for what the surface names;
+//! - answers are capped (declared length first, then while read): 2 MiB
+//!   for a surface or a WorkView, and for a file read the base64 of the
+//!   renderer's largest file (`DOCUMENT_MAX_BYTES`, 200 MiB) plus its JSON;
 //! - the answer is returned as `{ status, body, origin }` for every HTTP
 //!   status (`origin` is the host the surface's images load from); transport
 //!   failures are errors.
@@ -30,7 +37,11 @@ use crate::managed_agents::access_policy::guest_route_url;
 use crate::relay::relay_ws_url_with_override;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+/// A file read carries the file's bytes: more time than a JSON read.
+const FILE_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+/// base64 of 200 MiB (surface-core `DOCUMENT_MAX_BYTES`) and its JSON.
+const MAX_FILE_RESPONSE_BYTES: usize = 280 * 1024 * 1024;
 const MOUNT: &str = "/api/buzz-ui/desktop";
 
 fn error(status: Option<u16>, code: &str) -> String {
@@ -41,11 +52,32 @@ fn error(status: Option<u16>, code: &str) -> String {
 /// reach it, else `None`. No query strings.
 fn allowed_path(method: &str, path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
-    let ok = match parts.as_slice() {
-        ["surfaces", id] => method == "GET" && is_uuid(id),
-        _ => false,
-    };
+    let ok = method == "GET"
+        && match parts.as_slice() {
+            ["surfaces", id] => is_uuid(id),
+            ["surfaces", id, "files", file, "card" | "model"] => is_uuid(id) && is_uuid(file),
+            ["surfaces", id, "files", file, "image", page] => {
+                is_uuid(id) && is_uuid(file) && is_page(page)
+            }
+            ["surfaces", id, "files", file, "versions", version, "image", page] => {
+                is_uuid(id) && is_uuid(file) && is_page(version) && is_page(page)
+            }
+            ["surfaces", id, "workview", "threads", thread] => is_uuid(id) && is_uuid(thread),
+            _ => false,
+        };
     ok.then(|| path.to_ascii_lowercase())
+}
+
+/// A page or version number from 1: digits only, no leading zero.
+fn is_page(value: &str) -> bool {
+    (1..=6).contains(&value.len())
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+        && !value.starts_with('0')
+}
+
+/// A file read (its answer carries the file's bytes).
+fn is_file_read(path: &str) -> bool {
+    path.split('/').nth(2) == Some("files")
 }
 
 /// The one URL that is both signed and sent, only if its normalised path is
@@ -78,9 +110,14 @@ pub async fn agent_ui_request(
     let url = request_url(&origin, &path).ok_or_else(|| error(None, "path_not_allowed"))?;
     let origin = url.origin().ascii_serialization();
     let authorization = nip98_header(&keys, &method, url.as_str(), None)?;
+    let (timeout, max_bytes) = if is_file_read(&path) {
+        (FILE_REQUEST_TIMEOUT, MAX_FILE_RESPONSE_BYTES)
+    } else {
+        (REQUEST_TIMEOUT, MAX_RESPONSE_BYTES)
+    };
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(timeout)
         .build()
         .map_err(|_| error(None, "client_failed"))?;
     let response = client
@@ -103,7 +140,7 @@ pub async fn agent_ui_request(
     let status = response.status().as_u16();
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+        .is_some_and(|length| length > max_bytes as u64)
     {
         return Err(error(Some(status), "response_too_large"));
     }
@@ -114,7 +151,7 @@ pub async fn agent_ui_request(
         .await
         .map_err(|_| error(Some(status), "response_unreadable"))?
     {
-        if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+        if bytes.len() + chunk.len() > max_bytes {
             return Err(error(Some(status), "response_too_large"));
         }
         bytes.extend_from_slice(&chunk);

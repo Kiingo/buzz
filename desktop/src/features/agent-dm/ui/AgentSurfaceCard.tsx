@@ -21,6 +21,7 @@ import { useIdentityQuery } from "@/shared/api/hooks";
 
 import { parseSurface } from "../lib/markers";
 import { sendAgentDmTaggedMessage } from "../lib/send";
+import { surfaceReads } from "../lib/surfaceReads";
 import { surfaceFromSigner } from "../lib/surfaceCardGate";
 
 /** A focus re-read waits at least this long after the last read. */
@@ -104,6 +105,16 @@ export function AgentSurfaceCard({
       openUrl: (url) => {
         void openUrl(url).catch(() => toast.error("Couldn’t open that link."));
       },
+      // Files and worker trees the surface names, read through the
+      // native signed request under this surface (BUZZWIRE); openFile
+      // opens the agent's Files in the Kiingo app.
+      ...(surfaceId
+        ? surfaceReads({
+            surfaceId,
+            agentId: () => controller?.getSnapshot()?.surface.agentId,
+            apiOrigin: surfaceApiOrigin,
+          })
+        : {}),
       openExpanded: () => setExpanded("sheet"),
       // The header's Full screen button and `open` with `target: fullscreen`:
       // the same controller in a dialog the size of the window. Reads nothing.
@@ -126,7 +137,7 @@ export function AgentSurfaceCard({
         );
       },
     }),
-    [queryClient, channelId, senderPubkey],
+    [queryClient, channelId, senderPubkey, surfaceId, controller],
   );
 
   // S-b: only the agent the host bound to this surface may show it here.

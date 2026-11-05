@@ -2195,6 +2195,7 @@
         "desktop/src-tauri/src/extensions/agent_ui/mod.rs",
         "desktop/src/features/agent-dm/lib/surfaceCardGate.test.mjs",
         "desktop/src/features/agent-dm/lib/surfaceCardGate.ts",
+        "desktop/src/features/agent-dm/lib/surfaceReads.ts",
         "desktop/src/features/agent-dm/ui/AgentSurfaceCard.tsx",
         "desktop/src/features/surfaces/core/api.ts",
         "desktop/src/features/surfaces/core/board.ts",
