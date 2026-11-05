@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import { useMemo, useState } from "react";
 import {
   appendPointer,
@@ -22,11 +22,14 @@ import {
 import { cn } from "./cn";
 import { useNodeContext, type NodeProps } from "./context";
 import { BadgeLabel, EntityChip } from "./display";
+import { InlineMarkdown } from "./markdown";
 import { catalogIcon, Glyphs } from "./icons";
 import { ProxyImage } from "./media";
 import { fieldClass, QuotedText, TooLargeRow } from "./ui";
 
 // §4.2 Table and List: data-heavy display.
+
+type ChoiceOption = { value: string; label: string };
 
 type Column = {
   index: number;
@@ -37,10 +40,26 @@ type Column = {
   editable: boolean;
   currency?: string;
   width?: string;
+  options: ChoiceOption[];
 };
 
+const optionsOf = (raw: JsonValue | undefined): ChoiceOption[] =>
+  Array.isArray(raw)
+    ? raw.flatMap((item) =>
+        isObject(item) && typeof item.value === "string"
+          ? [
+              {
+                value: item.value,
+                label: plainText(item.label, 100) ?? item.value,
+              },
+            ]
+          : [],
+      )
+    : [];
+
+// Every column the agent sent (no column cap; the row scrolls sideways).
 const columnsOf = (raw: JsonValue[]): Column[] =>
-  raw.slice(0, 12).flatMap((item, index) => {
+  raw.flatMap((item, index) => {
     if (!isObject(item) || typeof item.key !== "string") {
       return [];
     }
@@ -61,12 +80,27 @@ const columnsOf = (raw: JsonValue[]): Column[] =>
           ? { currency: item.currency }
           : {}),
         ...(typeof item.width === "string" ? { width: item.width } : {}),
+        options: optionsOf(item.options),
       },
     ];
   });
 
 const fieldOf = (row: JsonValue, key: string): JsonValue | undefined =>
   isObject(row) ? row[key] : undefined;
+
+/** A choice cell shows its option's label; a checkbox Yes or No. */
+const shownText = (column: Column, value: JsonValue | undefined): string => {
+  if (column.type === "checkbox") {
+    return value === true ? "Yes" : value === false ? "No" : "";
+  }
+  if (column.type === "choice") {
+    const option = column.options.find((item) => item.value === value);
+    if (option) {
+      return option.label;
+    }
+  }
+  return cellText(value);
+};
 
 const compare = (
   a: JsonValue | undefined,
@@ -77,10 +111,39 @@ const compare = (
   if (x !== undefined && y !== undefined) {
     return x - y;
   }
+  if (typeof a === "boolean" || typeof b === "boolean") {
+    return Number(a === true) - Number(b === true);
+  }
   return cellText(a).localeCompare(cellText(b), undefined, {
     numeric: true,
     sensitivity: "base",
   });
+};
+
+/** The cells an added row starts with: empty text, unchecked, else null; then `newRow`. */
+const blankRow = (
+  columns: Column[],
+  newRow: JsonValue | undefined,
+): Record<string, JsonValue> => {
+  const row: Record<string, JsonValue> = {};
+  for (const column of columns) {
+    row[column.key] =
+      column.type === "checkbox"
+        ? false
+        : column.type === "text" ||
+            column.type === "badge" ||
+            column.type === "link"
+          ? ""
+          : null;
+  }
+  if (isObject(newRow)) {
+    for (const [key, value] of Object.entries(newRow)) {
+      if (value !== undefined) {
+        row[key] = value;
+      }
+    }
+  }
+  return row;
 };
 
 export const TableView = ({ component, scope }: NodeProps) => {
@@ -88,12 +151,20 @@ export const TableView = ({ component, scope }: NodeProps) => {
   const [sortKey, setSortKey] = useState<string | undefined>(undefined);
   const [ascending, setAscending] = useState(true);
   const [filter, setFilter] = useState("");
-  const [pages, setPages] = useState(1);
+  const [page, setPage] = useState(0);
   const columns = columnsOf(context.list(component, "columns", scope));
   const rowsPointer = bindingOf(component.props.rows, scope);
-  const all = context.list(component, "rows", scope);
+  // Every row, not the first MAX_REPEATS: one page is drawn at a time, so a
+  // long table stays whole and reachable (no row cap).
+  const rawRows = context.value(component, "rows", scope);
+  const all = useMemo(() => (Array.isArray(rawRows) ? rawRows : []), [rawRows]);
   const sortable = context.flag(component, "sortable", scope);
   const filterable = context.flag(component, "filterable", scope);
+  const canChangeRows = Boolean(rowsPointer) && context.acceptsEdits;
+  const addRows = context.flag(component, "addRows", scope) && canChangeRows;
+  const removeRows =
+    context.flag(component, "removeRows", scope) && canChangeRows;
+  // Rows drawn per page; the catalog allows 5 to 100, 50 when unset.
   const pageSize = Math.max(
     1,
     Math.min(
@@ -103,25 +174,22 @@ export const TableView = ({ component, scope }: NodeProps) => {
   );
   const selectable = context.string(component, "selectable") ?? "none";
   const selectionPointer = bindingOf(component.props.selection, scope);
-  const selected = new Set(
-    (() => {
-      const value = selectionPointer
-        ? context.read(selectionPointer)
-        : undefined;
-      return Array.isArray(value)
-        ? value
-            .map((item) => asInt(item))
-            .filter((item): item is number => item !== undefined)
-        : [];
-    })(),
-  );
+  const selectedList = (() => {
+    const value = selectionPointer ? context.read(selectionPointer) : undefined;
+    return Array.isArray(value)
+      ? value
+          .map((item) => asInt(item))
+          .filter((item): item is number => item !== undefined)
+      : [];
+  })();
+  const selected = new Set(selectedList);
   const shown = useMemo(() => {
     let out = all.map((value, index) => ({ index, value }));
     const needle = filter.trim().toLowerCase();
     if (needle) {
       out = out.filter((row) =>
         columns.some((column) =>
-          cellText(fieldOf(row.value, column.key))
+          shownText(column, fieldOf(row.value, column.key))
             .toLowerCase()
             .includes(needle),
         ),
@@ -138,13 +206,15 @@ export const TableView = ({ component, scope }: NodeProps) => {
     }
     return out;
   }, [all, columns, filter, sortKey, ascending]);
-  const limit = pageSize * pages;
+  const pageCount = Math.max(1, Math.ceil(shown.length / pageSize));
+  const current = Math.min(page, pageCount - 1);
+  const first = current * pageSize;
+  const pageRows = shown.slice(first, first + pageSize);
   // Rows drawn within the surface's shared cell budget (79 W6 SHOULD 5).
-  const wanted = Math.min(shown.length, limit);
   const drawn = context.claimCells(
     `table:${childKey(component.id, scope)}`,
-    wanted,
-    columns.length + (selectable !== "none" ? 1 : 0),
+    pageRows.length,
+    columns.length + (selectable !== "none" ? 1 : 0) + (removeRows ? 1 : 0),
   );
   const empty = context.text(component, "emptyText", scope, 200);
   const canSelect = Boolean(selectionPointer) && context.acceptsEdits;
@@ -162,6 +232,41 @@ export const TableView = ({ component, scope }: NodeProps) => {
       context.edit(selectionPointer, [...next, index]);
     }
   };
+  const addRow = () => {
+    if (!rowsPointer) {
+      return;
+    }
+    const row = blankRow(columns, component.props.newRow as JsonValue);
+    if (Array.isArray(rawRows)) {
+      context.edit(appendPointer(rowsPointer, all.length), row);
+    } else {
+      context.edit(rowsPointer, [row]);
+    }
+    // Show the new row: no filter hides it, and an unsorted table turns to
+    // the last page, where it is.
+    setFilter("");
+    if (!sortKey) {
+      setPage(Math.floor(all.length / pageSize));
+    }
+  };
+  const removeRow = (index: number) => {
+    if (!rowsPointer) {
+      return;
+    }
+    context.edit(appendPointer(rowsPointer, index), undefined);
+    // Selection holds row indexes: the removed row goes, later rows move up.
+    if (selectionPointer && selectedList.length > 0) {
+      const next = selectedList
+        .filter((item) => item !== index)
+        .map((item) => (item > index ? item - 1 : item));
+      if (
+        next.length !== selectedList.length ||
+        next.some((item, position) => item !== selectedList[position])
+      ) {
+        context.edit(selectionPointer, next);
+      }
+    }
+  };
   const cell = (column: Column, row: JsonValue, index: number) => {
     const value = fieldOf(row, column.key);
     // Outside content in a cell is a quote: never a link, chip or control
@@ -172,14 +277,14 @@ export const TableView = ({ component, scope }: NodeProps) => {
         appendPointer(appendPointer(rowsPointer, index), column.key),
       )
     ) {
-      return <QuotedText text={cellText(value)} />;
+      return <QuotedText text={shownText(column, value)} />;
     }
     if (column.editable && rowsPointer && context.acceptsEdits) {
       const pointer = appendPointer(
         appendPointer(rowsPointer, index),
         column.key,
       );
-      return <EditableCell column={column} pointer={pointer} />;
+      return <EditableCell column={column} pointer={pointer} row={index + 1} />;
     }
     switch (column.type) {
       case "number": {
@@ -206,6 +311,17 @@ export const TableView = ({ component, scope }: NodeProps) => {
         const text = plainText(value, 40);
         return text ? <BadgeLabel text={text} /> : null;
       }
+      case "checkbox":
+        return value === true ? (
+          <>
+            <Glyphs.checkboxOn aria-hidden className="inline h-4 w-4" />
+            <span className="sr-only">Yes</span>
+          </>
+        ) : value === false ? (
+          <span className="sr-only">No</span>
+        ) : null;
+      case "choice":
+        return <span>{shownText(column, value)}</span>;
       case "link": {
         const link = openableUrl(isObject(value) ? value.url : value);
         if (!link) {
@@ -231,9 +347,10 @@ export const TableView = ({ component, scope }: NodeProps) => {
         );
       }
       default:
+        // A text cell is inline Markdown (catalog `inlineMarkdown`).
         return (
           <span className="line-clamp-3 whitespace-pre-wrap break-words">
-            {cellText(value)}
+            <InlineMarkdown text={cellText(value)} onLink={context.openLink} />
           </span>
         );
     }
@@ -251,7 +368,7 @@ export const TableView = ({ component, scope }: NodeProps) => {
           aria-label="Filter rows"
           onChange={(event) => {
             setFilter(event.target.value);
-            setPages(1);
+            setPage(0);
           }}
           className={cn(fieldClass, "h-8 py-1 text-xs")}
         />
@@ -311,10 +428,15 @@ export const TableView = ({ component, scope }: NodeProps) => {
                     )}
                   </th>
                 ))}
+                {removeRows ? (
+                  <th scope="col" className="w-8 px-2 py-1.5">
+                    <span className="sr-only">Remove</span>
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
-              {shown.slice(0, drawn).map((row) => {
+              {pageRows.slice(0, drawn).map((row) => {
                 const isSelected = selected.has(row.index);
                 return (
                   <tr
@@ -347,6 +469,19 @@ export const TableView = ({ component, scope }: NodeProps) => {
                         {cell(column, row.value, row.index)}
                       </td>
                     ))}
+                    {removeRows ? (
+                      <td className="px-2 py-1.5 align-top">
+                        <button
+                          type="button"
+                          aria-label={`Remove row ${row.index + 1}`}
+                          title="Remove row"
+                          onClick={() => removeRow(row.index)}
+                          className="text-muted-foreground hover:text-destructive"
+                        >
+                          <TrashGlyph aria-hidden className="h-4 w-4" />
+                        </button>
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}
@@ -354,39 +489,134 @@ export const TableView = ({ component, scope }: NodeProps) => {
           </table>
         </div>
       ) : null}
-      {drawn < wanted ? (
-        <TooLargeRow />
-      ) : shown.length > limit ? (
-        <button
-          type="button"
-          className="self-start text-xs text-primary hover:underline"
-          onClick={() => setPages(pages + 1)}
-        >
-          Show {Math.min(pageSize, shown.length - limit)} more
-        </button>
+      {drawn < pageRows.length ? <TooLargeRow /> : null}
+      {pageCount > 1 || addRows ? (
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          {addRows ? (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-primary hover:underline"
+              onClick={addRow}
+            >
+              <AddGlyph aria-hidden className="h-3.5 w-3.5" />
+              Add row
+            </button>
+          ) : null}
+          {pageCount > 1 ? (
+            <nav
+              aria-label="Table pages"
+              className="ml-auto inline-flex items-center gap-2 text-muted-foreground"
+            >
+              <span aria-live="polite">
+                Rows {formatNumber(first + 1)}–
+                {formatNumber(first + pageRows.length)} of{" "}
+                {formatNumber(shown.length)}
+              </span>
+              <button
+                type="button"
+                disabled={current === 0}
+                onClick={() => setPage(current - 1)}
+                className="text-primary hover:underline disabled:text-muted-foreground disabled:no-underline"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                disabled={current >= pageCount - 1}
+                onClick={() => setPage(current + 1)}
+                className="text-primary hover:underline disabled:text-muted-foreground disabled:no-underline"
+              >
+                Next
+              </button>
+            </nav>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
 };
 
+const TrashGlyph = catalogIcon("trash");
+const AddGlyph = catalogIcon("add");
+
 const EditableCell = ({
   column,
   pointer,
+  row,
 }: {
   column: Column;
   pointer: Pointer;
+  row: number;
 }) => {
   const context = useNodeContext();
   const value = context.read(pointer);
   const numeric = column.type === "number" || column.type === "currency";
   const [draft, setDraft] = useState<string | undefined>(undefined);
+  const label = `${column.title}, row ${row}`;
+  if (column.type === "checkbox") {
+    return (
+      <input
+        type="checkbox"
+        aria-label={label}
+        checked={value === true}
+        onChange={(event) => context.edit(pointer, event.target.checked)}
+        className="h-4 w-4 accent-primary"
+      />
+    );
+  }
+  if (column.type === "choice") {
+    const known = column.options.some((option) => option.value === value);
+    return (
+      <select
+        aria-label={label}
+        value={typeof value === "string" && known ? value : ""}
+        onChange={(event) =>
+          context.edit(
+            pointer,
+            event.target.value === "" ? null : event.target.value,
+          )
+        }
+        className={cn(fieldClass, "h-8 min-w-[6rem] py-1 text-xs")}
+      >
+        <option value="">
+          {known || value == null ? "—" : cellText(value)}
+        </option>
+        {column.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (column.type === "date") {
+    // Stored as YYYY-MM-DD, as the catalog says; cleared is null.
+    const text =
+      typeof value === "string" && /^\d{4}-\d{2}-\d{2}/u.test(value)
+        ? value.slice(0, 10)
+        : "";
+    return (
+      <input
+        type="date"
+        aria-label={label}
+        value={text}
+        onChange={(event) =>
+          context.edit(
+            pointer,
+            event.target.value === "" ? null : event.target.value,
+          )
+        }
+        className={cn(fieldClass, "h-8 min-w-[8rem] py-1 text-xs")}
+      />
+    );
+  }
   const shown =
     draft ?? (value === undefined || value === null ? "" : cellText(value));
   return (
     <input
       type={numeric ? "number" : "text"}
       inputMode={numeric ? "decimal" : undefined}
-      aria-label={column.title}
+      aria-label={label}
       value={shown}
       onChange={(event) => {
         const text = event.target.value;
@@ -493,7 +723,13 @@ export const ListView = ({ component, scope }: NodeProps) => {
                 <span className="block truncate text-sm">{title}</span>
                 {subtitle ? (
                   <span className="block truncate text-xs text-muted-foreground">
-                    {subtitle}
+                    {/* Inline Markdown; a tappable row's links are words
+                        (no button inside its button). */}
+                    <InlineMarkdown
+                      text={subtitle}
+                      onLink={context.openLink}
+                      links={!(tappable && action)}
+                    />
                   </span>
                 ) : null}
               </span>
@@ -548,7 +784,7 @@ export const ListView = ({ component, scope }: NodeProps) => {
   );
 };
 
-const Leading = ({
+export const Leading = ({
   leading,
   scope,
 }: {

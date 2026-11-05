@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import {
   asBool,
   asInt,
@@ -38,7 +38,7 @@ export const MAX_SURFACE_CELLS = 50_000;
  */
 export const MAX_SURFACE_DIFF_CELLS = 4_000_000;
 
-export type SurfaceDisplay = "inline" | "expanded" | "carousel";
+export type SurfaceDisplay = "inline" | "expanded" | "carousel" | "fullscreen";
 export type SurfaceState =
   | "active"
   | "submitted"
@@ -62,6 +62,8 @@ export const COMPONENT_TYPES = [
   "Steps",
   "Divider",
   "Modal",
+  // GENUI-TREE (2026-11-05)
+  "SplitView",
   // 4.2 Display
   "Text",
   "Markdown",
@@ -90,10 +92,18 @@ export const COMPONENT_TYPES = [
   "LiveLog",
   "Gauge",
   "Sparkline",
+  // GENUI-WORKVIEW (2026-11-05)
+  "WorkView",
   "DocumentViewer",
   "Board",
   "Diagram",
   "CalendarView",
+  // GENUI-MARKUP (2026-11-05)
+  "Compare",
+  // GENUI-SPATIAL (2026-11-05)
+  "Model3D",
+  // GENUI-TREE (2026-11-05)
+  "Tree",
   // 4.3 Inputs
   "TextField",
   "RichTextEditor",
@@ -118,12 +128,16 @@ export const COMPONENT_TYPES = [
   "SignaturePad",
   "PhotoCapture",
   "VoiceNote",
+  "ImageMarkup",
+  "Whiteboard",
   // 4.4 Actions
   "Button",
   "ActionBar",
   "SuggestionChips",
   "Menu",
   "Link",
+  // Decide one at a time (GENUI-SWIPE)
+  "SwipeDeck",
 ] as const;
 export type ComponentType = (typeof COMPONENT_TYPES)[number];
 
@@ -153,6 +167,9 @@ export const INPUT_TYPES = new Set<ComponentType>([
   "SignaturePad",
   "PhotoCapture",
   "VoiceNote",
+  "SwipeDeck",
+  "ImageMarkup",
+  "Whiteboard",
 ]);
 
 export const isKnownType = (type: string): type is ComponentType =>
@@ -216,7 +233,19 @@ export type ActionStyle = "primary" | "secondary" | "destructive" | "plain";
 export type OpenTarget =
   | { kind: "url"; url: string }
   | { kind: "entity"; entity: EntityKey }
-  | { kind: "expanded" };
+  | { kind: "expanded" }
+  | { kind: "fullscreen" };
+
+export type ActionFeedback = {
+  /** The text box label (default "Your feedback"). */
+  label: string;
+  placeholder?: string;
+  /** The send button (default "Send"). */
+  submitLabel: string;
+};
+
+export const FEEDBACK_LABEL_DEFAULT = "Your feedback";
+export const FEEDBACK_SUBMIT_DEFAULT = "Send";
 
 export type SurfaceAction = {
   id: string;
@@ -242,6 +271,12 @@ export type SurfaceAction = {
   /** ask_agent: the short instruction sent with the surface state. */
   prompt?: string;
   /**
+   * ask_agent with `feedback`: the press opens a text box in the card, and
+   * its Send taps with the person's words (Ross, 2026-11-02, Ask agent to
+   * revise). Labels are the agent's plain text.
+   */
+  feedback?: ActionFeedback;
+  /**
    * The agent's raw label, words or prompt held an invisible character
    * (79 S1): the action never sends words (see `messageSend`).
    */
@@ -263,8 +298,11 @@ export type SurfaceSentEmail = {
   messageId?: string;
 };
 
-/** `sent`: the email went out; `send_failed`: refused before anything went out. */
-export type SurfaceStatusKind = "sent" | "send_failed";
+/**
+ * `sent`: the email went out; `send_failed`: refused before anything went
+ * out; `send_unknown`: Outlook never confirmed a send that may have gone out.
+ */
+export type SurfaceStatusKind = "sent" | "send_failed" | "send_unknown";
 
 export type SurfaceStatus = {
   text: string;
@@ -275,6 +313,8 @@ export type SurfaceStatus = {
   kind?: SurfaceStatusKind;
   /** With kind `sent`: what was sent. */
   sent?: SurfaceSentEmail;
+  /** With kind `send_unknown`: the send whose outcome is open. */
+  operationId?: string;
 };
 
 export type SurfaceLastEdit = {
@@ -285,6 +325,12 @@ export type SurfaceLastEdit = {
 };
 
 export type Surface = {
+  /** Owner-only, server-validated approved signature; never agent HTML. */
+  emailSignaturePreview?: {
+    versionId: string;
+    contentHash: string;
+    html: string;
+  };
   id: string;
   catalog: string;
   template?: string;
@@ -481,6 +527,15 @@ export const decodeAction = (
   if (prompt) {
     action.prompt = prompt;
   }
+  if (kind === "ask_agent" && isObject(value.feedback)) {
+    const placeholder = plainText(value.feedback.placeholder, 200);
+    action.feedback = {
+      label: plainText(value.feedback.label, 80) ?? FEEDBACK_LABEL_DEFAULT,
+      submitLabel:
+        plainText(value.feedback.submitLabel, 40) ?? FEEDBACK_SUBMIT_DEFAULT,
+      ...(placeholder ? { placeholder } : {}),
+    };
+  }
   const statePath = asString(value.path);
   if (statePath !== undefined && parsePointer(statePath)) {
     action.statePath = statePath;
@@ -496,6 +551,8 @@ export const decodeAction = (
       action.target = { kind: "entity", entity };
     } else if (target.expanded === true) {
       action.target = { kind: "expanded" };
+    } else if (target.fullscreen === true) {
+      action.target = { kind: "fullscreen" };
     }
   }
   if (Array.isArray(value.validate)) {
@@ -547,7 +604,11 @@ const decodeSentEmail = (value: unknown): SurfaceSentEmail | undefined => {
   };
 };
 
-const STATUS_KINDS = new Set<SurfaceStatusKind>(["sent", "send_failed"]);
+const STATUS_KINDS = new Set<SurfaceStatusKind>([
+  "sent",
+  "send_failed",
+  "send_unknown",
+]);
 
 const decodeStatus = (value: unknown): SurfaceStatus | undefined => {
   const text = plainText(field(value, "text"), 500);
@@ -559,6 +620,8 @@ const decodeStatus = (value: unknown): SurfaceStatus | undefined => {
   const actionId = plainId(value.actionId);
   const kind = asString(value.kind) as SurfaceStatusKind | undefined;
   const sent = kind === "sent" ? decodeSentEmail(value.sent) : undefined;
+  const operationId =
+    kind === "send_unknown" ? plainId(value.operationId) : undefined;
   return {
     text,
     tone: tone && STATUS_TONES.has(tone) ? tone : "info",
@@ -567,6 +630,7 @@ const decodeStatus = (value: unknown): SurfaceStatus | undefined => {
     retryable: value.retryable === true,
     ...(kind && STATUS_KINDS.has(kind) ? { kind } : {}),
     ...(sent ? { sent } : {}),
+    ...(operationId ? { operationId } : {}),
   };
 };
 
@@ -608,6 +672,8 @@ const childIdsOf = (component: SurfaceComponent): string[] => {
       return each(props.steps);
     case "Modal":
       return [...one(props.entry), ...one(props.content)];
+    case "SplitView":
+      return one(props.detail);
     default:
       return [];
   }
@@ -709,7 +775,11 @@ export const decodeSurface = (value: unknown): Surface | undefined => {
     catalog: asString(get("catalog")) ?? CATALOG_V1,
     title: plainText(get("title"), 200) ?? "",
     display:
-      display === "expanded" || display === "carousel" ? display : "inline",
+      display === "expanded" ||
+      display === "carousel" ||
+      display === "fullscreen"
+        ? display
+        : "inline",
     root,
     components: byId,
     order: components.map((component) => component.id),
@@ -779,6 +849,22 @@ export const decodeSurface = (value: unknown): Surface | undefined => {
   if (updatedAt) {
     surface.updatedAt = updatedAt;
   }
+  const signature = value.emailSignaturePreview;
+  if (
+    surface.template === "email_draft" &&
+    isObject(signature) &&
+    typeof signature.versionId === "string" &&
+    typeof signature.contentHash === "string" &&
+    /^[a-f0-9]{64}$/.test(signature.contentHash) &&
+    typeof signature.html === "string" &&
+    signature.html.length <= 7_500_000
+  ) {
+    surface.emailSignaturePreview = {
+      versionId: signature.versionId,
+      contentHash: signature.contentHash,
+      html: signature.html,
+    };
+  }
   const webUrl = httpsUrl(value.webUrl);
   if (webUrl) {
     surface.webUrl = webUrl;
@@ -819,6 +905,15 @@ const recipientNames = (value: unknown): Map<string, string> => {
   }
   return names;
 };
+
+/**
+ * An open email_draft card whose send Outlook never confirmed (M-4916). The
+ * email may be out, so Send is not offered; "Check again" looks in Sent Items.
+ */
+export const emailSendUnknown = (surface: Surface): boolean =>
+  surface.template === "email_draft" &&
+  surface.state === "active" &&
+  surface.status?.kind === "send_unknown";
 
 /**
  * The sent row of an email_draft card the server marked sent (status kind

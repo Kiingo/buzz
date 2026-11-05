@@ -1,5 +1,5 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
+import { useEffect, useMemo, useState } from "react";
 import {
   ownEntry,
   asNumber,
@@ -8,31 +8,29 @@ import {
   countdownText,
   diffCellCount,
   diffText,
-  ENTITY_TYPES,
-  formatBytes,
   formatDateText,
   initialsOf,
+  inlineText,
   isObject,
   openableUrl,
   parseDate,
+  parseInline,
   plainId,
   plainText,
   proxiedMediaUrl,
   repeatsSurfaceTitle,
   resolveProp,
-  textFileRef,
   urlHost,
-  type EntityKey,
-  type EntityType,
   type JsonValue,
 } from "../core";
 import { CopyButton } from "./copy";
 import { cn } from "./cn";
 import { useNodeContext, type NodeProps } from "./context";
-import { catalogIcon, ENTITY_ICONS, ENTITY_NOUNS, Glyphs } from "./icons";
-import { MarkdownText } from "./markdown";
-import { TextFileRow } from "./text-file";
+import { catalogIcon, Glyphs } from "./icons";
+import { InlineMarkdown, MarkdownText } from "./markdown";
 import { ProxyImage } from "./media";
+import { EntityChip } from "./display-files";
+import { PagedRow } from "./paged";
 import {
   QuoteBox,
   SurfaceButton,
@@ -44,8 +42,29 @@ import {
 } from "./ui";
 import { Sparkline } from "./chart";
 
-// §4.2 Display. Agent text is plain text (React text nodes, never HTML);
-// outside content is a Quote with no links; media only through the proxy.
+// Kiingo object chips, files and FileList live in display-files.tsx, the
+// email card's Signature row in email-signature.tsx (split out to keep each
+// file under Buzz desktop's 1,200-line limit); re-exported here so every
+// `./display` import stays as it was.
+export {
+  EntityChip,
+  EntityRefView,
+  FileListView,
+  FileRow,
+} from "./display-files";
+export {
+  EmailSignatureRow,
+  emailSignaturePlain,
+  emailSignatureStatus,
+  emailSignatureText,
+} from "./email-signature";
+
+// §4.2 Display. Agent text is React text nodes, never HTML: prose fields
+// (the catalog's `inlineMarkdown`: Text, KeyValue values, List subtitles,
+// Table text cells, Timeline bodies) are inline Markdown (`InlineMarkdown`),
+// Markdown and a Callout's body the safe Markdown subset; titles, names and
+// labels are plain. Outside content is a Quote with no links or Markdown;
+// media only through the proxy.
 
 const TEXT_VARIANTS: Record<string, string> = {
   h1: "text-xl font-semibold",
@@ -91,13 +110,13 @@ export const TextView = ({ component, scope }: NodeProps) => {
     const Tag = variant === "h1" ? "h2" : variant === "h2" ? "h3" : "h4";
     return (
       <Tag className={className} style={style}>
-        {text}
+        <InlineMarkdown text={text} onLink={context.openLink} />
       </Tag>
     );
   }
   return (
     <p className={className} style={style}>
-      {text}
+      <InlineMarkdown text={text} onLink={context.openLink} />
     </p>
   );
 };
@@ -167,34 +186,47 @@ export const ImageGalleryView = ({ component, scope }: NodeProps) => {
     enlarged !== undefined
       ? images[Math.min(enlarged, images.length - 1)]
       : undefined;
+  // `layout: carousel` pages one larger image at a time (PagedRow).
+  const carousel = context.string(component, "layout") === "carousel";
+  const tile = (item: JsonValue, index: number) => {
+    const caption = context.textOf(field(item, "caption"), scope, 200);
+    return (
+      <button
+        key={index}
+        type="button"
+        onClick={() => setEnlarged(index)}
+        className="flex w-full flex-col gap-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={altOf(item) || `Image ${index + 1}`}
+      >
+        <ProxyImage
+          url={urlOf(item)}
+          alt={altOf(item)}
+          fit="cover"
+          aspect={carousel ? 4 / 3 : 1}
+        />
+        {caption ? (
+          <span className="line-clamp-2 text-2xs text-muted-foreground">
+            {caption}
+          </span>
+        ) : null}
+      </button>
+    );
+  };
   return (
     <>
-      <div className={cn("grid gap-1.5", ownEntry(GALLERY_COLUMNS, columns))}>
-        {images.map((item, index) => {
-          const caption = context.textOf(field(item, "caption"), scope, 200);
-          return (
-            <button
-              key={index}
-              type="button"
-              onClick={() => setEnlarged(index)}
-              className="flex flex-col gap-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={altOf(item) || `Image ${index + 1}`}
-            >
-              <ProxyImage
-                url={urlOf(item)}
-                alt={altOf(item)}
-                fit="cover"
-                aspect={1}
-              />
-              {caption ? (
-                <span className="line-clamp-2 text-2xs text-muted-foreground">
-                  {caption}
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
+      {carousel ? (
+        <PagedRow
+          count={images.length}
+          label="Images"
+          noun="Image"
+          itemClassName="w-72"
+          renderItem={(index) => tile(images[index]!, index)}
+        />
+      ) : (
+        <div className={cn("grid gap-1.5", ownEntry(GALLERY_COLUMNS, columns))}>
+          {images.map(tile)}
+        </div>
+      )}
       <SurfaceDialog
         open={shown !== undefined}
         onOpenChange={(open) => (open ? undefined : setEnlarged(undefined))}
@@ -342,15 +374,23 @@ export const KeyValueView = ({ component, scope }: NodeProps) => {
     cellText(
       isObject(item) ? resolveProp(item.value, context.data, scope) : undefined,
     );
-  // An outside value (or name) is quoted (79 S5/W6).
-  const valueText = (item: JsonValue) =>
+  // An outside value (or name) is quoted (79 S5/W6); the agent's own
+  // value is inline Markdown.
+  const outsideValue = (item: JsonValue) =>
     isObject(item) &&
     (context.isUntrustedValue(item.value, scope) ||
-      context.isUntrustedValue(item.name, scope)) ? (
+      context.isUntrustedValue(item.name, scope));
+  const valueText = (item: JsonValue) =>
+    outsideValue(item) ? (
       <QuotedText text={rawValue(item)} />
     ) : (
-      rawValue(item)
+      <InlineMarkdown text={rawValue(item)} onLink={context.openLink} />
     );
+  // Copy writes the drawn words, never the Markdown source.
+  const copyValue = (item: JsonValue) =>
+    outsideValue(item)
+      ? rawValue(item)
+      : inlineText(parseInline(rawValue(item)));
   if (context.string(component, "layout") === "stacked") {
     return (
       <dl className="flex flex-col gap-2">
@@ -360,7 +400,11 @@ export const KeyValueView = ({ component, scope }: NodeProps) => {
             <dd className="flex items-start gap-1.5 whitespace-pre-wrap break-words text-sm">
               <span className="min-w-0 flex-1">{valueText(item)}</span>
               {copyValues ? (
-                <CopyButton text={rawValue(item)} what={nameOf(item)} compact />
+                <CopyButton
+                  text={copyValue(item)}
+                  what={nameOf(item)}
+                  compact
+                />
               ) : null}
             </dd>
           </div>
@@ -376,7 +420,7 @@ export const KeyValueView = ({ component, scope }: NodeProps) => {
           <dd className="flex items-start gap-1.5 whitespace-pre-wrap break-words text-sm">
             <span className="min-w-0 flex-1">{valueText(item)}</span>
             {copyValues ? (
-              <CopyButton text={rawValue(item)} what={nameOf(item)} compact />
+              <CopyButton text={copyValue(item)} what={nameOf(item)} compact />
             ) : null}
           </dd>
         </div>
@@ -553,6 +597,9 @@ export const TimelineView = ({ component, scope }: NodeProps) => {
           typeof record.status === "string" ? record.status : undefined;
         const at = formatDateText(record.at);
         const body = plainText(record.body, 1000, true);
+        // A bound timeline that reads outside content: its body quoted,
+        // never Markdown or a link.
+        const outside = context.isUntrusted(component, "items", scope);
         return (
           <li key={index} className="flex gap-2.5">
             <div className="flex flex-col items-center" aria-hidden>
@@ -575,7 +622,11 @@ export const TimelineView = ({ component, scope }: NodeProps) => {
               </p>
               {body ? (
                 <p className="whitespace-pre-wrap text-xs text-muted-foreground">
-                  {body}
+                  {outside ? (
+                    <QuotedText text={body} />
+                  ) : (
+                    <InlineMarkdown text={body} onLink={context.openLink} />
+                  )}
                 </p>
               ) : null}
               {status === "failed" ? (
@@ -706,7 +757,18 @@ export const CalloutView = ({ component, scope }: NodeProps) => {
       <div className="min-w-0 text-foreground">
         {title ? <p className="text-sm font-semibold">{title}</p> : null}
         {body ? (
-          <p className="whitespace-pre-wrap break-words text-xs">{body}</p>
+          // The body is Markdown (catalog `markdown: ['/body']`); outside
+          // words are a quote of their plain text.
+          context.isUntrusted(component, "body", scope) ? (
+            <QuoteBox text={body} />
+          ) : (
+            <MarkdownText
+              text={body}
+              onLink={context.openLink}
+              budget={context.markdown}
+              small
+            />
+          )
         ) : null}
       </div>
     </div>
@@ -742,185 +804,6 @@ export const QuoteView = ({ component, scope }: NodeProps) => {
   );
 };
 
-/**
- * A Kiingo object: its icon and title, resolved by the server when missing.
- * `outside` (an id or title read from outside content, 79 W6): a quote of
- * the title, never a button and never a lookup.
- */
-export const EntityChip = ({
-  entity,
-  outside = false,
-}: {
-  entity: EntityKey;
-  outside?: boolean;
-}) =>
-  outside ? (
-    <QuotedText text={entity.title ?? ENTITY_NOUNS[entity.type]} />
-  ) : (
-    <OwnEntityChip entity={entity} />
-  );
-
-const OwnEntityChip = ({ entity }: { entity: EntityKey }) => {
-  const context = useNodeContext();
-  const [resolved, setResolved] = useState<string | undefined>(undefined);
-  const controller = context.controller;
-  const { type, id, title } = entity;
-  // Batched with every other chip on the surface (79 W8).
-  useEffect(() => {
-    if (title) {
-      return undefined;
-    }
-    let cancelled = false;
-    void controller.resolveRefTitle({ type, id }).then((found) => {
-      if (!cancelled) {
-        setResolved(found);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [controller, type, id, title]);
-  const Icon = ENTITY_ICONS[entity.type];
-  const label = resolved ?? entity.title ?? ENTITY_NOUNS[entity.type];
-  const host = context.host;
-  const openable =
-    Boolean(host.openEntity) && (host.canOpenEntity?.(entity) ?? true);
-  const classes =
-    "inline-flex max-w-full items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-foreground";
-  if (!openable) {
-    return (
-      <span className={classes}>
-        <Icon aria-hidden className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{label}</span>
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      title={`Opens this ${ENTITY_NOUNS[entity.type].toLowerCase()}`}
-      onClick={() => host.openEntity?.(entity)}
-      className={cn(
-        classes,
-        "hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-      )}
-    >
-      <Icon aria-hidden className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">{label}</span>
-    </button>
-  );
-};
-
-export const EntityRefView = ({ component, scope }: NodeProps) => {
-  const context = useNodeContext();
-  const type = context.string(component, "entityType") as
-    | EntityType
-    | undefined;
-  const id = plainId(context.value(component, "id", scope));
-  if (!type || !ENTITY_TYPES.includes(type) || !id) {
-    return null;
-  }
-  const title = context.text(component, "label", scope, 200);
-  return (
-    <EntityChip
-      entity={{ type, id, ...(title ? { title } : {}) }}
-      outside={
-        context.isUntrusted(component, "id", scope) ||
-        context.isUntrusted(component, "label", scope)
-      }
-    />
-  );
-};
-
-/** One file. `outside` (read from outside content, 79 W6): quoted, never a button. */
-export const FileRow = ({
-  item,
-  outside = false,
-}: {
-  item: JsonValue;
-  outside?: boolean;
-}) => {
-  const host = useNodeContext().host;
-  const record = isObject(item) ? item : {};
-  const name = plainText(record.name, 200) ?? "File";
-  const id = plainId(record.artifactId);
-  const size = asNumber(record.size);
-  const type = plainText(record.contentType, 80);
-  const detail = [type, size !== undefined ? formatBytes(size) : undefined]
-    .filter(Boolean)
-    .join(" · ");
-  if (outside) {
-    return <QuotedText text={[name, detail].filter(Boolean).join(" · ")} />;
-  }
-  const content = (
-    <span className="flex min-w-0 items-center gap-2.5">
-      <Glyphs.file
-        aria-hidden
-        className="h-4 w-4 shrink-0 text-muted-foreground"
-      />
-      <span className="min-w-0">
-        <span className="block truncate text-sm">{name}</span>
-        {detail ? (
-          <span className="block text-xs text-muted-foreground">{detail}</span>
-        ) : null}
-      </span>
-    </span>
-  );
-  // A text or Markdown file opens in the text viewer, read with the
-  // viewer's own session (`text-file.tsx`), when the host can read it.
-  const textFile = textFileRef(item);
-  if (textFile && host.readTextFile) {
-    return <TextFileRow file={textFile}>{content}</TextFileRow>;
-  }
-  return id ? (
-    <EntityChipRow entity={{ type: "file", id, title: name }}>
-      {content}
-    </EntityChipRow>
-  ) : (
-    content
-  );
-};
-
-const EntityChipRow = ({
-  entity,
-  children,
-}: {
-  entity: EntityKey;
-  children: ReactNode;
-}) => {
-  const context = useNodeContext();
-  const host = context.host;
-  if (!host.openEntity || host.canOpenEntity?.(entity) === false) {
-    return <>{children}</>;
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => host.openEntity?.(entity)}
-      className="min-w-0 text-left hover:opacity-80"
-    >
-      {children}
-    </button>
-  );
-};
-
-export const FileListView = ({ component, scope }: NodeProps) => {
-  const context = useNodeContext();
-  const files = context.list(component, "files", scope).slice(0, 100);
-  const empty = context.text(component, "emptyText", scope, 200);
-  const outside = context.isUntrusted(component, "files", scope);
-  return (
-    <div className="flex flex-col gap-1.5">
-      {files.length === 0 && empty ? (
-        <p className="text-xs text-muted-foreground">{empty}</p>
-      ) : null}
-      {files.map((item, index) => (
-        <FileRow key={index} item={item} outside={outside} />
-      ))}
-    </div>
-  );
-};
-
 /** Audio or video: played only on the user's tap (preload none), from the proxy. */
 export const MediaView = ({ component, scope }: NodeProps) => {
   const context = useNodeContext();
@@ -949,7 +832,30 @@ export const MediaView = ({ component, scope }: NodeProps) => {
           {outside ? <QuotedText text={title} /> : title}
           <span className="sr-only">{isVideo ? " (video)" : " (audio)"}</span>
         </span>
-        {fileId ? (
+        {fileId && !outside && context.host.openFile ? (
+          // Plays in the host's viewer, read with the viewer's session.
+          <SurfaceButton
+            size="sm"
+            onClick={() =>
+              context.host.openFile?.({
+                files: [
+                  {
+                    fileId,
+                    name: title,
+                    contentType: isVideo ? "video/*" : "audio/*",
+                  },
+                ],
+                index: 0,
+                surfaceId: context.surface.id,
+                ...(context.surface.agentId
+                  ? { agentId: context.surface.agentId }
+                  : {}),
+              })
+            }
+          >
+            {isVideo ? "Play video" : "Play"}
+          </SurfaceButton>
+        ) : fileId ? (
           <EntityChip
             entity={{ type: "file", id: fileId, title }}
             outside={outside}

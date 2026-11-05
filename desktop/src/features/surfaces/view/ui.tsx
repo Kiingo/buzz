@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
@@ -148,6 +148,7 @@ export const SurfaceDialog = ({
   children,
   footer,
   wide,
+  full,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -156,15 +157,22 @@ export const SurfaceDialog = ({
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** The whole window (a card opened full screen). */
+  full?: boolean;
 }) => (
   <Dialog.Root open={open} onOpenChange={onOpenChange}>
     <Dialog.Portal>
       <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
       <Dialog.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col",
-          "rounded-lg border border-border bg-background text-foreground shadow-lg focus:outline-none",
-          wide ? "max-w-3xl" : "max-w-lg",
+          "fixed z-50 flex flex-col bg-background text-foreground focus:outline-none",
+          full
+            ? "inset-0"
+            : cn(
+                "left-1/2 top-1/2 max-h-[85vh] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2",
+                "rounded-lg border border-border shadow-lg",
+                wide ? "max-w-3xl" : "max-w-lg",
+              ),
         )}
         {...(description ? {} : { "aria-describedby": undefined })}
       >

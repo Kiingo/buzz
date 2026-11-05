@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import { cloneJson, isObject, type JsonObject, type JsonValue } from "./json";
 import {
   formatPointer,
@@ -137,19 +137,44 @@ export const opForEdit = (
   };
 };
 
-/** The newest op per path wins; a parent's op swallows its children's (as the Swift client). */
+/**
+ * The newest op per path wins; a parent's op swallows its children's (as the
+ * Swift client). Only replaces are swallowed, and never across an add or a
+ * remove: those insert into or shift arrays (two row deletes at one index are
+ * two rows), so they and everything before them stay in order. An add and a
+ * replace of the same path merge into one add, since the value was not there
+ * before the batch.
+ */
 export const coalescePatch = (ops: readonly PatchOp[]): PatchOp[] => {
   const result: PatchOp[] = [];
-  for (const op of ops) {
+  for (const incoming of ops) {
+    let op = incoming;
     const pointer = parsePointer(op.path);
     if (!pointer) {
       continue;
     }
     for (let i = result.length - 1; i >= 0; i -= 1) {
-      const other = parsePointer(result[i]!.path);
-      if (!other || isPointerPrefix(pointer, other)) {
+      const earlier = result[i]!;
+      const other = parsePointer(earlier.path);
+      if (!other) {
         result.splice(i, 1);
+        continue;
       }
+      if (earlier.op === "replace") {
+        if (isPointerPrefix(pointer, other)) {
+          result.splice(i, 1);
+        }
+        continue;
+      }
+      if (
+        earlier.op === "add" &&
+        op.op === "replace" &&
+        earlier.path === op.path
+      ) {
+        result.splice(i, 1);
+        op = { op: "add", path: op.path, value: op.value };
+      }
+      break;
     }
     result.push(op);
   }

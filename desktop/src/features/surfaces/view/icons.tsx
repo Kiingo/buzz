@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import {
   AppWindow,
   Archive,
@@ -46,6 +46,7 @@ import {
   LockKeyhole,
   type LucideIcon,
   Mail,
+  Maximize2,
   MapPin,
   MessageCircle,
   Minus,
@@ -208,4 +209,5 @@ export const Glyphs = {
   star: Star,
   globe: Globe,
   image: Image,
+  fullScreen: Maximize2,
 } as const;

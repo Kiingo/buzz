@@ -11,16 +11,24 @@
       ],
       "linter": {
         "rules": {
+          "correctness": {
+            "useExhaustiveDependencies": "off",
+            "useHookAtTopLevel": "off"
+          },
           "style": { "noNonNullAssertion": "off" },
           "suspicious": {
             "noArrayIndexKey": "off",
-            "noPrototypeBuiltins": "off"
+            "noPrototypeBuiltins": "off",
+            "noImplicitAnyLet": "off"
           },
           "a11y": {
             "useAriaPropsSupportedByRole": "off",
             "useSemanticElements": "off",
             "useFocusableInteractive": "off",
-            "noNoninteractiveElementToInteractiveRole": "off"
+            "noNoninteractiveElementToInteractiveRole": "off",
+            "useKeyWithClickEvents": "off",
+            "noStaticElementInteractions": "off",
+            "noNoninteractiveTabindex": "off"
           }
         }
       }

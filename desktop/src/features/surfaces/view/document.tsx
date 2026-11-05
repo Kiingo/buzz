@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import { useEffect, useState } from "react";
 import {
   DOCUMENT_MAX_BYTES,
@@ -120,9 +120,36 @@ export const DocumentView = ({ component, scope }: NodeProps) => {
     <figure className="flex flex-col gap-2">
       <figcaption className="flex items-center justify-between gap-2 text-xs">
         <span className="truncate font-medium">{model.name}</span>
-        {component.props.copyable === false || !copyText ? null : (
-          <CopyButton text={copyText} what="highlights" compact />
-        )}
+        <span className="flex shrink-0 items-center gap-1">
+          {component.props.copyable === false || !copyText ? null : (
+            <CopyButton text={copyText} what="highlights" compact />
+          )}
+          {context.host.openFile && isDocumentFileId(model.fileId) ? (
+            // The app's viewer: full size, markup, download, ask the agent.
+            <SurfaceButton
+              size="sm"
+              onClick={() =>
+                context.host.openFile?.({
+                  files: [
+                    {
+                      fileId: model.fileId,
+                      name: model.name,
+                      contentType: model.contentType ?? "application/pdf",
+                    },
+                  ],
+                  index: 0,
+                  page,
+                  surfaceId: context.surface.id,
+                  ...(context.surface.agentId
+                    ? { agentId: context.surface.agentId }
+                    : {}),
+                })
+              }
+            >
+              Open
+            </SurfaceButton>
+          ) : null}
+        </span>
       </figcaption>
       {!readFile ? (
         <p className="text-xs text-muted-foreground">

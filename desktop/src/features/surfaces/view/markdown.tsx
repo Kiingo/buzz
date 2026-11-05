@@ -1,6 +1,7 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import { createContext, Fragment, useContext, type ReactNode } from "react";
 import {
+  parseInline,
   parseMarkdown,
   type MarkdownBudget,
   type MdAlign,
@@ -45,6 +46,7 @@ export const MarkdownText = ({
   onLink,
   budget,
   copyCode = true,
+  small = false,
 }: {
   text: string;
   onLink: (url: string) => void;
@@ -52,13 +54,41 @@ export const MarkdownText = ({
   budget?: MarkdownBudget;
   /** A Copy control on each code fence (default on). */
   copyCode?: boolean;
+  /** The smaller size (a Callout's body). */
+  small?: boolean;
 }) => (
   <CodeCopy.Provider value={copyCode}>
-    <div className="space-y-2 break-words text-sm leading-relaxed">
+    <div
+      className={cn(
+        "space-y-2 break-words leading-relaxed",
+        small ? "text-xs" : "text-sm",
+      )}
+    >
       {renderBlocks(parseMarkdown(text, budget), onLink)}
     </div>
   </CodeCopy.Provider>
 );
+
+/**
+ * An agent's prose field (the catalog's `inlineMarkdown`: Text, KeyValue
+ * values, List subtitles, Table text cells, Timeline bodies; Ross
+ * 2026-11-03: a `[label](url)` in a card showed as raw Markdown): inline
+ * Markdown only, from the same safe parser as `MarkdownText`: bold,
+ * italic, strikethrough, code and links, line breaks kept; block syntax
+ * and raw HTML stay literal text. Links are only what `openableUrl`
+ * allowed and open through the host (outside hosts confirmed first).
+ * `links: false` (inside a tappable row) draws a link as its words.
+ * Outside content never comes here: callers quote it.
+ */
+export const InlineMarkdown = ({
+  text,
+  onLink,
+  links = true,
+}: {
+  text: string;
+  onLink: (url: string) => void;
+  links?: boolean;
+}) => <>{renderInline(parseInline(text), links ? onLink : undefined)}</>;
 
 const renderBlocks = (
   blocks: MdBlock[],
@@ -163,7 +193,8 @@ const alignClass = (align: MdAlign): string =>
 
 const renderInline = (
   nodes: MdInline[],
-  onLink: (url: string) => void,
+  /** Undefined: links draw as their words (no nested button). */
+  onLink: ((url: string) => void) | undefined,
 ): ReactNode =>
   nodes.map((node, index) => {
     switch (node.kind) {
@@ -188,7 +219,13 @@ const renderInline = (
             {node.text}
           </code>
         );
-      case "link":
+      case "link": {
+        const open = onLink;
+        if (!open) {
+          return (
+            <Fragment key={index}>{renderInline(node.children, open)}</Fragment>
+          );
+        }
         // A button, not <a href>: middle-click and auxclick can't skip the
         // outside-link confirmation (79 nit).
         return (
@@ -197,11 +234,12 @@ const renderInline = (
             type="button"
             title={node.href}
             className="inline p-0 text-left text-primary underline underline-offset-2"
-            onClick={() => onLink(node.href)}
+            onClick={() => open(node.href)}
           >
-            {renderInline(node.children, onLink)}
+            {renderInline(node.children, open)}
           </button>
         );
+      }
       default:
         return null;
     }

@@ -1,10 +1,11 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import type { ComponentType as ReactComponentType } from "react";
 import {
   childKey,
   isVisible,
   MAX_DEPTH,
   MAX_SURFACE_NODES,
+  emailSendUnknown,
   sentEmailOf,
   type ChildRef,
   type ComponentType,
@@ -27,6 +28,7 @@ import {
   CodeView,
   CountdownView,
   DiffView,
+  EmailSignatureRow,
   EntityRefView,
   FileListView,
   IconView,
@@ -46,7 +48,11 @@ import { Glyphs } from "./icons";
 import { InputView } from "./inputs";
 import { MapView } from "./places";
 import { DocumentView } from "./document";
+import { CompareView } from "./markup";
+import { Model3DView } from "./model3d";
+import { SplitViewView, TreeView } from "./outline";
 import { GaugeView, LiveLogView, SparklineView } from "./live";
+import { WorkViewView } from "./workview";
 import { BoardView, CalendarViewView, DiagramView } from "./planning";
 import {
   AccordionView,
@@ -112,6 +118,9 @@ const makeViews = (): Record<ComponentType, ReactComponentType<NodeProps>> => ({
   Board: BoardView,
   Diagram: DiagramView,
   CalendarView: CalendarViewView,
+  Compare: CompareView,
+  Tree: TreeView,
+  SplitView: SplitViewView,
   Countdown: CountdownView,
   TextField: InputView,
   RichTextEditor: InputView,
@@ -136,10 +145,15 @@ const makeViews = (): Record<ComponentType, ReactComponentType<NodeProps>> => ({
   SignaturePad: InputView,
   PhotoCapture: InputView,
   VoiceNote: InputView,
+  SwipeDeck: InputView,
+  ImageMarkup: InputView,
+  Whiteboard: InputView,
   LiveLog: LiveLogView,
   Gauge: GaugeView,
   Sparkline: SparklineView,
+  WorkView: WorkViewView,
   DocumentViewer: DocumentView,
+  Model3D: Model3DView,
   Button: ButtonView,
   ActionBar: ActionBarView,
   SuggestionChips: SuggestionChipsView,
@@ -185,6 +199,23 @@ export const Node = ({
   if (!component) {
     return null;
   }
+  // An email card's signature is one collapsed "Signature" row that opens in
+  // place (Ross, 2026-11-04). Its preview is a separate server-owned payload,
+  // never component props or agent HTML; the signature package validator
+  // permits raster data images only. The server's "View complete signature"
+  // link opened the whole card again, so the row replaces it. The row always
+  // draws where the server put it, whatever its props say (79
+  // LOW-79-EMAILCARD-SIGNATURE-ROW-DROPPABLE).
+  if (context.surface.template === "email_draft") {
+    if (componentId === "mailbox_signature_link") {
+      return null;
+    }
+    if (componentId === "mailbox_signature_preview") {
+      return (
+        <EmailSignatureRow component={component} scope={scope} depth={depth} />
+      );
+    }
+  }
   if (!isVisible(component.visibleWhen, context.data, scope)) {
     return null;
   }
@@ -205,6 +236,17 @@ export const Node = ({
   // A sent email card is a read-only record of what went out (Ross,
   // 2026-10-31): no Send, Revise or Discard, no chips or menus.
   if (SENT_HIDDEN_TYPES.has(component.type) && sentEmailOf(context.surface)) {
+    return null;
+  }
+  // A send Outlook hasn't confirmed may be out (M-4916): the card's Send (on
+  // the card since 2026-11-02; inside its sheet on older cards) is not
+  // offered while that's open. The footer says so.
+  if (
+    (component.type === "Modal" ||
+      (component.type === "Button" &&
+        component.props.action === "send_confirmed")) &&
+    emailSendUnknown(context.surface)
+  ) {
     return null;
   }
   const View = component.known

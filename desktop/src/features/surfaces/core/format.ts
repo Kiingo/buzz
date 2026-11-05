@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import { asNumber, isObject } from "./json";
 import { formatPlainNumber, plainText } from "./text";
 
@@ -72,6 +72,48 @@ export const formatBytes = (bytes: number): string => {
   }
   return `${unit === 0 ? value : value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
 };
+
+/**
+ * A file's type in a word, from its content type ("PDF", "Word",
+ * "Excel"…), for a file card (GENUI-CAROUSEL). The type is a hint the
+ * card or the server gave; nothing here reads a file name's extension.
+ */
+const FILE_KINDS: readonly [prefix: string, label: string][] = [
+  ["application/pdf", "PDF"],
+  ["text/csv", "CSV"],
+  ["text/markdown", "Markdown"],
+  ["application/msword", "Word"],
+  ["application/vnd.openxmlformats-officedocument.wordprocessingml", "Word"],
+  ["application/vnd.ms-excel", "Excel"],
+  ["application/vnd.openxmlformats-officedocument.spreadsheetml", "Excel"],
+  ["application/vnd.ms-powerpoint", "PowerPoint"],
+  [
+    "application/vnd.openxmlformats-officedocument.presentationml",
+    "PowerPoint",
+  ],
+  ["image/", "Image"],
+  ["video/", "Video"],
+  ["audio/", "Audio"],
+  ["text/", "Text"],
+];
+
+export const fileKindLabel = (contentType: string | undefined): string => {
+  const type = (contentType ?? "").toLowerCase().split(";")[0]?.trim() ?? "";
+  return (
+    FILE_KINDS.find(
+      ([prefix]) => type === prefix || type.startsWith(prefix),
+    )?.[1] ?? "File"
+  );
+};
+
+/**
+ * How long a file card waits before asking again while its file is still
+ * being checked: 3 s, then 1.5x each time up to 30 s, the same as the
+ * viewer (FILEVIEW contract section 4). There is no count: it stops when
+ * the scan answers or the card leaves the screen.
+ */
+export const fileCheckDelayMs = (attempt: number): number =>
+  Math.min(30_000, 3_000 * 1.5 ** Math.max(0, attempt));
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/u;
 const TIME_ONLY = /^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/u;

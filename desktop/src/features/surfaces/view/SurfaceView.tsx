@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import {
   Component,
   useCallback,
@@ -12,6 +12,8 @@ import {
   isOver,
   acceptsEdits,
   acceptsTaps,
+  CHECK_EMAIL_SEND_BUSY_ID,
+  emailSendUnknown,
   openableUrl,
   ROOT,
   sentEmailIsPlain,
@@ -139,6 +141,9 @@ export const SurfaceView = ({
         case "openExpanded":
           host.openExpanded?.(controller.id);
           break;
+        case "openFullScreen":
+          (host.openFullScreen ?? host.openExpanded)?.(controller.id);
+          break;
         case "openUrl":
           openLink(intent.url);
           break;
@@ -186,6 +191,12 @@ export const SurfaceView = ({
   // 2026-10-31); open, it shows the card read-only. A refused send
   // (send_failed) is not sent: that card stays open and editable.
   const sent = known ? sentEmailOf(surface) : null;
+  // Any card opens full screen from its header; `display: fullscreen` names
+  // the button, the rest show its icon.
+  const fullScreen =
+    mode === "inline" && host.openFullScreen && known && !over && !sent
+      ? host.openFullScreen
+      : undefined;
   const body = (
     <>
       <SurfaceErrorBoundary webUrl={surface.webUrl} onOpen={openLink}>
@@ -208,10 +219,34 @@ export const SurfaceView = ({
           )}
           data-surface-id={surface.id}
         >
-          <header className="flex flex-col gap-0.5">
-            <p className="text-xs text-muted-foreground">from {agentName}</p>
-            {surface.title ? (
-              <h3 className="text-sm font-semibold">{surface.title}</h3>
+          <header className="flex items-start gap-2">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <p className="text-xs text-muted-foreground">from {agentName}</p>
+              {surface.title ? (
+                <h3 className="text-sm font-semibold">{surface.title}</h3>
+              ) : null}
+            </div>
+            {fullScreen ? (
+              surface.display === "fullscreen" ? (
+                <SurfaceButton
+                  className="shrink-0"
+                  aria-label={`Open ${surface.title || "this card"} full screen`}
+                  onClick={() => fullScreen(surface.id)}
+                >
+                  <Glyphs.fullScreen aria-hidden className="h-3.5 w-3.5" />
+                  Full screen
+                </SurfaceButton>
+              ) : (
+                <button
+                  type="button"
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={`Open ${surface.title || "this card"} full screen`}
+                  title="Full screen"
+                  onClick={() => fullScreen(surface.id)}
+                >
+                  <Glyphs.fullScreen aria-hidden className="h-3.5 w-3.5" />
+                </button>
+              )
             ) : null}
           </header>
           {sent ? (
@@ -410,6 +445,11 @@ const Footer = ({
     !controller.editsDisabled
       ? status.actionId
       : undefined;
+  const canCheckSend =
+    !sent &&
+    emailSendUnknown(surface) &&
+    acceptsTaps(surface) &&
+    !controller.editsDisabled;
   const line = saveLine(snapshot, controller.editedNote);
   if (!status && !snapshot.notice && !line && !editsDisabled) {
     return null;
@@ -435,6 +475,18 @@ const Footer = ({
               onClick={() => onRetry(retry)}
             >
               Retry
+            </SurfaceButton>
+          ) : null}
+          {canCheckSend ? (
+            <SurfaceButton
+              variant="plain"
+              className="text-xs"
+              disabled={snapshot.busyActionId !== undefined}
+              onClick={() => void controller.checkEmailSend()}
+            >
+              {snapshot.busyActionId === CHECK_EMAIL_SEND_BUSY_ID
+                ? "Checking…"
+                : "Check again"}
             </SurfaceButton>
           ) : null}
         </div>
@@ -467,17 +519,22 @@ const Footer = ({
   );
 };
 
-/** The expanded view (a large sheet) of a surface, sharing the inline view's controller. */
+/**
+ * The expanded view (a large sheet) of a surface, or with `fullScreen` the
+ * whole window, sharing the inline view's controller.
+ */
 export const SurfaceExpandedDialog = ({
   controller,
   open,
   onOpenChange,
   host,
+  fullScreen = false,
 }: {
   controller: SurfaceController;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   host?: SurfaceHost;
+  fullScreen?: boolean;
 }) => {
   const snapshot = useSurfaceSnapshot(controller);
   return (
@@ -485,6 +542,7 @@ export const SurfaceExpandedDialog = ({
       open={open}
       onOpenChange={onOpenChange}
       wide
+      full={fullScreen}
       title={
         snapshot.surface.title ||
         `From ${snapshot.surface.agentName ?? "your agent"}`

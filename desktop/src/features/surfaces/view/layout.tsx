@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import { useState } from "react";
 import {
   ownEntry,
@@ -12,6 +12,7 @@ import {
   type JsonValue,
   type Pointer,
 } from "../core";
+import { PagedRow } from "./paged";
 import { cn } from "./cn";
 import { gapClass, useNodeContext, type NodeProps } from "./context";
 import { Glyphs } from "./icons";
@@ -447,21 +448,17 @@ export const CarouselView = ({ component, scope, depth }: NodeProps) => {
   const context = useNodeContext();
   const width =
     context.string(component, "itemWidth") === "compact" ? "w-52" : "w-72";
+  const children = context.children(component, scope);
   return (
-    <div
-      className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2"
-      role="list"
-    >
-      {context.children(component, scope).map((child) => (
-        <div
-          key={child.key}
-          role="listitem"
-          className={cn("shrink-0 snap-start", width)}
-        >
-          <Children refs={[child]} depth={depth} />
-        </div>
-      ))}
-    </div>
+    <PagedRow
+      count={children.length}
+      label="Carousel"
+      noun="Page"
+      itemClassName={width}
+      renderItem={(index) => (
+        <Children refs={[children[index]!]} depth={depth} />
+      )}
+    />
   );
 };
 

@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 import { useState } from "react";
 import {
   ownEntry,
@@ -36,6 +36,9 @@ import { LocationInput } from "./places";
 import { DateRangeInput } from "./planning";
 import { AddressInput, ColorInput, NumberInput } from "./typed";
 import { PhotoInput, SignatureInput, VoiceNoteInput } from "./capture";
+import { SwipeDeckInput } from "./swipe";
+import { ImageMarkupInput } from "./markup-input";
+import { WhiteboardInput } from "./whiteboard";
 
 // §4.3 Inputs. Each binds `value` to a path; edits go to the controller
 // (saved 600 ms after the last change). A field that asks for a secret is
@@ -117,6 +120,7 @@ export const InputView = ({ component, scope }: NodeProps) => {
 
 /** Inputs drawn as several controls under one label. */
 const GROUPED = new Set<string>([
+  "SwipeDeck",
   "RichTextEditor",
   "RecipientField",
   "ChoicePicker",
@@ -131,6 +135,8 @@ const GROUPED = new Set<string>([
   "SignaturePad",
   "PhotoCapture",
   "VoiceNote",
+  "ImageMarkup",
+  "Whiteboard",
 ]);
 
 const Field = ({ type, ...props }: FieldProps & { type: ComponentType }) => {
@@ -181,6 +187,12 @@ const Field = ({ type, ...props }: FieldProps & { type: ComponentType }) => {
       return <PhotoInput {...props} />;
     case "VoiceNote":
       return <VoiceNoteInput {...props} />;
+    case "SwipeDeck":
+      return <SwipeDeckInput {...props} />;
+    case "ImageMarkup":
+      return <ImageMarkupInput {...props} />;
+    case "Whiteboard":
+      return <WhiteboardInput {...props} />;
     default:
       return null;
   }

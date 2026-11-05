@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 13531a72d2cb7ee44fe53740136acc9e014de235; do not edit here.
+// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
 export * from "./json";
 export * from "./text";
 export * from "./sends";
@@ -18,9 +18,15 @@ export * from "./media";
 export * from "./board";
 export * from "./diagram";
 export * from "./calendar";
+export * from "./swipe";
 export * from "./map";
 export * from "./copy";
 export * from "./typed";
 export * from "./live";
 export * from "./document";
+export * from "./workview";
 export * from "./text-file";
+export * from "./markup";
+export * from "./ink";
+export * from "./model3d";
+export * from "./outline";
