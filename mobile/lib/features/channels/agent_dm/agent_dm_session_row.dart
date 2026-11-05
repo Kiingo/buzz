@@ -224,8 +224,9 @@ Future<bool> runAgentDmTypedCommand(
   }
   if (view == null) return false;
   clear();
-  if (context.mounted)
+  if (context.mounted) {
     await showAgentDmSessionSheet(context, agentPubkey, view);
+  }
   return true;
 }
 
