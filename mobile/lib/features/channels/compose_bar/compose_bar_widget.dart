@@ -593,6 +593,7 @@ class ComposeBar extends HookConsumerWidget {
             text,
             busy: (busy) => isSending.value = busy,
             clear: clearComposer,
+            newSession: agentCommands.newSession,
           )) {
         return;
       }

@@ -52,14 +52,18 @@ import {
   changeSessionSetup,
   effortLabel,
   ensureSessionSetup,
+  fastToggleArg,
   getSessionSetup,
   getSessionSetupVersion,
   parseSetupCommand,
   requestSetupPicker,
   resolveEffortArg,
   resolveModelArg,
+  resolveSpeedArg,
   setupChangeErrorSentence,
+  setupCommandApplies,
   setupCommandEntries,
+  speedPickLabel,
   subscribeSessionSetup,
   type SessionSetupPanel,
   type SetupCommand,
@@ -199,7 +203,12 @@ function withSetupCommands(
   const promptRows = (views?.prompts ?? []).filter(
     (row) => !setupNames.has(row.name),
   );
-  const entries = [...setup, ...viewRows, ...promptRows];
+  // /clear starts a new session, as /new does.
+  const clearRow =
+    views?.clear != null && !setupNames.has("clear")
+      ? [{ name: "clear", description: views.clear }]
+      : [];
+  const entries = [...setup, ...viewRows, ...promptRows, ...clearRow];
   const names = new Set<string>(entries.map((entry) => entry.name));
   const others = commands.filter((command) => !names.has(command.name));
   return [
@@ -216,12 +225,46 @@ function withSetupCommands(
   ];
 }
 
+/** `/speed` and `/fast`; a pick that isn't clear or allowed opens the panel. */
+async function runSpeedCommand(
+  agentPubkey: string,
+  panel: SessionSetupPanel,
+  command: Extract<SetupCommand, { name: "speed" | "fast" }>,
+): Promise<void> {
+  if (!panel.canChangeSpeed) {
+    toast.error("You can't change this session's speed.");
+    return;
+  }
+  const arg =
+    command.name === "fast"
+      ? fastToggleArg(panel)
+      : command.arg === null
+        ? "ask"
+        : resolveSpeedArg(panel, command.arg);
+  if (arg === "ask") {
+    requestSetupPicker(agentPubkey);
+    return;
+  }
+  try {
+    await changeSessionSetup(agentPubkey, { speed: arg.pick });
+    toast.success(
+      `${speedPickLabel(panel, arg.pick)} applies from the next turn.`,
+    );
+  } catch (error) {
+    toast.error(setupChangeErrorSentence(error));
+  }
+}
+
 /** Carry out a session command; a pick that isn't clear opens the panel. */
 async function runSetupCommand(
   agentPubkey: string,
   panel: SessionSetupPanel,
   command: SetupCommand,
 ): Promise<void> {
+  if (command.name === "speed" || command.name === "fast") {
+    await runSpeedCommand(agentPubkey, panel, command);
+    return;
+  }
   if (command.name !== "model" && command.name !== "effort") {
     requestSetupPicker(agentPubkey);
     return;
@@ -720,7 +763,7 @@ export function useAgentSlashCommands({
       if (setupCommand) {
         await ensureSessionSetup(dmPeer);
         const panel = getSessionSetup(dmPeer);
-        if (panel) {
+        if (panel && setupCommandApplies(panel, setupCommand)) {
           onSent();
           await runSetupCommand(dmPeer, panel, setupCommand);
           return true;
@@ -736,6 +779,30 @@ export function useAgentSlashCommands({
         if (view && getSessionSetup(dmPeer)) {
           onSent();
           requestSessionView(dmPeer, view.view);
+          return true;
+        }
+        // A typed /clear is /new, without the pick's question, as typed /new.
+        if (
+          plainText.trim() === "/clear" &&
+          getSessionBuiltins(dmPeer)?.clear != null &&
+          getSessionSetup(dmPeer)
+        ) {
+          try {
+            await sendAgentDmTaggedMessage({
+              queryClient,
+              channelId,
+              senderPubkey: selfPubkey,
+              content: "/new",
+              markerTags: [],
+            });
+            onSent();
+          } catch (error) {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : "Failed to start a new session.",
+            );
+          }
           return true;
         }
       }

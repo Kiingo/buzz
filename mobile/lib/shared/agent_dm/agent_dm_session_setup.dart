@@ -37,6 +37,42 @@ class AgentDmSetupModel {
   final List<String> efforts;
 }
 
+/// One speed the session's model offers (the host's `options`), Standard
+/// first. [available] false: a fresh check says it isn't on the reader's plan.
+/// The cost words are the host's.
+@immutable
+class AgentDmSpeedOption {
+  const AgentDmSpeedOption({
+    required this.id,
+    this.label,
+    this.available,
+    this.unavailableReason,
+    this.costHint,
+  });
+
+  final String id;
+  final String? label;
+  final bool? available;
+  final String? unavailableReason;
+  final String? costHint;
+}
+
+/// A speed to offer; [note] says why it can't be picked.
+@immutable
+class AgentDmSpeedRow {
+  const AgentDmSpeedRow({
+    required this.id,
+    required this.label,
+    required this.selected,
+    this.note,
+  });
+
+  final String id;
+  final String label;
+  final bool selected;
+  final String? note;
+}
+
 /// One way the session may work (the host's `options.modes`, widest first):
 /// Full, Accept edits, Ask or Plan, in the host's words. Only the host decides
 /// which can run; this client offers just the ones it marks available.
@@ -87,6 +123,7 @@ class AgentDmSessionVitals {
     this.costUsd,
     this.branch,
     this.folder,
+    this.worktree,
   });
 
   final String? accountAlias;
@@ -101,6 +138,9 @@ class AgentDmSessionVitals {
   final num? costUsd;
   final String? branch;
   final String? folder;
+
+  /// The worktree's name, when the session's folder is in a worktree home.
+  final String? worktree;
 }
 
 @immutable
@@ -119,6 +159,11 @@ class AgentDmSessionSetup {
     this.modes = const [],
     this.canChangeMode = false,
     this.vitals,
+    this.speed = _standardSpeed,
+    this.speeds = const [],
+    this.speedLabels = const {},
+    this.canChangeSpeed = false,
+    this.speedNoteLine,
   });
 
   final int revision;
@@ -142,6 +187,55 @@ class AgentDmSessionSetup {
   final List<AgentDmSessionMode> modes;
   final bool canChangeMode;
   final AgentDmSessionVitals? vitals;
+
+  /// What it runs at now; `standard` from a host that has no speeds.
+  final String speed;
+
+  /// The current model's speeds, else the harness's.
+  final List<AgentDmSpeedOption> speeds;
+  final Map<String, String> speedLabels;
+  final bool canChangeSpeed;
+
+  /// "Runs at Fast: Ultrafast isn't on your plan.", when the pick is kept but
+  /// doesn't run as chosen.
+  final String? speedNoteLine;
+
+  String speedLabel(String id) => _speedLabel(id, speedLabels, speeds);
+
+  /// The speeds to offer; none unless the host lists a choice of them.
+  List<AgentDmSpeedRow> get speedRows => speeds.length < 2
+      ? const []
+      : [
+          for (final option in speeds)
+            AgentDmSpeedRow(
+              id: option.id,
+              label: speedLabel(option.id),
+              selected: option.id == speed,
+              note: option.available == false && option.id != speed
+                  ? option.unavailableReason == 'not_on_your_plan'
+                        ? 'Not on your plan'
+                        : 'Not available'
+                  : null,
+            ),
+        ];
+
+  /// Under the speeds: why the pick runs slower, and what the speed costs.
+  String? get speedFooter {
+    if (speedRows.isEmpty) return null;
+    final selected = speeds.where((option) => option.id == speed).firstOrNull;
+    final dearer = speeds
+        .where((option) => option.costHint != null)
+        .firstOrNull
+        ?.costHint;
+    final hint =
+        selected?.costHint ??
+        (speed != _standardSpeed
+            ? '${speedLabel(speed)} uses more of your plan than Standard.'
+            : dearer != null
+            ? 'Faster speeds answer sooner. $dearer'
+            : 'Faster speeds answer sooner and use more of your plan.');
+    return [?speedNoteLine, hint].join(' ');
+  }
 
   /// The modes the host says this session can run: the only ones offered.
   List<AgentDmSessionMode> get availableModes => [
@@ -251,7 +345,57 @@ AgentDmSessionVitals? _parseVitals(Object? body) {
     costUsd: _number(cost?['usd']),
     branch: _text(location?['branch']),
     folder: folder,
+    worktree: _text(location?['worktree']),
   );
+}
+
+const _standardSpeed = 'standard';
+
+String _speedLabel(
+  String id,
+  Map<String, String> labels,
+  List<AgentDmSpeedOption> speeds,
+) =>
+    labels[id] ??
+    speeds.where((option) => option.id == id).firstOrNull?.label ??
+    (id.isEmpty ? id : '${id[0].toUpperCase()}${id.substring(1)}');
+
+/// A list of speeds, or null when absent; an unreadable one is left out.
+List<AgentDmSpeedOption>? _parseSpeeds(Object? value) => value is! List
+    ? null
+    : [
+        for (final raw in value)
+          if (raw is String && _text(raw) != null)
+            AgentDmSpeedOption(id: _text(raw)!)
+          else if (raw is Map && _text(raw['id']) != null)
+            AgentDmSpeedOption(
+              id: _text(raw['id'])!,
+              label: _text(raw['label']),
+              available: raw['available'] is bool
+                  ? raw['available'] as bool
+                  : null,
+              unavailableReason: _text(raw['unavailableReason']),
+              costHint: _text(raw['costHint']),
+            ),
+      ];
+
+String? _speedNoteLine(
+  Object? value,
+  Map<String, String> labels,
+  List<AgentDmSpeedOption> speeds,
+) {
+  if (value is! Map) return null;
+  final chosen = _text(value['chosen']);
+  final runsAt = _text(value['runsAt']);
+  if (chosen == null || runsAt == null || chosen == runsAt) return null;
+  final name = _speedLabel(chosen, labels, speeds);
+  final why = switch (value['reason']) {
+    'not_on_your_plan' => "$name isn't on your plan.",
+    'model' => "this model doesn't offer $name.",
+    'payer' => "$name isn't allowed on this session's plan.",
+    _ => "$name isn't available.",
+  };
+  return 'Runs at ${_speedLabel(runsAt, labels, speeds)}: $why';
 }
 
 /// The panel in [body], or `null` when the body is not that contract.
@@ -306,6 +450,21 @@ AgentDmSessionSetup? parseAgentDmSessionSetup(Object? body) {
             unavailableReason: _text(raw['unavailableReason']),
           ),
   ];
+  final currentModel = [
+    if (entry?['models'] case final List list)
+      for (final raw in list)
+        if (raw is Map && raw['id'] == model) raw,
+  ].firstOrNull;
+  final speeds =
+      _parseSpeeds(currentModel?['speeds']) ??
+      _parseSpeeds(entry?['speeds']) ??
+      const <AgentDmSpeedOption>[];
+  final speedLabels = <String, String>{
+    if (options['speedLabels'] case final Map labels)
+      for (final entry in labels.entries)
+        if (entry.key is String && _text(entry.value) != null)
+          entry.key as String: _text(entry.value)!,
+  };
   return AgentDmSessionSetup(
     revision: revision,
     model: model,
@@ -325,6 +484,11 @@ AgentDmSessionSetup? parseAgentDmSessionSetup(Object? body) {
     modes: modes,
     canChangeMode: canChange['mode'] == true && modes.isNotEmpty,
     vitals: _parseVitals(body['vitals']),
+    speed: _text(current['speed']) ?? _standardSpeed,
+    speeds: speeds,
+    speedLabels: speedLabels,
+    canChangeSpeed: canChange['speed'] == true,
+    speedNoteLine: _speedNoteLine(current['speedNote'], speedLabels, speeds),
   );
 }
 
@@ -366,7 +530,12 @@ List<String> agentDmVitalsLines(AgentDmSessionVitals vitals, {DateTime? now}) {
   final percent = vitals.contextPercent;
   final total = vitals.todosTotal;
   final cost = vitals.costUsd;
-  final place = [vitals.folder, vitals.branch].whereType<String>().join(' · ');
+  final worktree = vitals.worktree;
+  final place = [
+    if (worktree != vitals.folder) vitals.folder,
+    vitals.branch,
+    if (worktree != null) 'worktree $worktree',
+  ].whereType<String>().join(' · ');
   return [
     if (vitals.accountAlias case final alias?)
       vitals.usageStale ? '$alias (may be out of date)' : alias,
@@ -396,7 +565,7 @@ class AgentDmSetupCommand {
 
   final String name;
 
-  /// What follows `/model` or `/effort`.
+  /// What follows `/model`, `/effort` or `/speed`.
   final String? arg;
 
   @override
@@ -409,18 +578,19 @@ class AgentDmSetupCommand {
 
 final _commandPattern = RegExp(r'^/([a-z]+)(?:\s+(\S.*))?$', dotAll: true);
 
-/// `/model`, `/model <name>`, `/effort`, `/effort <level>`, `/status`,
-/// `/usage`, `/context` or `/cost` as the whole message; anything else is an
-/// ordinary message, like the session commands the server reads.
+/// `/model`, `/model <name>`, `/effort`, `/effort <level>`, `/speed`,
+/// `/speed <speed>`, `/fast`, `/status`, `/usage`, `/context` or `/cost` as
+/// the whole message; anything else is an ordinary message, like the session
+/// commands the server reads.
 AgentDmSetupCommand? parseAgentDmSetupCommand(String message) {
   final match = _commandPattern.firstMatch(message.trim());
   if (match == null) return null;
   final name = match.group(1)!;
   final arg = match.group(2)?.trim();
-  if (name == 'model' || name == 'effort') {
+  if (name == 'model' || name == 'effort' || name == 'speed') {
     return AgentDmSetupCommand(name, arg);
   }
-  return _viewCommands.contains(name) && arg == null
+  return (_viewCommands.contains(name) || name == 'fast') && arg == null
       ? AgentDmSetupCommand(name)
       : null;
 }
@@ -471,9 +641,46 @@ AgentDmSetupPick? resolveAgentDmEffortArg(
   for (final effort in setup.currentEfforts) effort: setup.effortLabel(effort),
 });
 
+/// A speed that can be picked: a null id is Standard. Null when it can't.
+AgentDmSetupPick? _speedPick(AgentDmSessionSetup setup, String id) {
+  final row = setup.speedRows.where((row) => row.id == id).firstOrNull;
+  if (row == null || row.note != null) return null;
+  return AgentDmSetupPick(id == _standardSpeed ? null : id);
+}
+
+/// What `/speed <arg>` names, or null to open the panel (several, none or a
+/// refused one).
+AgentDmSetupPick? resolveAgentDmSpeedArg(
+  AgentDmSessionSetup setup,
+  String arg,
+) {
+  final named = _matchArg(arg, {
+    for (final row in setup.speedRows) row.id: row.label,
+  });
+  final id = named?.id;
+  return id == null ? named : _speedPick(setup, id);
+}
+
+/// `/fast`: Standard to Fast, anything else back to Standard. Null to open the
+/// panel.
+AgentDmSetupPick? agentDmFastTogglePick(AgentDmSessionSetup setup) =>
+    _speedPick(setup, setup.speed == _standardSpeed ? 'fast' : _standardSpeed);
+
+/// Whether a typed session command is this session's: `/speed` and `/fast` only
+/// where the host lists a choice of speeds, so elsewhere they stay ordinary
+/// messages (a skill of that name still runs).
+bool agentDmSetupCommandApplies(
+  AgentDmSessionSetup setup,
+  AgentDmSetupCommand command,
+) =>
+    (command.name != 'speed' && command.name != 'fast') ||
+    setup.speedRows.isNotEmpty;
+
 const _commandDescriptions = {
   'model': 'Choose the model for this session.',
   'effort': 'Choose the reasoning level for this session.',
+  'speed': 'Choose the speed for this session.',
+  'fast': 'Switch this session between Standard and Fast.',
   'status': "Show this session's model, limits and context.",
   'usage': "Show this account's limits.",
   'context': "Show how full this session's context is.",
@@ -494,6 +701,10 @@ List<AgentCommand> withAgentDmSetupCommands(
   final names = [
     if (setup.canChangeModel) 'model',
     if (setup.canChangeEffort) 'effort',
+    if (setup.canChangeSpeed && setup.speedRows.isNotEmpty) ...[
+      'speed',
+      'fast',
+    ],
     ..._viewCommands,
   ];
   final others = [
@@ -558,6 +769,9 @@ const _changeErrorSentences = {
   'session_setup_not_supported':
       "Choosing a model isn't available for this agent.",
   'session_setup_mode_not_supported': "This session can't run that mode.",
+  'session_setup_speed_not_allowed':
+      "That speed isn't available for this model.",
+  'session_setup_speed_unavailable': "That speed isn't on your plan.",
 };
 
 /// The plain sentence for a failed change.
@@ -582,9 +796,10 @@ class AgentDmSessionActions {
 
   final Ref _ref;
 
-  /// Change the model, effort or mode: `{'model': id}`, `{'effort': id}` or
-  /// `{'mode': id}`, a null model or effort resetting it to the default; a
-  /// mode is sent only on an explicit pick. It applies from the next turn.
+  /// Change the model, effort, speed or mode: `{'model': id}`,
+  /// `{'effort': id}`, `{'speed': id}` or `{'mode': id}`, a null model, effort
+  /// or speed resetting it to the default; a mode is sent only on an explicit
+  /// pick. It applies from the next turn.
   /// Throws when the host refuses; the panel re-reads either way.
   Future<AgentDmSessionSetup> change(
     String agentPubkey,

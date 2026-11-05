@@ -18,6 +18,8 @@ import {
   modeNote,
   setupChangeErrorSentence,
   setupChipText,
+  speedFooter,
+  speedRows,
   subscribeSessionSetup,
   takeSetupPickerRequest,
   vitalsLines,
@@ -91,6 +93,7 @@ function SetupPanelBody({
   const efforts = currentModelEfforts(panel);
   const modes = panel.canChangeMode ? availableModes(panel) : [];
   const note = modeNote(panel);
+  const speeds = panel.canChangeSpeed ? speedRows(panel) : [];
   const lines = panel.vitals ? vitalsLines(panel.vitals) : [];
   return (
     <div className="flex flex-col gap-3" data-testid="agent-session-panel">
@@ -125,6 +128,31 @@ function SetupPanelBody({
           ))}
         </section>
       ) : null}
+      {speeds.length > 0 ? (
+        <section aria-label="Speed" className="flex flex-col gap-0.5">
+          <h3 className="px-2 text-xs text-muted-foreground">Speed</h3>
+          {speeds.map((speed) => (
+            <ChoiceRow
+              disabled={saving || speed.note !== null}
+              key={speed.id}
+              label={speed.note ? `${speed.label}: ${speed.note}` : speed.label}
+              onChoose={() =>
+                void choose({
+                  speed: speed.id === "standard" ? null : speed.id,
+                })
+              }
+              selected={speed.selected}
+              testId={`agent-session-speed-${speed.id}`}
+            />
+          ))}
+          <p
+            className="px-2 text-xs text-muted-foreground"
+            data-testid="agent-session-speed-note"
+          >
+            {speedFooter(panel)}
+          </p>
+        </section>
+      ) : null}
       {modes.length > 0 ? (
         <section aria-label="Mode" className="flex flex-col gap-0.5">
           <h3 className="px-2 text-xs text-muted-foreground">Mode</h3>
@@ -148,7 +176,10 @@ function SetupPanelBody({
           {note}
         </p>
       ) : null}
-      {panel.canChangeModel || panel.canChangeEffort || modes.length > 0 ? (
+      {panel.canChangeModel ||
+      panel.canChangeEffort ||
+      speeds.length > 0 ||
+      modes.length > 0 ? (
         <p className="px-2 text-xs text-muted-foreground">
           A change applies from the next turn.
         </p>
@@ -199,8 +230,8 @@ const SESSION_VIEW_ROWS: { id: string; label: string; view: SessionView }[] = [
 /**
  * The DM header's line for the reader's session with a hosted agent, for
  * example "Claude Code · Opus 5.5 · High · 25%". It opens the session's
- * vitals and the model, reasoning and mode picks; `/model`, `/effort` and the
- * vitals commands open it too. Nothing shows for an agent with no host.
+ * vitals and the model, reasoning, speed and mode picks; `/model`, `/effort`,
+ * `/speed` and the vitals commands open it too. Nothing shows for an agent with no host.
  */
 export function AgentSessionChip({
   agentPubkey,

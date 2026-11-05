@@ -201,12 +201,16 @@ class AgentDmSessionBuiltins {
     required this.inPane,
     required this.rows,
     this.prompts = const [],
+    this.clear,
   });
 
   /// The session runs in a pane (`tmux`), so Interrupt applies.
   final bool inPane;
   final List<AgentDmSessionBuiltin> rows;
   final List<AgentDmSessionPrompt> prompts;
+
+  /// `/clear`'s words, when this session lists it; it sends `/new`.
+  final String? clear;
 }
 
 String? _text(Object? value) =>
@@ -326,6 +330,7 @@ AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
   if (value == null || session == null || commands is! List) return null;
   final rows = <AgentDmSessionBuiltin>[];
   final prompts = <AgentDmSessionPrompt>[];
+  String? clear;
   final seen = <String>{};
   for (final raw in commands) {
     final entry = _map(raw);
@@ -342,6 +347,11 @@ AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
     if (action['kind'] == 'prompt') {
       seen.add(name);
       prompts.add(AgentDmSessionPrompt(name: name, description: shown));
+      continue;
+    }
+    if (name == 'clear' && action['kind'] == 'control') {
+      seen.add(name);
+      clear = shown;
       continue;
     }
     final screen = action['screen'];
@@ -361,6 +371,7 @@ AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
     inPane: session['lane'] == 'tmux',
     rows: rows,
     prompts: prompts,
+    clear: clear,
   );
 }
 
@@ -389,12 +400,14 @@ AgentDmSessionView? agentDmSessionViewForText(
 
 /// [commands] with the session's view and prompt rows after its session
 /// commands; a name already listed keeps its own row. A prompt row is put in
-/// the draft as `/name ` and sent as typed.
+/// the draft as `/name ` and sent as typed; `/clear` asks and sends `/new`.
 List<AgentCommand> withAgentDmSessionViewCommands(
   List<AgentCommand> commands,
   AgentDmSessionBuiltins? builtins,
 ) {
-  if (builtins == null || (builtins.rows.isEmpty && builtins.prompts.isEmpty)) {
+  final clear = builtins?.clear;
+  if (builtins == null ||
+      (builtins.rows.isEmpty && builtins.prompts.isEmpty && clear == null)) {
     return commands;
   }
   final names = {for (final command in commands) command.name};
@@ -405,6 +418,8 @@ List<AgentCommand> withAgentDmSessionViewCommands(
     for (final row in builtins.prompts)
       if (!names.contains(row.name))
         AgentCommand.session(name: row.name, description: row.description),
+    if (clear != null && !names.contains('clear'))
+      AgentCommand.session(name: 'clear', description: clear),
   ];
   return [
     for (final command in commands)

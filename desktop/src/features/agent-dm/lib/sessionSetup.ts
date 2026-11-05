@@ -54,6 +54,21 @@ export type SessionVitals = {
   costUsd: number | null;
   branch: string | null;
   folder: string | null;
+  /** The worktree's name, when the session's folder is in a worktree home. */
+  worktree: string | null;
+};
+
+/**
+ * One speed the session's model offers (the host's `options`), Standard first.
+ * `available` false: a fresh check says it isn't on the reader's plan. The
+ * cost words are the host's.
+ */
+export type SessionSpeedOption = {
+  id: string;
+  label: string | null;
+  available: boolean | null;
+  unavailableReason: string | null;
+  costHint: string | null;
 };
 
 /**
@@ -84,11 +99,21 @@ export type SessionSetupPanel = {
   effortLabels: Record<string, string>;
   canChangeModel: boolean;
   canChangeEffort: boolean;
+  /** What it runs at now; `standard` from a host that has no speeds. */
+  speed: string;
+  /** The current model's speeds, else the harness's. */
+  speeds: SessionSpeedOption[];
+  speedLabels: Record<string, string>;
+  canChangeSpeed: boolean;
+  /** The pick is kept but doesn't run as chosen. */
+  speedNote: { chosen: string; runsAt: string; reason: string | null } | null;
   /** Empty from a host that has no modes. */
   modes: SessionModeOption[];
   canChangeMode: boolean;
   vitals: SessionVitals | null;
 };
+
+const STANDARD_SPEED = "standard";
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -163,7 +188,37 @@ function parseVitals(body: unknown): SessionVitals | null {
     costUsd: finite(cost?.usd),
     branch: text(location?.branch),
     folder: cwd ? (cwd.replace(/\/+$/u, "").split("/").pop() ?? null) : null,
+    worktree: text(location?.worktree),
   };
+}
+
+/** A list of speeds, or null when absent; an unreadable one is left out. */
+function parseSpeeds(value: unknown): SessionSpeedOption[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.flatMap((raw): SessionSpeedOption[] => {
+    const option = record(raw);
+    const id = text(raw) ?? text(option?.id);
+    if (!id) return [];
+    return [
+      {
+        id,
+        label: text(option?.label),
+        available:
+          typeof option?.available === "boolean" ? option.available : null,
+        unavailableReason: text(option?.unavailableReason),
+        costHint: text(option?.costHint),
+      },
+    ];
+  });
+}
+
+function parseSpeedNote(value: unknown): SessionSetupPanel["speedNote"] {
+  const note = record(value);
+  const chosen = text(note?.chosen);
+  const runsAt = text(note?.runsAt);
+  return chosen && runsAt && chosen !== runsAt
+    ? { chosen, runsAt, reason: text(note?.reason) }
+    : null;
 }
 
 /** The panel, or null when the body is not that contract. */
@@ -209,6 +264,16 @@ export function parseSessionSetupPanel(
     const name = text(value);
     if (name) effortLabels[key] = name;
   }
+  const currentModel = (Array.isArray(entry?.models) ? entry.models : [])
+    .map(record)
+    .find((candidate) => candidate?.id === model);
+  const speedLabels: Record<string, string> = {};
+  for (const [key, value] of Object.entries(
+    record(options?.speedLabels) ?? {},
+  )) {
+    const name = text(value);
+    if (name) speedLabels[key] = name;
+  }
   const modes = (Array.isArray(options?.modes) ? options.modes : []).flatMap(
     (raw): SessionModeOption[] => {
       const option = record(raw);
@@ -236,6 +301,12 @@ export function parseSessionSetupPanel(
     effortLabels,
     canChangeModel: canChange?.model === true,
     canChangeEffort: canChange?.effort === true,
+    speed: text(current?.speed) ?? STANDARD_SPEED,
+    speeds:
+      parseSpeeds(currentModel?.speeds) ?? parseSpeeds(entry?.speeds) ?? [],
+    speedLabels,
+    canChangeSpeed: canChange?.speed === true,
+    speedNote: parseSpeedNote(current?.speedNote),
     modes,
     canChangeMode: canChange?.mode === true && modes.length > 0,
     vitals: parseVitals(root?.vitals),
@@ -298,7 +369,13 @@ export function vitalsLines(
         : `Est. $${vitals.costUsd.toFixed(2)}`,
     );
   }
-  const place = [vitals.folder, vitals.branch].filter(Boolean).join(" · ");
+  const place = [
+    vitals.worktree === vitals.folder ? null : vitals.folder,
+    vitals.branch,
+    vitals.worktree ? `worktree ${vitals.worktree}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   if (place) lines.push(place);
   return lines;
 }
@@ -353,6 +430,118 @@ export function currentModelEfforts(panel: SessionSetupPanel): string[] {
   return panel.models.find((model) => model.id === panel.model)?.efforts ?? [];
 }
 
+// ---- Speed ----
+
+export function speedLabel(panel: SessionSetupPanel, id: string): string {
+  const named =
+    panel.speedLabels[id] ??
+    panel.speeds.find((option) => option.id === id)?.label;
+  return named ?? `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+}
+
+export type SpeedRow = {
+  id: string;
+  label: string;
+  selected: boolean;
+  /** Why it can't be picked. */
+  note: string | null;
+};
+
+/** The speeds to offer; none unless the host lists a choice of them. */
+export function speedRows(panel: SessionSetupPanel): SpeedRow[] {
+  if (panel.speeds.length < 2) return [];
+  return panel.speeds.map((option) => ({
+    id: option.id,
+    label: speedLabel(panel, option.id),
+    selected: option.id === panel.speed,
+    note:
+      option.available === false && option.id !== panel.speed
+        ? option.unavailableReason === "not_on_your_plan"
+          ? "Not on your plan"
+          : "Not available"
+        : null,
+  }));
+}
+
+function speedNoteLine(panel: SessionSetupPanel): string | null {
+  const note = panel.speedNote;
+  if (!note) return null;
+  const chosen = speedLabel(panel, note.chosen);
+  const why =
+    note.reason === "not_on_your_plan"
+      ? `${chosen} isn't on your plan.`
+      : note.reason === "model"
+        ? `this model doesn't offer ${chosen}.`
+        : note.reason === "payer"
+          ? `${chosen} isn't allowed on this session's plan.`
+          : `${chosen} isn't available.`;
+  return `Runs at ${speedLabel(panel, note.runsAt)}: ${why}`;
+}
+
+/** Under the speeds: why the pick runs slower, and what the speed costs. */
+export function speedFooter(panel: SessionSetupPanel): string | null {
+  if (speedRows(panel).length === 0) return null;
+  const selected = panel.speeds.find((option) => option.id === panel.speed);
+  const dearer = panel.speeds.find((option) => option.costHint)?.costHint;
+  const hint =
+    selected?.costHint ??
+    (panel.speed !== STANDARD_SPEED
+      ? `${speedLabel(panel, panel.speed)} uses more of your plan than Standard.`
+      : dearer
+        ? `Faster speeds answer sooner. ${dearer}`
+        : "Faster speeds answer sooner and use more of your plan.");
+  return [speedNoteLine(panel), hint].filter(Boolean).join(" ");
+}
+
+/** A pick that can be made: `null` is Standard, the host's own default. */
+function speedPick(panel: SessionSetupPanel, id: string): SetupArg {
+  const row = speedRows(panel).find((candidate) => candidate.id === id);
+  if (!row || row.note) return "ask";
+  return { pick: id === STANDARD_SPEED ? null : id };
+}
+
+/** What `/speed <arg>` names; several, none or a refused one opens the panel. */
+export function resolveSpeedArg(
+  panel: SessionSetupPanel,
+  arg: string,
+): SetupArg {
+  const named = matchArg(
+    arg,
+    speedRows(panel).map(({ id, label }) => ({ id, label })),
+  );
+  return named === "ask" || named.pick === null
+    ? named
+    : speedPick(panel, named.pick);
+}
+
+/** `/fast`: Standard to Fast, anything else back to Standard. */
+export function fastToggleArg(panel: SessionSetupPanel): SetupArg {
+  return speedPick(
+    panel,
+    panel.speed === STANDARD_SPEED ? "fast" : STANDARD_SPEED,
+  );
+}
+
+/** The words for a speed pick; a null pick is Standard. */
+export function speedPickLabel(panel: SessionSetupPanel, pick: string | null) {
+  return speedLabel(panel, pick ?? STANDARD_SPEED);
+}
+
+/**
+ * Whether a typed session command is this session's: `/speed` and `/fast` only
+ * where the host lists a choice of speeds, so elsewhere they stay ordinary
+ * messages (a skill of that name still runs).
+ */
+export function setupCommandApplies(
+  panel: SessionSetupPanel,
+  command: SetupCommand,
+): boolean {
+  return (
+    (command.name !== "speed" && command.name !== "fast") ||
+    speedRows(panel).length > 0
+  );
+}
+
 // ---- Typed commands ----
 
 export const SETUP_VIEW_COMMANDS = [
@@ -363,12 +552,14 @@ export const SETUP_VIEW_COMMANDS = [
 ] as const;
 
 export type SetupCommand =
-  | { name: "model" | "effort"; arg: string | null }
+  | { name: "model" | "effort" | "speed"; arg: string | null }
+  | { name: "fast"; arg: null }
   | { name: (typeof SETUP_VIEW_COMMANDS)[number]; arg: null };
 
 /**
  * A whole message that is a session command: `/model`, `/model <name>`,
- * `/effort`, `/effort <level>`, `/status`, `/usage`, `/context` or `/cost`.
+ * `/effort`, `/effort <level>`, `/speed`, `/speed <speed>`, `/fast`,
+ * `/status`, `/usage`, `/context` or `/cost`.
  * Anything else is an ordinary message, like the session commands the server
  * reads.
  */
@@ -376,7 +567,10 @@ export function parseSetupCommand(message: string): SetupCommand | null {
   const match = /^\/([a-z]+)(?:\s+(\S.*))?$/u.exec(message.trim());
   const name = match?.[1];
   const arg = match?.[2]?.trim() ?? null;
-  if (name === "model" || name === "effort") return { name, arg };
+  if (name === "model" || name === "effort" || name === "speed") {
+    return { name, arg };
+  }
+  if (name === "fast") return arg ? null : { name, arg: null };
   if ((SETUP_VIEW_COMMANDS as readonly string[]).includes(name ?? "")) {
     return arg
       ? null
@@ -436,6 +630,8 @@ export function resolveEffortArg(
 const SETUP_COMMAND_DESCRIPTIONS: Record<SetupCommand["name"], string> = {
   model: "Choose the model for this session.",
   effort: "Choose the reasoning level for this session.",
+  speed: "Choose the speed for this session.",
+  fast: "Switch this session between Standard and Fast.",
   status: "Show this session's model, limits and context.",
   usage: "Show this account's limits.",
   context: "Show how full this session's context is.",
@@ -449,6 +645,9 @@ export function setupCommandEntries(
   const names: SetupCommand["name"][] = [
     ...(panel.canChangeModel ? (["model"] as const) : []),
     ...(panel.canChangeEffort ? (["effort"] as const) : []),
+    ...(panel.canChangeSpeed && speedRows(panel).length > 0
+      ? (["speed", "fast"] as const)
+      : []),
     ...SETUP_VIEW_COMMANDS,
   ];
   return names.map((name) => ({
@@ -570,6 +769,8 @@ export function takeSetupPickerRequest(agentPublicKey: string): boolean {
 export type SetupChoice = {
   model?: string | null;
   effort?: string | null;
+  /** Null is Standard. */
+  speed?: string | null;
   /** Sent only on an explicit pick; the host refuses a mode it won't run. */
   mode?: string;
 };
@@ -585,6 +786,8 @@ const CHANGE_ERROR_SENTENCES: Record<string, string> = {
   session_setup_not_supported:
     "Choosing a model isn't available for this agent.",
   session_setup_mode_not_supported: "This session can't run that mode.",
+  session_setup_speed_not_allowed: "That speed isn't available for this model.",
+  session_setup_speed_unavailable: "That speed isn't on your plan.",
 };
 
 /** The plain sentence for a failed change. */

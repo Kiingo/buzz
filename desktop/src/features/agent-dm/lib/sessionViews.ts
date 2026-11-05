@@ -120,6 +120,8 @@ export type SessionBuiltins = {
   lane: "tmux" | "managed";
   rows: SessionBuiltin[];
   prompts: SessionPromptRow[];
+  /** `/clear`'s words, when this session lists it; it sends `/new`. */
+  clear: string | null;
 };
 
 const text = (value: unknown): string | null =>
@@ -244,6 +246,7 @@ export function parseSessionBuiltins(body: unknown): SessionBuiltins | null {
   if (!value || !session || !Array.isArray(value.commands)) return null;
   const rows: SessionBuiltin[] = [];
   const prompts: SessionPromptRow[] = [];
+  let clear: string | null = null;
   const seen = new Set<string>();
   for (const raw of value.commands) {
     const entry = record(raw);
@@ -258,6 +261,11 @@ export function parseSessionBuiltins(body: unknown): SessionBuiltins | null {
         description: text(entry.description)?.slice(0, 300) ?? "",
         takesWords: action.takes_words === true,
       });
+      continue;
+    }
+    if (name === "clear" && action.kind === "control") {
+      seen.add(name);
+      clear = text(entry.description)?.slice(0, 300) ?? "";
       continue;
     }
     const view: SessionView | null =
@@ -278,6 +286,7 @@ export function parseSessionBuiltins(body: unknown): SessionBuiltins | null {
     lane: session.lane === "tmux" ? "tmux" : "managed",
     rows,
     prompts,
+    clear,
   };
 }
 

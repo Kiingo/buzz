@@ -27,6 +27,7 @@ class _AgentCommandAutocomplete {
     required this.tagsFor,
     required this.mentionsFor,
     required this.clear,
+    required this.newSession,
   });
 
   /// Rows to show now; empty when no "/" query is open.
@@ -46,6 +47,9 @@ class _AgentCommandAutocomplete {
 
   /// Forget picked skills (the draft was sent or cleared).
   final VoidCallback clear;
+
+  /// Ask, then send `/new`, as the "/" pick does (a typed `/clear`).
+  final VoidCallback newSession;
 }
 
 /// A channel's agent members and how to bind a mention of one.
@@ -413,8 +417,20 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
       unawaited(pickRef(agent.toLowerCase(), refType, next.text, next.caret));
       return;
     }
-    if (command.kind == AgentCommandKind.session && command.name == 'new') {
+    if (command.kind == AgentCommandKind.session &&
+        (command.name == 'new' || (!groupMode && command.name == 'clear'))) {
       unawaited(startNewSession(commandAgent, targetLabel));
+      return;
+    }
+    // `/fast` is a whole command: it switches the speed, with no panel.
+    if (!groupMode &&
+        command.kind == AgentCommandKind.session &&
+        command.name == 'fast') {
+      controller.value = const TextEditingValue(
+        text: '/fast',
+        selection: TextSelection.collapsed(offset: 5),
+      );
+      submit();
       return;
     }
     // This session's own commands open its panel, and never go as a message.
@@ -519,6 +535,7 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
       pickedRefs.value.clear();
       sessionTarget.value = null;
     },
+    newSession: () => unawaited(startNewSession(commandAgent, targetLabel)),
   );
 }
 

@@ -161,7 +161,9 @@ export function filterSlashCommands(
  * for its arguments; a session command is the exact command it sends.
  */
 export function slashCommandText(command: AgentSlashCommand) {
-  return command.kind === "skill" ? `/${command.name} ` : `/${command.name}`;
+  if (command.kind === "skill") return `/${command.name} `;
+  // `/clear` is `/new` here: the only session reset the host reads as text.
+  return command.name === "clear" ? "/new" : `/${command.name}`;
 }
 
 /**
@@ -169,7 +171,10 @@ export function slashCommandText(command: AgentSlashCommand) {
  * agent's current session. `/sessions` is a harmless listing request.
  */
 export function slashCommandNeedsConfirm(command: AgentSlashCommand) {
-  return command.kind === "session" && command.name === "new";
+  return (
+    command.kind === "session" &&
+    (command.name === "new" || command.name === "clear")
+  );
 }
 
 export type SkillInvocation = {

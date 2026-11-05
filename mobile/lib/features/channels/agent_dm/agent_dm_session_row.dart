@@ -154,9 +154,9 @@ class AgentDmSessionRow extends HookConsumerWidget {
   }
 }
 
-/// Opens the session's panel: its vitals and the model, level and mode picks,
-/// and its read-only views. With [view] ("/" picked `/mcp`, `/diff` …), that
-/// view opens instead.
+/// Opens the session's panel: its vitals and the model, level, speed and mode
+/// picks, and its read-only views. With [view] ("/" picked `/mcp`, `/diff` …),
+/// that view opens instead.
 Future<void> showAgentDmSessionSheet(
   BuildContext context,
   String agentPubkey, [
@@ -181,8 +181,9 @@ const _sessionViewRows = [
 /// names one of the session's views (`/mcp`, `/agents`, `/diff` …, as the "/"
 /// list has them): carried out here and never sent, as the "/" pick does.
 /// False when it stays an ordinary message: another text, an agent with no
-/// host, or a view this session doesn't list. [busy] covers the host read;
-/// [clear] empties the composer before the panel or view opens.
+/// host, or a view this session doesn't list. A `/clear` this session lists
+/// goes to [newSession], the pick's question and then `/new`. [busy] covers the
+/// host read; [clear] empties the composer before the panel or view opens.
 Future<bool> runAgentDmTypedCommand(
   BuildContext context,
   WidgetRef ref,
@@ -190,26 +191,26 @@ Future<bool> runAgentDmTypedCommand(
   String text, {
   required void Function(bool busy) busy,
   required void Function() clear,
+  required void Function() newSession,
 }) async {
   final setupCommand = parseAgentDmSetupCommand(text);
   if (setupCommand == null && !isAgentDmSessionViewShaped(text)) return false;
   busy(true);
   final AgentDmSessionSetup? setup;
-  final AgentDmSessionView? view;
+  final AgentDmSessionBuiltins? builtins;
   try {
     setup = setupCommand == null
         ? null
         : await ref.read(agentDmSessionSetupProvider(agentPubkey).future);
-    view = setupCommand != null
+    builtins = setupCommand != null
         ? null
-        : agentDmSessionViewForText(
-            await ref.read(agentDmSessionBuiltinsProvider(agentPubkey).future),
-            text,
-          );
+        : await ref.read(agentDmSessionBuiltinsProvider(agentPubkey).future);
   } finally {
     busy(false);
   }
-  if (setupCommand != null && setup != null) {
+  if (setupCommand != null &&
+      setup != null &&
+      agentDmSetupCommandApplies(setup, setupCommand)) {
     clear();
     if (context.mounted) {
       await runAgentDmSetupCommand(
@@ -222,6 +223,11 @@ Future<bool> runAgentDmTypedCommand(
     }
     return true;
   }
+  if (builtins?.clear != null && text.trim() == '/clear') {
+    newSession();
+    return true;
+  }
+  final view = agentDmSessionViewForText(builtins, text);
   if (view == null) return false;
   clear();
   if (context.mounted) {
@@ -239,27 +245,39 @@ Future<void> runAgentDmSetupCommand(
   AgentDmSessionSetup setup,
   AgentDmSetupCommand command,
 ) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final speedCommand = command.name == 'speed' || command.name == 'fast';
+  if (speedCommand && !setup.canChangeSpeed) {
+    messenger?.showSnackBar(
+      const SnackBar(content: Text("You can't change this session's speed.")),
+    );
+    return;
+  }
   final arg = command.arg;
-  final pick = arg == null
+  final pick = command.name == 'fast'
+      ? agentDmFastTogglePick(setup)
+      : arg == null
       ? null
       : switch (command.name) {
           'model' => resolveAgentDmModelArg(setup, arg),
           'effort' => resolveAgentDmEffortArg(setup, arg),
+          'speed' => resolveAgentDmSpeedArg(setup, arg),
           _ => null,
         };
   if (pick == null) {
     await showAgentDmSessionSheet(context, agentPubkey);
     return;
   }
-  final messenger = ScaffoldMessenger.maybeOf(context);
   String text;
   try {
     final next = await ref.read(agentDmSessionActionsProvider).change(
       agentPubkey,
       setup,
-      {command.name: pick.id},
+      {speedCommand ? 'speed' : command.name: pick.id},
     );
-    final shown = command.name == 'model'
+    final shown = speedCommand
+        ? next.speedLabel(pick.id ?? next.speed)
+        : command.name == 'model'
         ? next.models
                   .where((model) => model.id == next.model)
                   .firstOrNull
@@ -339,6 +357,10 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
         ? setup.availableModes
         : const <AgentDmSessionMode>[];
     final modeNote = setup.modeNote;
+    final speeds = setup.canChangeSpeed
+        ? setup.speedRows
+        : const <AgentDmSpeedRow>[];
+    final speedFooter = setup.speedFooter;
     return SafeArea(
       child: ListView(
         key: const ValueKey('agent-dm-session-sheet'),
@@ -366,6 +388,42 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
                 () => unawaited(choose({'effort': effort})),
               ),
           ],
+          if (speeds.isNotEmpty) ...[
+            heading('Speed'),
+            for (final speed in speeds)
+              ListTile(
+                dense: true,
+                selected: speed.selected,
+                title: Text(speed.label),
+                subtitle: speed.note == null ? null : Text(speed.note!),
+                trailing: speed.selected
+                    ? const Icon(BuzzIcons.check, size: 18)
+                    : null,
+                onTap: saving.value || speed.selected || speed.note != null
+                    ? null
+                    : () => unawaited(
+                        choose({
+                          'speed': speed.id == 'standard' ? null : speed.id,
+                        }),
+                      ),
+              ),
+            if (speedFooter != null)
+              Padding(
+                key: const ValueKey('agent-dm-session-speed-note'),
+                padding: const EdgeInsets.fromLTRB(
+                  Grid.xs,
+                  Grid.xxs,
+                  Grid.xs,
+                  0,
+                ),
+                child: Text(
+                  speedFooter,
+                  style: context.textTheme.bodySmall?.copyWith(
+                    color: context.colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+          ],
           if (modes.isNotEmpty) ...[
             heading('Mode'),
             for (final mode in modes)
@@ -386,7 +444,10 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
                 ),
               ),
             ),
-          if (setup.canChangeModel || setup.canChangeEffort || modes.isNotEmpty)
+          if (setup.canChangeModel ||
+              setup.canChangeEffort ||
+              speeds.isNotEmpty ||
+              modes.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(Grid.xs, Grid.xxs, Grid.xs, 0),
               child: Text(
