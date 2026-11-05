@@ -40,9 +40,8 @@ String? _id(Object? value) {
 int _count(Object? value) =>
     value is num && value.isFinite && value > 0 ? value.floor() : 0;
 
-int? _ms(Object? value) => value is num && value.isFinite
-    ? (value < 0 ? 0 : value.round())
-    : null;
+int? _ms(Object? value) =>
+    value is num && value.isFinite ? (value < 0 ? 0 : value.round()) : null;
 
 Map<Object?, Object?>? _map(Object? value) =>
     value is Map<Object?, Object?> ? value : null;
