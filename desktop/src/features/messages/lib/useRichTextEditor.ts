@@ -7,6 +7,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import Link from "@tiptap/extension-link";
 import { Extension } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 
 import { readTextFromSystemClipboard } from "@/shared/api/tauriMedia";
 import {
@@ -107,6 +108,11 @@ export type RichTextEditorOptions = {
    * ArrowUp fall through to normal caret movement.
    */
   onEditLastOwnMessage?: () => boolean;
+  /**
+   * Called in the same raw hook, before the ArrowUp rule, while no autocomplete
+   * is open. Return `true` to consume the key.
+   */
+  onRawKeyDown?: (event: KeyboardEvent, view: EditorView) => boolean;
   /** When true, plain Enter is passed through (e.g. to select an autocomplete item). */
   isAutocompleteOpen?: React.RefObject<boolean>;
   /**
@@ -154,6 +160,7 @@ export function useRichTextEditor({
   getMentionIdentities,
   onSubmit,
   onEditLastOwnMessage,
+  onRawKeyDown,
   isAutocompleteOpen,
   onEditLink,
   onLinkSelectionChange,
@@ -166,6 +173,8 @@ export function useRichTextEditor({
   onSubmitRef.current = onSubmit;
   const onEditLastOwnMessageRef = React.useRef(onEditLastOwnMessage);
   onEditLastOwnMessageRef.current = onEditLastOwnMessage;
+  const onRawKeyDownRef = React.useRef(onRawKeyDown);
+  onRawKeyDownRef.current = onRawKeyDown;
   const onEditLinkRef = React.useRef(onEditLink);
   onEditLinkRef.current = onEditLink;
   const onLinkSelectionChangeRef = React.useRef(onLinkSelectionChange);
@@ -501,6 +510,13 @@ export function useRichTextEditor({
             !event.isComposing
           ) {
             return onLinkShortcutRef.current?.() ?? false;
+          }
+
+          if (
+            !isAutocompleteOpen?.current &&
+            onRawKeyDownRef.current?.(event, view)
+          ) {
+            return true;
           }
 
           if (event.key !== "ArrowUp") return false;

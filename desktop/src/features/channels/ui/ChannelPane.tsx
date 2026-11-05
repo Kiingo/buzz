@@ -7,6 +7,7 @@ import { ComposerDockBackdrop } from "@/features/messages/ui/ComposerDockBackdro
 import { ComposerUploadProgressOverlay } from "@/features/messages/ui/ComposerUploadProgressOverlay";
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
 import { AgentDelegationDock } from "@/features/agent-dm/ui/AgentDelegationDock";
+import { usePromptHistory } from "@/features/agent-dm/ui/usePromptHistory";
 import { ComposerTimeoutBanner } from "@/features/moderation/ui/ComposerTimeoutBanner";
 import { useTimeoutActive } from "@/features/moderation/lib/timeoutStore";
 import { isModerationDm } from "@/features/moderation/lib/moderationDm";
@@ -490,6 +491,12 @@ export const ChannelPane = React.memo(function ChannelPane({
       onExternalTargetResolved: onThreadScrollTargetResolved,
       onModeChange: markExitComplete,
     });
+  const promptHistory = usePromptHistory(
+    activeChannel,
+    agentPubkeys,
+    currentPubkey,
+    mainTimelineEntries,
+  );
   const {
     handleEditLastOwnMainMessage,
     handleEditLastOwnThreadMessage,
@@ -782,6 +789,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                     onDeferredEditPendingChange={setMainDeferredEditPending}
                     onCancelEdit={onCancelEdit}
                     onEditLastOwnMessage={handleEditLastOwnMainMessage}
+                    promptHistory={promptHistory}
                     onEditSave={onEditSave}
                     onPrepareSendChannel={
                       activeChannel?.channelType === "dm"

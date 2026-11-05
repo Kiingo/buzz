@@ -68,6 +68,7 @@ import { useComposerLinkPreviews } from "./useComposerLinkPreviews";
 import { useAddressedAgentMentionRestore } from "./useAddressedAgentMentionRestore";
 import { scheduleSettleGatedAutoSubmit } from "./messageComposerAutoSubmit";
 import type { MessageComposerProps } from "./MessageComposer.types";
+import { PromptRecall } from "@/features/agent-dm/lib/promptRecall";
 import { AgentSlashCommandMenu } from "@/features/agent-dm/ui/AgentSlashCommandMenu";
 import { useSlashAgentPredicate } from "@/features/agent-dm/ui/useSlashAgentPredicate";
 import {
@@ -94,6 +95,7 @@ function MessageComposerImpl({
   onCancelReply,
   onCaptureSendContext,
   onEditLastOwnMessage,
+  promptHistory,
   onEditSave,
   onPrepareSendChannel,
   onPreparingMentionSendChange,
@@ -290,6 +292,9 @@ function MessageComposerImpl({
   const onSendRef = React.useRef(onSend);
   const onEditSaveRef = React.useRef(onEditSave);
   const onEditLastOwnMessageRef = React.useRef(onEditLastOwnMessage);
+  const promptHistoryRef = React.useRef(promptHistory);
+  promptHistoryRef.current = promptHistory;
+  const promptRecallRef = React.useRef<PromptRecall | null>(null);
   const editTargetRef = React.useRef(editTarget);
   const extractMentionPubkeysRef = React.useRef(mentions.extractMentionPubkeys);
   const ownerPubkeyRef = React.useRef(ownerPubkey);
@@ -350,6 +355,23 @@ function MessageComposerImpl({
       const handler = onEditLastOwnMessageRef.current;
       return handler ? handler() : false;
     },
+    onRawKeyDown: (event, view) => {
+      const history = promptHistoryRef.current;
+      const recall = promptRecallRef.current;
+      if (!history || !recall || editTargetRef.current) return false;
+      const { doc, selection } = view.state;
+      const block = selection.$from.index(0);
+      return recall.handleKey(
+        event,
+        {
+          text: doc.textContent,
+          onFirstLine: block === 0 && view.endOfTextblock("up"),
+          onLastLine:
+            block === doc.childCount - 1 && view.endOfTextblock("down"),
+        },
+        history,
+      );
+    },
     isAutocompleteOpen: isAutocompleteOpenRef,
     onEditLink: (info) => onEditLinkRef.current?.(info),
     onLinkSelectionChange: (info) => onLinkSelectionChangeRef.current?.(info),
@@ -371,6 +393,16 @@ function MessageComposerImpl({
       }
     },
   });
+  const setRecalledPromptRef = React.useRef((prompt: string) => prompt);
+  setRecalledPromptRef.current = (prompt) => {
+    setComposerContent(prompt);
+    richText.setContent(prompt);
+    return richText.editor?.state.doc.textContent ?? prompt;
+  };
+  promptRecallRef.current ??= new PromptRecall(
+    (prompt) => setRecalledPromptRef.current(prompt),
+    (sentence) => toast.info(sentence),
+  );
   const linkEditor = useLinkEditor(richText);
   syncContentRefFromEditorRef.current = () => {
     const markdown = richText.getMarkdown();

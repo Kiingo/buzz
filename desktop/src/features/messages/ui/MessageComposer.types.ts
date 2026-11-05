@@ -72,6 +72,11 @@ export type MessageComposerProps = {
    * return `false` to let the arrow key fall through normally.
    */
   onEditLastOwnMessage?: () => boolean;
+  /**
+   * What the user sent here, oldest first. When set, ↑ ↓ and Ctrl-R go through
+   * it, as in a terminal; ↑ falls back to `onEditLastOwnMessage` when it's empty.
+   */
+  promptHistory?: readonly string[];
   onEditSave?: (
     content: string,
     mediaTags?: string[][],
