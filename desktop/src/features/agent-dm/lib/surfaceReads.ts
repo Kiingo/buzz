@@ -153,23 +153,19 @@ export function surfaceReads(params: {
     signal: AbortSignal,
   ): Promise<FileImageAnswer> => {
     const page = Math.floor(request.page);
+    // The host serves the current version only (earlier ones aren't
+    // readable on a read-only Buzz read).
     if (
       !ours(request.surfaceId) ||
       !UUID.test(request.fileId) ||
       !Number.isSafeInteger(page) ||
-      page < 1
+      page < 1 ||
+      request.version !== undefined
     ) {
       return { kind: "unavailable" };
     }
-    const fileId = request.fileId.toLowerCase();
-    const version =
-      request.version !== undefined &&
-      Number.isSafeInteger(request.version) &&
-      request.version >= 1
-        ? `/versions/${request.version}`
-        : "";
     const body = record(
-      await read(`${base}/files/${fileId}${version}/image/${page}`),
+      await read(`${base}/files/${request.fileId.toLowerCase()}/image/${page}`),
     );
     aborted(signal);
     if (body?.kind === "image") {

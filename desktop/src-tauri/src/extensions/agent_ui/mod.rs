@@ -12,13 +12,14 @@
 //! - only reads are reachable: `GET surfaces/<uuid>` (the desktop shows
 //!   surfaces view only, and changes happen in the host's own apps), and
 //!   the card's own file and WorkView reads under it (BUZZWIRE:
-//!   `files/<uuid>/card`, `files/<uuid>/image/<page>`,
-//!   `files/<uuid>/versions/<n>/image/<page>`, `files/<uuid>/model`,
+//!   `files/<uuid>/card`, `files/<uuid>/image/<page>`, `files/<uuid>/model`,
 //!   `workview/threads/<uuid>`), which the host answers only for the
 //!   surface's owner and only for what the surface names;
-//! - answers are capped (declared length first, then while read): 2 MiB
-//!   for a surface or a WorkView, and for a file read the base64 of the
-//!   renderer's largest file (`DOCUMENT_MAX_BYTES`, 200 MiB) plus its JSON;
+//! - answers are capped per route (declared length first, then while
+//!   read): 2 MiB for a surface or a WorkView, the base64 of the host's
+//!   10 MiB picture cap plus its JSON for a card or an image, and the
+//!   base64 of the renderer's largest file (`DOCUMENT_MAX_BYTES`, 200 MiB)
+//!   plus its JSON for a model;
 //! - the answer is returned as `{ status, body, origin }` for every HTTP
 //!   status (`origin` is the host the surface's images load from); transport
 //!   failures are errors.
@@ -40,8 +41,12 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// A file read carries the file's bytes: more time than a JSON read.
 const FILE_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
-/// base64 of 200 MiB (surface-core `DOCUMENT_MAX_BYTES`) and its JSON.
-const MAX_FILE_RESPONSE_BYTES: usize = 280 * 1024 * 1024;
+/// base64 of the host's 10 MiB picture cap (a card's thumbnail, an image or
+/// a PDF page) and its JSON.
+const MAX_PICTURE_RESPONSE_BYTES: usize = 14 * 1024 * 1024;
+/// base64 of 200 MiB (surface-core `DOCUMENT_MAX_BYTES`, a model) and its
+/// JSON.
+const MAX_MODEL_RESPONSE_BYTES: usize = 280 * 1024 * 1024;
 const MOUNT: &str = "/api/buzz-ui/desktop";
 
 fn error(status: Option<u16>, code: &str) -> String {
@@ -59,9 +64,6 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
             ["surfaces", id, "files", file, "image", page] => {
                 is_uuid(id) && is_uuid(file) && is_page(page)
             }
-            ["surfaces", id, "files", file, "versions", version, "image", page] => {
-                is_uuid(id) && is_uuid(file) && is_page(version) && is_page(page)
-            }
             ["surfaces", id, "workview", "threads", thread] => is_uuid(id) && is_uuid(thread),
             _ => false,
         };
@@ -75,9 +77,15 @@ fn is_page(value: &str) -> bool {
         && !value.starts_with('0')
 }
 
-/// A file read (its answer carries the file's bytes).
-fn is_file_read(path: &str) -> bool {
-    path.split('/').nth(2) == Some("files")
+/// The timeout and answer cap for an allowed `path`: a file read carries
+/// the file's bytes, each route only as many as the host serves on it.
+fn limits(path: &str) -> (Duration, usize) {
+    let parts: Vec<&str> = path.split('/').collect();
+    match parts.as_slice() {
+        ["surfaces", _, "files", _, "model"] => (FILE_REQUEST_TIMEOUT, MAX_MODEL_RESPONSE_BYTES),
+        ["surfaces", _, "files", ..] => (FILE_REQUEST_TIMEOUT, MAX_PICTURE_RESPONSE_BYTES),
+        _ => (REQUEST_TIMEOUT, MAX_RESPONSE_BYTES),
+    }
 }
 
 /// The one URL that is both signed and sent, only if its normalised path is
@@ -110,11 +118,7 @@ pub async fn agent_ui_request(
     let url = request_url(&origin, &path).ok_or_else(|| error(None, "path_not_allowed"))?;
     let origin = url.origin().ascii_serialization();
     let authorization = nip98_header(&keys, &method, url.as_str(), None)?;
-    let (timeout, max_bytes) = if is_file_read(&path) {
-        (FILE_REQUEST_TIMEOUT, MAX_FILE_RESPONSE_BYTES)
-    } else {
-        (REQUEST_TIMEOUT, MAX_RESPONSE_BYTES)
-    };
+    let (timeout, max_bytes) = limits(&path);
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(timeout)
