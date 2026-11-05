@@ -380,12 +380,19 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     String expected,
     int at,
   ) async {
-    final picked = type == 'file'
-        ? switch (await showAgentDmFilePicker(context, agentPubkey: agent)) {
-            final path? => AgentDmRef(type: 'file', id: path, title: path),
-            null => null,
-          }
-        : await showAgentDmRefPicker(context, agentPubkey: agent, type: type);
+    final AgentDmRef? picked;
+    if (type == 'file') {
+      final path = await showAgentDmFilePicker(context, agentPubkey: agent);
+      picked = path == null
+          ? null
+          : AgentDmRef(type: 'file', id: path, title: path);
+    } else {
+      picked = await showAgentDmRefPicker(
+        context,
+        agentPubkey: agent,
+        type: type,
+      );
+    }
     if (picked == null || !context.mounted) return;
     final text = controller.text;
     final caret = text == expected ? at : text.length;
