@@ -141,6 +141,18 @@ pub async fn download_file(
     save_bytes_with_dialog(&app, &filename, "All Files", &extensions, &bytes).await
 }
 
+/// Save text the app built itself (a session's `/export`) via a native
+/// save-file dialog. Returns false when the person cancels.
+#[tauri::command]
+pub async fn save_text_file(
+    text: String,
+    filename: String,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    let filename = sanitize_filename(&filename);
+    save_bytes_with_dialog(&app, &filename, "Markdown", &["md"], text.as_bytes()).await
+}
+
 /// Copy an image from a relay media URL directly to the system clipboard.
 ///
 /// Fetches the image, decodes it to RGBA8, and writes it to the clipboard via

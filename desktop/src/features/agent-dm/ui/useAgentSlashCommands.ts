@@ -208,7 +208,16 @@ function withSetupCommands(
     views?.clear != null && !setupNames.has("clear")
       ? [{ name: "clear", description: views.clear }]
       : [];
-  const entries = [...setup, ...viewRows, ...promptRows, ...clearRow];
+  // /branch or /fork goes as typed; the host ends this session for the branch.
+  const branchRow =
+    views?.branch && !setupNames.has(views.branch.name) ? [views.branch] : [];
+  const entries = [
+    ...setup,
+    ...viewRows,
+    ...promptRows,
+    ...clearRow,
+    ...branchRow,
+  ];
   const names = new Set<string>(entries.map((entry) => entry.name));
   const others = commands.filter((command) => !names.has(command.name));
   return [

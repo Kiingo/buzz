@@ -167,13 +167,17 @@ export function slashCommandText(command: AgentSlashCommand) {
 }
 
 /**
- * Whether choosing the command asks first. Only `/new` does: it ends the
- * agent's current session. `/sessions` is a harmless listing request.
+ * Whether choosing the command asks first: `/new`, `/clear`, `/branch` and
+ * `/fork` end the agent's current session. `/sessions` is a harmless listing
+ * request.
  */
 export function slashCommandNeedsConfirm(command: AgentSlashCommand) {
   return (
     command.kind === "session" &&
-    (command.name === "new" || command.name === "clear")
+    (command.name === "new" ||
+      command.name === "clear" ||
+      command.name === "branch" ||
+      command.name === "fork")
   );
 }
 

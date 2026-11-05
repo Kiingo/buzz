@@ -98,6 +98,23 @@ function SetupPanelBody({
   return (
     <div className="flex flex-col gap-3" data-testid="agent-session-panel">
       <p className="text-sm font-medium">{panel.label}</p>
+      {panel.canChangeHarness && panel.harnesses.length > 1 ? (
+        <section aria-label="Harness" className="flex flex-col gap-0.5">
+          <h3 className="px-2 text-xs text-muted-foreground">Harness</h3>
+          {panel.harnesses.map((harness) => (
+            <ChoiceRow
+              disabled={saving || !harness.available}
+              key={harness.id}
+              label={harness.label}
+              onChoose={() =>
+                void choose({ harness: harness.id, model: null, effort: null })
+              }
+              selected={harness.id === panel.harness}
+              testId={`agent-session-harness-${harness.id}`}
+            />
+          ))}
+        </section>
+      ) : null}
       {panel.canChangeModel && panel.models.length > 0 ? (
         <section aria-label="Model" className="flex flex-col gap-0.5">
           <h3 className="px-2 text-xs text-muted-foreground">Model</h3>

@@ -85,8 +85,21 @@ export type SessionModeOption = {
   unavailableReason: string | null;
 };
 
+/** A harness this conversation's next session could run on. */
+export type SessionHarnessOption = {
+  id: string;
+  label: string;
+  available: boolean;
+};
+
 export type SessionSetupPanel = {
   revision: number;
+  /** The harness it runs, or will run, on. */
+  harness: string;
+  /** Empty from a host that has none. Provider harnesses aren't offered. */
+  harnesses: SessionHarnessOption[];
+  /** Only while no session is bound (the host's decision). */
+  canChangeHarness: boolean;
   model: string;
   effort: string;
   /** The session's mode now (`ceiling`, Full, when none is picked). */
@@ -258,6 +271,19 @@ export function parseSessionSetupPanel(
       ];
     },
   );
+  // OpenCode and Pi need a connection and model pick this panel doesn't have.
+  const harnessOptions = harnesses.flatMap((raw): SessionHarnessOption[] => {
+    const option = record(raw);
+    const id = text(option?.id);
+    if (!id || id === "opencode" || id === "pi") return [];
+    return [
+      {
+        id,
+        label: text(option?.label) ?? id,
+        available: option?.available === true,
+      },
+    ];
+  });
   const rawLabels = record(options?.effortLabels) ?? {};
   const effortLabels: Record<string, string> = {};
   for (const [key, value] of Object.entries(rawLabels)) {
@@ -292,6 +318,9 @@ export function parseSessionSetupPanel(
   );
   return {
     revision,
+    harness,
+    harnesses: harnessOptions,
+    canChangeHarness: canChange?.harness === true,
     model,
     effort,
     mode: text(current?.mode),
@@ -767,6 +796,8 @@ export function takeSetupPickerRequest(agentPublicKey: string): boolean {
 }
 
 export type SetupChoice = {
+  /** Sent with a null model and effort: the new harness's defaults. */
+  harness?: string;
   model?: string | null;
   effort?: string | null;
   /** Null is Standard. */
@@ -788,6 +819,7 @@ const CHANGE_ERROR_SENTENCES: Record<string, string> = {
   session_setup_mode_not_supported: "This session can't run that mode.",
   session_setup_speed_not_allowed: "That speed isn't available for this model.",
   session_setup_speed_unavailable: "That speed isn't on your plan.",
+  session_setup_harness_unavailable: "That harness isn't available here.",
 };
 
 /** The plain sentence for a failed change. */

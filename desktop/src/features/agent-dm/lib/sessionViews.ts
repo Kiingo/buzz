@@ -10,15 +10,16 @@ import { cachedAgentSummary, ensureAgentSummary } from "./agentSummary";
  * The reader's own session with a hosted agent, read from their 1:1 DM: its
  * screens (/agents, /mcp, /permissions, /config, /hooks, /memory, /help,
  * /doctor, /skills), the files it changed (/diff), their own queued messages,
- * and Interrupt. From the host's `agents/<id>/session/...` routes on the Buzz
+ * Interrupt, Stop on one background task, and the pages /export saves. From the host's `agents/<id>/session/...` routes on the Buzz
  * mount, which pick the session themselves: the signer's own conversation's
  * session, or 404.
  *
  * Everything here reads, except Withdraw and Edit (the reader's own queued
- * message) and Interrupt (Esc; the session keeps going). Nothing writes a
- * setting, types into a pane or runs a passkey command; the host strips
- * every write action from a screen. Every word shown is the session's or a tool's:
- * untrusted, plain text.
+ * message), Interrupt (Esc; the session keeps going) and Stop on a task. Nothing
+ * writes a setting or runs a passkey command; the host strips every write action
+ * from a screen, and all but `stop_task` on `agents`. Stop sends only the
+ * host's own line. Every word shown is the session's or a tool's: untrusted,
+ * plain text.
  *
  * Community-scoped: `resetSessionViewsCache()` runs in resetCommunityState().
  */
@@ -50,7 +51,8 @@ export type SessionScreenName = (typeof SESSION_SCREENS)[number];
 export type SessionView =
   | { kind: "screen"; screen: SessionScreenName }
   | { kind: "files" }
-  | { kind: "queued" };
+  | { kind: "queued" }
+  | { kind: "export" };
 
 // ---- Wire shapes ----
 
@@ -60,6 +62,10 @@ export type ScreenRow = {
   detail: string | null;
   body: string | null;
   mono: boolean;
+  /** The background task Stop names, on the `agents` screen only. */
+  stopTaskId: string | null;
+  /** Why Stop is off for this row; it shows disabled. */
+  stopUnavailable: string | null;
 };
 
 export type ScreenSection = {
@@ -122,6 +128,8 @@ export type SessionBuiltins = {
   prompts: SessionPromptRow[];
   /** `/clear`'s words, when this session lists it; it sends `/new`. */
   clear: string | null;
+  /** `/branch` or `/fork`, when this session has it; it goes as typed. */
+  branch: { name: string; description: string } | null;
 };
 
 const text = (value: unknown): string | null =>
@@ -137,10 +145,26 @@ const record = (value: unknown): Record<string, unknown> | null =>
     ? (value as Record<string, unknown>)
     : null;
 
+/** The host's `isHarnessTaskId` shape. */
+const TASK_ID_RE = /^[A-Za-z0-9_-]{1,128}$/u;
+
+const stopControl = (
+  value: unknown,
+): { stopTaskId: string | null; stopUnavailable: string | null } => {
+  const control = record(value);
+  const taskId = text(control?.task_id);
+  return control?.kind === "stop_task" && taskId && TASK_ID_RE.test(taskId)
+    ? { stopTaskId: taskId, stopUnavailable: text(control.unavailable_reason) }
+    : { stopTaskId: null, stopUnavailable: null };
+};
+
 const isScreenName = (value: unknown): value is SessionScreenName =>
   (SESSION_SCREENS as readonly unknown[]).includes(value);
 
-/** A screen, read only: rows keep their words and nothing they could do. */
+/**
+ * A screen, read only: rows keep their words and nothing they could do, except
+ * a Stop the host left on an `agents` row.
+ */
 export function parseSessionScreen(body: unknown): SessionScreen | null {
   const value = record(record(body)?.data);
   if (!value || !Array.isArray(value.sections)) return null;
@@ -159,6 +183,7 @@ export function parseSessionScreen(body: unknown): SessionScreen | null {
         detail: text(row.detail),
         body: text(row.body),
         mono: row.mono === true,
+        ...stopControl(row.control),
       });
     }
     sections.push({
@@ -247,6 +272,7 @@ export function parseSessionBuiltins(body: unknown): SessionBuiltins | null {
   const rows: SessionBuiltin[] = [];
   const prompts: SessionPromptRow[] = [];
   let clear: string | null = null;
+  let branch: SessionBuiltins["branch"] = null;
   const seen = new Set<string>();
   for (const raw of value.commands) {
     const entry = record(raw);
@@ -268,12 +294,24 @@ export function parseSessionBuiltins(body: unknown): SessionBuiltins | null {
       clear = text(entry.description)?.slice(0, 300) ?? "";
       continue;
     }
+    if ((name === "branch" || name === "fork") && action.kind === "control") {
+      seen.add(name);
+      branch = {
+        name,
+        description: text(entry.description)?.slice(0, 300) ?? "",
+      };
+      continue;
+    }
     const view: SessionView | null =
       action.kind === "screen" && isScreenName(action.screen)
         ? { kind: "screen", screen: action.screen }
         : action.kind === "panel" && action.panel === "diff"
           ? { kind: "files" }
-          : null;
+          : action.kind === "panel" &&
+              action.panel === "export" &&
+              action.pending !== true
+            ? { kind: "export" }
+            : null;
     if (!view) continue;
     seen.add(name);
     rows.push({
@@ -287,6 +325,7 @@ export function parseSessionBuiltins(body: unknown): SessionBuiltins | null {
     rows,
     prompts,
     clear,
+    branch,
   };
 }
 
@@ -315,6 +354,12 @@ export const editPath = (agentId: string, messageId: string) =>
   `agents/${agentId}/session/queued/${messageId}/edit`;
 export const interruptPath = (agentId: string) =>
   `agents/${agentId}/session/interrupt`;
+export const stopTaskPath = (agentId: string, taskId: string) =>
+  `agents/${agentId}/session/tasks/${taskId}/stop`;
+export const activityPagePath = (agentId: string, before: string | null) =>
+  `agents/${agentId}/session/activity${
+    before ? `?before=${encodeURIComponent(before)}` : ""
+  }`;
 
 // ---- The store ----
 
@@ -516,6 +561,56 @@ export async function interruptSession(agentPublicKey: string): Promise<void> {
   });
 }
 
+/** Ask the session to stop one background task. A request: it may take a turn. */
+export async function stopSessionTask(
+  agentPublicKey: string,
+  taskId: string,
+): Promise<void> {
+  const key = normalize(agentPublicKey);
+  if (!key) throw new AgentCallApiError(null, "agent_not_hosted");
+  if (!TASK_ID_RE.test(taskId)) {
+    throw new AgentCallApiError(null, "harness_session_task_id_invalid");
+  }
+  await request<unknown>(
+    "POST",
+    stopTaskPath(await hostedAgentId(key), taskId),
+    {
+      idempotency_key: newIdempotencyKey(),
+    },
+  );
+}
+
+/** One page of the conversation for /export, as the host sent it. */
+export async function loadActivityPage(
+  agentPublicKey: string,
+  before: string | null,
+): Promise<unknown> {
+  const key = normalize(agentPublicKey);
+  if (!key) throw new AgentCallApiError(null, "agent_not_hosted");
+  return request<unknown>(
+    "GET",
+    activityPagePath(await hostedAgentId(key), before),
+  );
+}
+
+/** A refused Stop in plain words. */
+export function stopTaskErrorSentence(error: unknown): string {
+  const code = error instanceof AgentCallApiError ? error.code : null;
+  if (code === "session_taken_over") {
+    return "This session is taken over at its machine, so stop it there.";
+  }
+  if (
+    code === "harness_session_task_not_found" ||
+    code === "harness_session_task_not_running"
+  ) {
+    return "That task isn't running any more.";
+  }
+  if (code === "harness_session_task_stop_unsupported") {
+    return "This session can't stop one task on its own.";
+  }
+  return sessionViewErrorSentence(error);
+}
+
 /** A refusal in plain words. */
 export function sessionViewErrorSentence(error: unknown): string {
   const code = error instanceof AgentCallApiError ? error.code : null;
@@ -533,6 +628,9 @@ export function sessionViewErrorSentence(error: unknown): string {
   }
   if (code === "harness_session_message_invalid") {
     return "A message can't be empty.";
+  }
+  if (code === "session_export_incomplete") {
+    return "Couldn't read the whole conversation, so nothing was exported.";
   }
   return "Couldn't reach the session. Try again.";
 }

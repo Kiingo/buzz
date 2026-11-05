@@ -217,10 +217,31 @@ fn is_session_files_query(query: &str) -> bool {
     })
 }
 
+/// `/export`'s next page (BUZZPARITY E4, 79 2026-11-05 item 10): `before`, once,
+/// the host's own base64url cursor. The host decodes and checks it.
+fn is_session_activity_query(query: &str) -> bool {
+    query.strip_prefix("before=").is_some_and(|value| {
+        !value.is_empty()
+            && value.len() <= 200
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    })
+}
+
+/// Stop's task id: the host's `isHarnessTaskId` shape.
+fn is_task_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
 /// The call route `path` (relative to the mount) if it is one this command
 /// may reach, else `None`. A query string is allowed only on the feed, the
 /// delegation cards long-poll, the owner chat head, the settings read, the
-/// reference search and the session files list.
+/// reference search, the session files list and `/export`'s pages.
 /// The session screens the host serves read-only to the Buzz app.
 const SESSION_SCREENS: [&str; 12] = [
     "config",
@@ -289,6 +310,11 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         // File names in that session's folder, for "Reference a file".
         ["agents", agent, "session", "files"] => get && is_uuid(agent),
         ["agents", agent, "session", "interrupt"] => post && is_uuid(agent),
+        // Stop one background task of that session, and `/export`'s pages.
+        ["agents", agent, "session", "tasks", task, "stop"] => {
+            post && is_uuid(agent) && is_task_id(task)
+        }
+        ["agents", agent, "session", "activity"] => get && is_uuid(agent),
         // The tasks and projects the reader can reference (B5).
         ["agents", agent, "chat", "refs"] => get && is_uuid(agent),
         ["agents", agent, "delegations", "cancel-all"] => post && is_uuid(agent),
@@ -350,6 +376,12 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         Some(query)
             if matches!(parts.as_slice(), ["agents", _, "session", "files"])
                 && is_session_files_query(query) =>
+        {
+            Some(format!("{route}?{query}"))
+        }
+        Some(query)
+            if matches!(parts.as_slice(), ["agents", _, "session", "activity"])
+                && is_session_activity_query(query) =>
         {
             Some(format!("{route}?{query}"))
         }

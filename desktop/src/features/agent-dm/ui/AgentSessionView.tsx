@@ -13,8 +13,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
+import { invokeTauri } from "@/shared/api/tauri";
 import { Textarea } from "@/shared/ui/textarea";
 
+import { readSessionExport, type SessionExport } from "../lib/sessionExport";
 import {
   type FileChange,
   loadFileChanges,
@@ -25,18 +27,22 @@ import {
   type SessionScreen,
   type SessionView,
   sessionViewErrorSentence,
+  stopSessionTask,
+  stopTaskErrorSentence,
   withdrawQueuedMessage,
 } from "../lib/sessionViews";
 
 type Read =
   | { kind: "screen"; screen: SessionScreen }
   | { kind: "files"; changes: FileChange[] }
-  | { kind: "queued"; messages: QueuedMessage[] };
+  | { kind: "queued"; messages: QueuedMessage[] }
+  | { kind: "export"; file: SessionExport };
 
 const VIEW_TITLE: Record<SessionView["kind"], string> = {
   screen: "Session",
   files: "Files changed",
   queued: "Queued messages",
+  export: "Export conversation",
 };
 
 async function readView(agent: string, view: SessionView): Promise<Read> {
@@ -50,6 +56,8 @@ async function readView(agent: string, view: SessionView): Promise<Read> {
       return { kind: "files", changes: await loadFileChanges(agent) };
     case "queued":
       return { kind: "queued", messages: await loadQueuedMessages(agent) };
+    case "export":
+      return { kind: "export", file: await readSessionExport(agent) };
   }
 }
 
@@ -161,7 +169,9 @@ export function AgentSessionView({
           <DialogDescription>
             {read?.kind === "screen" && read.screen.description
               ? read.screen.description
-              : "Read only, from your own session with this agent."}
+              : view?.kind === "export"
+                ? "Saves your conversation with this agent as a file. Nothing is sent anywhere."
+                : "Read only, from your own session with this agent."}
           </DialogDescription>
         </DialogHeader>
         {failed ? (
@@ -182,7 +192,14 @@ export function AgentSessionView({
             Loading…
           </p>
         ) : null}
-        {read?.kind === "screen" ? <ScreenBody screen={read.screen} /> : null}
+        {read?.kind === "screen" ? (
+          <ScreenBody
+            agentPubkey={agentPubkey}
+            onStopped={() => void load()}
+            screen={read.screen}
+          />
+        ) : null}
+        {read?.kind === "export" ? <ExportBody file={read.file} /> : null}
         {read?.kind === "files" ? <FilesBody changes={read.changes} /> : null}
         {read?.kind === "queued" ? (
           read.messages.length === 0 ? (
@@ -278,7 +295,115 @@ export function AgentSessionView({
   );
 }
 
-function ScreenBody({ screen }: { screen: SessionScreen }) {
+function ExportBody({ file }: { file: SessionExport }) {
+  const [saving, setSaving] = React.useState(false);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const saved = await invokeTauri<boolean>("save_text_file", {
+        text: file.markdown,
+        filename: file.fileName,
+      });
+      if (saved) toast.success("Saved.");
+    } catch {
+      toast.error("Couldn't save the file. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="flex items-center justify-between gap-2 text-sm">
+      <span>
+        {file.turns === 1 ? "1 turn" : `${file.turns} turns`} ready to save.
+      </span>
+      <Button
+        disabled={saving}
+        onClick={() => void save()}
+        size="xs"
+        type="button"
+      >
+        Save…
+      </Button>
+    </div>
+  );
+}
+
+/** Stop on one task, with a question first. A request, never "stopped". */
+function StopTaskButton({
+  agentPubkey,
+  onStopped,
+  taskId,
+  unavailable,
+}: {
+  agentPubkey: string;
+  onStopped: () => void;
+  taskId: string;
+  unavailable: string | null;
+}) {
+  const [asking, setAsking] = React.useState(false);
+  const [stopping, setStopping] = React.useState(false);
+  const stop = async () => {
+    setStopping(true);
+    try {
+      await stopSessionTask(agentPubkey, taskId);
+      toast.success(
+        "Stop requested. The session stops the task when it reads this.",
+      );
+      onStopped();
+    } catch (error) {
+      toast.error(stopTaskErrorSentence(error));
+    } finally {
+      setStopping(false);
+      setAsking(false);
+    }
+  };
+  if (unavailable) {
+    return <p className="text-xs text-muted-foreground">{unavailable}</p>;
+  }
+  return asking ? (
+    <div className="mt-1 flex items-center gap-2">
+      <span className="text-xs text-muted-foreground">Stop this task?</span>
+      <Button
+        disabled={stopping}
+        onClick={() => void stop()}
+        size="xs"
+        type="button"
+      >
+        Stop
+      </Button>
+      <Button
+        disabled={stopping}
+        onClick={() => setAsking(false)}
+        size="xs"
+        type="button"
+        variant="outline"
+      >
+        Cancel
+      </Button>
+    </div>
+  ) : (
+    <Button
+      className="mt-1"
+      data-testid="agent-session-stop-task"
+      onClick={() => setAsking(true)}
+      size="xs"
+      type="button"
+      variant="outline"
+    >
+      Stop
+    </Button>
+  );
+}
+
+function ScreenBody({
+  agentPubkey,
+  onStopped,
+  screen,
+}: {
+  agentPubkey: string;
+  onStopped: () => void;
+  screen: SessionScreen;
+}) {
   return (
     <div className="flex flex-col gap-3">
       {screen.sections.map((section) => (
@@ -335,6 +460,14 @@ function ScreenBody({ screen }: { screen: SessionScreen }) {
                     <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">
                       {row.body}
                     </pre>
+                  ) : null}
+                  {row.stopTaskId ? (
+                    <StopTaskButton
+                      agentPubkey={agentPubkey}
+                      onStopped={onStopped}
+                      taskId={row.stopTaskId}
+                      unavailable={row.stopUnavailable}
+                    />
                   ) : null}
                 </li>
               ))}

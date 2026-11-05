@@ -81,6 +81,9 @@ export function AgentSlashCommandMenu({
 
   // The confirm takes focus from the editor, so it renders regardless of
   // focus ownership; only the composer that opened it has one pending.
+  const branching =
+    slash.pendingConfirm?.name === "branch" ||
+    slash.pendingConfirm?.name === "fork";
   const confirm = (
     <AlertDialog
       onOpenChange={(open) => {
@@ -90,16 +93,19 @@ export function AgentSlashCommandMenu({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Start a new session?</AlertDialogTitle>
+          <AlertDialogTitle>
+            {branching ? "Branch this session?" : "Start a new session?"}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            The agent ends its current session. Your next message starts a fresh
-            one.
+            {branching
+              ? "The agent ends its current session. Your next message continues in a branch with everything so far, and the original is saved."
+              : "The agent ends its current session. Your next message starts a fresh one."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={slash.confirmPending}>
-            Start
+            {branching ? "Branch" : "Start"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
