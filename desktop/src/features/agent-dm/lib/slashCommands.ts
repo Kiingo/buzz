@@ -19,17 +19,10 @@ import { invokeTauri } from "@/shared/api/tauri";
 export type AgentSessionCommand = {
   kind: "session";
   /** `new`, `compact` and `sessions` come from the server and go as text;
-   * the rest are this client's own (sessionSetup.ts). */
-  name:
-    | "new"
-    | "compact"
-    | "sessions"
-    | "model"
-    | "effort"
-    | "status"
-    | "usage"
-    | "context"
-    | "cost";
+   * `model`, `effort`, `status`, `usage`, `context` and `cost` are this
+   * client's own (sessionSetup.ts); the session's screens and `/diff` open
+   * a read-only view (sessionViews.ts). */
+  name: string;
   description: string;
   usage: string | null;
 };

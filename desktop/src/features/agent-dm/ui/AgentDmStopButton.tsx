@@ -11,12 +11,20 @@ import {
   stopAgentDmTurn,
   subscribeSessionSetup,
 } from "../lib/sessionSetup";
+import {
+  getSessionBuiltins,
+  getSessionViewsVersion,
+  interruptSession,
+  sessionViewErrorSentence,
+  subscribeSessionViews,
+} from "../lib/sessionViews";
 
 /**
  * Stop beside "is typing…" in the reader's 1:1 DM with a hosted agent, while
  * that agent is working. It stops the turn, not the conversation or session.
  * An agent this device runs has no host, and its own Stop is in its session
- * panel.
+ * panel. On a session that runs in a pane, Interrupt is beside it: Esc, the
+ * running step stops and the session keeps going.
  */
 export function AgentDmStopButton({
   channel,
@@ -32,7 +40,13 @@ export function AgentDmStopButton({
     getSessionSetupVersion,
     getSessionSetupVersion,
   );
+  React.useSyncExternalStore(
+    subscribeSessionViews,
+    getSessionViewsVersion,
+    getSessionViewsVersion,
+  );
   const [stopping, setStopping] = React.useState(false);
+  const [interrupting, setInterrupting] = React.useState(false);
   const agent = delegationDmAgent(channel, currentPubkey);
   const working =
     agent !== null &&
@@ -55,20 +69,50 @@ export function AgentDmStopButton({
     }
   };
 
+  const interrupt = async () => {
+    setInterrupting(true);
+    try {
+      await interruptSession(agent);
+      toast.success("Interrupted. The session keeps going.");
+    } catch (error) {
+      toast.error(sessionViewErrorSentence(error));
+    } finally {
+      setInterrupting(false);
+    }
+  };
+  const inPane = getSessionBuiltins(agent)?.lane === "tmux";
+
   return (
-    <Button
-      aria-label="Stop the agent"
-      className="shrink-0"
-      data-testid="agent-dm-stop"
-      disabled={stopping}
-      onClick={() => void stop()}
-      size="xs"
-      title="Stop the agent"
-      type="button"
-      variant="ghost"
-    >
-      <Square aria-hidden className="h-3 w-3" />
-      Stop
-    </Button>
+    <>
+      {inPane ? (
+        <Button
+          aria-label="Interrupt the session"
+          className="shrink-0"
+          data-testid="agent-dm-interrupt"
+          disabled={interrupting}
+          onClick={() => void interrupt()}
+          size="xs"
+          title="Interrupt: stop the running step, keep the session"
+          type="button"
+          variant="ghost"
+        >
+          Interrupt
+        </Button>
+      ) : null}
+      <Button
+        aria-label="Stop the agent"
+        className="shrink-0"
+        data-testid="agent-dm-stop"
+        disabled={stopping}
+        onClick={() => void stop()}
+        size="xs"
+        title="Stop the agent"
+        type="button"
+        variant="ghost"
+      >
+        <Square aria-hidden className="h-3 w-3" />
+        Stop
+      </Button>
+    </>
   );
 }

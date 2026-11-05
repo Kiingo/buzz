@@ -167,6 +167,19 @@ fn is_chat_head_query(query: &str) -> bool {
 /// The call route `path` (relative to the mount) if it is one this command
 /// may reach, else `None`. A query string is allowed only on the feed, the
 /// delegation cards long-poll, the owner chat head and the settings read.
+/// The session screens the host serves read-only to the Buzz app.
+const SESSION_SCREENS: [&str; 9] = [
+    "config",
+    "permissions",
+    "mcp",
+    "agents",
+    "hooks",
+    "memory",
+    "resume",
+    "login",
+    "approvals",
+];
+
 fn allowed_path(method: &str, path: &str) -> Option<String> {
     let (route, query) = match path.split_once('?') {
         Some((route, query)) => (route, Some(query)),
@@ -204,6 +217,19 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         ["agents", agent, "chat", "turns", turn, "activity"] => {
             get && is_uuid(agent) && is_uuid(turn)
         }
+        // The reader's own session, read from their DM (BUZZPARITY B3+B4):
+        // its "/" built-ins, read-only screens, files changed and their own
+        // queued messages; Withdraw one, and Interrupt. The host picks the
+        // session; none of these names one.
+        ["agents", agent, "commands"] => get && is_uuid(agent),
+        ["agents", agent, "session", "screens", screen] => {
+            get && is_uuid(agent) && SESSION_SCREENS.contains(screen)
+        }
+        ["agents", agent, "session", "file-changes" | "queued"] => get && is_uuid(agent),
+        ["agents", agent, "session", "queued", id, "withdraw"] => {
+            post && is_uuid(agent) && is_uuid(id)
+        }
+        ["agents", agent, "session", "interrupt"] => post && is_uuid(agent),
         ["agents", agent, "delegations", "cancel-all"] => post && is_uuid(agent),
         // "Since you last looked" and the owner's own seen marker.
         ["agents", agent, "delegations", "since"] => get && is_uuid(agent),
@@ -488,6 +514,41 @@ mod tests {
         assert!(allowed_path("GET", &format!("{setup}?x=1")).is_none());
         assert!(allowed_path("POST", &format!("agents/{CALL}/chat/send")).is_none());
         assert!(allowed_path("GET", &format!("{setup}/options")).is_none());
+    }
+
+    #[test]
+    fn only_the_readers_session_views_are_reachable() {
+        let id = "0192a6b0-0000-7000-8000-0000000000de";
+        let commands = format!("agents/{CALL}/commands");
+        assert_eq!(allowed_path("GET", &commands), Some(commands.clone()));
+        let screen = format!("agents/{CALL}/session/screens/mcp");
+        assert_eq!(allowed_path("GET", &screen), Some(screen.clone()));
+        for read in ["file-changes", "queued"] {
+            let path = format!("agents/{CALL}/session/{read}");
+            assert_eq!(allowed_path("GET", &path), Some(path.clone()));
+            assert!(allowed_path("POST", &path).is_none());
+        }
+        let withdraw = format!("agents/{CALL}/session/queued/{id}/withdraw");
+        assert_eq!(allowed_path("POST", &withdraw), Some(withdraw.clone()));
+        let interrupt = format!("agents/{CALL}/session/interrupt");
+        assert_eq!(allowed_path("POST", &interrupt), Some(interrupt.clone()));
+        // Other methods, screens, ids, queries and routes stay closed.
+        assert!(allowed_path("POST", &commands).is_none());
+        assert!(allowed_path("GET", &format!("{commands}?audience=group")).is_none());
+        assert!(allowed_path("PUT", &screen).is_none());
+        assert!(allowed_path("GET", &format!("agents/{CALL}/session/screens/keys")).is_none());
+        assert!(allowed_path("GET", &format!("{screen}?x=1")).is_none());
+        assert!(allowed_path("GET", &withdraw).is_none());
+        assert!(allowed_path(
+            "POST",
+            &format!("agents/{CALL}/session/queued/not-an-id/withdraw")
+        )
+        .is_none());
+        assert!(allowed_path("POST", &format!("agents/{CALL}/session/queued/{id}/edit")).is_none());
+        assert!(allowed_path("GET", &interrupt).is_none());
+        assert!(allowed_path("POST", "agents/not-an-id/session/interrupt").is_none());
+        assert!(allowed_path("POST", &format!("agents/{CALL}/session/terminal/keys")).is_none());
+        assert!(allowed_path("POST", &format!("agents/{CALL}/session/settings/patch")).is_none());
     }
 
     #[test]

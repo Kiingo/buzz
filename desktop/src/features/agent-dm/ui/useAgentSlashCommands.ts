@@ -54,6 +54,15 @@ import {
   type SetupCommand,
 } from "../lib/sessionSetup";
 import {
+  ensureSessionBuiltins,
+  getSessionBuiltins,
+  getSessionViewsVersion,
+  requestSessionView,
+  type SessionBuiltins,
+  sessionBuiltinForText,
+  subscribeSessionViews,
+} from "../lib/sessionViews";
+import {
   agentDmPeer,
   argumentHintFor,
   buildSkillMessage,
@@ -167,8 +176,15 @@ function mergeCommands(
 function withSetupCommands(
   commands: readonly AgentSlashCommand[],
   panel: SessionSetupPanel,
+  views: SessionBuiltins | null,
 ): AgentSlashCommand[] {
-  const entries = setupCommandEntries(panel);
+  const setup = setupCommandEntries(panel);
+  const setupNames = new Set<string>(setup.map((entry) => entry.name));
+  // The session's screens and /diff, read only (sessionViews.ts).
+  const viewRows = (views?.rows ?? []).filter(
+    (row) => !setupNames.has(row.name),
+  );
+  const entries = [...setup, ...viewRows];
   const names = new Set<string>(entries.map((entry) => entry.name));
   const others = commands.filter((command) => !names.has(command.name));
   return [
@@ -296,6 +312,11 @@ export function useAgentSlashCommands({
     getSessionSetupVersion,
     getSessionSetupVersion,
   );
+  React.useSyncExternalStore(
+    subscribeSessionViews,
+    getSessionViewsVersion,
+    getSessionViewsVersion,
+  );
 
   const [slashQuery, setSlashQuery] = React.useState<GroupSlashQuery | null>(
     null,
@@ -353,10 +374,14 @@ export function useAgentSlashCommands({
       ? getAgentCommandSearch(agentPubkey, audience, slashQuery.query)
       : null;
   const setupPanel = mode === "dm" && dmPeer ? getSessionSetup(dmPeer) : null;
+  const sessionViews =
+    mode === "dm" && dmPeer ? getSessionBuiltins(dmPeer) : null;
   const commands = React.useMemo(() => {
     const merged = searched ? mergeCommands(searched, listed) : listed;
-    return setupPanel ? withSetupCommands(merged, setupPanel) : merged;
-  }, [listed, searched, setupPanel]);
+    return setupPanel
+      ? withSetupCommands(merged, setupPanel, sessionViews)
+      : merged;
+  }, [listed, searched, setupPanel, sessionViews]);
   /** What a send is checked against: the list, plus skills picked from a
    * search. */
   const sendable = React.useCallback(
@@ -441,7 +466,10 @@ export function useAgentSlashCommands({
         mode === "dm" && dmPeer
           ? ({ kind: "agent", pubkey: dmPeer } as const)
           : groupTargetFor(nextText, next.tokenStart);
-      if (mode === "dm" && dmPeer) void ensureSessionSetup(dmPeer);
+      if (mode === "dm" && dmPeer) {
+        void ensureSessionSetup(dmPeer);
+        void ensureSessionBuiltins(dmPeer);
+      }
       if (nextTarget?.kind === "agent") {
         void refreshAgentCommands(nextTarget.pubkey, audience).then(() =>
           refreshAgentCommandSearch(nextTarget.pubkey, audience, next.query),
@@ -630,6 +658,19 @@ export function useAgentSlashCommands({
         if (panel) {
           onSent();
           await runSetupCommand(dmPeer, panel, setupCommand);
+          return true;
+        }
+      }
+      // A session screen or /diff opens its read-only view, never a turn.
+      if (/^\/[a-z][a-z0-9-]{0,31}$/u.test(plainText.trim())) {
+        await ensureSessionBuiltins(dmPeer);
+        const view = sessionBuiltinForText(
+          getSessionBuiltins(dmPeer),
+          plainText,
+        );
+        if (view && getSessionSetup(dmPeer)) {
+          onSent();
+          requestSessionView(dmPeer, view.view);
           return true;
         }
       }

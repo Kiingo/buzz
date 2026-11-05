@@ -446,8 +446,8 @@ class ComposeBar extends HookConsumerWidget {
       agentPubkey: commandAgentPubkey,
       confirmNewSession: (agentName) =>
           _confirmNewAgentSession(context, agentName),
-      openSession: (agent) =>
-          unawaited(showAgentDmSessionSheet(context, agent)),
+      openSession: (agent, [view]) =>
+          unawaited(showAgentDmSessionSheet(context, agent, view)),
       submit: () => submitDraft.value?.call(),
       group: groupAgentCommands && commandAgentPubkey == null
           ? _GroupAgentCommandContext(

@@ -44,6 +44,7 @@ import { resetAgentSummaryCache } from "@/features/agent-dm/lib/agentSummary";
 import { resetAgentPrewarm } from "@/features/agent-dm/lib/agentPrewarm";
 import { resetDelegationStore } from "@/features/agent-dm/lib/delegationStore";
 import { resetSessionSetupCache } from "@/features/agent-dm/lib/sessionSetup";
+import { resetSessionViewsCache } from "@/features/agent-dm/lib/sessionViews";
 import { resetTurnStepsCache } from "@/features/agent-dm/lib/turnSteps";
 import { resetAgentCall } from "@/features/agent-call/lib/agentCallController";
 import { resetSurfaceStore } from "@/features/surfaces/lib/surfaceStore";
@@ -99,6 +100,7 @@ async function resetCommunityState({
   resetDelegationStore();
   resetSessionSetupCache();
   resetTurnStepsCache();
+  resetSessionViewsCache();
   resetAgentPrewarm();
   resetAgentCall();
   resetSurfaceStore();

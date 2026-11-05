@@ -110,7 +110,9 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
   required TextEditingController controller,
   required FocusNode focusNode,
   required Future<bool> Function(String? agentName) confirmNewSession,
-  required ValueChanged<String> openSession,
+  /// Opens the session's panel, or with a view (`/mcp`, `/diff` …) that
+  /// read-only view of the session.
+  required void Function(String agent, [AgentDmSessionView? view]) openSession,
   required VoidCallback submit,
 }) {
   final query = useState<String?>(null);
@@ -200,13 +202,19 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
   final merged = searched.isEmpty
       ? listed
       : mergeAgentCommands(searched, listed);
-  final commands = withAgentDmSetupCommands(
-    merged,
-    listOpen && !groupMode
-        ? ref
-              .watch(agentDmSessionSetupProvider(commandAgent.toLowerCase()))
-              .value
-        : null,
+  final setup = listOpen && !groupMode
+      ? ref.watch(agentDmSessionSetupProvider(commandAgent.toLowerCase())).value
+      : null;
+  // The session's screens and /diff open read-only views; an agent with no
+  // panel (no host) has none.
+  final sessionViews = setup != null
+      ? ref
+            .watch(agentDmSessionBuiltinsProvider(commandAgent!.toLowerCase()))
+            .value
+      : null;
+  final commands = withAgentDmSessionViewCommands(
+    withAgentDmSetupCommands(merged, setup),
+    sessionViews,
   );
   final List<AgentCommand> suggestions;
   if (listOpen) {
@@ -354,6 +362,17 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
       final next = replaceToken(text, dm.tokenStart, dm.tokenEnd, '');
       setText(next.text, next.caret);
       openSession(commandAgent.toLowerCase());
+      return;
+    }
+    final view = !groupMode && commandAgent != null
+        ? agentDmSessionViewFor(sessionViews, command.name)
+        : null;
+    if (view != null && command.kind == AgentCommandKind.session) {
+      final dm = findAgentCommandQuery(text, controller.selection.baseOffset);
+      if (dm == null) return;
+      final next = replaceToken(text, dm.tokenStart, dm.tokenEnd, '');
+      setText(next.text, next.caret);
+      openSession(commandAgent!.toLowerCase(), view);
       return;
     }
     if (!groupMode || open == null) {

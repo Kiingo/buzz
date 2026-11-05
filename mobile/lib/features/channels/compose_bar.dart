@@ -21,6 +21,7 @@ import 'package:nostr/nostr.dart' as nostr;
 import '../../shared/agent_commands/agent_commands.dart';
 import '../../shared/agent_commands/group_agent_commands.dart';
 import '../../shared/agent_dm/agent_dm_session_setup.dart';
+import '../../shared/agent_dm/agent_dm_session_views.dart';
 import '../../shared/mentions/agent_identity_provider.dart';
 import '../../shared/mentions/mention_bindings.dart';
 import '../../shared/mentions/mention_rules.dart';

@@ -1,6 +1,7 @@
 import 'package:buzz/shared/agent_commands/agent_commands.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_delegation_client.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_session_setup.dart';
+import 'package:buzz/shared/agent_dm/agent_dm_session_views.dart';
 import 'package:buzz/shared/agent_dm/agent_dm_turn_steps.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -482,6 +483,144 @@ void main() {
       expect(agentDmStepsDuration(185000), '3 min 5 s');
       expect(agentDmStepsDuration(3720000), '1 h 2 min');
       expect(agentDmActivityLine({'tools': 1}), 'Used 1 tool');
+    });
+  });
+
+  group('B3+B4 session views', () {
+    const msg = '0192a6b0-0000-7000-8000-0000000000c1';
+
+    test("the session's screens and /diff open views; nothing else", () {
+      final builtins = parseAgentDmSessionBuiltins({
+        'session': {'lane': 'tmux', 'raw_available': false},
+        'commands': [
+          {
+            'kind': 'session',
+            'name': 'new',
+            'action': {'kind': 'control'},
+          },
+          {
+            'kind': 'session',
+            'name': 'mcp',
+            'description': 'MCP servers',
+            'action': {'kind': 'screen', 'screen': 'mcp'},
+          },
+          {
+            'kind': 'session',
+            'name': 'diff',
+            'action': {'kind': 'panel', 'panel': 'diff'},
+          },
+          {
+            'kind': 'session',
+            'name': 'keys',
+            'action': {'kind': 'screen', 'screen': 'keys'},
+          },
+          {
+            'kind': 'session',
+            'name': 'doctor',
+            'action': {'kind': 'unsupported'},
+          },
+        ],
+      })!;
+      expect(builtins.inPane, isTrue);
+      expect(builtins.rows.map((row) => row.name), ['mcp', 'diff']);
+      expect(
+        agentDmSessionViewFor(builtins, 'mcp'),
+        const AgentDmSessionView.screen('mcp'),
+      );
+      expect(
+        agentDmSessionViewFor(builtins, 'diff'),
+        const AgentDmSessionView.files(),
+      );
+      expect(agentDmSessionViewFor(builtins, 'doctor'), isNull);
+      expect(agentDmSessionViewFor(null, 'mcp'), isNull);
+      final commands = withAgentDmSessionViewCommands([
+        const AgentCommand.session(name: 'new', description: 'New'),
+        const AgentCommand.skill(name: 'mcp', skillId: 'x'),
+      ], builtins);
+      expect(commands.map((command) => command.name), [
+        'new',
+        'diff',
+        'mcp',
+      ]);
+      expect(
+        agentDmSessionViewPath('a', const AgentDmSessionView.screen('mcp')),
+        'agents/a/session/screens/mcp',
+      );
+      expect(parseAgentDmSessionBuiltins({'commands': []}), isNull);
+    });
+
+    test('a screen reads without actions; unavailable stays unavailable', () {
+      final read = parseAgentDmSessionScreen({
+        'data': {
+          'title': 'MCP servers',
+          'sections': [
+            {'id': 'p', 'state': 'unavailable', 'rows': []},
+            {
+              'id': 'u',
+              'state': 'ok',
+              'rows': [
+                {
+                  'label': 'github',
+                  'value': 'connected',
+                  'mono': true,
+                  'actions': [
+                    {'kind': 'edit'},
+                  ],
+                },
+                {'value': 'no label drops'},
+              ],
+            },
+          ],
+        },
+      })!;
+      expect(read.title, 'MCP servers');
+      expect(read.sections![0].unavailable, isTrue);
+      expect(read.sections![1].rows.single.label, 'github');
+      expect(read.sections![1].rows.single.mono, isTrue);
+      expect(parseAgentDmSessionScreen({'data': {}}), isNull);
+    });
+
+    test('file changes and queued messages keep only well-formed parts', () {
+      final change = parseAgentDmFileChanges({
+        'data': [
+          {
+            'id': 't1',
+            'path': 'src/a.ts',
+            'kind': 'edit',
+            'added': 1,
+            'removed': 1,
+            'lines': [
+              {'sign': '-', 'text': 'old'},
+              {'sign': '+', 'text': 'new'},
+              {'sign': '*', 'text': 'bad'},
+            ],
+          },
+          {'id': 't2', 'path': 'x', 'kind': 'chmod'},
+        ],
+      })!.single;
+      expect(change.lines.map((line) => line.text), ['old', 'new']);
+      final queued = parseAgentDmQueuedMessages({
+        'data': [
+          {
+            'message_id': msg.toUpperCase(),
+            'body': 'also check the tests',
+            'send_when': 'idle',
+          },
+          {'message_id': 'not-an-id'},
+        ],
+      })!;
+      expect(queued.single.messageId, msg);
+      expect(queued.single.idle, isTrue);
+      expect(
+        agentDmWithdrawPath('a', msg),
+        'agents/a/session/queued/$msg/withdraw',
+      );
+      expect(
+        agentDmSessionViewErrorSentence(
+          const DelegationApiException(409, 'session_taken_over'),
+        ),
+        contains('taken over'),
+      );
     });
   });
 }

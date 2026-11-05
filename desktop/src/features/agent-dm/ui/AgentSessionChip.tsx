@@ -24,6 +24,15 @@ import {
   type SessionSetupPanel,
   type SetupChoice,
 } from "../lib/sessionSetup";
+import {
+  ensureSessionBuiltins,
+  getSessionViewsVersion,
+  requestSessionView,
+  type SessionView,
+  subscribeSessionViews,
+  takeSessionViewRequest,
+} from "../lib/sessionViews";
+import { AgentSessionView } from "./AgentSessionView";
 
 /** The header re-reads the panel this often while the DM shows. */
 const REFRESH_MS = 60_000;
@@ -155,9 +164,36 @@ function SetupPanelBody({
           ))}
         </ul>
       ) : null}
+      <section
+        aria-label="This session"
+        className="flex flex-col gap-0.5 border-t border-border pt-2"
+      >
+        {SESSION_VIEW_ROWS.map((row) => (
+          <button
+            className="w-full rounded-md px-2 py-1 text-left text-sm hover:bg-accent focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+            data-testid={`agent-session-view-${row.id}`}
+            key={row.id}
+            onClick={() => requestSessionView(agentPubkey, row.view)}
+            type="button"
+          >
+            {row.label}
+          </button>
+        ))}
+      </section>
     </div>
   );
 }
+
+/** The panel's read-only views of the session (BUZZPARITY B4). */
+const SESSION_VIEW_ROWS: { id: string; label: string; view: SessionView }[] = [
+  { id: "files", label: "Files changed", view: { kind: "files" } },
+  {
+    id: "agents",
+    label: "Subagents and background tasks",
+    view: { kind: "screen", screen: "agents" },
+  },
+  { id: "queued", label: "Queued messages", view: { kind: "queued" } },
+];
 
 /**
  * The DM header's line for the reader's session with a hosted agent, for
@@ -179,11 +215,18 @@ export function AgentSessionChip({
     getSessionSetupVersion,
     getSessionSetupVersion,
   );
+  React.useSyncExternalStore(
+    subscribeSessionViews,
+    getSessionViewsVersion,
+    getSessionViewsVersion,
+  );
   const [open, setOpen] = React.useState(false);
+  const [view, setView] = React.useState<SessionView | null>(null);
 
   React.useEffect(() => {
     if (!isAgent) return;
     void ensureSessionSetup(agentPubkey);
+    void ensureSessionBuiltins(agentPubkey);
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         void ensureSessionSetup(agentPubkey);
@@ -197,25 +240,41 @@ export function AgentSessionChip({
   React.useEffect(() => {
     if (panel && takeSetupPickerRequest(agentPubkey)) setOpen(true);
   });
+  // A view from the panel or from "/" (`/mcp`, `/diff` …) opens here.
+  React.useEffect(() => {
+    if (!panel) return;
+    const asked = takeSessionViewRequest(agentPubkey);
+    if (asked) {
+      setOpen(false);
+      setView(asked);
+    }
+  });
   if (!panel) return null;
 
   const text = setupChipText(panel);
   return (
-    <Popover onOpenChange={setOpen} open={open}>
-      <PopoverTrigger asChild>
-        <button
-          aria-label={`Session: ${text}`}
-          className="max-w-56 truncate rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-          data-testid="agent-session-chip"
-          title={text}
-          type="button"
-        >
-          {text}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 p-2">
-        <SetupPanelBody agentPubkey={agentPubkey} panel={panel} />
-      </PopoverContent>
-    </Popover>
+    <>
+      <Popover onOpenChange={setOpen} open={open}>
+        <PopoverTrigger asChild>
+          <button
+            aria-label={`Session: ${text}`}
+            className="max-w-56 truncate rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+            data-testid="agent-session-chip"
+            title={text}
+            type="button"
+          >
+            {text}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-72 p-2">
+          <SetupPanelBody agentPubkey={agentPubkey} panel={panel} />
+        </PopoverContent>
+      </Popover>
+      <AgentSessionView
+        agentPubkey={agentPubkey}
+        onClose={() => setView(null)}
+        view={view}
+      />
+    </>
   );
 }

@@ -5,16 +5,20 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../../../shared/agent_dm/agent_dm_session_setup.dart';
+import '../../../shared/agent_dm/agent_dm_session_views.dart';
 import '../../../shared/theme/buzz_icons.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/modal_presentation.dart';
+import 'agent_dm_session_view_sheet.dart';
 
 /// The row re-reads the panel this often while the DM shows.
 const _refresh = Duration(seconds: 60);
 
 /// The line above a 1:1 hosted agent DM's composer: the session's model,
-/// level and context, opening its panel, and Stop while the agent works.
-/// Nothing shows for an agent with no host.
+/// level and context, opening its panel, and Stop while the agent works. On
+/// a session that runs in a pane, Interrupt is beside Stop: Esc, the running
+/// step stops and the session keeps going. Nothing shows for an agent with no
+/// host.
 class AgentDmSessionRow extends HookConsumerWidget {
   const AgentDmSessionRow({
     super.key,
@@ -40,6 +44,10 @@ class AgentDmSessionRow extends HookConsumerWidget {
       return timer.cancel;
     }, [agentPubkey]);
     final stopping = useState(false);
+    final interrupting = useState(false);
+    final inPane =
+        ref.watch(agentDmSessionBuiltinsProvider(agentPubkey)).value?.inPane ??
+        false;
     if (setup == null) return const SizedBox.shrink();
     final messenger = ScaffoldMessenger.maybeOf(context);
 
@@ -62,6 +70,22 @@ class AgentDmSessionRow extends HookConsumerWidget {
         return;
       } finally {
         if (context.mounted) stopping.value = false;
+      }
+      messenger?.showSnackBar(SnackBar(content: Text(text)));
+    }
+
+    Future<void> interrupt() async {
+      interrupting.value = true;
+      String text;
+      try {
+        await ref
+            .read(agentDmSessionViewActionsProvider)
+            .interrupt(agentPubkey);
+        text = 'Interrupted. The session keeps going.';
+      } catch (error) {
+        text = agentDmSessionViewErrorSentence(error);
+      } finally {
+        if (context.mounted) interrupting.value = false;
       }
       messenger?.showSnackBar(SnackBar(content: Text(text)));
     }
@@ -101,6 +125,18 @@ class AgentDmSessionRow extends HookConsumerWidget {
               ),
             ),
           ),
+          if (working && inPane)
+            TextButton(
+              key: const ValueKey('agent-dm-interrupt'),
+              onPressed: interrupting.value
+                  ? null
+                  : () => unawaited(interrupt()),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.padded,
+              ),
+              child: const Text('Interrupt'),
+            ),
           if (working)
             TextButton.icon(
               key: const ValueKey('agent-dm-stop'),
@@ -118,16 +154,28 @@ class AgentDmSessionRow extends HookConsumerWidget {
   }
 }
 
-/// Opens the session's panel: its vitals and the model, level and mode picks.
+/// Opens the session's panel: its vitals and the model, level and mode picks,
+/// and its read-only views. With [view] ("/" picked `/mcp`, `/diff` …), that
+/// view opens instead.
 Future<void> showAgentDmSessionSheet(
   BuildContext context,
-  String agentPubkey,
-) => showBuzzModalBottomSheet<void>(
-  context: context,
-  title: 'Session',
-  isScrollControlled: true,
-  builder: (_) => _AgentDmSessionSheet(agentPubkey: agentPubkey),
-);
+  String agentPubkey, [
+  AgentDmSessionView? view,
+]) => view != null
+    ? showAgentDmSessionViewSheet(context, agentPubkey, view)
+    : showBuzzModalBottomSheet<void>(
+        context: context,
+        title: 'Session',
+        isScrollControlled: true,
+        builder: (_) => _AgentDmSessionSheet(agentPubkey: agentPubkey),
+      );
+
+/// The panel's read-only views of the session (BUZZPARITY B4).
+const _sessionViewRows = [
+  ('Files changed', AgentDmSessionView.files()),
+  ('Subagents and background tasks', AgentDmSessionView.screen('agents')),
+  ('Queued messages', AgentDmSessionView.queued()),
+];
 
 /// Carries out a typed session command: a clear pick changes the session, and
 /// anything else opens the panel.
@@ -183,6 +231,9 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
     final saving = useState(false);
     if (setup == null) return const SizedBox.shrink();
     final messenger = ScaffoldMessenger.maybeOf(context);
+    // The sheet closes before a view opens, so the view opens from the
+    // navigator's own context.
+    final navigatorContext = Navigator.of(context).context;
 
     Future<void> choose(Map<String, String?> choice) async {
       saving.value = true;
@@ -303,6 +354,23 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
                 child: Text(line, style: context.textTheme.bodySmall),
               ),
           ],
+          heading('This session'),
+          for (final (label, view) in _sessionViewRows)
+            ListTile(
+              dense: true,
+              title: Text(label),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              onTap: () {
+                Navigator.of(context).pop();
+                unawaited(
+                  showAgentDmSessionViewSheet(
+                    navigatorContext,
+                    agentPubkey,
+                    view,
+                  ),
+                );
+              },
+            ),
           const SizedBox(height: Grid.xs),
         ],
       ),

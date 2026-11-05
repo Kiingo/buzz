@@ -40,6 +40,21 @@ import {
   setTurnStepsClockForTests,
   stepsDuration,
 } from "./turnSteps.ts";
+import {
+  ensureSessionBuiltins,
+  getSessionBuiltins,
+  interruptSession,
+  loadQueuedMessages,
+  loadSessionScreen,
+  parseFileChanges,
+  parseSessionScreen,
+  requestSessionView,
+  resetSessionViewsCache,
+  sessionBuiltinForText,
+  sessionViewErrorSentence,
+  takeSessionViewRequest,
+  withdrawQueuedMessage,
+} from "./sessionViews.ts";
 
 const AGENT = "a".repeat(64);
 const AGENT_ID = "0192a6b0-0000-7000-8000-0000000000aa";
@@ -157,6 +172,7 @@ const restores = [];
 afterEach(() => {
   for (const restore of restores.splice(0)) restore();
   resetSessionSetupCache();
+  resetSessionViewsCache();
   resetTurnStepsCache();
   resetAgentSummaryCache();
 });
@@ -746,4 +762,211 @@ test("a reply newer than the last page read asks again; a failed steps read thro
   await ensureReplyTurn(AGENT, newer);
   assert.equal(calls.length, 2);
   await assert.rejects(loadTurnSteps(AGENT, YOU));
+});
+
+// ── B3+B4: the session's views, read from the DM ─────────────────────────
+
+const MSG = "0192a6b0-0000-7000-8000-0000000000c1";
+
+function commandsBody(lane = "tmux") {
+  return {
+    contract_version: 1,
+    agent_id: AGENT_ID,
+    session: { id: "s", harness: "claude_code", lane, raw_available: false },
+    commands: [
+      { kind: "session", name: "new", action: { kind: "control" } },
+      {
+        kind: "session",
+        name: "mcp",
+        description: "MCP servers",
+        action: { kind: "screen", screen: "mcp", session_id: "s" },
+      },
+      {
+        kind: "session",
+        name: "diff",
+        description: "Files changed",
+        action: { kind: "panel", panel: "diff", pending: false },
+      },
+      // A screen the host doesn't serve, and a row of a kind this
+      // client leaves to its own path, never open a view.
+      {
+        kind: "session",
+        name: "keys",
+        action: { kind: "screen", screen: "keys" },
+      },
+      {
+        kind: "session",
+        name: "doctor",
+        action: { kind: "unsupported", reason: "needs_terminal" },
+      },
+      { kind: "skill", name: "mcp", skill_id: "x" },
+    ],
+  };
+}
+
+test("the session's screens and /diff open views; nothing else does", async () => {
+  const calls = installHost(() => ({ status: 200, body: commandsBody() }));
+  await Promise.all([
+    ensureSessionBuiltins(AGENT),
+    ensureSessionBuiltins(AGENT),
+  ]);
+  await ensureSessionBuiltins(AGENT);
+  assert.deepEqual(
+    calls.map((call) => `${call.method} ${call.path}`),
+    [`GET agents/${AGENT_ID}/commands`],
+  );
+  const builtins = getSessionBuiltins(AGENT);
+  assert.equal(builtins.lane, "tmux");
+  assert.deepEqual(
+    builtins.rows.map((row) => [row.name, row.view]),
+    [
+      ["mcp", { kind: "screen", screen: "mcp" }],
+      ["diff", { kind: "files" }],
+    ],
+  );
+  assert.equal(sessionBuiltinForText(builtins, " /mcp ").name, "mcp");
+  assert.equal(sessionBuiltinForText(builtins, "/mcp please"), null);
+  assert.equal(sessionBuiltinForText(builtins, "/doctor"), null);
+  assert.equal(sessionBuiltinForText(null, "/mcp"), null);
+});
+
+test("a failed built-ins read means no views and no Interrupt", async () => {
+  installHost(() => ({ status: 503, body: { error: "database_unavailable" } }));
+  await ensureSessionBuiltins(AGENT);
+  assert.equal(getSessionBuiltins(AGENT), null);
+});
+
+test("a screen reads with no row action or write; unavailable stays unavailable", async () => {
+  const calls = installHost(() => ({
+    status: 200,
+    body: {
+      data: {
+        title: "MCP servers",
+        description: "From this session's project.",
+        sections: [
+          {
+            id: "project",
+            title: "Project",
+            state: "unavailable",
+            rows: [],
+          },
+          {
+            id: "user",
+            title: "User",
+            state: "ok",
+            empty: "None",
+            rows: [
+              {
+                label: "github",
+                value: "connected",
+                mono: true,
+                action: { kind: "open_session" },
+                actions: [{ kind: "edit" }],
+              },
+              { value: "no label drops" },
+            ],
+          },
+        ],
+      },
+    },
+  }));
+  const screen = await loadSessionScreen(AGENT, "mcp");
+  assert.equal(calls[0].path, `agents/${AGENT_ID}/session/screens/mcp`);
+  assert.equal(screen.sections[0].unavailable, true);
+  assert.deepEqual(screen.sections[1].rows, [
+    {
+      label: "github",
+      value: "connected",
+      detail: null,
+      body: null,
+      mono: true,
+    },
+  ]);
+  assert.equal(parseSessionScreen({ data: {} }), null);
+});
+
+test("file changes keep only well-formed lines", () => {
+  const [change] = parseFileChanges({
+    data: [
+      {
+        id: "t1",
+        path: "src/a.ts",
+        kind: "edit",
+        moved_to: null,
+        failed: false,
+        added: 1,
+        removed: 1,
+        lines: [
+          { sign: "-", text: "old" },
+          { sign: "+", text: "new" },
+          { sign: "*", text: "bad" },
+        ],
+      },
+      { id: "t2", path: "x", kind: "chmod" },
+    ],
+  });
+  assert.deepEqual(change.lines, [
+    { sign: "-", text: "old" },
+    { sign: "+", text: "new" },
+  ]);
+  assert.equal(parseFileChanges({ data: null }), null);
+});
+
+test("queued messages read the reader's own; Withdraw names one", async () => {
+  const calls = installHost((method) =>
+    method === "GET"
+      ? {
+          status: 200,
+          body: {
+            data: [
+              {
+                message_id: MSG.toUpperCase(),
+                body: "also check the tests",
+                created_at: "2026-11-04T10:00:00Z",
+                send_when: "idle",
+              },
+              { message_id: "not-an-id", body: "drops" },
+            ],
+          },
+        }
+      : { status: 200, body: { data: { message_id: MSG } } },
+  );
+  const queued = await loadQueuedMessages(AGENT);
+  assert.deepEqual(queued, [
+    {
+      messageId: MSG,
+      body: "also check the tests",
+      createdAt: "2026-11-04T10:00:00Z",
+      idle: true,
+    },
+  ]);
+  await withdrawQueuedMessage(AGENT, MSG);
+  assert.equal(calls[1].method, "POST");
+  assert.equal(
+    calls[1].path,
+    `agents/${AGENT_ID}/session/queued/${MSG}/withdraw`,
+  );
+  await assert.rejects(withdrawQueuedMessage(AGENT, "not-an-id"));
+});
+
+test("Interrupt posts a fresh key each time, and a refusal reads in words", async () => {
+  let answer = { status: 200, body: { data: {} } };
+  const calls = installHost(() => answer);
+  await interruptSession(AGENT);
+  await interruptSession(AGENT);
+  assert.equal(calls[0].path, `agents/${AGENT_ID}/session/interrupt`);
+  assert.ok(calls[0].body.idempotency_key);
+  assert.notEqual(calls[0].body.idempotency_key, calls[1].body.idempotency_key);
+  answer = { status: 409, body: { error: "session_taken_over" } };
+  const error = await interruptSession(AGENT).catch((caught) => caught);
+  assert.match(sessionViewErrorSentence(error), /taken over/);
+  answer = { status: 404, body: { error: "session_not_found" } };
+  const missing = await interruptSession(AGENT).catch((caught) => caught);
+  assert.match(sessionViewErrorSentence(missing), /no session/);
+});
+
+test("a view open is asked once", () => {
+  requestSessionView(AGENT, { kind: "queued" });
+  assert.deepEqual(takeSessionViewRequest(AGENT), { kind: "queued" });
+  assert.equal(takeSessionViewRequest(AGENT), null);
 });
