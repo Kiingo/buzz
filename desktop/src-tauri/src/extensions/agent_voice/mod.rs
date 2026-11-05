@@ -222,7 +222,7 @@ fn is_session_files_query(query: &str) -> bool {
 /// delegation cards long-poll, the owner chat head, the settings read, the
 /// reference search and the session files list.
 /// The session screens the host serves read-only to the Buzz app.
-const SESSION_SCREENS: [&str; 9] = [
+const SESSION_SCREENS: [&str; 12] = [
     "config",
     "permissions",
     "mcp",
@@ -232,6 +232,9 @@ const SESSION_SCREENS: [&str; 9] = [
     "resume",
     "login",
     "approvals",
+    "help",
+    "doctor",
+    "skills",
 ];
 
 fn allowed_path(method: &str, path: &str) -> Option<String> {

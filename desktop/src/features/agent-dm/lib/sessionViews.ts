@@ -8,10 +8,11 @@ import { cachedAgentSummary, ensureAgentSummary } from "./agentSummary";
 
 /**
  * The reader's own session with a hosted agent, read from their 1:1 DM: its
- * screens (/agents, /mcp, /permissions, /config, /hooks, /memory), the files
- * it changed (/diff), their own queued messages, and Interrupt. From the
- * host's `agents/<id>/session/...` routes on the Buzz mount, which pick the
- * session themselves: the signer's own conversation's session, or 404.
+ * screens (/agents, /mcp, /permissions, /config, /hooks, /memory, /help,
+ * /doctor, /skills), the files it changed (/diff), their own queued messages,
+ * and Interrupt. From the host's `agents/<id>/session/...` routes on the Buzz
+ * mount, which pick the session themselves: the signer's own conversation's
+ * session, or 404.
  *
  * Everything here reads, except Withdraw and Edit (the reader's own queued
  * message) and Interrupt (Esc; the session keeps going). Nothing writes a
@@ -40,6 +41,9 @@ export const SESSION_SCREENS = [
   "resume",
   "login",
   "approvals",
+  "help",
+  "doctor",
+  "skills",
 ] as const;
 export type SessionScreenName = (typeof SESSION_SCREENS)[number];
 
