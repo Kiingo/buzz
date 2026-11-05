@@ -53,7 +53,10 @@ export function AgentSurfaceCard({
     [message.tags],
   );
   const [load, setLoad] = React.useState<Load>({ kind: "loading" });
-  const [expanded, setExpanded] = React.useState(false);
+  // Closed, the expanded sheet, or the whole window (Full screen).
+  const [expanded, setExpanded] = React.useState<"closed" | "sheet" | "full">(
+    "closed",
+  );
   const queryClient = useQueryClient();
   const senderPubkey = useIdentityQuery().data?.pubkey;
   const surfaceId = marker?.surfaceId;
@@ -101,7 +104,10 @@ export function AgentSurfaceCard({
       openUrl: (url) => {
         void openUrl(url).catch(() => toast.error("Couldn’t open that link."));
       },
-      openExpanded: () => setExpanded(true),
+      openExpanded: () => setExpanded("sheet"),
+      // The header's Full screen button and `open` with `target: fullscreen`:
+      // the same controller in a dialog the size of the window. Reads nothing.
+      openFullScreen: () => setExpanded("full"),
       // The surface's single send path (controller.sendMessage) hands over
       // exactly the words the control showed and the tap they came from:
       // the tag makes the turn a surface tap (lower trust) on the server.
@@ -139,9 +145,12 @@ export function AgentSurfaceCard({
       <SurfaceView controller={controller} host={host} />
       <SurfaceExpandedDialog
         controller={controller}
-        open={expanded}
-        onOpenChange={setExpanded}
+        open={expanded !== "closed"}
+        onOpenChange={(open) => {
+          if (!open) setExpanded("closed");
+        }}
         host={host}
+        fullScreen={expanded === "full"}
       />
     </div>
   );
