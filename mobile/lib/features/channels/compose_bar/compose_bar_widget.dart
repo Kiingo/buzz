@@ -580,35 +580,21 @@ class ComposeBar extends HookConsumerWidget {
       // `_reportSendCancelledByCommunitySwitch`.
       final messenger = ScaffoldMessenger.maybeOf(context);
 
-      // Session commands never reach the model. An agent with no panel (no
-      // host) has none of them, so its `/model` stays an ordinary message.
+      // Session commands and the session's views never reach the model. An
+      // agent with no host has none, so its `/model` stays an ordinary message.
       final setupAgent = commandAgentPubkey;
-      final setupCommand = setupAgent == null || hasAttachments
-          ? null
-          : parseAgentDmSetupCommand(text);
-      if (setupAgent != null && setupCommand != null) {
-        isSending.value = true;
-        final AgentDmSessionSetup? setup;
-        try {
-          setup = await ref.read(
-            agentDmSessionSetupProvider(setupAgent.toLowerCase()).future,
-          );
-        } finally {
-          isSending.value = false;
-        }
-        if (setup != null) {
-          clearComposer();
-          if (context.mounted) {
-            await runAgentDmSetupCommand(
-              context,
-              ref,
-              setupAgent.toLowerCase(),
-              setup,
-              setupCommand,
-            );
-          }
-          return;
-        }
+      if (setupAgent != null &&
+          !hasAttachments &&
+          skillTags.isEmpty &&
+          await runAgentDmTypedCommand(
+            context,
+            ref,
+            setupAgent.toLowerCase(),
+            text,
+            busy: (busy) => isSending.value = busy,
+            clear: clearComposer,
+          )) {
+        return;
       }
 
       // Extract pubkeys for mentions present in the final text.

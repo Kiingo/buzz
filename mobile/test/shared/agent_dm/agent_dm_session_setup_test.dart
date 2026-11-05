@@ -528,6 +528,22 @@ void main() {
       );
       expect(agentDmSessionViewFor(builtins, 'doctor'), isNull);
       expect(agentDmSessionViewFor(null, 'mcp'), isNull);
+      // Typed as the whole message, exactly `/name`, a listed view opens as
+      // the pick does; anything else stays an ordinary message.
+      expect(
+        agentDmSessionViewForText(builtins, ' /mcp '),
+        const AgentDmSessionView.screen('mcp'),
+      );
+      expect(
+        agentDmSessionViewForText(builtins, '/diff'),
+        const AgentDmSessionView.files(),
+      );
+      for (final text in ['/mcp now', 'mcp', '/MCP', '/doctor', '/keys']) {
+        expect(agentDmSessionViewForText(builtins, text), isNull, reason: text);
+      }
+      expect(agentDmSessionViewForText(null, '/mcp'), isNull);
+      expect(isAgentDmSessionViewShaped('/agents'), isTrue);
+      expect(isAgentDmSessionViewShaped('/agents please'), isFalse);
       final commands = withAgentDmSessionViewCommands([
         const AgentCommand.session(name: 'new', description: 'New'),
         const AgentCommand.skill(name: 'mcp', skillId: 'x'),

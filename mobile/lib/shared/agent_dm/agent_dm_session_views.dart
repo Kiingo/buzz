@@ -285,8 +285,7 @@ List<AgentDmQueuedMessage>? parseAgentDmQueuedMessages(Object? body) {
   return [
     for (final raw in list)
       if (_map(raw) case final message?)
-        if (_text(message['message_id']) case final id?
-            when _uuid.hasMatch(id))
+        if (_text(message['message_id']) case final id? when _uuid.hasMatch(id))
           AgentDmQueuedMessage(
             messageId: id.toLowerCase(),
             body: message['body'] is String ? message['body'] as String : '',
@@ -344,6 +343,23 @@ AgentDmSessionView? agentDmSessionViewFor(
   AgentDmSessionBuiltins? builtins,
   String name,
 ) => builtins?.rows.where((row) => row.name == name).firstOrNull?.view;
+
+final _typedViewCommand = RegExp(r'^/([a-z][a-z0-9-]{0,31})$');
+
+/// Whether [message] is shaped like a typed view row, exactly `/name`, before
+/// any read.
+bool isAgentDmSessionViewShaped(String message) =>
+    _typedViewCommand.hasMatch(message.trim());
+
+/// The view row a whole typed message names, exactly `/name` (the desktop's
+/// `sessionBuiltinForText`), or null: then it is an ordinary message.
+AgentDmSessionView? agentDmSessionViewForText(
+  AgentDmSessionBuiltins? builtins,
+  String message,
+) {
+  final name = _typedViewCommand.firstMatch(message.trim())?.group(1);
+  return name == null ? null : agentDmSessionViewFor(builtins, name);
+}
 
 /// [commands] with the session's view rows after its session commands; a
 /// name already listed keeps its own row.

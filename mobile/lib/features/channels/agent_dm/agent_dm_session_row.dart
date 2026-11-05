@@ -177,6 +177,58 @@ const _sessionViewRows = [
   ('Queued messages', AgentDmSessionView.queued()),
 ];
 
+/// A whole typed message that is a session command (`/model`, `/status` …) or
+/// names one of the session's views (`/mcp`, `/agents`, `/diff` …, as the "/"
+/// list has them): carried out here and never sent, as the "/" pick does.
+/// False when it stays an ordinary message: another text, an agent with no
+/// host, or a view this session doesn't list. [busy] covers the host read;
+/// [clear] empties the composer before the panel or view opens.
+Future<bool> runAgentDmTypedCommand(
+  BuildContext context,
+  WidgetRef ref,
+  String agentPubkey,
+  String text, {
+  required void Function(bool busy) busy,
+  required void Function() clear,
+}) async {
+  final setupCommand = parseAgentDmSetupCommand(text);
+  if (setupCommand == null && !isAgentDmSessionViewShaped(text)) return false;
+  busy(true);
+  final AgentDmSessionSetup? setup;
+  final AgentDmSessionView? view;
+  try {
+    setup = setupCommand == null
+        ? null
+        : await ref.read(agentDmSessionSetupProvider(agentPubkey).future);
+    view = setupCommand != null
+        ? null
+        : agentDmSessionViewForText(
+            await ref.read(agentDmSessionBuiltinsProvider(agentPubkey).future),
+            text,
+          );
+  } finally {
+    busy(false);
+  }
+  if (setupCommand != null && setup != null) {
+    clear();
+    if (context.mounted) {
+      await runAgentDmSetupCommand(
+        context,
+        ref,
+        agentPubkey,
+        setup,
+        setupCommand,
+      );
+    }
+    return true;
+  }
+  if (view == null) return false;
+  clear();
+  if (context.mounted)
+    await showAgentDmSessionSheet(context, agentPubkey, view);
+  return true;
+}
+
 /// Carries out a typed session command: a clear pick changes the session, and
 /// anything else opens the panel.
 Future<void> runAgentDmSetupCommand(
