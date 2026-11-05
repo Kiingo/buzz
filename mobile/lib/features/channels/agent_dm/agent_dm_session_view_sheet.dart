@@ -1,15 +1,20 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
+import '../../../shared/agent_dm/agent_dm_session_export.dart';
 import '../../../shared/agent_dm/agent_dm_session_views.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/modal_presentation.dart';
 
 /// Opens one read-only view of the reader's own session: a screen, the files
-/// it changed, or their own queued messages (each with Edit and Withdraw).
+/// it changed, their own queued messages (each with Edit and Withdraw), or the
+/// conversation as a file to share (`/export`).
 Future<void> showAgentDmSessionViewSheet(
   BuildContext context,
   String agentPubkey,
@@ -19,6 +24,7 @@ Future<void> showAgentDmSessionViewSheet(
   title: switch (view.kind) {
     'files' => 'Files changed',
     'queued' => 'Queued messages',
+    'export' => 'Export conversation',
     _ => 'Session',
   },
   isScrollControlled: true,
@@ -89,6 +95,41 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
         if (context.mounted) editing.value = null;
       }
       messenger?.showSnackBar(SnackBar(content: Text(notice)));
+    }
+
+    /// Stop asks first, and reports a request, never a stopped task.
+    Future<void> stopTask(String taskId) async {
+      final stop = await showBuzzDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog.adaptive(
+          title: const Text('Stop this task?'),
+          content: const Text(
+            'The session is asked to stop this background task.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const ValueKey('agent-dm-stop-task-confirm'),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Stop'),
+            ),
+          ],
+        ),
+      );
+      if (stop != true || !context.mounted) return;
+      String text;
+      try {
+        await ref
+            .read(agentDmSessionViewActionsProvider)
+            .stopTask(agentPubkey, taskId);
+        text = 'Stop requested. The session stops the task when it reads this.';
+      } catch (error) {
+        text = agentDmStopTaskErrorSentence(error);
+      }
+      messenger?.showSnackBar(SnackBar(content: Text(text)));
     }
 
     // A failed read keeps what showed and says so; never shown as empty.
@@ -167,9 +208,12 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
               child: Text(section.empty ?? 'Nothing here.', style: muted),
             )
           else
-            for (final row in section.rows) _ScreenRow(row: row),
+            for (final row in section.rows)
+              _ScreenRow(row: row, onStop: stopTask),
         ],
       ];
+    } else if (value.exportFile case final file?) {
+      body = [_ExportBody(file: file)];
     } else if (value.changes case final changes?) {
       body = [
         if (changes.isEmpty)
@@ -245,10 +289,59 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
   }
 }
 
+/// The file, ready to share. Nothing is sent unless the person sends it.
+class _ExportBody extends StatelessWidget {
+  const _ExportBody({required this.file});
+
+  final AgentDmSessionExport file;
+
+  Future<void> _share(BuildContext context) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final box = context.findRenderObject() as RenderBox?;
+    final origin = box == null
+        ? null
+        : box.localToGlobal(Offset.zero) & box.size;
+    try {
+      final directory = await getTemporaryDirectory();
+      final path = '${directory.path}${Platform.pathSeparator}${file.fileName}';
+      await File(path).writeAsString(file.markdown, flush: true);
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(path)], sharePositionOrigin: origin),
+      );
+    } catch (_) {
+      messenger?.showSnackBar(
+        const SnackBar(content: Text("Couldn't share the file. Try again.")),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: Grid.xs),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            '${file.turns == 1 ? '1 turn' : '${file.turns} turns'} ready to share.',
+          ),
+        ),
+        Builder(
+          builder: (buttonContext) => FilledButton(
+            key: const ValueKey('agent-dm-export-share'),
+            onPressed: () => unawaited(_share(buttonContext)),
+            child: const Text('Share'),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class _ScreenRow extends StatelessWidget {
-  const _ScreenRow({required this.row});
+  const _ScreenRow({required this.row, required this.onStop});
 
   final AgentDmScreenRow row;
+  final ValueChanged<String> onStop;
 
   @override
   Widget build(BuildContext context) {
@@ -288,6 +381,15 @@ class _ScreenRow extends StatelessWidget {
               ),
               child: SelectableText(body, style: mono),
             ),
+          if (row.stopTaskId case final taskId?)
+            if (row.stopUnavailable case final reason?)
+              Text(reason, style: muted)
+            else
+              TextButton(
+                key: ValueKey('agent-dm-stop-task-$taskId'),
+                onPressed: () => onStop(taskId),
+                child: const Text('Stop'),
+              ),
         ],
       ),
     );

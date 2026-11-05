@@ -370,6 +370,29 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: Grid.xs),
             child: Text(setup.label, style: context.textTheme.titleSmall),
           ),
+          if (setup.canChangeHarness && setup.harnesses.length > 1) ...[
+            heading('Harness'),
+            for (final harness in setup.harnesses)
+              ListTile(
+                dense: true,
+                enabled: harness.available,
+                selected: harness.id == setup.harness,
+                title: Text(harness.label),
+                trailing: harness.id == setup.harness
+                    ? const Icon(BuzzIcons.check, size: 18)
+                    : null,
+                onTap:
+                    saving.value ||
+                        !harness.available ||
+                        harness.id == setup.harness
+                    ? null
+                    : () => choose({
+                        'harness': harness.id,
+                        'model': null,
+                        'effort': null,
+                      }),
+              ),
+          ],
           if (setup.canChangeModel && setup.models.isNotEmpty) ...[
             heading('Model'),
             for (final model in setup.models)

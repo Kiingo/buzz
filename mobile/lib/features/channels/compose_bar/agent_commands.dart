@@ -320,6 +320,19 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     submit();
   }
 
+  /// `/branch` or `/fork`, after the question, sent at once as typed.
+  Future<void> startBranch(String name, String? agentName) async {
+    query.value = null;
+    groupQuery.value = null;
+    if (!await _confirmBranchAgentSession(context, agentName)) return;
+    final text = '/$name';
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    submit();
+  }
+
   /// [text] with the token [start]..[end] replaced by [insert] (spaces right
   /// after it go when [insert] ends in one; line breaks stay). With
   /// [replacesSkill], a skill picked earlier elsewhere in the message is
@@ -420,6 +433,13 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     if (command.kind == AgentCommandKind.session &&
         (command.name == 'new' || (!groupMode && command.name == 'clear'))) {
       unawaited(startNewSession(commandAgent, targetLabel));
+      return;
+    }
+    // `/branch` and `/fork` end this session for a branch: ask, send as typed.
+    if (!groupMode &&
+        command.kind == AgentCommandKind.session &&
+        (command.name == 'branch' || command.name == 'fork')) {
+      unawaited(startBranch(command.name, targetLabel));
       return;
     }
     // `/fast` is a whole command: it switches the speed, with no panel.
@@ -562,6 +582,36 @@ Future<bool> _confirmNewAgentSession(
             key: const ValueKey('agent-command-new-confirm'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: const Text('New session'),
+          ),
+        ],
+      ),
+    ) ==
+    true;
+
+/// Asks before a picked `/branch` or `/fork` ends the agent's current session.
+Future<bool> _confirmBranchAgentSession(
+  BuildContext context,
+  String? agentName,
+) async =>
+    await showBuzzDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog.adaptive(
+        title: const Text('Branch this session?'),
+        content: Text(
+          '${agentName ?? 'The agent'} ends its current session. Your next '
+          'message continues in a branch with everything so far, and the '
+          'original is saved.',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('agent-command-branch-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('agent-command-branch-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Branch'),
           ),
         ],
       ),

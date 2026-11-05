@@ -147,6 +147,9 @@ class AgentDmSessionVitals {
 class AgentDmSessionSetup {
   const AgentDmSessionSetup({
     required this.revision,
+    this.harness,
+    this.harnesses = const [],
+    this.canChangeHarness = false,
     required this.model,
     required this.effort,
     required this.label,
@@ -167,6 +170,15 @@ class AgentDmSessionSetup {
   });
 
   final int revision;
+
+  /// The harness it runs, or will run, on.
+  final String? harness;
+
+  /// What the next session could run on; provider harnesses aren't offered.
+  final List<({String id, String label, bool available})> harnesses;
+
+  /// Only while no session is bound (the host's decision).
+  final bool canChangeHarness;
   final String model;
   final String effort;
 
@@ -467,6 +479,21 @@ AgentDmSessionSetup? parseAgentDmSessionSetup(Object? body) {
   };
   return AgentDmSessionSetup(
     revision: revision,
+    harness: harness,
+    // OpenCode and Pi need a connection and model pick this sheet doesn't have.
+    harnesses: [
+      if (options['harnesses'] case final List list)
+        for (final raw in list)
+          if (raw is Map)
+            if (_text(raw['id']) case final id?
+                when id != 'opencode' && id != 'pi')
+              (
+                id: id,
+                label: _text(raw['label']) ?? id,
+                available: raw['available'] == true,
+              ),
+    ],
+    canChangeHarness: canChange['harness'] == true,
     model: model,
     effort: effort,
     label: label,
@@ -772,6 +799,7 @@ const _changeErrorSentences = {
   'session_setup_speed_not_allowed':
       "That speed isn't available for this model.",
   'session_setup_speed_unavailable': "That speed isn't on your plan.",
+  'session_setup_harness_unavailable': "That harness isn't available here.",
 };
 
 /// The plain sentence for a failed change.

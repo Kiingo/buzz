@@ -5,25 +5,30 @@ import 'package:uuid/uuid.dart';
 import '../agent_commands/agent_commands.dart';
 import '../agent_details/agent_summary.dart';
 import 'agent_dm_delegation_client.dart';
+import 'agent_dm_session_export.dart';
 
 // The reader's own session with a hosted agent, read from their 1:1 DM: its
 // screens (/agents, /mcp, /permissions, /config, /hooks, /memory, /help,
 // /doctor, /skills), the files it changed (/diff), their own queued messages,
-// and Interrupt. From the host's `agents/<id>/session/...` routes on the Buzz
-// mount, which pick the session themselves: the signer's own conversation's
-// session, or 404.
+// Interrupt, Stop on one background task, and the pages /export saves. From the
+// host's `agents/<id>/session/...` routes on the Buzz mount, which pick the
+// session themselves: the signer's own conversation's session, or 404.
 //
 // Everything here reads, except Withdraw and Edit (the reader's own queued
-// message) and Interrupt (Esc; the session keeps going). Nothing writes a setting,
-// types into a pane or runs a passkey command; the host strips every write
-// action from a screen. Every word shown is the session's or a tool's:
-// untrusted, plain text.
+// message), Interrupt (Esc; the session keeps going) and Stop on a task. Nothing
+// writes a setting or runs a passkey command; the host strips every write
+// action from a screen, and all but `stop_task` on `agents`. Stop sends only the
+// host's own line. Every word shown is the session's or a tool's: untrusted,
+// plain text.
 
 final _uuid = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
   caseSensitive: false,
 );
 final _builtinName = RegExp(r'^[a-z][a-z0-9-]{0,31}$');
+
+/// The host's `isHarnessTaskId` shape.
+final _taskId = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
 
 /// The screens the host serves (`HARNESS_NATIVE_SCREENS`).
 const agentDmSessionScreens = {
@@ -48,8 +53,9 @@ class AgentDmSessionView {
   const AgentDmSessionView.screen(String this.screen) : kind = 'screen';
   const AgentDmSessionView.files() : kind = 'files', screen = null;
   const AgentDmSessionView.queued() : kind = 'queued', screen = null;
+  const AgentDmSessionView.export() : kind = 'export', screen = null;
 
-  /// `screen`, `files` or `queued`.
+  /// `screen`, `files`, `queued` or `export`.
   final String kind;
   final String? screen;
 
@@ -73,6 +79,8 @@ class AgentDmScreenRow {
     this.detail,
     this.body,
     this.mono = false,
+    this.stopTaskId,
+    this.stopUnavailable,
   });
 
   final String label;
@@ -80,6 +88,12 @@ class AgentDmScreenRow {
   final String? detail;
   final String? body;
   final bool mono;
+
+  /// The background task Stop names, on the `agents` screen only.
+  final String? stopTaskId;
+
+  /// Why Stop is off for this row; it shows no button.
+  final String? stopUnavailable;
 }
 
 @immutable
@@ -143,7 +157,7 @@ class AgentDmQueuedMessage {
   final bool idle;
 }
 
-/// What one view read: exactly one of the three is set.
+/// What one view read: exactly one of the four is set.
 @immutable
 class AgentDmSessionViewRead {
   const AgentDmSessionViewRead.screen({
@@ -151,23 +165,33 @@ class AgentDmSessionViewRead {
     required String this.description,
     required List<AgentDmScreenSection> this.sections,
   }) : changes = null,
-       queued = null;
+       queued = null,
+       exportFile = null;
   const AgentDmSessionViewRead.files(List<AgentDmFileChange> this.changes)
     : title = null,
       description = null,
       sections = null,
-      queued = null;
+      queued = null,
+      exportFile = null;
   const AgentDmSessionViewRead.queued(List<AgentDmQueuedMessage> this.queued)
     : title = null,
       description = null,
       sections = null,
-      changes = null;
+      changes = null,
+      exportFile = null;
+  const AgentDmSessionViewRead.export(AgentDmSessionExport this.exportFile)
+    : title = null,
+      description = null,
+      sections = null,
+      changes = null,
+      queued = null;
 
   final String? title;
   final String? description;
   final List<AgentDmScreenSection>? sections;
   final List<AgentDmFileChange>? changes;
   final List<AgentDmQueuedMessage>? queued;
+  final AgentDmSessionExport? exportFile;
 }
 
 /// A "/" row this client opens as a view.
@@ -202,6 +226,7 @@ class AgentDmSessionBuiltins {
     required this.rows,
     this.prompts = const [],
     this.clear,
+    this.branch,
   });
 
   /// The session runs in a pane (`tmux`), so Interrupt applies.
@@ -211,6 +236,9 @@ class AgentDmSessionBuiltins {
 
   /// `/clear`'s words, when this session lists it; it sends `/new`.
   final String? clear;
+
+  /// `/branch` or `/fork`, when this session has it; it goes as typed.
+  final AgentDmSessionPrompt? branch;
 }
 
 String? _text(Object? value) =>
@@ -222,7 +250,8 @@ int _count(Object? value) =>
 Map<Object?, Object?>? _map(Object? value) =>
     value is Map<Object?, Object?> ? value : null;
 
-/// A screen, read only: rows keep their words and nothing they could do.
+/// A screen, read only: rows keep their words and nothing they could do, except
+/// a Stop the host left on an `agents` row.
 AgentDmSessionViewRead? parseAgentDmSessionScreen(Object? body) {
   final value = _map(_map(body)?['data']);
   final rawSections = value?['sections'];
@@ -237,6 +266,13 @@ AgentDmSessionViewRead? parseAgentDmSessionScreen(Object? body) {
       final row = _map(rawRow);
       final label = _text(row?['label']);
       if (row == null || label == null) continue;
+      final control = _map(row['control']);
+      final taskId = control?['kind'] == 'stop_task'
+          ? _text(control?['task_id'])
+          : null;
+      final stopTaskId = taskId != null && _taskId.hasMatch(taskId)
+          ? taskId
+          : null;
       rows.add(
         AgentDmScreenRow(
           label: label,
@@ -244,6 +280,10 @@ AgentDmSessionViewRead? parseAgentDmSessionScreen(Object? body) {
           detail: _text(row['detail']),
           body: _text(row['body']),
           mono: row['mono'] == true,
+          stopTaskId: stopTaskId,
+          stopUnavailable: stopTaskId == null
+              ? null
+              : _text(control?['unavailable_reason']),
         ),
       );
     }
@@ -331,6 +371,7 @@ AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
   final rows = <AgentDmSessionBuiltin>[];
   final prompts = <AgentDmSessionPrompt>[];
   String? clear;
+  AgentDmSessionPrompt? branch;
   final seen = <String>{};
   for (final raw in commands) {
     final entry = _map(raw);
@@ -354,6 +395,11 @@ AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
       clear = shown;
       continue;
     }
+    if ((name == 'branch' || name == 'fork') && action['kind'] == 'control') {
+      seen.add(name);
+      branch = AgentDmSessionPrompt(name: name, description: shown);
+      continue;
+    }
     final screen = action['screen'];
     final AgentDmSessionView? view =
         action['kind'] == 'screen' &&
@@ -362,6 +408,10 @@ AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
         ? AgentDmSessionView.screen(screen)
         : action['kind'] == 'panel' && action['panel'] == 'diff'
         ? const AgentDmSessionView.files()
+        : action['kind'] == 'panel' &&
+              action['panel'] == 'export' &&
+              action['pending'] != true
+        ? const AgentDmSessionView.export()
         : null;
     if (view == null) continue;
     seen.add(name);
@@ -372,6 +422,7 @@ AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
     rows: rows,
     prompts: prompts,
     clear: clear,
+    branch: branch,
   );
 }
 
@@ -400,14 +451,19 @@ AgentDmSessionView? agentDmSessionViewForText(
 
 /// [commands] with the session's view and prompt rows after its session
 /// commands; a name already listed keeps its own row. A prompt row is put in
-/// the draft as `/name ` and sent as typed; `/clear` asks and sends `/new`.
+/// the draft as `/name ` and sent as typed; `/clear` asks and sends `/new`;
+/// `/branch` or `/fork` asks and goes as typed.
 List<AgentCommand> withAgentDmSessionViewCommands(
   List<AgentCommand> commands,
   AgentDmSessionBuiltins? builtins,
 ) {
   final clear = builtins?.clear;
+  final branch = builtins?.branch;
   if (builtins == null ||
-      (builtins.rows.isEmpty && builtins.prompts.isEmpty && clear == null)) {
+      (builtins.rows.isEmpty &&
+          builtins.prompts.isEmpty &&
+          clear == null &&
+          branch == null)) {
     return commands;
   }
   final names = {for (final command in commands) command.name};
@@ -420,6 +476,8 @@ List<AgentCommand> withAgentDmSessionViewCommands(
         AgentCommand.session(name: row.name, description: row.description),
     if (clear != null && !names.contains('clear'))
       AgentCommand.session(name: 'clear', description: clear),
+    if (branch != null && !names.contains(branch.name))
+      AgentCommand.session(name: branch.name, description: branch.description),
   ];
   return [
     for (final command in commands)
@@ -450,6 +508,9 @@ String agentDmEditPath(String agentId, String messageId) =>
 String agentDmInterruptPath(String agentId) =>
     'agents/$agentId/session/interrupt';
 
+String agentDmStopTaskPath(String agentId, String taskId) =>
+    'agents/$agentId/session/tasks/$taskId/stop';
+
 const _errorSentences = {
   'session_not_found': 'This conversation has no session to show right now.',
   'session_taken_over':
@@ -458,7 +519,25 @@ const _errorSentences = {
   'harness_session_message_not_editable':
       "That message isn't waiting any more.",
   'harness_session_message_invalid': "A message can't be empty.",
+  'session_export_incomplete':
+      "Couldn't read the whole conversation, so nothing was exported.",
 };
+
+const _stopErrorSentences = {
+  'session_taken_over':
+      'This session is taken over at its machine, so stop it there.',
+  'harness_session_task_not_found': "That task isn't running any more.",
+  'harness_session_task_not_running': "That task isn't running any more.",
+  'harness_session_task_stop_unsupported':
+      "This session can't stop one task on its own.",
+};
+
+/// A refused Stop in plain words.
+String agentDmStopTaskErrorSentence(Object error) =>
+    (error is DelegationApiException
+        ? _stopErrorSentences[error.code]
+        : null) ??
+    agentDmSessionViewErrorSentence(error);
 
 /// A refusal in plain words.
 String agentDmSessionViewErrorSentence(Object error) =>
@@ -503,6 +582,11 @@ final agentDmSessionViewProvider = FutureProvider.autoDispose
       final agentId = await _hostedAgentId(ref, key.agentPubkey);
       if (client == null || agentId == null) {
         throw const DelegationApiException(null, 'agent_not_hosted');
+      }
+      if (key.view.kind == 'export') {
+        return AgentDmSessionViewRead.export(
+          await readAgentDmSessionExport(client, agentId),
+        );
       }
       final body = await client.send(
         'GET',
@@ -587,6 +671,25 @@ class AgentDmSessionViewActions {
         )),
       );
     }
+  }
+
+  /// Ask the session to stop one background task, then read the screen again.
+  /// A request: only a later read says it stopped.
+  Future<void> stopTask(String agentPubkey, String taskId) async {
+    final client = _ref.read(delegationClientProvider);
+    final agentId = await _hostedAgentId(_ref, agentPubkey);
+    if (client == null || agentId == null || !_taskId.hasMatch(taskId)) {
+      throw const DelegationApiException(null, 'agent_not_hosted');
+    }
+    await client.send('POST', agentDmStopTaskPath(agentId, taskId), {
+      'idempotency_key': const Uuid().v4(),
+    });
+    _ref.invalidate(
+      agentDmSessionViewProvider((
+        agentPubkey: agentPubkey.toLowerCase(),
+        view: const AgentDmSessionView.screen('agents'),
+      )),
+    );
   }
 
   /// Esc in the session's pane: the running step stops, the session stays.
