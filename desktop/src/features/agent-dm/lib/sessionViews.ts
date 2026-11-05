@@ -629,7 +629,10 @@ export function sessionViewErrorSentence(error: unknown): string {
   if (code === "harness_session_message_invalid") {
     return "A message can't be empty.";
   }
-  if (code === "session_export_incomplete") {
+  if (
+    code === "session_export_incomplete" ||
+    code === "session_export_page_too_large"
+  ) {
     return "Couldn't read the whole conversation, so nothing was exported.";
   }
   return "Couldn't reach the session. Try again.";
