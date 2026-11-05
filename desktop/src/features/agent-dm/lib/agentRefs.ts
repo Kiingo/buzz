@@ -15,13 +15,20 @@ import type { AgentSlashCommand } from "./slashCommands";
  * only a request: Kiingo checks each again, for the author's own message in
  * a private DM, and the agent gets the ones that resolve. No count limit.
  *
+ * "/file" (BZ-FILES, 79 2026-11-05 D4) lists file names in the reader's own
+ * session's project folder (the host's `agents/<id>/session/files`, the
+ * apps' own files list). A pick puts the path in the draft and the send
+ * carries one `["buzz-file", path]` tag for each path still in the text:
+ * names only, checked again by the host with the chat's own path rule.
+ *
  * Community-scoped: `resetAgentRefs()` runs in resetCommunityState().
  */
 
-export type AgentRefType = "task" | "project";
+export type AgentRefType = "task" | "project" | "file";
 
 export type AgentRef = {
   type: AgentRefType;
+  /** A task's or project's id; a file's path in its project folder. */
   id: string;
   title: string;
   /** "In your queue with Scout" for a task in the agent's queue. */
@@ -48,6 +55,12 @@ export const AGENT_REF_COMMANDS: readonly AgentSlashCommand[] = [
     description: "Reference a project",
     usage: "/project",
   },
+  {
+    kind: "session",
+    name: "file",
+    description: "Reference a file",
+    usage: "/file",
+  },
 ];
 
 /**
@@ -58,11 +71,16 @@ export const AGENT_REF_COMMANDS: readonly AgentSlashCommand[] = [
 export function agentRefTypeFor(command: unknown): AgentRefType | null {
   if (command === AGENT_REF_COMMANDS[0]) return "task";
   if (command === AGENT_REF_COMMANDS[1]) return "project";
+  if (command === AGENT_REF_COMMANDS[2]) return "file";
   return null;
 }
 
 /** What a pick puts in the draft. */
-export function agentRefLabel(ref: Pick<AgentRef, "type" | "title">): string {
+export function agentRefLabel(
+  ref: Pick<AgentRef, "type" | "id" | "title">,
+): string {
+  // A file is its path, as typed in the apps' "@" picker.
+  if (ref.type === "file") return ref.id;
   const title = ref.title.replace(/\s+/gu, " ").trim();
   return `${ref.type}: ${title || "untitled"}`;
 }
@@ -119,7 +137,11 @@ export function agentRefTags(
     const key = `${pick.type}:${pick.id}`;
     if (seen.has(key) || !text.includes(pick.label)) continue;
     seen.add(key);
-    tags.push(["buzz-ref", pick.type, pick.id]);
+    tags.push(
+      pick.type === "file"
+        ? ["buzz-file", pick.id]
+        : ["buzz-ref", pick.type, pick.id],
+    );
   }
   return tags;
 }
@@ -220,12 +242,111 @@ export async function searchAgentRefs(
   return read;
 }
 
+// ---- "/file": names in the reader's own session's project folder ----
+
+export type SessionFileRow = {
+  path: string;
+  kind: "file" | "directory" | "symlink" | "other";
+};
+
+export type SessionFilePage =
+  | { state: "ok"; entries: SessionFileRow[]; nextCursor: string | null }
+  /** The host's own sentence (folder missing, machine offline …). */
+  | { state: "unavailable"; note: string };
+
+const FILE_KINDS: ReadonlySet<unknown> = new Set([
+  "file",
+  "directory",
+  "symlink",
+  "other",
+]);
+
+/** The host's `{ data }`: a page of names, or why there is none. */
+export function parseSessionFiles(body: unknown): SessionFilePage | null {
+  const data =
+    body && typeof body === "object" ? (body as { data?: unknown }).data : null;
+  if (!data || typeof data !== "object") return null;
+  const value = data as Record<string, unknown>;
+  if (value.state === "unavailable") {
+    return {
+      state: "unavailable",
+      note:
+        typeof value.note === "string" && value.note
+          ? value.note
+          : "This session's files can't be listed right now.",
+    };
+  }
+  if (value.state !== "ok" || !Array.isArray(value.entries)) return null;
+  const entries: SessionFileRow[] = [];
+  for (const item of value.entries) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    if (
+      typeof row.path !== "string" ||
+      !row.path ||
+      !FILE_KINDS.has(row.kind)
+    ) {
+      continue;
+    }
+    entries.push({ path: row.path, kind: row.kind as SessionFileRow["kind"] });
+  }
+  return {
+    state: "ok",
+    entries,
+    nextCursor:
+      typeof value.next_cursor === "string" && value.next_cursor
+        ? value.next_cursor
+        : null,
+  };
+}
+
+/**
+ * `dir` (a folder to list) or `q` (a search), never both, and `cursor` for
+ * the next page; each at most once, percent-encoded.
+ */
+export const sessionFilesPath = (
+  agentId: string,
+  input: { dir?: string | null; query?: string | null; cursor?: string | null },
+) => {
+  const q = input.query?.trim() ?? "";
+  const params = [
+    q
+      ? `q=${encodeURIComponent(q)}`
+      : input.dir
+        ? `dir=${encodeURIComponent(input.dir)}`
+        : null,
+    input.cursor ? `cursor=${encodeURIComponent(input.cursor)}` : null,
+  ].filter((part): part is string => part !== null);
+  return `agents/${agentId}/session/files${params.length ? `?${params.join("&")}` : ""}`;
+};
+
+/** Throws on a failed read; the picker says so and offers Try again. */
+export async function listSessionFiles(
+  agentPublicKey: string,
+  input: { dir?: string | null; query?: string | null; cursor?: string | null },
+): Promise<SessionFilePage> {
+  const key = normalize(agentPublicKey);
+  if (!key) throw new AgentCallApiError(null, "agent_not_hosted");
+  await ensureAgentSummary(key);
+  const id = cachedAgentSummary(key)?.agentId ?? null;
+  if (!id || !UUID_RE.test(id)) {
+    throw new AgentCallApiError(null, "agent_not_hosted");
+  }
+  const read = parseSessionFiles(
+    await request<unknown>("GET", sessionFilesPath(id.toLowerCase(), input)),
+  );
+  if (!read) throw new AgentCallApiError(null, "response_malformed");
+  return read;
+}
+
 /** A failed search in plain words. */
 export function agentRefsErrorSentence(error: unknown): string {
   const code = error instanceof AgentCallApiError ? error.code : null;
   return code === "agent_not_hosted"
     ? "This agent has no host, so there is nothing to reference here."
-    : "Couldn't search right now. Try again.";
+    : code === "session_not_found"
+      ? "This conversation has no session, so there are no files to reference."
+      : "Couldn't search right now. Try again.";
 }
 
 export function resetAgentRefs() {

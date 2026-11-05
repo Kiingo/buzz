@@ -193,10 +193,34 @@ fn is_chat_refs_query(query: &str) -> bool {
     })
 }
 
+/// The "Reference a file" list in the reader's own DM (BZ-FILES, 79
+/// 2026-11-05 D4): `dir` (a folder), `q` (a search) and `cursor` (the next
+/// page), each percent-encoded and at most once. The host lists names in
+/// the signer's own bound session's folder only.
+fn is_session_files_query(query: &str) -> bool {
+    let mut seen: Vec<&str> = Vec::new();
+    query.split('&').all(|pair| {
+        let Some((key, value)) = pair.split_once('=') else {
+            return false;
+        };
+        if seen.contains(&key) || !matches!(key, "dir" | "q" | "cursor") {
+            return false;
+        }
+        seen.push(key);
+        value.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'%' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+                )
+        })
+    })
+}
+
 /// The call route `path` (relative to the mount) if it is one this command
 /// may reach, else `None`. A query string is allowed only on the feed, the
-/// delegation cards long-poll, the owner chat head, the settings read and
-/// the reference search.
+/// delegation cards long-poll, the owner chat head, the settings read, the
+/// reference search and the session files list.
 /// The session screens the host serves read-only to the Buzz app.
 const SESSION_SCREENS: [&str; 9] = [
     "config",
@@ -249,16 +273,18 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         }
         // The reader's own session, read from their DM (BUZZPARITY B3+B4):
         // its "/" built-ins, read-only screens, files changed and their own
-        // queued messages; Withdraw one, and Interrupt. The host picks the
-        // session; none of these names one.
+        // queued messages; Withdraw or Edit one (BZ-QEDIT), and Interrupt.
+        // The host picks the session; none of these names one.
         ["agents", agent, "commands"] => get && is_uuid(agent),
         ["agents", agent, "session", "screens", screen] => {
             get && is_uuid(agent) && SESSION_SCREENS.contains(screen)
         }
         ["agents", agent, "session", "file-changes" | "queued"] => get && is_uuid(agent),
-        ["agents", agent, "session", "queued", id, "withdraw"] => {
+        ["agents", agent, "session", "queued", id, "withdraw" | "edit"] => {
             post && is_uuid(agent) && is_uuid(id)
         }
+        // File names in that session's folder, for "Reference a file".
+        ["agents", agent, "session", "files"] => get && is_uuid(agent),
         ["agents", agent, "session", "interrupt"] => post && is_uuid(agent),
         // The tasks and projects the reader can reference (B5).
         ["agents", agent, "chat", "refs"] => get && is_uuid(agent),
@@ -315,6 +341,12 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         Some(query)
             if matches!(parts.as_slice(), ["agents", _, "chat", "refs"])
                 && is_chat_refs_query(query) =>
+        {
+            Some(format!("{route}?{query}"))
+        }
+        Some(query)
+            if matches!(parts.as_slice(), ["agents", _, "session", "files"])
+                && is_session_files_query(query) =>
         {
             Some(format!("{route}?{query}"))
         }
@@ -582,7 +614,8 @@ mod tests {
             &format!("agents/{CALL}/session/queued/not-an-id/withdraw")
         )
         .is_none());
-        assert!(allowed_path("POST", &format!("agents/{CALL}/session/queued/{id}/edit")).is_none());
+        let edit = format!("agents/{CALL}/session/queued/{id}/edit");
+        assert_eq!(allowed_path("POST", &edit), Some(edit.clone()));
         assert!(allowed_path("GET", &interrupt).is_none());
         assert!(allowed_path("POST", "agents/not-an-id/session/interrupt").is_none());
         assert!(allowed_path("POST", &format!("agents/{CALL}/session/terminal/keys")).is_none());

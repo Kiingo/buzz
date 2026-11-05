@@ -1,6 +1,10 @@
 import * as React from "react";
 import { toast } from "sonner";
 
+import {
+  AgentCallApiError,
+  newIdempotencyKey,
+} from "@/features/agent-call/lib/agentCallApi";
 import { Button } from "@/shared/ui/button";
 import {
   Dialog,
@@ -9,12 +13,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
+import { Textarea } from "@/shared/ui/textarea";
 
 import {
   type FileChange,
   loadFileChanges,
   loadQueuedMessages,
   loadSessionScreen,
+  editQueuedMessage,
   type QueuedMessage,
   type SessionScreen,
   type SessionView,
@@ -47,10 +53,17 @@ async function readView(agent: string, view: SessionView): Promise<Read> {
   }
 }
 
+/** An Edit in progress: one key per text sent, so a retried Save is a replay. */
+type Editing = {
+  messageId: string;
+  draft: string;
+  sent: { text: string; key: string } | null;
+};
+
 /**
  * One read-only view of the reader's own session, opened from the panel or
  * "/": a screen, the files it changed, or their own queued messages (each
- * with Withdraw). A failed read keeps what showed and says so; it never
+ * with Edit and Withdraw). A failed read keeps what showed and says so; it never
  * shows as empty. Every word here is the session's or a tool's: plain text.
  */
 export function AgentSessionView({
@@ -66,6 +79,8 @@ export function AgentSessionView({
   const [failed, setFailed] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [withdrawing, setWithdrawing] = React.useState<string | null>(null);
+  const [editing, setEditing] = React.useState<Editing | null>(null);
+  const [saving, setSaving] = React.useState(false);
   const latest = React.useRef(0);
 
   const load = React.useCallback(async () => {
@@ -99,6 +114,33 @@ export function AgentSessionView({
       toast.error(sessionViewErrorSentence(error));
     } finally {
       setWithdrawing(null);
+    }
+  };
+
+  /**
+   * Save once: a failed Save keeps the editor and its key, so Save again is
+   * the same edit. Taken meanwhile (409) says so and reloads; never resends.
+   */
+  const save = async () => {
+    if (!editing || saving) return;
+    const text = editing.draft;
+    const key =
+      editing.sent?.text === text ? editing.sent.key : newIdempotencyKey();
+    setEditing({ ...editing, sent: { text, key } });
+    setSaving(true);
+    try {
+      await editQueuedMessage(agentPubkey, editing.messageId, text, key);
+      setEditing(null);
+      toast.success("Edited. The session gets the new text.");
+      await load();
+    } catch (error) {
+      toast.error(sessionViewErrorSentence(error));
+      if (error instanceof AgentCallApiError && error.status === 409) {
+        setEditing(null);
+        await load();
+      }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -156,24 +198,76 @@ export function AgentSessionView({
                   key={message.messageId}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="whitespace-pre-wrap break-words">
-                      {message.body}
-                    </p>
+                    {editing?.messageId === message.messageId ? (
+                      <Textarea
+                        aria-label="Edit your queued message"
+                        autoFocus
+                        className="min-h-20"
+                        disabled={saving}
+                        onChange={(event) =>
+                          setEditing({ ...editing, draft: event.target.value })
+                        }
+                        value={editing.draft}
+                      />
+                    ) : (
+                      <p className="whitespace-pre-wrap break-words">
+                        {message.body}
+                      </p>
+                    )}
                     {message.idle ? (
                       <p className="text-xs text-muted-foreground">
                         Waits for the session to be idle.
                       </p>
                     ) : null}
                   </div>
-                  <Button
-                    disabled={withdrawing !== null}
-                    onClick={() => void withdraw(message.messageId)}
-                    size="xs"
-                    type="button"
-                    variant="outline"
-                  >
-                    Withdraw
-                  </Button>
+                  {editing?.messageId === message.messageId ? (
+                    <>
+                      <Button
+                        disabled={saving || !editing.draft.trim()}
+                        onClick={() => void save()}
+                        size="xs"
+                        type="button"
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        disabled={saving}
+                        onClick={() => setEditing(null)}
+                        size="xs"
+                        type="button"
+                        variant="outline"
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        disabled={withdrawing !== null || editing !== null}
+                        onClick={() =>
+                          setEditing({
+                            messageId: message.messageId,
+                            draft: message.body,
+                            sent: null,
+                          })
+                        }
+                        size="xs"
+                        type="button"
+                        variant="outline"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        disabled={withdrawing !== null || editing !== null}
+                        onClick={() => void withdraw(message.messageId)}
+                        size="xs"
+                        type="button"
+                        variant="outline"
+                      >
+                        Withdraw
+                      </Button>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>

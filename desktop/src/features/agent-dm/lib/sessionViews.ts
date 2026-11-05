@@ -13,10 +13,10 @@ import { cachedAgentSummary, ensureAgentSummary } from "./agentSummary";
  * host's `agents/<id>/session/...` routes on the Buzz mount, which pick the
  * session themselves: the signer's own conversation's session, or 404.
  *
- * Everything here reads, except Withdraw (the reader's own queued message)
- * and Interrupt (Esc; the session keeps going). Nothing writes a setting,
- * types into a pane or runs a passkey command; the host strips every write
- * action from a screen. Every word shown is the session's or a tool's:
+ * Everything here reads, except Withdraw and Edit (the reader's own queued
+ * message) and Interrupt (Esc; the session keeps going). Nothing writes a
+ * setting, types into a pane or runs a passkey command; the host strips
+ * every write action from a screen. Every word shown is the session's or a tool's:
  * untrusted, plain text.
  *
  * Community-scoped: `resetSessionViewsCache()` runs in resetCommunityState().
@@ -100,10 +100,22 @@ export type SessionBuiltin = {
   view: SessionView;
 };
 
+/**
+ * A "/" row sent as typed (/review, /init): the host starts the chat's own
+ * server-fixed turn for it in the reader's own DM (BZ-REVIEW, 79 2026-11-05
+ * D2). `takesWords`: the person's own words may follow (/review).
+ */
+export type SessionPromptRow = {
+  name: string;
+  description: string;
+  takesWords: boolean;
+};
+
 export type SessionBuiltins = {
   /** `tmux`: the session runs in a pane, so Interrupt applies. */
   lane: "tmux" | "managed";
   rows: SessionBuiltin[];
+  prompts: SessionPromptRow[];
 };
 
 const text = (value: unknown): string | null =>
@@ -216,16 +228,18 @@ export function parseQueuedMessages(body: unknown): QueuedMessage[] | null {
 }
 
 /**
- * The "/" rows this client opens as views: a screen, or the files changed.
- * Rows the panel already has (/model, /usage …), rows that go as text
- * (/new) and rows this session can't run are left to their own paths. The
- * host lists no passkey or prompt row to the Buzz app.
+ * The "/" rows this client opens as views (a screen, or the files changed),
+ * and the prompt rows it sends as typed (/review, /init). Rows the panel
+ * already has (/model, /usage …), rows that go as text (/new) and rows this
+ * session can't run are left to their own paths. The host lists no passkey
+ * row to the Buzz app.
  */
 export function parseSessionBuiltins(body: unknown): SessionBuiltins | null {
   const value = record(body);
   const session = record(value?.session);
   if (!value || !session || !Array.isArray(value.commands)) return null;
   const rows: SessionBuiltin[] = [];
+  const prompts: SessionPromptRow[] = [];
   const seen = new Set<string>();
   for (const raw of value.commands) {
     const entry = record(raw);
@@ -233,6 +247,15 @@ export function parseSessionBuiltins(body: unknown): SessionBuiltins | null {
     const name = text(entry?.name);
     if (entry?.kind !== "session" || !action || !name) continue;
     if (!/^[a-z][a-z0-9-]{0,31}$/u.test(name) || seen.has(name)) continue;
+    if (action.kind === "prompt") {
+      seen.add(name);
+      prompts.push({
+        name,
+        description: text(entry.description)?.slice(0, 300) ?? "",
+        takesWords: action.takes_words === true,
+      });
+      continue;
+    }
     const view: SessionView | null =
       action.kind === "screen" && isScreenName(action.screen)
         ? { kind: "screen", screen: action.screen }
@@ -247,7 +270,11 @@ export function parseSessionBuiltins(body: unknown): SessionBuiltins | null {
       view,
     });
   }
-  return { lane: session.lane === "tmux" ? "tmux" : "managed", rows };
+  return {
+    lane: session.lane === "tmux" ? "tmux" : "managed",
+    rows,
+    prompts,
+  };
 }
 
 /** A whole message that names a listed view row, exactly `/name`. */
@@ -271,6 +298,8 @@ export const queuedPath = (agentId: string) =>
   `agents/${agentId}/session/queued`;
 export const withdrawPath = (agentId: string, messageId: string) =>
   `agents/${agentId}/session/queued/${messageId}/withdraw`;
+export const editPath = (agentId: string, messageId: string) =>
+  `agents/${agentId}/session/queued/${messageId}/edit`;
 export const interruptPath = (agentId: string) =>
   `agents/${agentId}/session/interrupt`;
 
@@ -443,6 +472,28 @@ export async function withdrawQueuedMessage(
   );
 }
 
+/**
+ * Edit the reader's own queued message (BZ-QEDIT, 79 2026-11-05 D3): it is
+ * replaced by `body`, as an edit in the apps. One key per Save, so a retry
+ * of the same Save never sends twice. Throws when it was taken meanwhile.
+ */
+export async function editQueuedMessage(
+  agentPublicKey: string,
+  messageId: string,
+  body: string,
+  idempotencyKey: string,
+): Promise<void> {
+  const key = normalize(agentPublicKey);
+  if (!key || !UUID_RE.test(messageId)) {
+    throw new AgentCallApiError(null, "harness_session_message_not_found");
+  }
+  await request<unknown>(
+    "POST",
+    editPath(await hostedAgentId(key), messageId.toLowerCase()),
+    { body, idempotency_key: idempotencyKey },
+  );
+}
+
 /** Esc in the session's pane: the running step stops, the session stays. */
 export async function interruptSession(agentPublicKey: string): Promise<void> {
   const key = normalize(agentPublicKey);
@@ -461,8 +512,14 @@ export function sessionViewErrorSentence(error: unknown): string {
   if (code === "session_taken_over") {
     return "This session is taken over at its machine, so Interrupt is there.";
   }
-  if (code === "harness_session_message_not_found") {
+  if (
+    code === "harness_session_message_not_found" ||
+    code === "harness_session_message_not_editable"
+  ) {
     return "That message isn't waiting any more.";
+  }
+  if (code === "harness_session_message_invalid") {
+    return "A message can't be empty.";
   }
   return "Couldn't reach the session. Try again.";
 }

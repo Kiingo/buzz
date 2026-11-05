@@ -195,7 +195,11 @@ function withSetupCommands(
   const viewRows = (views?.rows ?? []).filter(
     (row) => !setupNames.has(row.name),
   );
-  const entries = [...setup, ...viewRows];
+  // /review and /init, sent as typed (BZ-REVIEW).
+  const promptRows = (views?.prompts ?? []).filter(
+    (row) => !setupNames.has(row.name),
+  );
+  const entries = [...setup, ...viewRows, ...promptRows];
   const names = new Set<string>(entries.map((entry) => entry.name));
   const others = commands.filter((command) => !names.has(command.name));
   return [
@@ -389,12 +393,18 @@ export function useAgentSlashCommands({
   const setupPanel = mode === "dm" && dmPeer ? getSessionSetup(dmPeer) : null;
   const sessionViews =
     mode === "dm" && dmPeer ? getSessionBuiltins(dmPeer) : null;
+  const sessionViewsRef = React.useRef(sessionViews);
+  sessionViewsRef.current = sessionViews;
   const commands = React.useMemo(() => {
     const merged = searched ? mergeCommands(searched, listed) : listed;
     const base = setupPanel
       ? withSetupCommands(merged, setupPanel, sessionViews)
       : merged;
-    return refsOffered ? [...base, ...AGENT_REF_COMMANDS] : base;
+    // "/file" (BZ-FILES) needs the reader's own session to list.
+    const refs = AGENT_REF_COMMANDS.filter(
+      (command) => agentRefTypeFor(command) !== "file" || sessionViews,
+    );
+    return refsOffered ? [...base, ...refs] : base;
   }, [listed, refsOffered, searched, setupPanel, sessionViews]);
   /** What a send is checked against: the list, plus skills picked from a
    * search. */
@@ -644,6 +654,17 @@ export function useAgentSlashCommands({
       }
       if (slashCommandNeedsConfirm(item)) {
         setPendingConfirm({ command: item, edit, actions });
+        return;
+      }
+      // /review takes the person's own words after it, so it waits for them.
+      const prompt =
+        mode === "dm" && item.kind === "session"
+          ? sessionViewsRef.current?.prompts.find(
+              (row) => row.name === item.name,
+            )
+          : undefined;
+      if (prompt?.takesWords) {
+        actions.applyEdit({ ...edit, insertText: `/${item.name} ` });
         return;
       }
       if (replaced) {
