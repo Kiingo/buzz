@@ -16,14 +16,24 @@ import {
 import { invokeTauri } from "@/shared/api/tauri";
 import { Textarea } from "@/shared/ui/textarea";
 
-import { readSessionExport, type SessionExport } from "../lib/sessionExport";
+import {
+  type ExportTurn,
+  parseExportPage,
+  readSessionExport,
+  type SessionExport,
+} from "../lib/sessionExport";
 import {
   type FileChange,
   loadFileChanges,
   loadQueuedMessages,
   loadSessionScreen,
+  loadSubagentPage,
   editQueuedMessage,
   type QueuedMessage,
+  type RewindControl,
+  type RewindScope,
+  rewindRefusal,
+  rewindSession,
   type SessionScreen,
   type SessionView,
   sessionViewErrorSentence,
@@ -36,14 +46,32 @@ type Read =
   | { kind: "screen"; screen: SessionScreen }
   | { kind: "files"; changes: FileChange[] }
   | { kind: "queued"; messages: QueuedMessage[] }
-  | { kind: "export"; file: SessionExport };
+  | { kind: "export"; file: SessionExport }
+  | { kind: "subagent"; turns: ExportTurn[]; olderCursor: string | null };
 
 const VIEW_TITLE: Record<SessionView["kind"], string> = {
   screen: "Session",
   files: "Files changed",
   queued: "Queued messages",
   export: "Export conversation",
+  subagent: "Subagent",
 };
+
+/** One page of a subagent, oldest turn first. A bad page is a failed read. */
+async function readSubagentPage(
+  agent: string,
+  sessionId: string,
+  before: string | null,
+): Promise<{ turns: ExportTurn[]; olderCursor: string | null }> {
+  const page = parseExportPage(
+    await loadSubagentPage(agent, sessionId, before),
+  );
+  if (!page) throw new AgentCallApiError(null, "response_malformed");
+  return {
+    turns: page.turns,
+    olderCursor: page.hasMore ? page.olderCursor : null,
+  };
+}
 
 async function readView(agent: string, view: SessionView): Promise<Read> {
   switch (view.kind) {
@@ -58,6 +86,11 @@ async function readView(agent: string, view: SessionView): Promise<Read> {
       return { kind: "queued", messages: await loadQueuedMessages(agent) };
     case "export":
       return { kind: "export", file: await readSessionExport(agent) };
+    case "subagent":
+      return {
+        kind: "subagent",
+        ...(await readSubagentPage(agent, view.sessionId, null)),
+      };
   }
 }
 
@@ -70,19 +103,27 @@ type Editing = {
 
 /**
  * One read-only view of the reader's own session, opened from the panel or
- * "/": a screen, the files it changed, or their own queued messages (each
- * with Edit and Withdraw). A failed read keeps what showed and says so; it never
+ * "/": a screen, the files it changed, one of its subagents, or their own queued
+ * messages (each with Edit and Withdraw). A failed read keeps what showed and says so; it never
  * shows as empty. Every word here is the session's or a tool's: plain text.
  */
 export function AgentSessionView({
   agentPubkey,
   onClose,
-  view,
+  view: asked,
 }: {
   agentPubkey: string;
   onClose: () => void;
   view: SessionView | null;
 }) {
+  // A subagent opened from the `agents` screen, with Back to that screen.
+  const [child, setChild] = React.useState<SessionView | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new ask resets it
+  React.useEffect(() => {
+    setChild(null);
+  }, [asked]);
+  const view = asked ? (child ?? asked) : null;
+  const [olderFailed, setOlderFailed] = React.useState<string | null>(null);
   const [read, setRead] = React.useState<Read | null>(null);
   const [failed, setFailed] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -109,8 +150,33 @@ export function AgentSessionView({
 
   React.useEffect(() => {
     setRead(null);
+    setOlderFailed(null);
     void load();
   }, [load]);
+
+  const readOlder = async () => {
+    if (read?.kind !== "subagent" || !read.olderCursor) return;
+    if (view?.kind !== "subagent") return;
+    setOlderFailed(null);
+    try {
+      const older = await readSubagentPage(
+        agentPubkey,
+        view.sessionId,
+        read.olderCursor,
+      );
+      const shown = new Set(read.turns.map((turn) => turn.id));
+      setRead({
+        kind: "subagent",
+        turns: [
+          ...older.turns.filter((turn) => !shown.has(turn.id)),
+          ...read.turns,
+        ],
+        olderCursor: older.olderCursor,
+      });
+    } catch (error) {
+      setOlderFailed(sessionViewErrorSentence(error));
+    }
+  };
 
   const withdraw = async (messageId: string) => {
     setWithdrawing(messageId);
@@ -155,9 +221,11 @@ export function AgentSessionView({
   const title =
     read?.kind === "screen" && read.screen.title
       ? read.screen.title
-      : view
-        ? VIEW_TITLE[view.kind]
-        : "";
+      : view?.kind === "subagent"
+        ? view.name
+        : view
+          ? VIEW_TITLE[view.kind]
+          : "";
   return (
     <Dialog onOpenChange={(open) => (open ? null : onClose())} open={!!view}>
       <DialogContent
@@ -169,7 +237,9 @@ export function AgentSessionView({
           <DialogDescription>
             {read?.kind === "screen" && read.screen.description
               ? read.screen.description
-              : view?.kind === "export"
+              : view?.kind === "subagent"
+                ? "Read only: this subagent's messages and tool names, from your own session."
+                : view?.kind === "export"
                 ? "Saves your conversation with this agent as a file. Nothing is sent anywhere."
                 : "Read only, from your own session with this agent."}
           </DialogDescription>
@@ -192,11 +262,33 @@ export function AgentSessionView({
             Loading…
           </p>
         ) : null}
+        {child ? (
+          <div>
+            <Button
+              onClick={() => setChild(null)}
+              size="xs"
+              type="button"
+              variant="outline"
+            >
+              Back
+            </Button>
+          </div>
+        ) : null}
         {read?.kind === "screen" ? (
           <ScreenBody
             agentPubkey={agentPubkey}
+            onOpenSubagent={(sessionId, name) =>
+              setChild({ kind: "subagent", sessionId, name })
+            }
             onStopped={() => void load()}
             screen={read.screen}
+          />
+        ) : null}
+        {read?.kind === "subagent" ? (
+          <SubagentBody
+            failed={olderFailed}
+            onOlder={read.olderCursor ? () => void readOlder() : null}
+            turns={read.turns}
           />
         ) : null}
         {read?.kind === "export" ? <ExportBody file={read.file} /> : null}
@@ -392,12 +484,207 @@ function StopTaskButton({
   );
 }
 
+/** One subagent's conversation, oldest first: plain text, read only. */
+function SubagentBody({
+  failed,
+  onOlder,
+  turns,
+}: {
+  failed: string | null;
+  onOlder: (() => void) | null;
+  turns: ExportTurn[];
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      {failed ? (
+        <p className="text-sm" role="alert">
+          {failed}
+        </p>
+      ) : null}
+      {onOlder ? (
+        <div>
+          <Button onClick={onOlder} size="xs" type="button" variant="outline">
+            Older messages
+          </Button>
+        </div>
+      ) : null}
+      {turns.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Kiingo keeps no messages for this subagent yet.
+        </p>
+      ) : null}
+      {turns.map((turn) => (
+        <section
+          className="flex flex-col gap-1 text-sm"
+          data-testid="agent-session-subagent-turn"
+          key={turn.id}
+        >
+          {turn.prompt ? (
+            <p className="whitespace-pre-wrap break-words font-medium">
+              {turn.prompt.text}
+            </p>
+          ) : null}
+          {turn.omitted > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              {`${turn.omitted} earlier steps not shown`}
+            </p>
+          ) : null}
+          {turn.items.length > 0 ? (
+            <ul className="flex flex-col text-xs text-muted-foreground">
+              {turn.items.map((item, index) => (
+                // Steps have no id; their order is the turn's.
+                // biome-ignore lint/suspicious/noArrayIndexKey: read-only list
+                <li className="break-words" key={index}>
+                  {[item.action ?? item.name, item.line]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {turn.reply ? (
+            <p className="whitespace-pre-wrap break-words">{turn.reply.text}</p>
+          ) : null}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+const REWIND_SCOPE_LABEL: Record<RewindScope, string> = {
+  conversation: "The conversation",
+  files: "The code",
+  both: "The conversation and the code",
+};
+
+/**
+ * /rewind, as in the apps: pick what goes back, then confirm. The confirm says
+ * the code is restored when the next message starts, with the edits since. How
+ * it came out is the chat's own line after that message.
+ */
+function RewindButton({
+  agentPubkey,
+  control,
+  edits,
+  onDone,
+}: {
+  agentPubkey: string;
+  control: RewindControl;
+  edits: string | null;
+  onDone: () => void;
+}) {
+  const key = React.useRef(newIdempotencyKey());
+  const [open, setOpen] = React.useState(false);
+  const [scope, setScope] = React.useState<RewindScope | null>(
+    control.scopes[0] ?? null,
+  );
+  const [sending, setSending] = React.useState(false);
+  const [refused, setRefused] = React.useState<string | null>(null);
+  if (control.unavailable || control.scopes.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {control.unavailable ?? "Nothing here can go back."}
+      </p>
+    );
+  }
+  if (!open) {
+    return (
+      <Button
+        className="mt-1"
+        data-testid="agent-session-rewind"
+        onClick={() => setOpen(true)}
+        size="xs"
+        type="button"
+        variant="outline"
+      >
+        Go back to here
+      </Button>
+    );
+  }
+  const send = async () => {
+    if (!scope) return;
+    setSending(true);
+    setRefused(null);
+    try {
+      toast.success(
+        await rewindSession(agentPubkey, control, scope, key.current),
+      );
+      key.current = newIdempotencyKey();
+      setOpen(false);
+      onDone();
+    } catch (error) {
+      const refusal = rewindRefusal(error);
+      if (refusal.readAgain) {
+        key.current = newIdempotencyKey();
+        toast.error(refusal.sentence);
+        setOpen(false);
+        onDone();
+      } else {
+        setRefused(refusal.sentence);
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+  const restoresCode = scope === "files" || scope === "both";
+  return (
+    <form
+      className="mt-1 flex flex-col gap-1 text-xs"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!sending) void send();
+      }}
+    >
+      <fieldset className="flex flex-col gap-1">
+        <legend className="text-muted-foreground">What goes back</legend>
+        {control.scopes.map((option) => (
+          <label className="flex items-center gap-1" key={option}>
+            <input
+              checked={scope === option}
+              disabled={sending}
+              name={`rewind-${control.turnIndex}`}
+              onChange={() => setScope(option)}
+              type="radio"
+            />
+            {REWIND_SCOPE_LABEL[option]}
+          </label>
+        ))}
+      </fieldset>
+      <p className="text-muted-foreground">
+        {restoresCode
+          ? `The code is restored when your next message starts${edits ? ` (${edits.toLowerCase()})` : ""}.`
+          : "Your next message continues from here. The code stays as it is."}
+        {scope === "conversation" || scope === "both"
+          ? " The later messages stay saved, and this session can be loaded again."
+          : ""}
+      </p>
+      {refused ? <p role="alert">{refused}</p> : null}
+      <div className="flex items-center gap-2">
+        <Button disabled={!scope || sending} size="xs" type="submit">
+          {sending ? "Going back…" : "Go back"}
+        </Button>
+        <Button
+          disabled={sending}
+          onClick={() => setOpen(false)}
+          size="xs"
+          type="button"
+          variant="outline"
+        >
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function ScreenBody({
   agentPubkey,
+  onOpenSubagent,
   onStopped,
   screen,
 }: {
   agentPubkey: string;
+  onOpenSubagent: (sessionId: string, name: string) => void;
   onStopped: () => void;
   screen: SessionScreen;
 }) {
@@ -457,6 +744,28 @@ function ScreenBody({
                     <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">
                       {row.body}
                     </pre>
+                  ) : null}
+                  {row.openSessionId ? (
+                    <Button
+                      className="mt-1"
+                      data-testid="agent-session-open-subagent"
+                      onClick={() =>
+                        onOpenSubagent(row.openSessionId as string, row.label)
+                      }
+                      size="xs"
+                      type="button"
+                      variant="outline"
+                    >
+                      Open
+                    </Button>
+                  ) : null}
+                  {row.rewind ? (
+                    <RewindButton
+                      agentPubkey={agentPubkey}
+                      control={row.rewind}
+                      edits={row.value}
+                      onDone={onStopped}
+                    />
                   ) : null}
                   {row.stopTaskId ? (
                     <StopTaskButton

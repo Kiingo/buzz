@@ -15,11 +15,13 @@ import 'agent_dm_session_export.dart';
 // session themselves: the signer's own conversation's session, or 404.
 //
 // Everything here reads, except Withdraw and Edit (the reader's own queued
-// message), Interrupt (Esc; the session keeps going) and Stop on a task. Nothing
-// writes a setting or runs a passkey command; the host strips every write
-// action from a screen, and all but `stop_task` on `agents`. Stop sends only the
-// host's own line. Every word shown is the session's or a tool's: untrusted,
-// plain text.
+// message), Interrupt (Esc; the session keeps going), Stop on a task and going
+// back to a message (/rewind). Nothing writes a setting or runs a passkey
+// command; the host strips every write action from a screen, except `stop_task`
+// and `open_session` on `agents` and `rewind` on `rewind`. Stop sends only the
+// host's own line. A subagent's page is read only, and comes over this signed
+// request, never over the relay. Every word shown is the session's or a tool's:
+// untrusted, plain text.
 
 final _uuid = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
@@ -44,6 +46,7 @@ const agentDmSessionScreens = {
   'help',
   'doctor',
   'skills',
+  'rewind',
 };
 
 /// A read-only view of the session: a screen, the files changed, or the
@@ -81,6 +84,8 @@ class AgentDmScreenRow {
     this.mono = false,
     this.stopTaskId,
     this.stopUnavailable,
+    this.openSessionId,
+    this.rewind,
   });
 
   final String label;
@@ -94,6 +99,59 @@ class AgentDmScreenRow {
 
   /// Why Stop is off for this row; it shows no button.
   final String? stopUnavailable;
+
+  /// The subagent this row opens, on the `agents` screen only.
+  final String? openSessionId;
+
+  /// Go back to this message, on the `rewind` screen only.
+  final AgentDmRewindControl? rewind;
+}
+
+/// A row's `rewind` control.
+@immutable
+class AgentDmRewindControl {
+  const AgentDmRewindControl({
+    required this.turnIndex,
+    required this.transcriptRevision,
+    required this.scopes,
+    this.unavailable,
+  });
+
+  final int turnIndex;
+  final int transcriptRevision;
+
+  /// `conversation`, `files` or `both`.
+  final List<String> scopes;
+
+  /// Why this row can't go back now; it shows no button.
+  final String? unavailable;
+}
+
+/// One turn of a subagent's conversation.
+@immutable
+class AgentDmSubagentTurn {
+  const AgentDmSubagentTurn({
+    required this.id,
+    required this.omitted,
+    required this.steps,
+    this.prompt,
+    this.reply,
+  });
+
+  final String id;
+  final String? prompt;
+  final String? reply;
+  final int omitted;
+  final List<String> steps;
+}
+
+/// One page of a subagent's conversation, oldest turn first.
+@immutable
+class AgentDmSubagentPage {
+  const AgentDmSubagentPage({required this.turns, this.olderCursor});
+
+  final List<AgentDmSubagentTurn> turns;
+  final String? olderCursor;
 }
 
 @immutable
@@ -250,8 +308,67 @@ int _count(Object? value) =>
 Map<Object?, Object?>? _map(Object? value) =>
     value is Map<Object?, Object?> ? value : null;
 
+const _rewindScopes = {'conversation', 'files', 'both'};
+
+AgentDmRewindControl? _rewindControl(Map<Object?, Object?>? control) {
+  final turn = control?['turn_index'];
+  final revision = control?['transcript_revision'];
+  final scopes = control?['scopes'];
+  if (control?['kind'] != 'rewind' ||
+      turn is! int ||
+      revision is! int ||
+      scopes is! List) {
+    return null;
+  }
+  return AgentDmRewindControl(
+    turnIndex: turn,
+    transcriptRevision: revision,
+    scopes: [
+      for (final scope in scopes)
+        if (scope is String && _rewindScopes.contains(scope)) scope,
+    ],
+    unavailable: _text(control?['unavailable_reason']),
+  );
+}
+
+/// One page of a subagent, or null when it isn't one (a failed read).
+AgentDmSubagentPage? parseAgentDmSubagentPage(Object? body) {
+  final data = _map(_map(body)?['data']);
+  final page = _map(data?['page']);
+  final rawTurns = data?['turns'];
+  if (data == null || page == null || rawTurns is! List) return null;
+  final turns = <AgentDmSubagentTurn>[];
+  for (final raw in rawTurns) {
+    final turn = _map(raw);
+    final id = _text(turn?['id']);
+    final items = turn?['items'];
+    if (turn == null || id == null || items is! List) return null;
+    turns.add(
+      AgentDmSubagentTurn(
+        id: id,
+        prompt: _text(_map(turn['prompt'])?['text']),
+        reply: _text(_map(turn['reply'])?['text']),
+        omitted: _count(turn['omitted']),
+        steps: [
+          for (final rawItem in items)
+            if (_map(rawItem) case final item?)
+              [
+                _text(item['action']) ?? _text(item['name']),
+                _text(item['line']),
+              ].nonNulls.join(' · '),
+        ],
+      ),
+    );
+  }
+  return AgentDmSubagentPage(
+    turns: turns,
+    olderCursor: page['hasMore'] == true ? _text(page['olderCursor']) : null,
+  );
+}
+
 /// A screen, read only: rows keep their words and nothing they could do, except
-/// a Stop the host left on an `agents` row.
+/// a Stop or an open subagent the host left on an `agents` row, and a go back on
+/// a `rewind` row.
 AgentDmSessionViewRead? parseAgentDmSessionScreen(Object? body) {
   final value = _map(_map(body)?['data']);
   final rawSections = value?['sections'];
@@ -284,6 +401,14 @@ AgentDmSessionViewRead? parseAgentDmSessionScreen(Object? body) {
           stopUnavailable: stopTaskId == null
               ? null
               : _text(control?['unavailable_reason']),
+          openSessionId: switch (_map(row['action'])) {
+            final action?
+                when action['kind'] == 'open_session' &&
+                    _uuid.hasMatch(_text(action['session_id']) ?? '') =>
+              (action['session_id'] as String).toLowerCase(),
+            _ => null,
+          },
+          rewind: _rewindControl(control),
         ),
       );
     }
@@ -513,6 +638,16 @@ String agentDmRenamePath(String agentId) => 'agents/$agentId/session/rename';
 String agentDmStopTaskPath(String agentId, String taskId) =>
     'agents/$agentId/session/tasks/$taskId/stop';
 
+String agentDmRewindPath(String agentId) => 'agents/$agentId/session/rewind';
+
+String agentDmSubagentPagePath(
+  String agentId,
+  String sessionId,
+  String? before,
+) =>
+    'agents/$agentId/session/subagents/$sessionId/activity'
+    '${before == null ? '' : '?before=${Uri.encodeQueryComponent(before)}'}';
+
 const _errorSentences = {
   'session_not_found': 'This conversation has no session to show right now.',
   'session_taken_over':
@@ -574,6 +709,36 @@ bool _controlIsPending(Object? body) {
 }
 
 const _controlPending = "Asked. Kiingo hasn't heard back from the session yet.";
+
+/// The apps' words for a refused go back, and whether to read the list again.
+({String sentence, bool readAgain}) agentDmRewindRefusal(Object error) {
+  final code = error is DelegationApiException ? error.code : null;
+  final status = error is DelegationApiException ? error.status : null;
+  final sentence = switch (code) {
+    'harness_session_rewind_point_unavailable' =>
+      "The conversation can't go back to this message. The code still can.",
+    'conversation_session_rewind_unsupported' =>
+      "This agent's session can't be rewound.",
+    'conversation_session_rewind_not_current' =>
+      "This isn't the chat's current session any more.",
+    'harness_session_rewind_cloud_copy' =>
+      "Kiingo can't go back to a message on a cloud chat yet.",
+    'session_taken_over' =>
+      'This session is taken over at its machine, so go back there.',
+    'caller_not_allowed' =>
+      'Only your own Buzz key can go back here, so nothing went back.',
+    _ => null,
+  };
+  if (sentence != null) return (sentence: sentence, readAgain: false);
+  // Any other 409: the chat moved on since the list was read.
+  return status == 409
+      ? (
+          sentence:
+              'This chat moved on since the list was read. Here it is again.',
+          readAgain: true,
+        )
+      : (sentence: agentDmSessionViewErrorSentence(error), readAgain: false);
+}
 
 /// A refused Stop in plain words.
 String agentDmStopTaskErrorSentence(Object error) =>
@@ -744,6 +909,53 @@ class AgentDmSessionViewActions {
     return pending
         ? _controlPending
         : 'Stop requested. The session stops the task when it reads this.';
+  }
+
+  /// One page of a direct subagent. Throws on a failed read.
+  Future<AgentDmSubagentPage> subagentPage(
+    String agentPubkey,
+    String sessionId,
+    String? before,
+  ) async {
+    final client = _ref.read(delegationClientProvider);
+    final agentId = await _hostedAgentId(_ref, agentPubkey);
+    if (client == null || agentId == null || !_uuid.hasMatch(sessionId)) {
+      throw const DelegationApiException(null, 'session_not_found');
+    }
+    final page = parseAgentDmSubagentPage(
+      await client.send(
+        'GET',
+        agentDmSubagentPagePath(agentId, sessionId.toLowerCase(), before),
+      ),
+    );
+    if (page == null) {
+      throw const DelegationApiException(null, 'response_malformed');
+    }
+    return page;
+  }
+
+  /// Go back to a message, as the apps' /rewind: the host reads the point from
+  /// the transcript and applies it with the next message. Returns the host's
+  /// own sentence. The caller keeps [idempotencyKey] for a retry of this pick.
+  Future<String> rewind(
+    String agentPubkey,
+    AgentDmRewindControl control,
+    String scope,
+    String idempotencyKey,
+  ) async {
+    final client = _ref.read(delegationClientProvider);
+    final agentId = await _hostedAgentId(_ref, agentPubkey);
+    if (client == null || agentId == null) {
+      throw const DelegationApiException(null, 'agent_not_hosted');
+    }
+    final answer = await client.send('POST', agentDmRewindPath(agentId), {
+      'turn_index': control.turnIndex,
+      'transcript_revision': control.transcriptRevision,
+      'scope': scope,
+      'idempotency_key': idempotencyKey,
+    });
+    return _text(_map(_map(_map(answer)?['data'])?['acknowledgement'])?['text']) ??
+        'Asked. Your next message goes back to that point.';
   }
 
   /// Name the reader's current session, as a rename in the apps. Empty clears

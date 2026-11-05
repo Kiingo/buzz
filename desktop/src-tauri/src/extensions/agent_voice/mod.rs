@@ -243,7 +243,8 @@ fn is_task_id(value: &str) -> bool {
 /// delegation cards long-poll, the owner chat head, the settings read, the
 /// reference search, the session files list and `/export`'s pages.
 /// The session screens the host serves read-only to the Buzz app.
-const SESSION_SCREENS: [&str; 12] = [
+const SESSION_SCREENS: [&str; 13] = [
+    "rewind",
     "config",
     "permissions",
     "mcp",
@@ -317,6 +318,12 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
             post && is_uuid(agent) && is_task_id(task)
         }
         ["agents", agent, "session", "activity"] => get && is_uuid(agent),
+        // A direct child's pages (the host checks it is one), and going back to
+        // a message in that session.
+        ["agents", agent, "session", "subagents", id, "activity"] => {
+            get && is_uuid(agent) && is_uuid(id)
+        }
+        ["agents", agent, "session", "rewind"] => post && is_uuid(agent),
         // The tasks and projects the reader can reference (B5).
         ["agents", agent, "chat", "refs"] => get && is_uuid(agent),
         ["agents", agent, "delegations", "cancel-all"] => post && is_uuid(agent),
@@ -382,8 +389,11 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
             Some(format!("{route}?{query}"))
         }
         Some(query)
-            if matches!(parts.as_slice(), ["agents", _, "session", "activity"])
-                && is_session_activity_query(query) =>
+            if matches!(
+                parts.as_slice(),
+                ["agents", _, "session", "activity"]
+                    | ["agents", _, "session", "subagents", _, "activity"]
+            ) && is_session_activity_query(query) =>
         {
             Some(format!("{route}?{query}"))
         }
@@ -639,6 +649,19 @@ mod tests {
         assert_eq!(allowed_path("POST", &withdraw), Some(withdraw.clone()));
         let interrupt = format!("agents/{CALL}/session/interrupt");
         assert_eq!(allowed_path("POST", &interrupt), Some(interrupt.clone()));
+        let rewind = format!("agents/{CALL}/session/rewind");
+        assert_eq!(allowed_path("POST", &rewind), Some(rewind.clone()));
+        assert!(allowed_path("GET", &rewind).is_none());
+        let child = format!("agents/{CALL}/session/subagents/{id}/activity");
+        assert_eq!(allowed_path("GET", &child), Some(child.clone()));
+        let older = format!("{child}?before=abc_-1");
+        assert_eq!(allowed_path("GET", &older), Some(older.clone()));
+        assert!(allowed_path("POST", &child).is_none());
+        assert!(allowed_path(
+            "GET",
+            &format!("agents/{CALL}/session/subagents/not-an-id/activity")
+        )
+        .is_none());
         // Other methods, screens, ids, queries and routes stay closed.
         assert!(allowed_path("POST", &commands).is_none());
         assert!(allowed_path("GET", &format!("{commands}?audience=group")).is_none());

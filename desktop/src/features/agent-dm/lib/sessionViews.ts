@@ -15,10 +15,12 @@ import { cachedAgentSummary, ensureAgentSummary } from "./agentSummary";
  * session, or 404.
  *
  * Everything here reads, except Withdraw and Edit (the reader's own queued
- * message), Interrupt (Esc; the session keeps going) and Stop on a task. Nothing
- * writes a setting or runs a passkey command; the host strips every write action
- * from a screen, and all but `stop_task` on `agents`. Stop sends only the
- * host's own line. Every word shown is the session's or a tool's: untrusted,
+ * message), Interrupt (Esc; the session keeps going), Stop on a task and going
+ * back to a message (/rewind). Nothing writes a setting or runs a passkey command;
+ * the host strips every write action from a screen, except `stop_task` and
+ * `open_session` on `agents` and `rewind` on `rewind`. Stop sends only the host's
+ * own line. A subagent's page is read only, and comes over this signed request,
+ * never over the relay. Every word shown is the session's or a tool's: untrusted,
  * plain text.
  *
  * Community-scoped: `resetSessionViewsCache()` runs in resetCommunityState().
@@ -45,6 +47,7 @@ export const SESSION_SCREENS = [
   "help",
   "doctor",
   "skills",
+  "rewind",
 ] as const;
 export type SessionScreenName = (typeof SESSION_SCREENS)[number];
 
@@ -52,9 +55,22 @@ export type SessionView =
   | { kind: "screen"; screen: SessionScreenName }
   | { kind: "files" }
   | { kind: "queued" }
-  | { kind: "export" };
+  | { kind: "export" }
+  /** One direct subagent of the session, opened from its `agents` row. */
+  | { kind: "subagent"; sessionId: string; name: string };
 
 // ---- Wire shapes ----
+
+export type RewindScope = "conversation" | "files" | "both";
+
+/** Go back to this message: the row's `rewind` control. */
+export type RewindControl = {
+  turnIndex: number;
+  transcriptRevision: number;
+  scopes: RewindScope[];
+  /** Why this row can't go back now; it shows no button. */
+  unavailable: string | null;
+};
 
 export type ScreenRow = {
   label: string;
@@ -66,6 +82,9 @@ export type ScreenRow = {
   stopTaskId: string | null;
   /** Why Stop is off for this row; it shows disabled. */
   stopUnavailable: string | null;
+  /** The subagent this row opens, on the `agents` screen only. */
+  openSessionId: string | null;
+  rewind: RewindControl | null;
 };
 
 export type ScreenSection = {
@@ -158,12 +177,46 @@ const stopControl = (
     : { stopTaskId: null, stopUnavailable: null };
 };
 
+const openSession = (value: unknown): string | null => {
+  const action = record(value);
+  const id = text(action?.session_id);
+  return action?.kind === "open_session" && id && UUID_RE.test(id)
+    ? id.toLowerCase()
+    : null;
+};
+
+const REWIND_SCOPES: ReadonlySet<unknown> = new Set([
+  "conversation",
+  "files",
+  "both",
+]);
+
+const rewindControl = (value: unknown): RewindControl | null => {
+  const control = record(value);
+  const { turn_index: turnIndex, transcript_revision: revision } =
+    control ?? {};
+  return control?.kind === "rewind" &&
+    Number.isSafeInteger(turnIndex) &&
+    Number.isSafeInteger(revision) &&
+    Array.isArray(control.scopes)
+    ? {
+        turnIndex: turnIndex as number,
+        transcriptRevision: revision as number,
+        scopes: control.scopes.filter((scope): scope is RewindScope =>
+          REWIND_SCOPES.has(scope),
+        ),
+        unavailable: text(control.unavailable_reason),
+      }
+    : null;
+};
+
 const isScreenName = (value: unknown): value is SessionScreenName =>
   (SESSION_SCREENS as readonly unknown[]).includes(value);
 
 /**
  * A screen, read only: rows keep their words and nothing they could do, except
- * a Stop the host left on an `agents` row.
+ * a Stop or an open subagent the host left on an `agents` row, and a go back on
+ * a `rewind` row.
  */
 export function parseSessionScreen(body: unknown): SessionScreen | null {
   const value = record(record(body)?.data);
@@ -184,6 +237,8 @@ export function parseSessionScreen(body: unknown): SessionScreen | null {
         body: text(row.body),
         mono: row.mono === true,
         ...stopControl(row.control),
+        openSessionId: openSession(row.action),
+        rewind: rewindControl(row.control),
       });
     }
     sections.push({
@@ -358,6 +413,16 @@ export const renamePath = (agentId: string) =>
   `agents/${agentId}/session/rename`;
 export const stopTaskPath = (agentId: string, taskId: string) =>
   `agents/${agentId}/session/tasks/${taskId}/stop`;
+export const subagentPagePath = (
+  agentId: string,
+  sessionId: string,
+  before: string | null,
+) =>
+  `agents/${agentId}/session/subagents/${sessionId}/activity${
+    before ? `?before=${encodeURIComponent(before)}` : ""
+  }`;
+export const rewindPath = (agentId: string) =>
+  `agents/${agentId}/session/rewind`;
 export const activityPagePath = (agentId: string, before: string | null) =>
   `agents/${agentId}/session/activity${
     before ? `?before=${encodeURIComponent(before)}` : ""
@@ -660,6 +725,107 @@ export async function loadActivityPage(
     "GET",
     activityPagePath(await hostedAgentId(key), before),
   );
+}
+
+/** One page of a direct subagent's conversation, as the host sent it. */
+export async function loadSubagentPage(
+  agentPublicKey: string,
+  sessionId: string,
+  before: string | null,
+): Promise<unknown> {
+  const key = normalize(agentPublicKey);
+  if (!key || !UUID_RE.test(sessionId)) {
+    throw new AgentCallApiError(null, "session_not_found");
+  }
+  return request<unknown>(
+    "GET",
+    subagentPagePath(await hostedAgentId(key), sessionId.toLowerCase(), before),
+  );
+}
+
+/**
+ * Go back to a message, as the apps' /rewind: the host reads the point from the
+ * transcript and applies it with the next message. Returns the host's own
+ * sentence. One key per try, so a retry of the same pick is a replay.
+ */
+export async function rewindSession(
+  agentPublicKey: string,
+  control: RewindControl,
+  scope: RewindScope,
+  idempotencyKey: string,
+): Promise<string> {
+  const key = normalize(agentPublicKey);
+  if (!key) throw new AgentCallApiError(null, "agent_not_hosted");
+  const answer = await request<unknown>(
+    "POST",
+    rewindPath(await hostedAgentId(key)),
+    {
+      turn_index: control.turnIndex,
+      transcript_revision: control.transcriptRevision,
+      scope,
+      idempotency_key: idempotencyKey,
+    },
+  );
+  return (
+    text(record(record(record(answer)?.data)?.acknowledgement)?.text) ??
+    "Asked. Your next message goes back to that point."
+  );
+}
+
+/** The apps' words for a refused go back, and when to read the list again. */
+export function rewindRefusal(error: unknown): {
+  sentence: string;
+  readAgain: boolean;
+} {
+  const code = error instanceof AgentCallApiError ? error.code : null;
+  const status = error instanceof AgentCallApiError ? error.status : null;
+  if (code === "harness_session_rewind_point_unavailable") {
+    return {
+      sentence:
+        "The conversation can't go back to this message. The code still can.",
+      readAgain: false,
+    };
+  }
+  if (code === "conversation_session_rewind_unsupported") {
+    return {
+      sentence: "This agent's session can't be rewound.",
+      readAgain: false,
+    };
+  }
+  if (code === "conversation_session_rewind_not_current") {
+    return {
+      sentence: "This isn't the chat's current session any more.",
+      readAgain: false,
+    };
+  }
+  if (code === "harness_session_rewind_cloud_copy") {
+    return {
+      sentence: "Kiingo can't go back to a message on a cloud chat yet.",
+      readAgain: false,
+    };
+  }
+  if (code === "session_taken_over") {
+    return {
+      sentence:
+        "This session is taken over at its machine, so go back there.",
+      readAgain: false,
+    };
+  }
+  if (code === "caller_not_allowed") {
+    return {
+      sentence:
+        "Only your own Buzz key can go back here, so nothing went back.",
+      readAgain: false,
+    };
+  }
+  // Any other 409: the chat moved on since the list was read.
+  return status === 409
+    ? {
+        sentence:
+          "This chat moved on since the list was read. Here it is again.",
+        readAgain: true,
+      }
+    : { sentence: sessionViewErrorSentence(error), readAgain: false };
 }
 
 /** A refused Stop in plain words. */

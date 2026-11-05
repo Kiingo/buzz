@@ -6,15 +6,17 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../shared/agent_dm/agent_dm_session_export.dart';
 import '../../../shared/agent_dm/agent_dm_session_views.dart';
 import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/modal_presentation.dart';
 
-/// Opens one read-only view of the reader's own session: a screen, the files
-/// it changed, their own queued messages (each with Edit and Withdraw), or the
-/// conversation as a file to share (`/export`).
+/// Opens one read-only view of the reader's own session: a screen (a subagent's
+/// row opens it, the /rewind screen goes back), the files it changed, their own
+/// queued messages (each with Edit and Withdraw), or the conversation as a file
+/// to share (`/export`).
 Future<void> showAgentDmSessionViewSheet(
   BuildContext context,
   String agentPubkey,
@@ -53,6 +55,7 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
     final value = read.value;
     final withdrawing = useState<String?>(null);
     final editing = useState<String?>(null);
+    final rewindKey = useRef(const Uuid().v4());
     final muted = context.textTheme.bodySmall?.copyWith(
       color: context.colors.onSurfaceVariant,
     );
@@ -127,6 +130,36 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
             .stopTask(agentPubkey, taskId);
       } catch (error) {
         text = agentDmStopTaskErrorSentence(error);
+      }
+      messenger?.showSnackBar(SnackBar(content: Text(text)));
+    }
+
+    /// /rewind, as in the apps: pick what goes back, then confirm. One key until
+    /// the host accepts it, so a retry is a replay. A 409 reads the list again.
+    Future<void> rewindTo(AgentDmRewindControl control, String? edits) async {
+      final scope = await showBuzzDialog<String>(
+        context: context,
+        builder: (_) => _RewindDialog(control: control, edits: edits),
+      );
+      if (scope == null || !context.mounted) return;
+      final actions = ref.read(agentDmSessionViewActionsProvider);
+      String text;
+      try {
+        text = await actions.rewind(
+          agentPubkey,
+          control,
+          scope,
+          rewindKey.value,
+        );
+        rewindKey.value = const Uuid().v4();
+        ref.invalidate(provider);
+      } catch (error) {
+        final refusal = agentDmRewindRefusal(error);
+        text = refusal.sentence;
+        if (refusal.readAgain) {
+          rewindKey.value = const Uuid().v4();
+          ref.invalidate(provider);
+        }
       }
       messenger?.showSnackBar(SnackBar(content: Text(text)));
     }
@@ -208,7 +241,22 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
             )
           else
             for (final row in section.rows)
-              _ScreenRow(row: row, onStop: stopTask),
+              _ScreenRow(
+                row: row,
+                onStop: stopTask,
+                onOpen: (sessionId) => unawaited(
+                  showBuzzModalBottomSheet<void>(
+                    context: context,
+                    title: row.label,
+                    isScrollControlled: true,
+                    builder: (_) => _SubagentSheet(
+                      agentPubkey: agentPubkey,
+                      sessionId: sessionId,
+                    ),
+                  ),
+                ),
+                onRewind: (control) => unawaited(rewindTo(control, row.value)),
+              ),
         ],
       ];
     } else if (value.exportFile case final file?) {
@@ -336,11 +384,191 @@ class _ExportBody extends StatelessWidget {
   );
 }
 
+/// One subagent's conversation, oldest first: plain text, read only, over this
+/// signed request and never the relay. A failed read says so.
+class _SubagentSheet extends HookConsumerWidget {
+  const _SubagentSheet({required this.agentPubkey, required this.sessionId});
+
+  final String agentPubkey;
+  final String sessionId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final turns = useState<List<AgentDmSubagentTurn>?>(null);
+    final older = useState<String?>(null);
+    final failure = useState<String?>(null);
+    final loading = useState(false);
+    final muted = context.textTheme.bodySmall?.copyWith(
+      color: context.colors.onSurfaceVariant,
+    );
+
+    Future<void> load(String? before) async {
+      loading.value = true;
+      failure.value = null;
+      try {
+        final page = await ref
+            .read(agentDmSessionViewActionsProvider)
+            .subagentPage(agentPubkey, sessionId, before);
+        if (!context.mounted) return;
+        final shown = {for (final turn in turns.value ?? const []) turn.id};
+        turns.value = [
+          ...page.turns.where((turn) => !shown.contains(turn.id)),
+          ...?turns.value,
+        ];
+        older.value = page.olderCursor;
+      } catch (error) {
+        if (context.mounted) {
+          failure.value = agentDmSessionViewErrorSentence(error);
+        }
+      } finally {
+        if (context.mounted) loading.value = false;
+      }
+    }
+
+    useEffect(() {
+      unawaited(load(null));
+      return null;
+    }, const []);
+
+    final list = turns.value;
+    return SafeArea(
+      child: ListView(
+        key: const ValueKey('agent-dm-subagent-view'),
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(horizontal: Grid.xs),
+        children: [
+          Text(
+            "Read only: this subagent's messages and tool names, from your own session.",
+            style: muted,
+          ),
+          if (failure.value case final text?)
+            Row(
+              children: [
+                Expanded(child: Text(text, style: context.textTheme.bodySmall)),
+                TextButton(
+                  onPressed: () => unawaited(load(older.value)),
+                  child: const Text('Try again'),
+                ),
+              ],
+            ),
+          if (list == null && loading.value) Text('Loading…', style: muted),
+          if (older.value case final cursor?)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: loading.value
+                    ? null
+                    : () => unawaited(load(cursor)),
+                child: const Text('Older messages'),
+              ),
+            ),
+          if (list != null && list.isEmpty)
+            Text('Kiingo keeps no messages for this subagent yet.', style: muted),
+          for (final turn in list ?? const <AgentDmSubagentTurn>[])
+            Padding(
+              key: ValueKey(turn.id),
+              padding: const EdgeInsets.only(top: Grid.xs),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (turn.prompt case final prompt?)
+                    SelectableText(
+                      prompt,
+                      style: context.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  if (turn.omitted > 0)
+                    Text('${turn.omitted} earlier steps not shown', style: muted),
+                  for (final step in turn.steps) Text(step, style: muted),
+                  if (turn.reply case final reply?) SelectableText(reply),
+                ],
+              ),
+            ),
+          const SizedBox(height: Grid.xs),
+        ],
+      ),
+    );
+  }
+}
+
+const _rewindScopeLabels = {
+  'conversation': 'The conversation',
+  'files': 'The code',
+  'both': 'The conversation and the code',
+};
+
+/// What goes back, then Go back; returns the scope, or null on Cancel. The words
+/// are the apps': the code is restored when the next message starts.
+class _RewindDialog extends HookWidget {
+  const _RewindDialog({required this.control, required this.edits});
+
+  final AgentDmRewindControl control;
+  final String? edits;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = useState(control.scopes.first);
+    final restoresCode = scope.value == 'files' || scope.value == 'both';
+    final since = edits == null ? '' : ' (${edits!.toLowerCase()})';
+    return AlertDialog.adaptive(
+      title: const Text('What goes back'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          RadioGroup<String>(
+            groupValue: scope.value,
+            onChanged: (value) {
+              if (value != null) scope.value = value;
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final option in control.scopes)
+                  RadioListTile<String>(
+                    key: ValueKey('agent-dm-rewind-scope-$option'),
+                    value: option,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(_rewindScopeLabels[option] ?? option),
+                  ),
+              ],
+            ),
+          ),
+          Text(
+            '${restoresCode ? 'The code is restored when your next message starts$since.' : 'Your next message continues from here. The code stays as it is.'}'
+            '${scope.value == 'files' ? '' : ' The later messages stay saved, and this session can be loaded again.'}',
+            style: context.textTheme.bodySmall,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('agent-dm-rewind-confirm'),
+          onPressed: () => Navigator.of(context).pop(scope.value),
+          child: const Text('Go back'),
+        ),
+      ],
+    );
+  }
+}
+
 class _ScreenRow extends StatelessWidget {
-  const _ScreenRow({required this.row, required this.onStop});
+  const _ScreenRow({
+    required this.row,
+    required this.onStop,
+    required this.onOpen,
+    required this.onRewind,
+  });
 
   final AgentDmScreenRow row;
   final ValueChanged<String> onStop;
+  final ValueChanged<String> onOpen;
+  final ValueChanged<AgentDmRewindControl> onRewind;
 
   @override
   Widget build(BuildContext context) {
@@ -380,6 +608,23 @@ class _ScreenRow extends StatelessWidget {
               ),
               child: SelectableText(body, style: mono),
             ),
+          if (row.openSessionId case final sessionId?)
+            TextButton(
+              key: ValueKey('agent-dm-open-subagent-$sessionId'),
+              onPressed: () => onOpen(sessionId),
+              child: const Text('Open'),
+            ),
+          if (row.rewind case final control?)
+            if (control.unavailable case final reason?)
+              Text(reason, style: muted)
+            else if (control.scopes.isEmpty)
+              Text('Nothing here can go back.', style: muted)
+            else
+              TextButton(
+                key: ValueKey('agent-dm-rewind-${control.turnIndex}'),
+                onPressed: () => onRewind(control),
+                child: const Text('Go back to here'),
+              ),
           if (row.stopTaskId case final taskId?)
             if (row.stopUnavailable case final reason?)
               Text(reason, style: muted)
