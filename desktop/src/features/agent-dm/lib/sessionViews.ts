@@ -552,32 +552,80 @@ export async function editQueuedMessage(
   );
 }
 
-/** Esc in the session's pane: the running step stops, the session stays. */
-export async function interruptSession(agentPublicKey: string): Promise<void> {
-  const key = normalize(agentPublicKey);
-  if (!key) throw new AgentCallApiError(null, "agent_not_hosted");
-  await request<unknown>("POST", interruptPath(await hostedAgentId(key)), {
-    idempotency_key: newIdempotencyKey(),
-  });
+/**
+ * A press the host answered 200 for and didn't carry out. Its message is the
+ * sentence to show.
+ */
+export class SessionControlNotDone extends Error {}
+
+/**
+ * The host's answer to a press: a 200 can still be refused or failed. Throws
+ * then, using the host's own `reason_text` when it gave one (each says nothing
+ * was sent). True while the host hasn't heard back from the session.
+ */
+function controlIsPending(body: unknown): boolean {
+  const answer = record(record(body)?.data);
+  const outcome = answer?.outcome;
+  if (outcome === "failed") {
+    throw new SessionControlNotDone(
+      "Kiingo can't confirm this arrived. Check the session before pressing again.",
+    );
+  }
+  if (outcome === "refused") {
+    const why = text(answer?.reason_text);
+    throw new SessionControlNotDone(
+      why
+        ? `This didn't reach the session. ${why}`
+        : "This didn't reach the session.",
+    );
+  }
+  return outcome === "pending";
 }
 
-/** Ask the session to stop one background task. A request: it may take a turn. */
+const CONTROL_PENDING = "Asked. Kiingo hasn't heard back from the session yet.";
+
+/**
+ * Esc in the session's pane: the running step stops, the session stays.
+ * Returns the sentence to show.
+ */
+export async function interruptSession(
+  agentPublicKey: string,
+): Promise<string> {
+  const key = normalize(agentPublicKey);
+  if (!key) throw new AgentCallApiError(null, "agent_not_hosted");
+  const answer = await request<unknown>(
+    "POST",
+    interruptPath(await hostedAgentId(key)),
+    { idempotency_key: newIdempotencyKey() },
+  );
+  return controlIsPending(answer)
+    ? CONTROL_PENDING
+    : "Interrupted. The session keeps going.";
+}
+
+/**
+ * Ask the session to stop one background task. A request: it may take a turn.
+ * Returns the sentence to show.
+ */
 export async function stopSessionTask(
   agentPublicKey: string,
   taskId: string,
-): Promise<void> {
+): Promise<string> {
   const key = normalize(agentPublicKey);
   if (!key) throw new AgentCallApiError(null, "agent_not_hosted");
   if (!TASK_ID_RE.test(taskId)) {
     throw new AgentCallApiError(null, "harness_session_task_id_invalid");
   }
-  await request<unknown>(
+  const answer = await request<unknown>(
     "POST",
     stopTaskPath(await hostedAgentId(key), taskId),
     {
       idempotency_key: newIdempotencyKey(),
     },
   );
+  return controlIsPending(answer)
+    ? CONTROL_PENDING
+    : "Stop requested. The session stops the task when it reads this.";
 }
 
 /** One page of the conversation for /export, as the host sent it. */
@@ -608,17 +656,24 @@ export function stopTaskErrorSentence(error: unknown): string {
   if (code === "harness_session_task_stop_unsupported") {
     return "This session can't stop one task on its own.";
   }
+  if (code === "harness_session_terminal_transport_unavailable") {
+    return "Kiingo can't stop this from Buzz right now. Use the session's terminal.";
+  }
   return sessionViewErrorSentence(error);
 }
 
 /** A refusal in plain words. */
 export function sessionViewErrorSentence(error: unknown): string {
+  if (error instanceof SessionControlNotDone) return error.message;
   const code = error instanceof AgentCallApiError ? error.code : null;
   if (code === "session_not_found") {
     return "This conversation has no session to show right now.";
   }
   if (code === "session_taken_over") {
     return "This session is taken over at its machine, so Interrupt is there.";
+  }
+  if (code === "harness_session_terminal_transport_unavailable") {
+    return "Kiingo can't interrupt this session from Buzz right now. Use its terminal.";
   }
   if (
     code === "harness_session_message_not_found" ||

@@ -345,10 +345,7 @@ function StopTaskButton({
   const stop = async () => {
     setStopping(true);
     try {
-      await stopSessionTask(agentPubkey, taskId);
-      toast.success(
-        "Stop requested. The session stops the task when it reads this.",
-      );
+      toast.success(await stopSessionTask(agentPubkey, taskId));
       onStopped();
     } catch (error) {
       toast.error(stopTaskErrorSentence(error));

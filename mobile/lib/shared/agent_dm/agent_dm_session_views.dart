@@ -515,6 +515,8 @@ const _errorSentences = {
   'session_not_found': 'This conversation has no session to show right now.',
   'session_taken_over':
       'This session is taken over at its machine, so Interrupt is there.',
+  'harness_session_terminal_transport_unavailable':
+      "Kiingo can't interrupt this session from Buzz right now. Use its terminal.",
   'harness_session_message_not_found': "That message isn't waiting any more.",
   'harness_session_message_not_editable':
       "That message isn't waiting any more.",
@@ -534,7 +536,42 @@ const _stopErrorSentences = {
   'harness_session_task_not_running': "That task isn't running any more.",
   'harness_session_task_stop_unsupported':
       "This session can't stop one task on its own.",
+  'harness_session_terminal_transport_unavailable':
+      "Kiingo can't stop this from Buzz right now. Use the session's terminal.",
 };
+
+/// A press the host answered 200 for and didn't carry out, with the sentence
+/// to show.
+class AgentDmControlNotDone implements Exception {
+  const AgentDmControlNotDone(this.sentence);
+
+  final String sentence;
+}
+
+/// The host's answer to a press: a 200 can still be refused or failed. Throws
+/// then, using the host's own `reason_text` when it gave one (each says nothing
+/// was sent). True while the host hasn't heard back from the session.
+bool _controlIsPending(Object? body) {
+  final data = body is Map ? body['data'] : null;
+  final answer = data is Map ? data : const <String, Object?>{};
+  final outcome = answer['outcome'];
+  if (outcome == 'failed') {
+    throw const AgentDmControlNotDone(
+      "Kiingo can't confirm this arrived. Check the session before pressing again.",
+    );
+  }
+  if (outcome == 'refused') {
+    final why = _text(answer['reason_text']);
+    throw AgentDmControlNotDone(
+      why == null
+          ? "This didn't reach the session."
+          : "This didn't reach the session. $why",
+    );
+  }
+  return outcome == 'pending';
+}
+
+const _controlPending = "Asked. Kiingo hasn't heard back from the session yet.";
 
 /// A refused Stop in plain words.
 String agentDmStopTaskErrorSentence(Object error) =>
@@ -544,9 +581,13 @@ String agentDmStopTaskErrorSentence(Object error) =>
     agentDmSessionViewErrorSentence(error);
 
 /// A refusal in plain words.
-String agentDmSessionViewErrorSentence(Object error) =>
-    (error is DelegationApiException ? _errorSentences[error.code] : null) ??
-    "Couldn't reach the session. Try again.";
+String agentDmSessionViewErrorSentence(Object error) {
+  if (error is AgentDmControlNotDone) return error.sentence;
+  return (error is DelegationApiException
+          ? _errorSentences[error.code]
+          : null) ??
+      "Couldn't reach the session. Try again.";
+}
 
 // ---- The host ----
 
@@ -678,33 +719,44 @@ class AgentDmSessionViewActions {
   }
 
   /// Ask the session to stop one background task, then read the screen again.
-  /// A request: only a later read says it stopped.
-  Future<void> stopTask(String agentPubkey, String taskId) async {
+  /// A request: only a later read says it stopped. Returns the sentence to
+  /// show.
+  Future<String> stopTask(String agentPubkey, String taskId) async {
     final client = _ref.read(delegationClientProvider);
     final agentId = await _hostedAgentId(_ref, agentPubkey);
     if (client == null || agentId == null || !_taskId.hasMatch(taskId)) {
       throw const DelegationApiException(null, 'agent_not_hosted');
     }
-    await client.send('POST', agentDmStopTaskPath(agentId, taskId), {
-      'idempotency_key': const Uuid().v4(),
-    });
+    final answer = await client.send(
+      'POST',
+      agentDmStopTaskPath(agentId, taskId),
+      {'idempotency_key': const Uuid().v4()},
+    );
+    final pending = _controlIsPending(answer);
     _ref.invalidate(
       agentDmSessionViewProvider((
         agentPubkey: agentPubkey.toLowerCase(),
         view: const AgentDmSessionView.screen('agents'),
       )),
     );
+    return pending
+        ? _controlPending
+        : 'Stop requested. The session stops the task when it reads this.';
   }
 
   /// Esc in the session's pane: the running step stops, the session stays.
-  Future<void> interrupt(String agentPubkey) async {
+  /// Returns the sentence to show.
+  Future<String> interrupt(String agentPubkey) async {
     final client = _ref.read(delegationClientProvider);
     final agentId = await _hostedAgentId(_ref, agentPubkey);
     if (client == null || agentId == null) {
       throw const DelegationApiException(null, 'agent_not_hosted');
     }
-    await client.send('POST', agentDmInterruptPath(agentId), {
+    final answer = await client.send('POST', agentDmInterruptPath(agentId), {
       'idempotency_key': const Uuid().v4(),
     });
+    return _controlIsPending(answer)
+        ? _controlPending
+        : 'Interrupted. The session keeps going.';
   }
 }

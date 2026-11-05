@@ -122,10 +122,9 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
       if (stop != true || !context.mounted) return;
       String text;
       try {
-        await ref
+        text = await ref
             .read(agentDmSessionViewActionsProvider)
             .stopTask(agentPubkey, taskId);
-        text = 'Stop requested. The session stops the task when it reads this.';
       } catch (error) {
         text = agentDmStopTaskErrorSentence(error);
       }

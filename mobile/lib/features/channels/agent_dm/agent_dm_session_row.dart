@@ -78,10 +78,9 @@ class AgentDmSessionRow extends HookConsumerWidget {
       interrupting.value = true;
       String text;
       try {
-        await ref
+        text = await ref
             .read(agentDmSessionViewActionsProvider)
             .interrupt(agentPubkey);
-        text = 'Interrupted. The session keeps going.';
       } catch (error) {
         text = agentDmSessionViewErrorSentence(error);
       } finally {

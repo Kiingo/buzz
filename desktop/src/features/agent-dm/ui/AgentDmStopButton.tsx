@@ -72,8 +72,7 @@ export function AgentDmStopButton({
   const interrupt = async () => {
     setInterrupting(true);
     try {
-      await interruptSession(agent);
-      toast.success("Interrupted. The session keeps going.");
+      toast.success(await interruptSession(agent));
     } catch (error) {
       toast.error(sessionViewErrorSentence(error));
     } finally {
