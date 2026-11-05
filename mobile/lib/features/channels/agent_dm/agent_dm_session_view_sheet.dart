@@ -9,7 +9,7 @@ import '../../../shared/theme/theme.dart';
 import '../../../shared/widgets/modal_presentation.dart';
 
 /// Opens one read-only view of the reader's own session: a screen, the files
-/// it changed, or their own queued messages (each with Withdraw).
+/// it changed, or their own queued messages (each with Edit and Withdraw).
 Future<void> showAgentDmSessionViewSheet(
   BuildContext context,
   String agentPubkey,
@@ -46,6 +46,7 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
     final read = ref.watch(provider);
     final value = read.value;
     final withdrawing = useState<String?>(null);
+    final editing = useState<String?>(null);
     final muted = context.textTheme.bodySmall?.copyWith(
       color: context.colors.onSurfaceVariant,
     );
@@ -65,6 +66,29 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
         if (context.mounted) withdrawing.value = null;
       }
       messenger?.showSnackBar(SnackBar(content: Text(text)));
+    }
+
+    /// Edit sends once, from the person's own text; taken meanwhile says so
+    /// and the list reads again. It never resends.
+    Future<void> edit(AgentDmQueuedMessage message) async {
+      final text = await showBuzzDialog<String>(
+        context: context,
+        builder: (_) => _EditQueuedDialog(body: message.body),
+      );
+      if (text == null || !context.mounted) return;
+      editing.value = message.messageId;
+      String notice;
+      try {
+        await ref
+            .read(agentDmSessionViewActionsProvider)
+            .edit(agentPubkey, message.messageId, text);
+        notice = 'Edited. The session gets the new text.';
+      } catch (error) {
+        notice = agentDmSessionViewErrorSentence(error);
+      } finally {
+        if (context.mounted) editing.value = null;
+      }
+      messenger?.showSnackBar(SnackBar(content: Text(notice)));
     }
 
     // A failed read keeps what showed and says so; never shown as empty.
@@ -179,11 +203,24 @@ class _AgentDmSessionViewSheet extends HookConsumerWidget {
               subtitle: message.idle
                   ? const Text('Waits for the session to be idle.')
                   : null,
-              trailing: TextButton(
-                onPressed: withdrawing.value == null
-                    ? () => unawaited(withdraw(message.messageId))
-                    : null,
-                child: const Text('Withdraw'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton(
+                    onPressed:
+                        withdrawing.value == null && editing.value == null
+                        ? () => unawaited(edit(message))
+                        : null,
+                    child: const Text('Edit'),
+                  ),
+                  TextButton(
+                    onPressed:
+                        withdrawing.value == null && editing.value == null
+                        ? () => unawaited(withdraw(message.messageId))
+                        : null,
+                    child: const Text('Withdraw'),
+                  ),
+                ],
               ),
             ),
       ];
@@ -218,9 +255,7 @@ class _ScreenRow extends StatelessWidget {
     final muted = context.textTheme.bodySmall?.copyWith(
       color: context.colors.onSurfaceVariant,
     );
-    final mono = context.textTheme.bodySmall?.copyWith(
-      fontFamily: 'monospace',
-    );
+    final mono = context.textTheme.bodySmall?.copyWith(fontFamily: 'monospace');
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: Grid.xs,
@@ -238,8 +273,7 @@ class _ScreenRow extends StatelessWidget {
                   style: row.mono ? mono : context.textTheme.bodyMedium,
                 ),
               ),
-              if (row.value case final value?)
-                Text(value, style: muted),
+              if (row.value case final value?) Text(value, style: muted),
             ],
           ),
           if (row.detail case final detail?) Text(detail, style: muted),
@@ -268,9 +302,7 @@ class _FileChangeTile extends HookWidget {
   @override
   Widget build(BuildContext context) {
     final open = useState(false);
-    final mono = context.textTheme.bodySmall?.copyWith(
-      fontFamily: 'monospace',
-    );
+    final mono = context.textTheme.bodySmall?.copyWith(fontFamily: 'monospace');
     final path = change.movedTo == null
         ? change.path
         : '${change.path} → ${change.movedTo}';
@@ -316,6 +348,42 @@ class _FileChangeTile extends HookWidget {
               ),
             ),
           ),
+      ],
+    );
+  }
+}
+
+/// The queued message's text to edit; Save returns it, Cancel returns null.
+class _EditQueuedDialog extends HookWidget {
+  const _EditQueuedDialog({required this.body});
+
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = useTextEditingController(text: body);
+    final text = useValueListenable(controller);
+    return AlertDialog(
+      title: const Text('Edit queued message'),
+      content: TextField(
+        key: const ValueKey('agent-dm-queued-edit'),
+        controller: controller,
+        autofocus: true,
+        maxLines: null,
+        minLines: 3,
+        decoration: const InputDecoration(labelText: 'Your queued message'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: text.text.trim().isEmpty
+              ? null
+              : () => Navigator.of(context).pop(controller.text),
+          child: const Text('Save'),
+        ),
       ],
     );
   }

@@ -12,8 +12,8 @@ import 'agent_dm_delegation_client.dart';
 // host's `agents/<id>/session/...` routes on the Buzz mount, which pick the
 // session themselves: the signer's own conversation's session, or 404.
 //
-// Everything here reads, except Withdraw (the reader's own queued message)
-// and Interrupt (Esc; the session keeps going). Nothing writes a setting,
+// Everything here reads, except Withdraw and Edit (the reader's own queued
+// message) and Interrupt (Esc; the session keeps going). Nothing writes a setting,
 // types into a pane or runs a passkey command; the host strips every write
 // action from a screen. Every word shown is the session's or a tool's:
 // untrusted, plain text.
@@ -180,13 +180,29 @@ class AgentDmSessionBuiltin {
   final AgentDmSessionView view;
 }
 
+/// A "/" row sent as typed (/review, /init): the host starts the chat's own
+/// server-fixed turn for it in the reader's own DM (BZ-REVIEW, 79
+/// 2026-11-05 D2).
+@immutable
+class AgentDmSessionPrompt {
+  const AgentDmSessionPrompt({required this.name, required this.description});
+
+  final String name;
+  final String description;
+}
+
 @immutable
 class AgentDmSessionBuiltins {
-  const AgentDmSessionBuiltins({required this.inPane, required this.rows});
+  const AgentDmSessionBuiltins({
+    required this.inPane,
+    required this.rows,
+    this.prompts = const [],
+  });
 
   /// The session runs in a pane (`tmux`), so Interrupt applies.
   final bool inPane;
   final List<AgentDmSessionBuiltin> rows;
+  final List<AgentDmSessionPrompt> prompts;
 }
 
 String? _text(Object? value) =>
@@ -294,16 +310,18 @@ List<AgentDmQueuedMessage>? parseAgentDmQueuedMessages(Object? body) {
   ];
 }
 
-/// The "/" rows this client opens as views: a screen, or the files changed.
-/// Rows the panel already has, rows that go as text and rows this session
-/// can't run are left to their own paths. The host lists no passkey or
-/// prompt row to the Buzz app.
+/// The "/" rows this client opens as views (a screen, or the files changed),
+/// and the prompt rows it puts in the draft to send as typed (/review,
+/// /init). Rows the panel already has, rows that go as text and rows this
+/// session can't run are left to their own paths. The host lists no passkey
+/// row to the Buzz app.
 AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
   final value = _map(body);
   final session = _map(value?['session']);
   final commands = value?['commands'];
   if (value == null || session == null || commands is! List) return null;
   final rows = <AgentDmSessionBuiltin>[];
+  final prompts = <AgentDmSessionPrompt>[];
   final seen = <String>{};
   for (final raw in commands) {
     final entry = _map(raw);
@@ -313,6 +331,15 @@ AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
       continue;
     }
     if (!_builtinName.hasMatch(name) || seen.contains(name)) continue;
+    final description = _text(entry?['description']) ?? '';
+    final shown = description.length > 300
+        ? description.substring(0, 300)
+        : description;
+    if (action['kind'] == 'prompt') {
+      seen.add(name);
+      prompts.add(AgentDmSessionPrompt(name: name, description: shown));
+      continue;
+    }
     final screen = action['screen'];
     final AgentDmSessionView? view =
         action['kind'] == 'screen' &&
@@ -324,18 +351,13 @@ AgentDmSessionBuiltins? parseAgentDmSessionBuiltins(Object? body) {
         : null;
     if (view == null) continue;
     seen.add(name);
-    final description = _text(entry?['description']) ?? '';
-    rows.add(
-      AgentDmSessionBuiltin(
-        name: name,
-        description: description.length > 300
-            ? description.substring(0, 300)
-            : description,
-        view: view,
-      ),
-    );
+    rows.add(AgentDmSessionBuiltin(name: name, description: shown, view: view));
   }
-  return AgentDmSessionBuiltins(inPane: session['lane'] == 'tmux', rows: rows);
+  return AgentDmSessionBuiltins(
+    inPane: session['lane'] == 'tmux',
+    rows: rows,
+    prompts: prompts,
+  );
 }
 
 /// The view row "/" picked as [name], or null.
@@ -361,16 +383,22 @@ AgentDmSessionView? agentDmSessionViewForText(
   return name == null ? null : agentDmSessionViewFor(builtins, name);
 }
 
-/// [commands] with the session's view rows after its session commands; a
-/// name already listed keeps its own row.
+/// [commands] with the session's view and prompt rows after its session
+/// commands; a name already listed keeps its own row. A prompt row is put in
+/// the draft as `/name ` and sent as typed.
 List<AgentCommand> withAgentDmSessionViewCommands(
   List<AgentCommand> commands,
   AgentDmSessionBuiltins? builtins,
 ) {
-  if (builtins == null || builtins.rows.isEmpty) return commands;
+  if (builtins == null || (builtins.rows.isEmpty && builtins.prompts.isEmpty)) {
+    return commands;
+  }
   final names = {for (final command in commands) command.name};
   final added = [
     for (final row in builtins.rows)
+      if (!names.contains(row.name))
+        AgentCommand.session(name: row.name, description: row.description),
+    for (final row in builtins.prompts)
       if (!names.contains(row.name))
         AgentCommand.session(name: row.name, description: row.description),
   ];
@@ -397,6 +425,9 @@ String agentDmSessionViewPath(String agentId, AgentDmSessionView view) =>
 String agentDmWithdrawPath(String agentId, String messageId) =>
     'agents/$agentId/session/queued/$messageId/withdraw';
 
+String agentDmEditPath(String agentId, String messageId) =>
+    'agents/$agentId/session/queued/$messageId/edit';
+
 String agentDmInterruptPath(String agentId) =>
     'agents/$agentId/session/interrupt';
 
@@ -405,6 +436,9 @@ const _errorSentences = {
   'session_taken_over':
       'This session is taken over at its machine, so Interrupt is there.',
   'harness_session_message_not_found': "That message isn't waiting any more.",
+  'harness_session_message_not_editable':
+      "That message isn't waiting any more.",
+  'harness_session_message_invalid': "A message can't be empty.",
 };
 
 /// A refusal in plain words.
@@ -476,7 +510,7 @@ final agentDmSessionViewActionsProvider = Provider<AgentDmSessionViewActions>(
   AgentDmSessionViewActions.new,
 );
 
-/// The two things a view does: withdraw the reader's own queued message, and
+/// What a view does: withdraw or edit the reader's own queued message, and
 /// interrupt the session's running step.
 class AgentDmSessionViewActions {
   const AgentDmSessionViewActions(this._ref);
@@ -497,6 +531,34 @@ class AgentDmSessionViewActions {
         'POST',
         agentDmWithdrawPath(agentId, messageId.toLowerCase()),
         const <String, Object?>{},
+      );
+    } finally {
+      _ref.invalidate(
+        agentDmSessionViewProvider((
+          agentPubkey: agentPubkey.toLowerCase(),
+          view: const AgentDmSessionView.queued(),
+        )),
+      );
+    }
+  }
+
+  /// Replace the reader's own queued message with [body] (BZ-QEDIT, 79
+  /// 2026-11-05 D3), as an edit in the apps. One key per Save. Throws when
+  /// it was taken meanwhile; the list reads again either way.
+  Future<void> edit(String agentPubkey, String messageId, String body) async {
+    final client = _ref.read(delegationClientProvider);
+    final agentId = await _hostedAgentId(_ref, agentPubkey);
+    if (client == null || agentId == null || !_uuid.hasMatch(messageId)) {
+      throw const DelegationApiException(
+        null,
+        'harness_session_message_not_found',
+      );
+    }
+    try {
+      await client.send(
+        'POST',
+        agentDmEditPath(agentId, messageId.toLowerCase()),
+        {'body': body, 'idempotency_key': const Uuid().v4()},
       );
     } finally {
       _ref.invalidate(

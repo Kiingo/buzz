@@ -17,6 +17,8 @@ part of '../compose_bar.dart';
 /// In a DM with a hosted agent, "/task" and "/project" (anywhere) open a
 /// search of what the reader can read; a pick puts its label in the draft and
 /// the send carries its `buzz-ref` tag while the label is still there (B5).
+/// With a session, "/file" lists its project folder; a pick puts the path in
+/// the draft and the send carries its `buzz-file` tag (BZ-FILES).
 class _AgentCommandAutocomplete {
   const _AgentCommandAutocomplete({
     required this.suggestions,
@@ -235,6 +237,7 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
       sessionViews,
     ),
     hosted: hosted,
+    session: sessionViews != null,
   );
   final List<AgentCommand> suggestions;
   if (listOpen) {
@@ -368,7 +371,7 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     );
   }
 
-  /// The picker for a "/task" or "/project" row; a pick's label goes where
+  /// The picker for a "/task", "/project" or "/file" row; a pick's label goes where
   /// the "/" token was ([at], in [expected]), or at the end of a draft that
   /// changed meanwhile.
   Future<void> pickRef(
@@ -377,11 +380,12 @@ _AgentCommandAutocomplete _useAgentCommandAutocomplete(
     String expected,
     int at,
   ) async {
-    final picked = await showAgentDmRefPicker(
-      context,
-      agentPubkey: agent,
-      type: type,
-    );
+    final picked = type == 'file'
+        ? switch (await showAgentDmFilePicker(context, agentPubkey: agent)) {
+            final path? => AgentDmRef(type: 'file', id: path, title: path),
+            null => null,
+          }
+        : await showAgentDmRefPicker(context, agentPubkey: agent, type: type);
     if (picked == null || !context.mounted) return;
     final text = controller.text;
     final caret = text == expected ? at : text.length;

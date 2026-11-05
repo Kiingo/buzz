@@ -12,6 +12,13 @@ import 'agent_dm_delegation_client.dart';
 // `["buzz-ref", type, id]` tag for each label still in the text. The tag is
 // only a request: Kiingo checks each again, for the author's own message in
 // a private DM, and the agent gets the ones that resolve. No count limit.
+//
+// "/file" (BZ-FILES, 79 2026-11-05 D4) lists file names in the reader's own
+// session's project folder (the host's `agents/<id>/session/files`, the
+// apps' own files list, agent_dm_file_picker.dart). A pick puts the path in
+// the draft and the send carries one `["buzz-file", path]` tag for each path
+// still in the text: names only, checked again by the host with the chat's
+// own path rule.
 
 final _uuid = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
@@ -27,22 +34,32 @@ const agentDmRefProjectCommand = AgentCommand.session(
   name: 'project',
   description: 'Reference a project',
 );
+const agentDmRefFileCommand = AgentCommand.session(
+  name: 'file',
+  description: 'Reference a file',
+);
 const agentDmRefCommands = [agentDmRefTaskCommand, agentDmRefProjectCommand];
 
-/// `task` or `project` for one of these very rows, else null: a session
-/// command or skill of the same name never opens the picker.
+/// `task`, `project` or `file` for one of these very rows, else null: a
+/// session command or skill of the same name never opens the picker.
 String? agentDmRefTypeFor(AgentCommand command) =>
     identical(command, agentDmRefTaskCommand)
     ? 'task'
     : identical(command, agentDmRefProjectCommand)
     ? 'project'
+    : identical(command, agentDmRefFileCommand)
+    ? 'file'
     : null;
 
-/// [commands] with the reference rows after them, when the agent is hosted.
+/// [commands] with the reference rows after them, when the agent is hosted;
+/// "/file" also needs the reader's own session ([session]) to list.
 List<AgentCommand> withAgentDmRefCommands(
   List<AgentCommand> commands, {
   required bool hosted,
-}) => hosted ? [...commands, ...agentDmRefCommands] : commands;
+  bool session = false,
+}) => hosted
+    ? [...commands, ...agentDmRefCommands, if (session) agentDmRefFileCommand]
+    : commands;
 
 @immutable
 class AgentDmRef {
@@ -53,8 +70,10 @@ class AgentDmRef {
     this.subtitle,
   });
 
-  /// `task` or `project`.
+  /// `task`, `project` or `file`.
   final String type;
+
+  /// A task's or project's id; a file's path in its project folder.
   final String id;
   final String title;
 
@@ -63,6 +82,8 @@ class AgentDmRef {
 
   /// What a pick puts in the draft.
   String get label {
+    // A file is its path, as in the apps' "@" picker.
+    if (type == 'file') return id;
     final shown = title.replaceAll(RegExp(r'\s+'), ' ').trim();
     return '$type: ${shown.isEmpty ? 'untitled' : shown}';
   }
@@ -114,7 +135,9 @@ List<List<String>> agentDmRefTags(List<AgentDmRef> picks, String text) {
   return [
     for (final pick in picks)
       if (text.contains(pick.label) && seen.add('${pick.type}:${pick.id}'))
-        ['buzz-ref', pick.type, pick.id],
+        pick.type == 'file'
+            ? ['buzz-file', pick.id]
+            : ['buzz-ref', pick.type, pick.id],
   ];
 }
 
