@@ -37,6 +37,8 @@ type Page = {
   turns: ExportTurn[];
   hasMore: boolean;
   olderCursor: string | null;
+  /** The host's exact false: it holds no copy of this session's transcript. */
+  noTranscript: boolean;
 };
 
 const record = (value: unknown): Record<string, unknown> | null =>
@@ -98,6 +100,7 @@ export function parseExportPage(body: unknown): Page | null {
     turns,
     hasMore: page.hasMore === true,
     olderCursor: textOf(page.olderCursor),
+    noTranscript: data.transcriptAvailable === false,
   };
 }
 
@@ -208,6 +211,9 @@ export async function readSessionExport(
       await loadActivityPage(agentPublicKey, before),
     );
     if (!page) throw new AgentCallApiError(null, "session_export_incomplete");
+    if (page.noTranscript) {
+      throw new AgentCallApiError(null, "session_export_no_transcript");
+    }
     pages.push(page);
     if (!page.hasMore) break;
     const next = page.olderCursor;

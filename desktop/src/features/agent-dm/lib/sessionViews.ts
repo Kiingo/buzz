@@ -629,6 +629,9 @@ export function sessionViewErrorSentence(error: unknown): string {
   if (code === "harness_session_message_invalid") {
     return "A message can't be empty.";
   }
+  if (code === "session_export_no_transcript") {
+    return "Kiingo keeps no transcript for this session, so there's nothing to export.";
+  }
   if (
     code === "session_export_incomplete" ||
     code === "session_export_page_too_large"

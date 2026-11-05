@@ -521,6 +521,8 @@ const _errorSentences = {
   'harness_session_message_invalid': "A message can't be empty.",
   'session_export_incomplete':
       "Couldn't read the whole conversation, so nothing was exported.",
+  'session_export_no_transcript':
+      "Kiingo keeps no transcript for this session, so there's nothing to export.",
   'session_export_page_too_large':
       "Couldn't read the whole conversation, so nothing was exported.",
 };

@@ -106,8 +106,7 @@ String agentDmSessionExportMarkdown({
     final steps = <String>[
       if (turn['items'] case final List items)
         for (final raw in items)
-          if (_map(raw) case final item?)
-            if (_stepLine(item) case final step?) step,
+          if (_map(raw) case final item?) ?_stepLine(item),
     ];
     final omitted = turn['omitted'] is num
         ? (turn['omitted'] as num).floor()
@@ -150,6 +149,10 @@ Future<AgentDmSessionExport> readAgentDmSessionExport(
     final page = _map(data?['page']);
     final turns = data?['turns'];
     if (data == null || page == null || turns is! List) throw _incomplete;
+    // The host's exact false: it holds no copy of this session's transcript.
+    if (data['transcriptAvailable'] == false) {
+      throw const DelegationApiException(null, 'session_export_no_transcript');
+    }
     final parsed = <Map<Object?, Object?>>[];
     for (final raw in turns) {
       final turn = _map(raw);
