@@ -2493,7 +2493,7 @@
       "id": "agent-dm-session-setup-and-stop",
       "classification": "retain-generic",
       "owner": "Buzz agent access maintainers",
-      "purpose": "The reader's 1:1 DM with a hosted agent shows its session: the model, level and vitals from the host's session-setup panel, the /model, /effort, /status, /usage, /context and /cost commands, and Stop while the agent works. Clients read the same chat routes as the other apps on the Buzz mount; a change applies from the next turn. /compact joins the listed session commands.",
+      "purpose": "The reader's 1:1 DM with a hosted agent shows its session: the model, level and vitals from the host's session-setup panel, the /model, /effort, /status, /usage, /context and /cost commands, and Stop while the agent works. Clients read the same chat routes as the other apps on the Buzz mount; a change applies from the next turn. /compact joins the listed session commands. The session's own views build on it: /task, /project and /file references in the composer (agentRefs, AgentRefPicker, AgentFilePickerBody; mobile agent_dm_refs, agent_dm_ref_picker, agent_dm_file_picker, agent_dm_session_files), the session screen with its screens, files changed, queued messages (edit) and Interrupt (sessionViews, AgentSessionView; mobile agent_dm_session_views, agent_dm_session_view_sheet), and each reply's steps line (turnSteps, AgentTurnSteps; mobile agent_dm_turn_steps, agent_dm_turn_steps_row).",
       "upstreamStatus": "Depends on the hosted-agent routes; not proposed upstream.",
       "removalCondition": "Drop when upstream Buzz offers session setup, vitals and turn Stop for hosted-agent DMs.",
       "paths": [
@@ -2501,10 +2501,36 @@
         "desktop/src/features/agent-dm/lib/sessionSetup.test.mjs",
         "desktop/src/features/agent-dm/ui/AgentDmStopButton.tsx",
         "desktop/src/features/agent-dm/ui/AgentSessionChip.tsx",
+        "desktop/src/features/agent-dm/lib/agentRefs.ts",
+        "desktop/src/features/agent-dm/lib/sessionViews.ts",
+        "desktop/src/features/agent-dm/lib/turnSteps.ts",
+        "desktop/src/features/agent-dm/ui/AgentFilePickerBody.tsx",
+        "desktop/src/features/agent-dm/ui/AgentRefPicker.tsx",
+        "desktop/src/features/agent-dm/ui/AgentSessionView.tsx",
+        "desktop/src/features/agent-dm/ui/AgentTurnSteps.tsx",
         "mobile/lib/features/channels/agent_dm/agent_dm_session_row.dart",
+        "mobile/lib/features/channels/agent_dm/agent_dm_session_view_sheet.dart",
+        "mobile/lib/features/channels/agent_dm/agent_dm_turn_steps_row.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_file_picker.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_ref_picker.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_refs.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_session_files.dart",
         "mobile/lib/shared/agent_dm/agent_dm_session_setup.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_session_views.dart",
+        "mobile/lib/shared/agent_dm/agent_dm_turn_steps.dart",
         "mobile/test/features/channels/agent_dm/agent_dm_session_row_test.dart",
         "mobile/test/shared/agent_dm/agent_dm_session_setup_test.dart"
+      ]
+    },
+    {
+      "id": "kiingo-dependabot-version-updates",
+      "classification": "move-to-kiingo",
+      "owner": "Kiingo platform engineering",
+      "purpose": "Kiingo's Dependabot version updates (Ross, 2026-11-02): weekly, one grouped PR per ecosystem Buzz ships (cargo for the root and desktop/src-tauri workspaces, the pnpm workspace, pub and gradle for mobile, the root and minio Dockerfiles, github-actions), with benchmarks/** excluded. Config only; upstream block/buzz has no dependabot.yml.",
+      "upstreamStatus": "Organization-specific update policy; not proposed upstream.",
+      "removalCondition": "Remove when Kiingo stops taking Dependabot version updates on the fork, or upstream adopts an equivalent config.",
+      "paths": [
+        ".github/dependabot.yml"
       ]
     },
     {
