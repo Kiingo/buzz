@@ -730,6 +730,15 @@ const _controlPending = "Asked. Kiingo hasn't heard back from the session yet.";
     _ => null,
   };
   if (sentence != null) return (sentence: sentence, readAgain: false);
+  // The list offered this before the saved point went: read it again, and say
+  // why rather than that the chat moved on.
+  if (code == 'conversation_session_rewind_no_checkpoint') {
+    return (
+      sentence:
+          'The conversation has no saved point to go back to yet. Send a message first, then go back.',
+      readAgain: true,
+    );
+  }
   // Any other 409: the chat moved on since the list was read.
   return status == 409
       ? (

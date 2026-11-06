@@ -792,6 +792,15 @@ export function rewindRefusal(error: unknown): {
       readAgain: false,
     };
   }
+  if (code === "conversation_session_rewind_no_checkpoint") {
+    // The list offered this before the saved point went: read it again, and
+    // say why rather than that the chat moved on.
+    return {
+      sentence:
+        "The conversation has no saved point to go back to yet. Send a message first, then go back.",
+      readAgain: true,
+    };
+  }
   if (code === "conversation_session_rewind_not_current") {
     return {
       sentence: "This isn't the chat's current session any more.",

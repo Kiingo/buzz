@@ -559,8 +559,9 @@ const REWIND_SCOPE_LABEL: Record<RewindScope, string> = {
 
 /**
  * /rewind, as in the apps: pick what goes back, then confirm. The confirm says
- * the code is restored when the next message starts, with the edits since. How
- * it came out is the chat's own line after that message.
+ * the code is restored when the next message starts, with the edits since, and
+ * that there's no undo for the code. How it came out is the chat's own line
+ * after that message.
  */
 function RewindButton({
   agentPubkey,
@@ -652,7 +653,7 @@ function RewindButton({
       </fieldset>
       <p className="text-muted-foreground">
         {restoresCode
-          ? `The code is restored when your next message starts${edits ? ` (${edits.toLowerCase()})` : ""}.`
+          ? `The code is restored when your next message starts${edits ? ` (${edits.toLowerCase()})` : ""}. There's no undo for the code.`
           : "Your next message continues from here. The code stays as it is."}
         {scope === "conversation" || scope === "both"
           ? " The later messages stay saved, and this session can be loaded again."

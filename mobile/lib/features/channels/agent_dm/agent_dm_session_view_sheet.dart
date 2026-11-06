@@ -499,7 +499,8 @@ const _rewindScopeLabels = {
 };
 
 /// What goes back, then Go back; returns the scope, or null on Cancel. The words
-/// are the apps': the code is restored when the next message starts.
+/// are the apps': the code is restored when the next message starts. Buzz also
+/// says there's no undo for the code.
 class _RewindDialog extends HookWidget {
   const _RewindDialog({required this.control, required this.edits});
 
@@ -536,7 +537,7 @@ class _RewindDialog extends HookWidget {
             ),
           ),
           Text(
-            '${restoresCode ? 'The code is restored when your next message starts$since.' : 'Your next message continues from here. The code stays as it is.'}'
+            '${restoresCode ? "The code is restored when your next message starts$since. There's no undo for the code." : 'Your next message continues from here. The code stays as it is.'}'
             '${scope.value == 'files' ? '' : ' The later messages stay saved, and this session can be loaded again.'}',
             style: context.textTheme.bodySmall,
           ),
