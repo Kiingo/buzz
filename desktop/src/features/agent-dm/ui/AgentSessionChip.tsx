@@ -10,6 +10,9 @@ import { Input } from "@/shared/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
 import {
+  ACCOUNTS_USAGE_NOTE,
+  type AccountUsage,
+  accountUsageLines,
   availableModes,
   changeSessionSetup,
   currentModelEfforts,
@@ -17,6 +20,7 @@ import {
   ensureSessionSetup,
   getSessionSetup,
   getSessionSetupVersion,
+  loadAccountsUsage,
   modeNote,
   setupChangeErrorSentence,
   setupChipText,
@@ -134,6 +138,50 @@ function RenameRow({ agentPubkey }: { agentPubkey: string }) {
         Cancel
       </Button>
     </form>
+  );
+}
+
+/** The reader's own accounts, read each time the panel opens. */
+function AllAccounts() {
+  const [accounts, setAccounts] = React.useState<AccountUsage[] | null>(null);
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    loadAccountsUsage().then(
+      (next) => {
+        if (live) setAccounts(next);
+      },
+      () => {
+        if (live) setFailed(true);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  return (
+    <section
+      aria-label="All accounts"
+      className="flex flex-col gap-0.5 border-t border-border px-2 pt-2 text-xs text-muted-foreground"
+      data-testid="agent-session-all-accounts"
+    >
+      <h3>All accounts</h3>
+      {failed ? <p>Couldn't read your accounts.</p> : null}
+      {accounts?.length === 0 ? <p>You have no accounts of your own.</p> : null}
+      {accounts?.map((account) => (
+        <ul
+          className="flex flex-col gap-0.5"
+          key={`${account.harness}:${account.alias}`}
+        >
+          {accountUsageLines(account).map((line) => (
+            <li className="break-words" key={line}>
+              {line}
+            </li>
+          ))}
+        </ul>
+      ))}
+      {accounts ? <p>{ACCOUNTS_USAGE_NOTE}</p> : null}
+    </section>
   );
 }
 
@@ -278,6 +326,7 @@ function SetupPanelBody({
           ))}
         </ul>
       ) : null}
+      <AllAccounts />
       <section
         aria-label="This session"
         className="flex flex-col gap-0.5 border-t border-border pt-2"

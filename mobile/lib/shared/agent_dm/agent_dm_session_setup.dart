@@ -780,6 +780,72 @@ final agentDmSessionSetupProvider = FutureProvider.autoDispose
       }
     });
 
+/// One of the reader's own accounts: its name and what's left on it.
+@immutable
+class AgentDmAccountUsage {
+  const AgentDmAccountUsage({
+    required this.alias,
+    required this.harness,
+    required this.stale,
+    required this.usage,
+  });
+
+  final String alias;
+  final String? harness;
+  final bool stale;
+  final List<AgentDmUsageWindow> usage;
+}
+
+const agentDmAccountsUsageNote =
+    "Your own accounts. Organization accounts and accounts shared with you aren't listed.";
+
+List<AgentDmAccountUsage> parseAgentDmAccountsUsage(Object? body) {
+  final data = body is Map ? body['data'] : null;
+  final accounts = data is Map ? data['accounts'] : null;
+  if (accounts is! List) return const [];
+  return [
+    for (final account in accounts)
+      if (account is Map)
+        if (_text(account['alias']) case final alias?)
+          AgentDmAccountUsage(
+            alias: alias,
+            harness: _text(account['harness']),
+            stale: account['freshness'] != 'fresh',
+            usage: _parseUsage(account),
+          ),
+  ];
+}
+
+List<String> agentDmAccountUsageLines(
+  AgentDmAccountUsage account, {
+  DateTime? now,
+}) {
+  final at = now ?? DateTime.now();
+  final harness = switch (account.harness) {
+    'claude-code' => 'Claude Code',
+    'codex' => 'Codex',
+    _ => null,
+  };
+  final name = harness == null ? account.alias : '${account.alias} · $harness';
+  return [
+    account.stale ? '$name (may be out of date)' : name,
+    for (final usage in account.usage) _usageLine(usage, at),
+  ];
+}
+
+/// The reader's own accounts, whichever agent's panel this is. Throws on a
+/// failed read, so the panel can say so. It reads again each time it opens.
+final agentDmAccountsUsageProvider =
+    FutureProvider.autoDispose<List<AgentDmAccountUsage>>((ref) async {
+      final client = ref.watch(delegationClientProvider);
+      if (client == null) {
+        throw const DelegationApiException(null, 'agent_not_hosted');
+      }
+      return parseAgentDmAccountsUsage(
+        await client.send('GET', 'harness-accounts/usage'),
+      );
+    });
+
 /// What a person does with their session: change it, or stop its turn.
 final agentDmSessionActionsProvider = Provider<AgentDmSessionActions>(
   AgentDmSessionActions.new,

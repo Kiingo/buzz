@@ -347,6 +347,10 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
           onTap: saving.value || selected ? null : onChoose,
         );
 
+    final allAccounts = ref.watch(agentDmAccountsUsageProvider);
+    final muted = context.textTheme.bodySmall?.copyWith(
+      color: context.colors.onSurfaceVariant,
+    );
     final vitals = setup.vitals;
     final lines = vitals == null
         ? const <String>[]
@@ -490,6 +494,23 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
                 child: Text(line, style: context.textTheme.bodySmall),
               ),
           ],
+          heading('All accounts'),
+          for (final line in switch (allAccounts) {
+            AsyncData(:final value) => [
+              if (value.isEmpty) 'You have no accounts of your own.',
+              for (final account in value) ...agentDmAccountUsageLines(account),
+              agentDmAccountsUsageNote,
+            ],
+            AsyncError() => const ["Couldn't read your accounts."],
+            _ => const <String>[],
+          })
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Grid.xs,
+                vertical: Grid.quarter,
+              ),
+              child: Text(line, style: muted),
+            ),
           heading('This session'),
           for (final (label, view) in _sessionViewRows)
             ListTile(

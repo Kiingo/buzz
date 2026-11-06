@@ -289,6 +289,8 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         ["agents", _, "delegations"] => is_delegation_list(&parts, get),
         // The newest owner chat page, for the pending ack (§10.1).
         ["agents", agent, "chat"] => get && is_uuid(agent),
+        // The reader's own accounts' usage: the host fixes the owner to them.
+        ["harness-accounts", "usage"] => get,
         // The reader's own session: its setup and vitals, and Stop.
         ["agents", agent, "session-setup"] => (get || method == "PUT") && is_uuid(agent),
         ["agents", agent, "chat", "stop"] => post && is_uuid(agent),

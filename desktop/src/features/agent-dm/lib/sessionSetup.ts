@@ -409,6 +409,60 @@ export function vitalsLines(
   return lines;
 }
 
+/** One of the reader's own accounts: its name and what's left on it. */
+export type AccountUsage = {
+  alias: string;
+  harness: string;
+  stale: boolean;
+  usage: UsageWindow[];
+};
+
+export const ACCOUNTS_USAGE_NOTE =
+  "Your own accounts. Organization accounts and accounts shared with you aren't listed.";
+
+export function parseAccountsUsage(body: unknown): AccountUsage[] {
+  const accounts = record(record(body)?.data)?.accounts;
+  if (!Array.isArray(accounts)) return [];
+  return accounts.flatMap((raw) => {
+    const account = record(raw);
+    const alias = text(account?.alias);
+    return alias
+      ? [
+          {
+            alias,
+            harness: text(account?.harness) ?? "",
+            stale: account?.freshness !== "fresh",
+            usage: parseUsage(account),
+          },
+        ]
+      : [];
+  });
+}
+
+/** The reader's own accounts, whichever agent's panel this is. */
+export async function loadAccountsUsage(): Promise<AccountUsage[]> {
+  return parseAccountsUsage(
+    await request<unknown>("GET", "harness-accounts/usage"),
+  );
+}
+
+export function accountUsageLines(
+  account: AccountUsage,
+  now: Date = new Date(),
+): string[] {
+  const harness =
+    account.harness === "claude-code"
+      ? "Claude Code"
+      : account.harness === "codex"
+        ? "Codex"
+        : null;
+  const name = harness ? `${account.alias} · ${harness}` : account.alias;
+  return [
+    account.stale ? `${name} (may be out of date)` : name,
+    ...account.usage.map((window) => usageLine(window, now)),
+  ];
+}
+
 /** The short line for the DM header: the label, and how full the context is. */
 export function setupChipText(panel: SessionSetupPanel): string {
   const percent = panel.vitals?.context?.percent;
