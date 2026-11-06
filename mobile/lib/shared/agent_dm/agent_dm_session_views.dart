@@ -508,6 +508,8 @@ String agentDmEditPath(String agentId, String messageId) =>
 String agentDmInterruptPath(String agentId) =>
     'agents/$agentId/session/interrupt';
 
+String agentDmRenamePath(String agentId) => 'agents/$agentId/session/rename';
+
 String agentDmStopTaskPath(String agentId, String taskId) =>
     'agents/$agentId/session/tasks/$taskId/stop';
 
@@ -742,6 +744,22 @@ class AgentDmSessionViewActions {
     return pending
         ? _controlPending
         : 'Stop requested. The session stops the task when it reads this.';
+  }
+
+  /// Name the reader's current session, as a rename in the apps. Empty clears
+  /// the name, so the session's own title shows again. Returns the sentence to
+  /// show.
+  Future<String> rename(String agentPubkey, String name) async {
+    final client = _ref.read(delegationClientProvider);
+    final agentId = await _hostedAgentId(_ref, agentPubkey);
+    if (client == null || agentId == null) {
+      throw const DelegationApiException(null, 'agent_not_hosted');
+    }
+    final trimmed = name.trim();
+    await client.send('POST', agentDmRenamePath(agentId), {'name': trimmed});
+    return trimmed.isEmpty
+        ? "Cleared this session's name. It shows its own title again."
+        : 'Renamed this session.';
   }
 
   /// Esc in the session's pane: the running step stops, the session stays.

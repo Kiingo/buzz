@@ -507,9 +507,68 @@ class _AgentDmSessionSheet extends HookConsumerWidget {
                 );
               },
             ),
+          ListTile(
+            key: const ValueKey('agent-dm-session-rename'),
+            dense: true,
+            title: const Text('Rename'),
+            onTap: () => unawaited(_renameSession(context, ref, agentPubkey)),
+          ),
           const SizedBox(height: Grid.xs),
         ],
       ),
+    );
+  }
+}
+
+/// Rename, with one field: the sentence comes back as a snack bar.
+Future<void> _renameSession(
+  BuildContext context,
+  WidgetRef ref,
+  String agentPubkey,
+) async {
+  final actions = ref.read(agentDmSessionViewActionsProvider);
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final name = await showBuzzDialog<String>(
+    context: context,
+    builder: (_) => const _RenameDialog(),
+  );
+  if (name == null) return;
+  String notice;
+  try {
+    notice = await actions.rename(agentPubkey, name);
+  } catch (error) {
+    notice = agentDmSessionViewErrorSentence(error);
+  }
+  messenger?.showSnackBar(SnackBar(content: Text(notice)));
+}
+
+class _RenameDialog extends HookWidget {
+  const _RenameDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = useTextEditingController();
+    return AlertDialog(
+      title: const Text('Rename this session'),
+      content: TextField(
+        key: const ValueKey('agent-dm-session-rename-field'),
+        controller: controller,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: 'A name for this session',
+          helperText: 'Empty clears the name.',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(controller.text),
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

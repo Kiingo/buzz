@@ -310,6 +310,8 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
         // File names in that session's folder, for "Reference a file".
         ["agents", agent, "session", "files"] => get && is_uuid(agent),
         ["agents", agent, "session", "interrupt"] => post && is_uuid(agent),
+        // Name that session, or clear its name.
+        ["agents", agent, "session", "rename"] => post && is_uuid(agent),
         // Stop one background task of that session, and `/export`'s pages.
         ["agents", agent, "session", "tasks", task, "stop"] => {
             post && is_uuid(agent) && is_task_id(task)

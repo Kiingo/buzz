@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { cn } from "@/shared/lib/cn";
+import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
 import {
@@ -29,7 +31,9 @@ import {
 import {
   ensureSessionBuiltins,
   getSessionViewsVersion,
+  renameSession,
   requestSessionView,
+  sessionViewErrorSentence,
   type SessionView,
   subscribeSessionViews,
   takeSessionViewRequest,
@@ -69,6 +73,67 @@ function ChoiceRow({
       <span className="min-w-0 truncate">{label}</span>
       {selected ? <Check aria-hidden className="h-3.5 w-3.5 shrink-0" /> : null}
     </button>
+  );
+}
+
+/** Rename: one field. Saved empty, the session's own title shows again. */
+function RenameRow({ agentPubkey }: { agentPubkey: string }) {
+  const [draft, setDraft] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const save = async () => {
+    setSaving(true);
+    try {
+      toast.success(await renameSession(agentPubkey, draft ?? ""));
+      setDraft(null);
+    } catch (error) {
+      toast.error(sessionViewErrorSentence(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (draft === null) {
+    return (
+      <button
+        className="w-full rounded-md px-2 py-1 text-left text-sm hover:bg-accent focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+        data-testid="agent-session-rename"
+        onClick={() => setDraft("")}
+        type="button"
+      >
+        Rename
+      </button>
+    );
+  }
+  return (
+    <form
+      className="flex items-center gap-1 px-2 py-1"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <Input
+        aria-label="A name for this session"
+        autoFocus
+        className="h-7 min-w-0 flex-1 text-sm"
+        data-testid="agent-session-rename-field"
+        disabled={saving}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder="Empty clears the name"
+        value={draft}
+      />
+      <Button disabled={saving} size="xs" type="submit">
+        Save
+      </Button>
+      <Button
+        disabled={saving}
+        onClick={() => setDraft(null)}
+        size="xs"
+        type="button"
+        variant="outline"
+      >
+        Cancel
+      </Button>
+    </form>
   );
 }
 
@@ -228,6 +293,7 @@ function SetupPanelBody({
             {row.label}
           </button>
         ))}
+        <RenameRow agentPubkey={agentPubkey} />
       </section>
     </div>
   );

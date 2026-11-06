@@ -354,6 +354,8 @@ export const editPath = (agentId: string, messageId: string) =>
   `agents/${agentId}/session/queued/${messageId}/edit`;
 export const interruptPath = (agentId: string) =>
   `agents/${agentId}/session/interrupt`;
+export const renamePath = (agentId: string) =>
+  `agents/${agentId}/session/rename`;
 export const stopTaskPath = (agentId: string, taskId: string) =>
   `agents/${agentId}/session/tasks/${taskId}/stop`;
 export const activityPagePath = (agentId: string, before: string | null) =>
@@ -601,6 +603,25 @@ export async function interruptSession(
   return controlIsPending(answer)
     ? CONTROL_PENDING
     : "Interrupted. The session keeps going.";
+}
+
+/**
+ * Name the reader's current session, as a rename in the apps. Empty clears the
+ * name, so the session's own title shows again. Returns the sentence to show.
+ */
+export async function renameSession(
+  agentPublicKey: string,
+  name: string,
+): Promise<string> {
+  const key = normalize(agentPublicKey);
+  if (!key) throw new AgentCallApiError(null, "agent_not_hosted");
+  const trimmed = name.trim();
+  await request<unknown>("POST", renamePath(await hostedAgentId(key)), {
+    name: trimmed,
+  });
+  return trimmed
+    ? "Renamed this session."
+    : "Cleared this session's name. It shows its own title again.";
 }
 
 /**
