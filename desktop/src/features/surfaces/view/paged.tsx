@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
+// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
 import {
   useCallback,
   useEffect,
@@ -21,6 +21,34 @@ const reducedMotion = (): boolean =>
   typeof window !== "undefined" &&
   typeof window.matchMedia === "function" &&
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Elements whose own arrow, Home and End keys move inside them. */
+const ARROW_KEY_OWNERS = [
+  "input",
+  "textarea",
+  "select",
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="slider"]',
+  '[role="spinbutton"]',
+  '[role="listbox"]',
+  '[role="combobox"]',
+  '[role="tree"]',
+  '[role="grid"]',
+  '[role="tablist"]',
+  '[role="radiogroup"]',
+  '[role="menu"]',
+  '[role="menubar"]',
+  '[aria-roledescription="carousel"]',
+].join(", ");
+
+/** Whether the key's target sits in such an element inside this row. */
+const ownsArrowKeys = (target: EventTarget, row: HTMLElement): boolean => {
+  if (target === row || !(target instanceof Element)) {
+    return false;
+  }
+  const owner = target.closest(ARROW_KEY_OWNERS);
+  return owner !== null && row.contains(owner);
+};
 
 export const PagedRow = ({
   count,
@@ -98,6 +126,15 @@ export const PagedRow = ({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // A page can hold any component, a text field, slider, tree or another
+    // carousel among them. Their arrow, Home and End keys stay theirs: the
+    // row pages only for a key nothing inside it has taken.
+    if (
+      event.defaultPrevented ||
+      ownsArrowKeys(event.target, event.currentTarget)
+    ) {
+      return;
+    }
     if (event.key === "ArrowRight") {
       event.preventDefault();
       go(shown + 1);

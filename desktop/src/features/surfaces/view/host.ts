@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at f7dffff48426f852528f24ecb4cb04fb5bc2d5b2; do not edit here.
+// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
 import { createContext, useContext } from "react";
 import {
   IMAGE_MIME_TYPES,
@@ -207,7 +207,7 @@ export type FileImageAnswer =
 
 /** One file a surface shows: its ref as the card states it (untrusted text). */
 export type SurfaceFileRef = {
-  /** The ref's `artifactId`: a Kiingo file or attachment id. */
+  /** The ref's `artifactId`: a file the agent kept, or a library file. */
   fileId: string;
   name: string;
   contentType?: string;
