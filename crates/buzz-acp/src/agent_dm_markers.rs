@@ -141,6 +141,7 @@ pub(crate) fn relayed_person_mirror(event: &nostr::Event) -> Option<RelayedPerso
 #[cfg(test)]
 mod tests {
     use super::{is_quiet_agent_dm_marker, is_quiet_agent_dm_marker_event, relayed_person_mirror};
+    use crate::pool::signed_context_event_for_tests;
     use nostr::{EventBuilder, Keys, Kind, Tag};
     use serde_json::json;
 
@@ -177,14 +178,15 @@ mod tests {
 
     #[test]
     fn dm_context_leaves_quiet_markers_out() {
-        let marker = json!({
-            "id": "a".repeat(64), "pubkey": "b".repeat(64), "created_at": 2, "kind": 40002,
-            "content": "mirrored email", "tags": [["h", "c"], ["buzz-mirror", "email", "m1", "1"]]
-        });
-        let message = json!({
-            "id": "c".repeat(64), "pubkey": "d".repeat(64), "created_at": 1, "kind": 9,
-            "content": "hello", "tags": [["h", "c"]]
-        });
+        let marker = signed_context_event_for_tests(
+            &Keys::generate(),
+            40002,
+            "mirrored email",
+            2,
+            &[&["h", "c"], &["buzz-mirror", "email", "m1", "1"]],
+        );
+        let message =
+            signed_context_event_for_tests(&Keys::generate(), 9, "hello", 1, &[&["h", "c"]]);
         let context = crate::pool::parse_nostr_dm_response_for_tests(json!([marker, message]), 20)
             .expect("context");
         let crate::queue::ConversationContext::Dm { messages, .. } = context else {
@@ -196,24 +198,31 @@ mod tests {
 
     #[test]
     fn dm_context_leaves_requester_mirrors_out_whoever_signed_them() {
-        let requester = "d".repeat(64);
-        let agent_signed = json!({
-            "id": "a".repeat(64), "pubkey": "b".repeat(64), "created_at": 3, "kind": 40002,
-            "content": "relayed from Kiingo Tasks", "tags": [
-                ["h", "c"], ["buzz-mirror", "tasks", "t1", "3"],
-                ["buzz-mirror-author", "requester", requester, ""]
-            ]
-        });
-        let requester_signed_author_only = json!({
-            "id": "e".repeat(64), "pubkey": requester, "created_at": 2, "kind": 9,
-            "content": "author tag only", "tags": [
-                ["h", "c"], ["buzz-mirror-author", "requester", requester, ""]
-            ]
-        });
-        let message = json!({
-            "id": "c".repeat(64), "pubkey": requester, "created_at": 1, "kind": 9,
-            "content": "hello", "tags": [["h", "c"]]
-        });
+        let agent = Keys::generate();
+        let requester = Keys::generate();
+        let requester_hex = requester.public_key().to_hex();
+        let agent_signed = signed_context_event_for_tests(
+            &agent,
+            40002,
+            "relayed from Kiingo Tasks",
+            3,
+            &[
+                &["h", "c"],
+                &["buzz-mirror", "tasks", "t1", "3"],
+                &["buzz-mirror-author", "requester", &requester_hex, ""],
+            ],
+        );
+        let requester_signed_author_only = signed_context_event_for_tests(
+            &requester,
+            9,
+            "author tag only",
+            2,
+            &[
+                &["h", "c"],
+                &["buzz-mirror-author", "requester", &requester_hex, ""],
+            ],
+        );
+        let message = signed_context_event_for_tests(&requester, 9, "hello", 1, &[&["h", "c"]]);
         let context = crate::pool::parse_nostr_dm_response_for_tests(
             json!([agent_signed, requester_signed_author_only, message]),
             20,
