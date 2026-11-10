@@ -1,6 +1,11 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import { useId, useState, type ReactNode } from "react";
-import { formatDateText, sentRecipientsLine, type SentEmail } from "../core";
+import {
+  formatDateText,
+  sentEmailLabel,
+  sentRecipientsLine,
+  type SentEmail,
+} from "../core";
 import { cn } from "./cn";
 import { Glyphs } from "./icons";
 import { toneText } from "./ui";
@@ -31,6 +36,8 @@ export const SentEmailRow = ({
 }) => {
   const [open, setOpen] = useState(initiallyOpen);
   const bodyId = useId();
+  const label = sentEmailLabel(sent);
+  const tone = sent.declaredBy ? "info" : "success";
   if (plain) {
     return (
       <p
@@ -39,9 +46,9 @@ export const SentEmailRow = ({
       >
         <Glyphs.success
           aria-hidden
-          className={cn("h-4 w-4 shrink-0", toneText("success"))}
+          className={cn("h-4 w-4 shrink-0", toneText(tone))}
         />
-        Sent
+        {label}
       </p>
     );
   }
@@ -56,7 +63,7 @@ export const SentEmailRow = ({
         type="button"
         aria-expanded={open}
         aria-controls={bodyId}
-        aria-label={`Sent ${recipients}${sent.subject ? `, subject ${sent.subject}` : ""}${time ? `, ${time}` : ""}. ${open ? "Hide" : "Show"} what was sent`}
+        aria-label={`${label} ${recipients}${sent.subject ? `, subject ${sent.subject}` : ""}${time ? `, ${time}` : ""}. ${open ? "Hide" : "Show"} what was sent`}
         onClick={() => setOpen((value) => !value)}
         className={cn(
           "flex w-full min-w-0 items-start gap-2 rounded-md bg-muted/60 px-2.5 py-2 text-left",
@@ -67,12 +74,12 @@ export const SentEmailRow = ({
       >
         <Glyphs.success
           aria-hidden
-          className={cn("mt-0.5 h-4 w-4 shrink-0", toneText("success"))}
+          className={cn("mt-0.5 h-4 w-4 shrink-0", toneText(tone))}
         />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex items-baseline gap-2">
-            <span className={cn("text-sm font-semibold", toneText("success"))}>
-              Sent
+            <span className={cn("text-sm font-semibold", toneText(tone))}>
+              {label}
             </span>
             {time ? (
               <span className="text-xs text-muted-foreground">{time}</span>

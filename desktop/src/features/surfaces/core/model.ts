@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import {
   asBool,
   asInt,
@@ -102,6 +102,8 @@ export const COMPONENT_TYPES = [
   "Compare",
   // GENUI-SPATIAL (2026-11-05)
   "Model3D",
+  // An agent-made web page in a sandbox on its own origin (plan §10.2).
+  "HtmlApp",
   // GENUI-TREE (2026-11-05)
   "Tree",
   // 4.3 Inputs
@@ -288,6 +290,8 @@ export type SurfaceAction = {
  * provider-confirmed send, never agent or user words).
  */
 export type SurfaceSentEmail = {
+  /** Server-recorded declaration, not a provider-confirmed send. */
+  declaredBy?: "owner" | "agent";
   /** When the provider sent it (ISO). */
   at?: string;
   to: string[];
@@ -585,6 +589,15 @@ const decodeSentEmail = (value: unknown): SurfaceSentEmail | undefined => {
   if (!isObject(value)) {
     return undefined;
   }
+  // Unknown declaration provenance must not become provider confirmation.
+  const declaredBy = value.declaredBy;
+  if (
+    declaredBy !== undefined &&
+    declaredBy !== "owner" &&
+    declaredBy !== "agent"
+  ) {
+    return undefined;
+  }
   const to = decodeAddresses(value.to);
   const cc = decodeAddresses(value.cc);
   const bcc = decodeAddresses(value.bcc);
@@ -600,7 +613,8 @@ const decodeSentEmail = (value: unknown): SurfaceSentEmail | undefined => {
     cc,
     bcc,
     ...(subject ? { subject } : {}),
-    ...(messageId ? { messageId } : {}),
+    ...(messageId && !declaredBy ? { messageId } : {}),
+    ...(declaredBy ? { declaredBy } : {}),
   };
 };
 
@@ -882,12 +896,21 @@ export type SentRecipient = { email: string; name?: string };
 
 /** A sent email_draft card's compact row (renderers collapse to it). */
 export type SentEmail = {
+  declaredBy?: "owner" | "agent";
   /** When the provider sent it (ISO), when known. */
   at?: string;
   to: SentRecipient[];
   cc: SentRecipient[];
   bcc: SentRecipient[];
   subject: string | null;
+};
+
+/** A declaration stays visibly distinct from a provider-confirmed send. */
+export const sentEmailLabel = (sent: Pick<SentEmail, "declaredBy">): string => {
+  if (sent.declaredBy === "agent") {
+    return "Agent marked as sent";
+  }
+  return sent.declaredBy === "owner" ? "Marked as sent" : "Sent";
 };
 
 const recipientNames = (value: unknown): Map<string, string> => {
@@ -947,6 +970,7 @@ export const sentEmailOf = (surface: Surface): SentEmail | null => {
     cc: named(sent.cc),
     bcc: named(sent.bcc),
     subject: sent.subject ?? null,
+    ...(sent.declaredBy ? { declaredBy: sent.declaredBy } : {}),
   };
 };
 

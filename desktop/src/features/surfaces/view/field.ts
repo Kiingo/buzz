@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import type { Pointer, SurfaceComponent } from "../core";
 
 /** What every §4.3 input gets from `InputView` (shared by inputs and pickers). */

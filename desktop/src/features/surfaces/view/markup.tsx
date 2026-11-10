@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import {
   useEffect,
   useRef,
@@ -61,6 +61,9 @@ export const usePicture = (side: CompareSide): Picture => {
     ? proxiedMediaUrl(side.url, host.apiOrigin)
     : undefined;
   const readFileImage = host.readFileImage;
+  // The loader, not the host object: a host rebuilt on the app's re-render
+  // must not reload the picture (CHAT-SCROLL-PERF).
+  const loadMedia = host.loadMedia;
   const [picture, setPicture] = useState<Picture>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -83,7 +86,7 @@ export const usePicture = (side: CompareSide): Picture => {
     };
     if (proxied) {
       setPicture({ kind: "loading" });
-      void (host.loadMedia ?? fetchMedia)(proxied).then((answer) => {
+      void (loadMedia ?? fetchMedia)(proxied).then((answer) => {
         if (cancelled) {
           return;
         }
@@ -158,7 +161,7 @@ export const usePicture = (side: CompareSide): Picture => {
         URL.revokeObjectURL(objectUrl);
       }
     };
-    // The controller and host are stable per surface; a re-signed URL reloads.
+    // The controller is stable per surface; a re-signed URL reloads.
   }, [
     proxied,
     side.fileId,
@@ -168,7 +171,7 @@ export const usePicture = (side: CompareSide): Picture => {
     agentId,
     surfaceId,
     readFileImage,
-    host,
+    loadMedia,
     controller,
     attempt,
   ]);

@@ -1,14 +1,14 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
-import {
-  idempotencyKey,
-  type Confirmation,
-  type LookupItem,
-  type Result,
-  type SurfaceApi,
-  type TapFeedback,
-  type TapOutcome,
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
+import type {
+  Confirmation,
+  EmailSendOutcome,
+  LookupItem,
+  Result,
+  SurfaceApi,
+  TapFeedback,
+  TapOutcome,
 } from "./api";
-import { isObject, type JsonObject, type JsonValue } from "./json";
+import type { JsonObject, JsonValue } from "./json";
 import {
   surfaceMessage,
   RUN_UNAVAILABLE_HINT,
@@ -34,6 +34,7 @@ import {
   type PatchOp,
 } from "./patch";
 import {
+  formatPointer,
   parsePointer,
   readAt,
   resolvePointer,
@@ -47,13 +48,26 @@ import {
   sendBlockedText,
   sentText,
   type MessageSend,
-  type SurfaceTapRef,
 } from "./sends";
 import {
   RUN_ACTIONS_OFF,
   type RunActionGate,
   type RunAuthorization,
 } from "./run-gate";
+import {
+  CHECK_EMAIL_SEND_BUSY_ID,
+  EMAIL_SEND_NOT_FOUND_YET,
+  FEEDBACK_DRAFT_CHANGED,
+  FEEDBACK_SEND_FAILED,
+  RESOLVE_EMAIL_SEND_BUSY_ID,
+  newFeedbackRequestId,
+  type ControllerOptions,
+  type ControllerSnapshot,
+  type FeedbackDraft,
+  type Intent,
+} from "./controller-state";
+
+const MAX_STALE_RETRIES = 2;
 
 /**
  * One surface on screen (§7.2 semantics, from the Swift reference
@@ -63,117 +77,6 @@ import {
  * not at all. Every view of one surface (inline and expanded) shares one
  * controller through `SurfaceStore`.
  */
-
-export type SaveState =
-  | { kind: "idle" }
-  | { kind: "saving" }
-  | { kind: "saved"; at: number }
-  /** Edits kept on this device, waiting to be saved. */
-  | { kind: "offline"; pending: number }
-  /** The server refused the edit; the field is back to its value. */
-  | { kind: "refused"; text: string };
-
-/** What a tap asks the host to do; the controller opens and sends nothing itself. */
-export type Intent =
-  /**
-   * Send `text` as the person's message, carrying `tap` (the Buzz
-   * `buzz-surface-tap` tag, the dashboard turn's `ui_surface_tap`): the only
-   * way a surface sends words ({@link SurfaceController.sendMessage}).
-   */
-  | { kind: "sendMessage"; text: string; tap: SurfaceTapRef }
-  | { kind: "openUrl"; url: string }
-  | { kind: "openEntity"; entity: EntityKey }
-  | { kind: "openExpanded" }
-  | { kind: "openFullScreen" };
-
-/** The busy id while "Check again" runs (never an action's id). */
-export const CHECK_EMAIL_SEND_BUSY_ID = "#checkEmailSend";
-
-/** A check that found nothing: the card stays as it is. */
-export const EMAIL_SEND_NOT_FOUND_YET =
-  "Not in Sent Items yet. Kiingo keeps checking.";
-
-export type ControllerSnapshot = {
-  surface: Surface;
-  /** The server's data with local edits applied: what the views draw. */
-  data: JsonObject;
-  saveState: SaveState;
-  /** Problems under inputs, by child key (`componentId@scope`). */
-  problems: ReadonlyMap<string, string>;
-  /** One line under the surface (stale, refused, offline). */
-  notice?: string;
-  /** A run waiting for the user's confirmation (server text only). */
-  confirmation?: Confirmation;
-  /** The action being sent, for a spinner on its button. */
-  busyActionId?: string;
-  /** The open text box of an ask_agent with `feedback` (one per surface). */
-  feedback?: FeedbackDraft;
-  pendingCount: number;
-};
-
-/**
- * The text box an ask_agent with `feedback` opens in the card (Ross,
- * 2026-11-02: "Ask agent to revise" opens "a text box below (within the
- * card)", and "Send Revision Request" sends it). `editing` → `sending` →
- * `sent` or `failed` (Retry sends again).
- */
-export type FeedbackDraft = {
-  actionId: string;
-  text: string;
-  phase: "editing" | "sending" | "sent" | "failed";
-  /** One per Send: kept for a retry that got no answer (tap-feedback.ts). */
-  requestId: string;
-  /** With `failed`: what to tell the person. */
-  error?: string;
-  /** With `sent`: the words that went, and the card's revision then. */
-  sentText?: string;
-  sentRevision?: number;
-};
-
-export const FEEDBACK_SEND_FAILED = "Couldn’t send. Try again.";
-export const FEEDBACK_DRAFT_CHANGED =
-  "The draft changed. Check it, then send again.";
-
-/** A fresh request id (one per Send). */
-export const newFeedbackRequestId = (): string => {
-  const crypto = globalThis.crypto as Crypto | undefined;
-  if (crypto && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  const bytes = new Uint8Array(16);
-  if (crypto && typeof crypto.getRandomValues === "function") {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0"));
-  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
-};
-
-export type ControllerOptions = {
-  api: SurfaceApi;
-  /** The client name on edits and taps: dashboard, buzz, … */
-  client: string;
-  /** Run buttons: off unless the client has an approved gate. */
-  runGate?: RunActionGate;
-  /**
-   * A host that may show a surface but not change it yet (Buzz until its
-   * signed edit routes are reviewed): inputs, `set_state`, `ask_agent`,
-   * `dismiss` and `run` draw disabled and send nothing, whatever `runGate`
-   * says (79). `open` and `send_message` (the user's own message) are
-   * unchanged.
-   */
-  editsDisabled?: boolean;
-  debounceMs?: number;
-  now?: () => number;
-};
-
-const MAX_STALE_RETRIES = 2;
-
 export class SurfaceController {
   readonly id: string;
   readonly client: string;
@@ -186,6 +89,15 @@ export class SurfaceController {
   private readonly debounceMs: number;
   private readonly now: () => number;
   private pending: PatchOp[] = [];
+  /**
+   * HtmlApp page writes (kiingo.setValue), the latest per value path. Saved
+   * in their own edits, never with an input's (the server stores them as
+   * the page's, host_app, and refuses a mixed edit; plan §10.2).
+   */
+  private readonly pageValues = new Map<
+    string,
+    { pointer: Pointer; value: JsonValue | undefined }
+  >();
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private flushing: Promise<void> | undefined;
   private failures = 0;
@@ -224,7 +136,7 @@ export class SurfaceController {
     this.snapshot = {
       ...this.snapshot,
       ...patch,
-      pendingCount: this.pending.length,
+      pendingCount: this.pending.length + this.pageValues.size,
     };
     for (const listener of [...this.listeners]) {
       listener();
@@ -233,6 +145,18 @@ export class SurfaceController {
 
   get surface(): Surface {
     return this.snapshot.surface;
+  }
+
+  /** `data` with every unsaved local change on top: inputs, then page values. */
+  private withLocal(data: JsonObject): JsonObject {
+    const next = applyPatch(data, this.pending);
+    for (const { pointer, value } of this.pageValues.values()) {
+      const op = opForEdit(next, pointer, value);
+      if (op) {
+        applyPatchOp(next, op);
+      }
+    }
+    return next;
   }
 
   get data(): JsonObject {
@@ -275,7 +199,7 @@ export class SurfaceController {
     const feedback = this.snapshot.feedback;
     this.set({
       surface: updated,
-      data: applyPatch(updated.data, this.pending),
+      data: this.withLocal(updated.data),
       // The sent row goes once the card moves on (the agent revised it).
       ...(feedback?.phase === "sent" &&
       feedback.sentRevision !== undefined &&
@@ -354,6 +278,20 @@ export class SurfaceController {
     this.scheduleSave();
   }
 
+  /**
+   * An HtmlApp page's kiingo.setValue at its own value path (plan §10.2):
+   * shown at once and saved like an edit, but in edits of its own, which
+   * the server stores as the page's (host_app), never the person's.
+   */
+  pageEdit(pointer: Pointer, value: JsonValue | undefined): void {
+    if (!this.acceptsEdits || pointer.length === 0) {
+      return;
+    }
+    this.pageValues.set(formatPointer(pointer), { pointer, value });
+    this.set({ data: this.withLocal(this.snapshot.surface.data) });
+    this.scheduleSave();
+  }
+
   private scheduleSave(delay = this.debounceMs): void {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
@@ -375,7 +313,7 @@ export class SurfaceController {
     if (this.flushing) {
       await this.flushing;
     }
-    if (this.pending.length > 0) {
+    if (this.pending.length > 0 || this.pageValues.size > 0) {
       await this.startFlush();
     }
   }
@@ -423,7 +361,7 @@ export class SurfaceController {
             : this.snapshot.surface;
         this.set({
           surface: updated,
-          data: applyPatch(updated.data, this.pending),
+          data: this.withLocal(updated.data),
           saveState: { kind: "saved", at: this.now() },
         });
         continue;
@@ -445,9 +383,91 @@ export class SurfaceController {
           : "Changes can’t be saved here.";
       const surface = this.snapshot.surface;
       this.set({
-        data: applyPatch(surface.data, this.pending),
+        data: this.withLocal(surface.data),
         saveState: { kind: "refused", text },
         ...(result.kind === "refused" ? { notice: text } : {}),
+      });
+      return;
+    }
+    await this.flushPageValues();
+  }
+
+  /** Page values, after the inputs: one edit of page paths only. */
+  private async flushPageValues(): Promise<void> {
+    let staleRetries = 0;
+    while (this.pageValues.size > 0 && !this.disposed) {
+      const taken = [...this.pageValues.entries()];
+      const base = applyPatch(this.snapshot.surface.data, []);
+      const ops: PatchOp[] = [];
+      for (const [, { pointer, value }] of taken) {
+        const op = opForEdit(base, pointer, value);
+        if (op && applyPatchOp(base, op)) {
+          ops.push(op);
+        }
+      }
+      // Sent values leave the queue unless the page wrote again meanwhile.
+      const settle = () => {
+        for (const [key, entry] of taken) {
+          if (this.pageValues.get(key) === entry) {
+            this.pageValues.delete(key);
+          }
+        }
+      };
+      if (ops.length === 0) {
+        settle();
+        this.set({});
+        return;
+      }
+      this.set({ saveState: { kind: "saving" } });
+      let result: Result<Surface>;
+      try {
+        result = await this.api.editSurface(
+          this.id,
+          this.snapshot.surface.revision,
+          ops,
+          this.client,
+        );
+      } catch {
+        this.failures += 1;
+        this.set({
+          saveState: { kind: "offline", pending: this.pageValues.size },
+        });
+        this.scheduleSave(
+          Math.min(60_000, 1000 * 2 ** Math.min(this.failures, 6)),
+        );
+        return;
+      }
+      this.failures = 0;
+      if (result.kind === "done") {
+        settle();
+        const updated =
+          result.value.revision >= this.snapshot.surface.revision
+            ? result.value
+            : this.snapshot.surface;
+        this.set({
+          surface: updated,
+          data: this.withLocal(updated.data),
+          saveState: { kind: "saved", at: this.now() },
+        });
+        continue;
+      }
+      if (
+        result.kind === "refused" &&
+        result.code === "ui_surface_revision_stale" &&
+        staleRetries < MAX_STALE_RETRIES
+      ) {
+        staleRetries += 1;
+        await this.refresh();
+        continue;
+      }
+      settle();
+      const text =
+        result.kind === "refused"
+          ? (result.message ?? surfaceMessage(result.code))
+          : "Changes can’t be saved here.";
+      this.set({
+        data: this.withLocal(this.snapshot.surface.data),
+        saveState: { kind: "refused", text },
       });
       return;
     }
@@ -614,6 +634,47 @@ export class SurfaceController {
       text,
       tap: { surfaceId: this.id, actionId, revision: surface.revision },
     };
+  }
+
+  /**
+   * Whether an HtmlApp page may ask for `actionId` (kiingo.action): only a
+   * plain ask_agent with no text box (plan §10.2; 79 batch 7 Q3). The server
+   * checks again, and refuses one its template locks.
+   */
+  pageMayAsk(actionId: string): boolean {
+    const action = this.snapshot.surface.actions.get(actionId);
+    return (
+      action?.kind === "ask_agent" &&
+      !action.feedback &&
+      !this.editsDisabled &&
+      acceptsTaps(this.snapshot.surface)
+    );
+  }
+
+  /**
+   * An HtmlApp page's kiingo.action, once the person confirmed it on the
+   * host's own prompt (never the page's): sent with `via: html_page`, so
+   * its turn says the page chose it and treats it as data (79 Q3/Q5).
+   */
+  async tapFromPage(actionId: string): Promise<void> {
+    if (!this.pageMayAsk(actionId) || this.snapshot.busyActionId) {
+      return;
+    }
+    this.set({ notice: undefined });
+    if (!(await this.savedBeforeTap())) {
+      return;
+    }
+    await this.send(actionId, () =>
+      this.api.tap(
+        this.id,
+        actionId,
+        this.snapshot.surface.revision,
+        this.client,
+        undefined,
+        undefined,
+        "html_page",
+      ),
+    );
   }
 
   /**
@@ -931,7 +992,7 @@ export class SurfaceController {
   /** The server resolves a tap from its stored revision, so local edits go first. */
   private async savedBeforeTap(): Promise<boolean> {
     await this.saveNow();
-    if (this.pending.length > 0) {
+    if (this.pending.length > 0 || this.pageValues.size > 0) {
       this.set({
         notice:
           "Your changes haven’t saved yet. Try again when you’re back online.",
@@ -1046,6 +1107,51 @@ export class SurfaceController {
     }
   }
 
+  /** A structured owner choice for the operation shown, never a send or a retry. */
+  async resolveEmailSend(
+    operationId: string,
+    outcome: EmailSendOutcome,
+  ): Promise<void> {
+    const surface = this.snapshot.surface;
+    if (
+      !emailSendUnknown(surface) ||
+      !acceptsTaps(surface) ||
+      this.editsDisabled ||
+      this.snapshot.busyActionId ||
+      !operationId ||
+      operationId !== surface.status?.operationId
+    ) {
+      return;
+    }
+    this.set({ busyActionId: RESOLVE_EMAIL_SEND_BUSY_ID, notice: undefined });
+    try {
+      const result = await this.api.resolveEmailSend(
+        surface.id,
+        operationId,
+        outcome,
+        this.client,
+      );
+      switch (result.kind) {
+        case "done":
+          await this.refresh();
+          break;
+        case "refused":
+          this.set({ notice: result.message ?? surfaceMessage(result.code) });
+          break;
+        case "off":
+          this.set({ notice: "This isn’t available here yet." });
+          break;
+      }
+    } catch {
+      this.set({
+        notice:
+          "Couldn’t confirm whether the card was updated. Check again before recording another outcome.",
+      });
+    } finally {
+      this.set({ busyActionId: undefined });
+    }
+  }
+
   private async send(
     actionId: string,
     call: () => Promise<TapOutcome>,
@@ -1088,104 +1194,3 @@ export class SurfaceController {
     }
   }
 }
-
-/** The idempotency key the confirm carries (exported for hosts that send their own confirm). */
-export const confirmKey = (confirmation: Confirmation): string =>
-  idempotencyKey(
-    confirmation.surfaceId,
-    confirmation.actionId,
-    confirmation.revision,
-  );
-
-/** One controller per surface id, shared by the inline card and the expanded view. */
-export class SurfaceStore {
-  static readonly capacity = 64;
-  private readonly controllers = new Map<string, SurfaceController>();
-  private order: string[] = [];
-
-  constructor(private readonly options: ControllerOptions) {}
-
-  get api(): SurfaceApi {
-    return this.options.api;
-  }
-
-  get client(): string {
-    return this.options.client;
-  }
-
-  get runAvailable(): boolean {
-    return (this.options.runGate ?? RUN_ACTIONS_OFF).available;
-  }
-
-  controller(id: string): SurfaceController | undefined {
-    return this.controllers.get(id);
-  }
-
-  /** The controller for `surface`, made on first use; a newer revision updates it. */
-  controllerFor(surface: Surface): SurfaceController {
-    this.touch(surface.id);
-    const existing = this.controllers.get(surface.id);
-    if (existing) {
-      existing.receive(surface);
-      return existing;
-    }
-    const controller = new SurfaceController(surface, this.options);
-    this.controllers.set(surface.id, controller);
-    this.trim();
-    return controller;
-  }
-
-  /** Reads a surface the chat only pointed at. */
-  async load(
-    surfaceId: string,
-    revision?: number,
-  ): Promise<SurfaceController | undefined> {
-    const existing = this.controllers.get(surfaceId);
-    if (existing) {
-      if (revision !== undefined && revision > existing.surface.revision) {
-        await existing.refresh();
-      }
-      this.touch(surfaceId);
-      return existing;
-    }
-    try {
-      const result = await this.options.api.surface(surfaceId);
-      return result.kind === "done"
-        ? this.controllerFor(result.value)
-        : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** Saves every pending edit (page hidden or closing). */
-  async saveAll(): Promise<void> {
-    await Promise.all(
-      [...this.controllers.values()]
-        .filter((c) => c.getSnapshot().pendingCount > 0)
-        .map((c) => c.saveNow()),
-    );
-  }
-
-  private touch(id: string): void {
-    this.order = this.order.filter((item) => item !== id);
-    this.order.push(id);
-  }
-
-  private trim(): void {
-    while (this.controllers.size > SurfaceStore.capacity) {
-      const victim = this.order.find(
-        (id) => this.controllers.get(id)?.getSnapshot().pendingCount === 0,
-      );
-      if (!victim) {
-        return;
-      }
-      this.controllers.get(victim)?.dispose();
-      this.controllers.delete(victim);
-      this.order = this.order.filter((id) => id !== victim);
-    }
-  }
-}
-
-/** True when the value is a JSON object (re-exported for renderers). */
-export const isJsonObject = isObject;

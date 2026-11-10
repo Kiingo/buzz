@@ -8,6 +8,7 @@ import {
   SurfaceStore,
   surfaceResult,
 } from "../core";
+import { resetExpandedViews } from "../view/expanded-views";
 
 /**
  * Agent surfaces on Buzz desktop (docs/agent-dm-markers.md §7): one store
@@ -70,8 +71,9 @@ export function surfaceApiOrigin(): string | null {
   return apiOrigin;
 }
 
-/** Community switch: drop every controller and the host origin. */
+/** Community switch: drop controllers, expanded views, and the host origin. */
 export function resetSurfaceStore() {
+  resetExpandedViews();
   store = null;
   apiOrigin = null;
 }

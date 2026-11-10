@@ -1,7 +1,8 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 // The surface renderer (kiingo.ui/v1). Logic lives in ../core; this folder only draws it.
 
 export { SurfaceView, SurfaceExpandedDialog } from "./SurfaceView";
+export { resetExpandedViews } from "./expanded-views";
 export { ConfirmationDialog } from "./confirm";
 export { NewerAppRow, Node, Children, viewFor } from "./node";
 export {
@@ -29,6 +30,7 @@ export type {
   SurfaceFileOpen,
   SurfaceFileRef,
   SurfaceHost,
+  SurfaceMediaOpen,
   UploadAnswer,
   UploadedFile,
   UploadTarget,

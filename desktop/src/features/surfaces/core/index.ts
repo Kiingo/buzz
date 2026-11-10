@@ -1,5 +1,7 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 export * from "./json";
+/** True when the value is a JSON object (re-exported for renderers). */
+export { isObject as isJsonObject } from "./json";
 export * from "./text";
 export * from "./sends";
 export * from "./pointer";
@@ -10,6 +12,8 @@ export * from "./messages";
 export * from "./api";
 export * from "./run-gate";
 export * from "./controller";
+export * from "./controller-state";
+export * from "./store";
 export * from "./format";
 export * from "./diff";
 export * from "./chart";

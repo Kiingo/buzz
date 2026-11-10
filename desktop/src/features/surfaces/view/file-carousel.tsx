@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   IMAGE_MIME_TYPES,
@@ -210,7 +210,9 @@ const useFileCard = (
   agentId: string | undefined,
   element: RefObject<HTMLDivElement | null>,
 ) => {
-  const host = useNodeContext().host;
+  // The read, not the host object: a host rebuilt on the app's re-render
+  // must not restart a card's read (CHAT-SCROLL-PERF).
+  const readCard = useNodeContext().host.fileCard;
   const [card, setCard] = useState<SurfaceFileCard | undefined>(undefined);
   const [thumbnail, setThumbnail] = useState<string | undefined>(undefined);
   const [visible, setVisible] = useState(false);
@@ -236,7 +238,7 @@ const useFileCard = (
   }, [fileId]);
 
   useEffect(() => {
-    const read = host.fileCard;
+    const read = readCard;
     if (!read || !fileRef || !visible || settled.current) {
       return undefined;
     }
@@ -285,7 +287,7 @@ const useFileCard = (
       }
     };
     // The ref is rebuilt each render; its id and the agent decide the read.
-  }, [host, fileId, agentId, visible]);
+  }, [readCard, fileId, agentId, visible]);
 
   useEffect(
     () => () => {

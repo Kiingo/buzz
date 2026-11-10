@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import type { ComponentType as ReactComponentType } from "react";
 import {
   childKey,
@@ -49,6 +49,7 @@ import { InputView } from "./inputs";
 import { MapView } from "./places";
 import { DocumentView } from "./document";
 import { CompareView } from "./markup";
+import { HtmlAppView } from "./html-app";
 import { Model3DView } from "./model3d";
 import { SplitViewView, TreeView } from "./outline";
 import { GaugeView, LiveLogView, SparklineView } from "./live";
@@ -154,6 +155,7 @@ const makeViews = (): Record<ComponentType, ReactComponentType<NodeProps>> => ({
   WorkView: WorkViewView,
   DocumentViewer: DocumentView,
   Model3D: Model3DView,
+  HtmlApp: HtmlAppView,
   Button: ButtonView,
   ActionBar: ActionBarView,
   SuggestionChips: SuggestionChipsView,

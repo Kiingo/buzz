@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import { useEffect, useMemo, useState } from "react";
 import {
   ownEntry,
@@ -818,9 +818,29 @@ export const MediaView = ({ component, scope }: NodeProps) => {
   const outside = ["title", "url", "artifactId"].some((key) =>
     context.isUntrusted(component, key, scope),
   );
-  // No in-page playback until the media proxy serves audio and video with
-  // a no-redirect, A/V-type allowlist (79 nit, S7): open it in Kiingo.
+  // A URL plays in the host's viewer from the signed proxy, which streams
+  // only checked audio and video types (G11). Never in the card itself,
+  // and never on render. A host with no viewer opens it in Kiingo.
   const webUrl = context.surface.webUrl;
+  const kind = isVideo ? "video" : "audio";
+  const openMedia = context.host.openMedia;
+  const controller = context.controller;
+  const apiOrigin = context.host.apiOrigin;
+  // The same Media at the same scope after one read of this surface (a
+  // token lasts 10 minutes); only this surface's answer counts.
+  const renew = async (): Promise<string | null> => {
+    await controller.refresh();
+    const fresh = controller.surface.components.get(component.id);
+    if (!fresh || fresh.type !== "Media") {
+      return null;
+    }
+    return (
+      proxiedMediaUrl(
+        resolveProp(fresh.props.url, controller.data, scope),
+        apiOrigin,
+      ) ?? null
+    );
+  };
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
       <div className="flex items-center gap-2.5">
@@ -860,6 +880,21 @@ export const MediaView = ({ component, scope }: NodeProps) => {
             entity={{ type: "file", id: fileId, title }}
             outside={outside}
           />
+        ) : url && !outside && openMedia ? (
+          <SurfaceButton
+            size="sm"
+            onClick={() =>
+              openMedia({
+                url,
+                name: title,
+                kind,
+                surfaceId: context.surface.id,
+                renew,
+              })
+            }
+          >
+            {isVideo ? "Play video" : "Play"}
+          </SurfaceButton>
         ) : url && webUrl ? (
           <SurfaceButton size="sm" onClick={() => context.openLink(webUrl)}>
             Open in Kiingo

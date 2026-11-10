@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import {
   Component,
   useCallback,
@@ -28,6 +28,7 @@ import {
   type SurfaceController,
 } from "../core";
 import { cn } from "./cn";
+import { useExpandedViewRegistration } from "./expanded-views";
 import { ConfirmationDialog } from "./confirm";
 import {
   NodeContext,
@@ -44,6 +45,7 @@ import {
 import { Glyphs } from "./icons";
 import { Node } from "./node";
 import { SentEmailRow } from "./sent";
+import { EmailSendOutcomeControls } from "./email-send-outcome";
 import { SurfaceButton, SurfaceDialog, toneText, ToneGlyph } from "./ui";
 
 /**
@@ -103,6 +105,8 @@ export const SurfaceView = ({
   const snapshot = useSurfaceSnapshot(controller);
   const [outsideUrl, setOutsideUrl] = useState<string | undefined>(undefined);
   const ownsDialogs = useOwnsDialogs(controller);
+  // An expanded view tells the inline card's HtmlApp to drop its frame.
+  useExpandedViewRegistration(controller, mode === "expanded");
   const surface = snapshot.surface;
 
   const openLink = useCallback(
@@ -490,6 +494,14 @@ const Footer = ({
             </SurfaceButton>
           ) : null}
         </div>
+      ) : null}
+      {canCheckSend && status?.operationId ? (
+        <EmailSendOutcomeControls
+          key={status.operationId}
+          controller={controller}
+          operationId={status.operationId}
+          busy={snapshot.busyActionId !== undefined}
+        />
       ) : null}
       {snapshot.notice ? (
         <p

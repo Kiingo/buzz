@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import { asInt, asString, field, isObject, type JsonValue } from "./json";
 import {
   decodeSurface,
@@ -70,7 +70,13 @@ export type SurfaceListItem = {
   title?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** Home pins (`?pinned=home`): where the card lives and when it was pinned. */
+  conversationId?: string;
+  agentId?: string;
+  pinnedAt?: string;
 };
+/** A Home pin's state after a pin or unpin (GENUI-PINNED). */
+export type HomePin = { pinned: boolean; pinnedAt?: string };
 export type SurfaceList = { items: SurfaceListItem[]; nextBefore?: string };
 
 export type LookupItem = {
@@ -89,6 +95,8 @@ export type LookupItem = {
  * answer.
  */
 export type EmailSendCheck = "sent" | "unknown" | "not_sent";
+/** The owner's declaration, never provider confirmation. */
+export type EmailSendOutcome = "sent" | "not_sent";
 
 export type SurfaceApi = {
   surface(id: string): Promise<Result<Surface>>;
@@ -114,6 +122,8 @@ export type SurfaceApi = {
     client: string,
     extra?: RunAuthorization,
     feedback?: TapFeedback,
+    /** The surface's HtmlApp page asked, and the person confirmed it (plan §10.2). */
+    via?: "html_page",
   ): Promise<TapOutcome>;
   confirm(
     id: string,
@@ -124,10 +134,26 @@ export type SurfaceApi = {
     extra?: RunAuthorization,
   ): Promise<TapOutcome>;
   dismiss(id: string, revision: number, client: string): Promise<TapOutcome>;
+  /** The reader's Home pins, newest pin first (GENUI-PINNED). */
+  pinnedSurfaces(limit: number, before?: string): Promise<Result<SurfaceList>>;
+  /** Pin the card to the reader's Home, or take it off. */
+  setHomePin(
+    id: string,
+    revision: number,
+    pinned: boolean,
+    client: string,
+  ): Promise<Result<HomePin>>;
   /** The card owner's "Check again". No operation id: the card's newest send. */
   checkEmailSend(
     id: string,
     operationId: string | undefined,
+    client: string,
+  ): Promise<Result<EmailSendCheck>>;
+  /** Records the owner's answer for this exact send; never sends an email. */
+  resolveEmailSend(
+    id: string,
+    operationId: string,
+    outcome: EmailSendOutcome,
     client: string,
   ): Promise<Result<EmailSendCheck>>;
   lookupRecipients(query: string): Promise<Result<LookupItem[]>>;
@@ -147,7 +173,10 @@ export const offSurfaceApi: SurfaceApi = {
   tap: async () => ({ kind: "off" }),
   confirm: async () => ({ kind: "off" }),
   dismiss: async () => ({ kind: "off" }),
+  pinnedSurfaces: async () => ({ kind: "off" }),
+  setHomePin: async () => ({ kind: "off" }),
   checkEmailSend: async () => ({ kind: "off" }),
+  resolveEmailSend: async () => ({ kind: "off" }),
   lookupRecipients: async () => ({ kind: "off" }),
   lookupEntities: async () => ({ kind: "off" }),
   resolveRefs: async () => ({ kind: "off" }),
@@ -355,6 +384,9 @@ export const listResult = (
         const title = plainText(field(item, "title"), 200);
         const createdAt = asString(field(item, "createdAt"));
         const updatedAt = asString(field(item, "updatedAt"));
+        const conversationId = plainId(field(item, "conversationId"));
+        const agentId = plainId(field(item, "agentId"));
+        const pinnedAt = asString(field(item, "pinnedAt"));
         return {
           surfaceId,
           revision,
@@ -365,6 +397,9 @@ export const listResult = (
           ...(title ? { title } : {}),
           ...(createdAt ? { createdAt } : {}),
           ...(updatedAt ? { updatedAt } : {}),
+          ...(conversationId ? { conversationId } : {}),
+          ...(agentId ? { agentId } : {}),
+          ...(pinnedAt ? { pinnedAt } : {}),
         };
       })
       .filter((item): item is SurfaceListItem => Boolean(item));
@@ -372,6 +407,25 @@ export const listResult = (
     return {
       kind: "done",
       value: { items, ...(next ? { nextBefore: next.slice(0, 40) } : {}) },
+    };
+  }
+  return refusedOrOff(status, body, [400, 403, 404, 409, 422, 429]);
+};
+
+/** The answer to a pin or unpin: `{surfaceId, pinned, pinnedAt}`. */
+export const homePinResult = (
+  status: number,
+  body: unknown,
+): Result<HomePin> | undefined => {
+  if (status >= 200 && status < 300) {
+    const pinned = field(body, "pinned");
+    if (typeof pinned !== "boolean") {
+      return undefined;
+    }
+    const pinnedAt = asString(field(body, "pinnedAt"));
+    return {
+      kind: "done",
+      value: { pinned, ...(pinned && pinnedAt ? { pinnedAt } : {}) },
     };
   }
   return refusedOrOff(status, body, [400, 403, 404, 409, 422, 429]);
@@ -561,7 +615,7 @@ export const createSurfaceApi = (send: HttpSend): SurfaceApi => {
       }
       return value;
     },
-    tap: async (id, actionId, revision, client, extra, feedback) =>
+    tap: async (id, actionId, revision, client, extra, feedback, via) =>
       await answer(
         {
           method: "POST",
@@ -573,6 +627,7 @@ export const createSurfaceApi = (send: HttpSend): SurfaceApi => {
             ...(feedback
               ? { feedback: feedback.text, requestId: feedback.requestId }
               : {}),
+            ...(via ? { via } : {}),
           },
           ...(extra?.headers ? { headers: extra.headers } : {}),
         },
@@ -605,12 +660,43 @@ export const createSurfaceApi = (send: HttpSend): SurfaceApi => {
         },
         (status, body) => tapResult(status, body, id, "dismiss"),
       ),
+    pinnedSurfaces: (limit, before) =>
+      answer(
+        {
+          method: "GET",
+          path: "/ui/surfaces",
+          query: {
+            pinned: "home",
+            limit: String(Math.min(Math.max(limit, 1), 50)),
+            ...(before ? { before: before.slice(0, 40) } : {}),
+          },
+        },
+        listResult,
+      ),
+    setHomePin: (id, revision, pinned, client) =>
+      answer(
+        {
+          method: "POST",
+          path: `${base(id)}/${pinned ? "pin" : "unpin"}`,
+          body: { revision, client },
+        },
+        homePinResult,
+      ),
     checkEmailSend: (id, operationId, client) =>
       answer(
         {
           method: "POST",
           path: `${base(id)}/send-outcome/check`,
           body: { client, ...(operationId ? { operationId } : {}) },
+        },
+        emailSendCheckResult,
+      ),
+    resolveEmailSend: (id, operationId, outcome, client) =>
+      answer(
+        {
+          method: "POST",
+          path: `${base(id)}/send-outcome`,
+          body: { operationId, outcome, client },
         },
         emailSendCheckResult,
       ),

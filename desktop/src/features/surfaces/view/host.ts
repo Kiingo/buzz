@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 8a4382a01c1d2046b63e7c78a1220c2c33e419a3; do not edit here.
+// Generated from the Kiingo surface renderer packages at 1055d96f74fb6ac27bf0ebcd3c7fa12aee50be9c; do not edit here.
 import { createContext, useContext } from "react";
 import {
   IMAGE_MIME_TYPES,
@@ -34,6 +34,13 @@ export type SurfaceHost = WorkViewHost & {
    * button is not drawn and the target opens the expanded view.
    */
   openFullScreen?: (surfaceId: string) => void;
+  /**
+   * HtmlApp (GENUI-HTML, plan §10.2): this host's origin is one the pages'
+   * `frame-ancestors` lists (`KIINGO_UI_HTML_FRAME_ANCESTORS`), so the page
+   * is framed inline. Without it the card shows its fallback text (Buzz
+   * desktop and any host with no reviewed sandbox).
+   */
+  framesHtmlPages?: boolean;
   /** Opens an https or Kiingo link. Outside hosts were confirmed first. */
   openUrl: (url: string) => void;
   /**
@@ -106,6 +113,14 @@ export type SurfaceHost = WorkViewHost & {
    * before (text viewer, file entity).
    */
   openFile?: (request: SurfaceFileOpen) => void;
+  /**
+   * A Media given by URL (FILEVIEW row 3d): plays in the app's own viewer,
+   * as the iPhone and Mac do. `url` is only the signed proxy URL on
+   * `apiOrigin` (`proxiedMediaUrl`), so the browser never reaches the
+   * agent's host; the proxy streams it (G11). Called only on the viewer's
+   * tap. Without it the card keeps "Open in Kiingo".
+   */
+  openMedia?: (request: SurfaceMediaOpen) => void;
   /**
    * Compare and ImageMarkup (GENUI-MARKUP): the pixels of one Kiingo file
    * a card draws, read with the viewer's own session behind the scan gate
@@ -222,6 +237,22 @@ export type SurfaceFileOpen = {
   page?: number;
   surfaceId: string;
   agentId?: string;
+};
+
+/** One card Media by URL to play (`SurfaceHost.openMedia`). */
+export type SurfaceMediaOpen = {
+  /** The signed proxy URL, checked by `proxiedMediaUrl`. */
+  url: string;
+  /** The Media's title: untrusted, plain text only. */
+  name: string;
+  kind: "video" | "audio";
+  surfaceId: string;
+  /**
+   * A fresh signed URL for the same Media, after one read of this surface
+   * (a token lasts 10 minutes). Null when the Media is gone or no longer
+   * a proxy URL. Only this surface's answer counts.
+   */
+  renew: () => Promise<string | null>;
 };
 
 /**
