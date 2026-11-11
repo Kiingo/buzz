@@ -1,4 +1,4 @@
-// Generated from the Kiingo surface renderer packages at 23394ec833a81a2fb1d9cfb5c0a7fcc34cd1b948; do not edit here.
+// Generated from the Kiingo surface renderer packages at dbc93b6d803e88e782fd6dbc8d7871827f2a9f7c; do not edit here.
 import { withoutInvisible } from "./text";
 
 // Copy to clipboard (Ross, 2026-10-29): a client-only control next to input
