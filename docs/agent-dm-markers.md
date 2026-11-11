@@ -376,3 +376,25 @@ A message a card sends carries exactly one tap tag, and only that marker:
 The host treats a turn carrying this tag as a card tap: the agent wrote those
 words, so they are never the person's own typed instruction. Messages typed in
 the composer never carry it.
+
+### Private cards from outside apps
+
+Kiingo's outside-app conversations appear in **Cards from outside apps** in
+Buzz desktop Home (the Cards button) and mobile Home (the Cards tab). Cards
+retain their Kiingo conversation ID, per-app label and history. This is a
+private Kiingo accessory; the Agent DM signature and owner-attestation rules
+above continue to govern relay messages.
+
+The clients page `GET /api/buzz-ui/<desktop|ios>/outside-apps`, then
+`/outside-apps/<nextBefore>` with the unchanged opaque cursor. Each read is
+NIP-98 signed by the current verified human key with the active community.
+The server restricts results to that community's organization, the owner,
+private outside-app conversations and current content authority. A refused
+refresh replaces the card list with a recoverable error. A community or
+identity change drops the view's previous state.
+
+Metadata names the conversation and surface revision; each card still uses
+the existing signed per-surface read and native view-only renderer. The view
+refreshes on desktop every 15 seconds and mobile every 30 seconds or on
+resume. Open the card in Kiingo to answer, edit or confirm an action. These
+cards use outside-app authorship and do not create an Agent identity.

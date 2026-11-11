@@ -16,6 +16,8 @@ import '../../shared/widgets/mobile_tab_footer_backdrop.dart';
 import '../activity/activity_page.dart';
 import '../channels/channels_page.dart';
 import '../search/search_page.dart';
+import '../../shared/surfaces/outside_app_cards_page.dart';
+import '../../shared/surfaces/surface_client.dart';
 
 class HomePage extends HookConsumerWidget {
   const HomePage({
@@ -78,6 +80,17 @@ class HomePage extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final cardsClient = ref.watch(surfaceClientProvider);
+    final hasCards = cardsClient != null;
+    final destinations = [
+      ..._destinations,
+      if (hasCards)
+        const _HomeDestination(
+          icon: Icons.dashboard_outlined,
+          selectedIcon: Icons.dashboard,
+          label: 'Cards',
+        ),
+    ];
     final tabIndex = useState(0);
     final visitedTabs = useRef(<int>{0});
     final tabContentTransitionDirection = useRef(1.0);
@@ -99,7 +112,7 @@ class HomePage extends HookConsumerWidget {
     final systemBottomInset = MediaQuery.viewPaddingOf(context).bottom;
     final navigationBarWidth = _floatingTabBarWidth(
       MediaQuery.sizeOf(context).width,
-      _destinations.length,
+      destinations.length,
     );
     final pages = [
       ChannelsPage(
@@ -130,6 +143,7 @@ class HomePage extends HookConsumerWidget {
         mePageBuilder?.call(context, newChatAction) ?? const SizedBox.shrink()
       else
         const SizedBox.shrink(),
+      if (hasCards) OutsideAppCardsPageView(key: ObjectKey(cardsClient)),
     ];
 
     final settingsTransitionGradient = tabIndex.value == 0
@@ -183,7 +197,9 @@ class HomePage extends HookConsumerWidget {
                         opacity: tabContentTransitionProgress,
                         child: ClipRect(
                           child: IndexedStack(
-                            index: tabIndex.value,
+                            index: tabIndex.value < destinations.length
+                                ? tabIndex.value
+                                : 0,
                             children: pages,
                           ),
                         ),
@@ -204,7 +220,7 @@ class HomePage extends HookConsumerWidget {
                       valueListenable: newChatAction,
                       builder: (context, onNewChat, _) =>
                           ChannelQuickActionsLauncher(
-                            visible: true,
+                            visible: tabIndex.value < 2,
                             newChatMode: tabIndex.value == 1,
                             onNewChat: onNewChat,
                             navigationBarHeight: HomePage._tabBarHeight,
@@ -220,7 +236,9 @@ class HomePage extends HookConsumerWidget {
               ),
             ),
             bottomNavigationBar: _FloatingTabBar(
-              selectedIndex: tabIndex.value,
+              selectedIndex: tabIndex.value < destinations.length
+                  ? tabIndex.value
+                  : 0,
               hasUnreadSolo: hasUnreadSolo,
               onDestinationSelected: (i) {
                 if (i == tabIndex.value) {
@@ -239,7 +257,7 @@ class HomePage extends HookConsumerWidget {
                   unawaited(tabContentTransitionController.forward(from: 0));
                 }
               },
-              destinations: _destinations,
+              destinations: destinations,
             ),
           ),
           builder: (context, progress, child) {

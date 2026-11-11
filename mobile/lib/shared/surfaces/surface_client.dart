@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import '../guest_access/guest_access_client.dart';
 import '../relay/relay.dart';
 import 'surface_model.dart';
+import 'outside_app_cards.dart';
 
 const _requestTimeout = Duration(seconds: 20);
 const _maxResponseBytes = 2 * 1024 * 1024;
@@ -62,7 +63,24 @@ class SurfaceClient {
     final host = origin;
     final surfaceId = id.toLowerCase();
     if (host == null || !_uuid.hasMatch(surfaceId)) return null;
-    final url = '$host$surfaceRouteMount/surfaces/$surfaceId';
+    final surface = decodeSurface(await _read('surfaces/$surfaceId'));
+    if (surface == null || surface.id.toLowerCase() != surfaceId) return null;
+    return LoadedSurface(surface: surface, origin: host);
+  }
+
+  Future<OutsideAppCardsPage> outsideApps({String? before}) async {
+    if (before != null && !isOutsideCardsCursor(before)) {
+      throw const FormatException('outside_cards_cursor_invalid');
+    }
+    return decodeOutsideAppCards(
+      await _read(before == null ? 'outside-apps' : 'outside-apps/$before'),
+    );
+  }
+
+  Future<Object?> _read(String path) async {
+    final host = origin;
+    if (host == null) return null;
+    final url = '$host$surfaceRouteMount/$path';
     final request = http.Request('GET', Uri.parse(url))
       ..followRedirects = false
       ..headers['Accept'] = 'application/json'
@@ -90,11 +108,7 @@ class SurfaceClient {
         }
         bytes.add(chunk);
       }
-      final surface = decodeSurface(jsonDecode(utf8.decode(bytes.takeBytes())));
-      if (surface == null || surface.id.toLowerCase() != surfaceId) {
-        return null;
-      }
-      return LoadedSurface(surface: surface, origin: host);
+      return jsonDecode(utf8.decode(bytes.takeBytes()));
     } finally {
       if (_http == null) client.close();
     }

@@ -8,6 +8,7 @@ import {
   MailOpen,
 } from "lucide-react";
 import * as React from "react";
+import { OutsideAppCards } from "@/features/surfaces/ui/OutsideAppCards";
 
 import {
   getInboxTypeLabel,
@@ -610,6 +611,7 @@ export function InboxListPane({
         <div className="px-5 py-2">
           <div className="flex min-h-9 w-full min-w-0 items-center justify-between gap-3">
             <div className="order-2 ml-auto flex shrink-0 items-center justify-end">
+              <OutsideAppCards />
               <Popover>
                 <PopoverTrigger asChild>
                   <button

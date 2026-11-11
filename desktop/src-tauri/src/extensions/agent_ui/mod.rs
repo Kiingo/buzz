@@ -57,6 +57,15 @@ fn error(status: Option<u16>, code: &str) -> String {
 /// reach it, else `None`. No query strings.
 fn allowed_path(method: &str, path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
+    if method == "GET" && matches!(parts.as_slice(), ["outside-apps"]) {
+        return Some(path.to_owned());
+    }
+    if method == "GET"
+        && matches!(parts.as_slice(), ["outside-apps", cursor] if is_surface_cursor(cursor))
+    {
+        // The opaque cursor is case-sensitive; UUID reads below normalize.
+        return Some(path.to_owned());
+    }
     let ok = method == "GET"
         && match parts.as_slice() {
             ["surfaces", id] => is_uuid(id),
@@ -68,6 +77,15 @@ fn allowed_path(method: &str, path: &str) -> Option<String> {
             _ => false,
         };
     ok.then(|| path.to_ascii_lowercase())
+}
+
+fn is_surface_cursor(value: &str) -> bool {
+    value.strip_prefix("v1.").is_some_and(|tail| {
+        tail.len() == 32
+            && tail
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    })
 }
 
 /// A page or version number from 1: digits only, no leading zero.
@@ -173,6 +191,31 @@ mod tests {
     use super::*;
 
     const SURFACE: &str = "0192a6b0-0000-7000-8000-0000000000ac";
+
+    #[test]
+    fn private_outside_cards_are_paged_reads_only() {
+        let cursor = "v1.ABCdef0123456789_-ABCdef01234567";
+        assert_eq!(
+            allowed_path("GET", "outside-apps").as_deref(),
+            Some("outside-apps")
+        );
+        let path = format!("outside-apps/{cursor}");
+        assert_eq!(allowed_path("GET", &path).as_deref(), Some(path.as_str()));
+        assert!(request_url("https://api.example.com", &path)
+            .unwrap()
+            .as_str()
+            .ends_with(cursor));
+        for path in [
+            "outside-apps/../surfaces",
+            "outside-apps?user=other",
+            "outside-apps/v1.short",
+            "outside-apps/v1.ABC/def",
+        ] {
+            assert!(allowed_path("GET", path).is_none());
+        }
+        assert!(allowed_path("POST", "outside-apps").is_none());
+        assert!(allowed_path("PATCH", &path).is_none());
+    }
 
     #[test]
     fn only_a_surface_read_is_reachable() {
