@@ -9,6 +9,7 @@ const card = {
   surfaceId: "0192a6b0-0000-7000-8000-0000000000ac",
   conversationId: "0192a6b0-0000-7000-8000-0000000000ad",
   revision: 3,
+  title: "Launch readiness",
   conversationTitle: "From Claude",
   appName: "Claude",
 };

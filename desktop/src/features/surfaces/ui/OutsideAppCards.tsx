@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Layers } from "lucide-react";
 import { toast } from "sonner";
@@ -70,15 +70,18 @@ function OutsideCard({ card }: { card: OutsideAppCard }) {
 /** Private Kiingo card accessory; no synthetic Agent or relay message. */
 export function OutsideAppCards() {
   const [open, setOpen] = React.useState(false);
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const queryClient = useQueryClient();
   const { activeCommunity, reinitKey } = useCommunities();
   const identity = useIdentityQuery().data?.pubkey;
+  const queryKey = [
+    "kiingo-outside-app-cards",
+    activeCommunity?.id,
+    reinitKey,
+    identity,
+  ];
   const query = useInfiniteQuery({
-    queryKey: [
-      "kiingo-outside-app-cards",
-      activeCommunity?.id,
-      reinitKey,
-      identity,
-    ],
+    queryKey,
     enabled: open,
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) => {
@@ -96,6 +99,7 @@ export function OutsideAppCards() {
       return decodeOutsideAppCards(result.body);
     },
     getNextPageParam: (page) => page.nextBefore ?? undefined,
+    maxPages: 3,
     refetchInterval: 15_000,
     gcTime: 0,
     retry: false,
@@ -107,6 +111,8 @@ export function OutsideAppCards() {
         .map((card) => [card.surfaceId, card]) ?? [],
     ).values(),
   ];
+  const selected =
+    cards.find((card) => card.surfaceId === selectedId) ?? cards[0];
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -130,11 +136,12 @@ export function OutsideAppCards() {
         <Button
           variant="outline"
           onClick={() => {
-            void query.refetch();
+            setSelectedId(null);
+            void queryClient.resetQueries({ queryKey, exact: true });
           }}
           disabled={query.isFetching}
         >
-          Refresh
+          Refresh newest cards
         </Button>
         {query.isError ? (
           <p role="alert">{query.error.message}</p>
@@ -148,9 +155,29 @@ export function OutsideAppCards() {
                 connected app.
               </p>
             )}
-            {cards.map((card) => (
-              <OutsideCard key={card.surfaceId} card={card} />
-            ))}
+            <nav
+              aria-label="Private outside-app conversations"
+              className="max-h-60 space-y-1 overflow-y-auto"
+            >
+              {cards.map((card) => (
+                <Button
+                  key={card.surfaceId}
+                  variant={
+                    selected?.surfaceId === card.surfaceId
+                      ? "secondary"
+                      : "ghost"
+                  }
+                  className="h-auto w-full justify-start whitespace-normal text-left"
+                  aria-pressed={selected?.surfaceId === card.surfaceId}
+                  onClick={() => setSelectedId(card.surfaceId)}
+                >
+                  {card.conversationTitle} · {card.title || "Untitled card"}
+                </Button>
+              ))}
+            </nav>
+            {selected && (
+              <OutsideCard key={selected.surfaceId} card={selected} />
+            )}
             {query.hasNextPage && (
               <Button
                 onClick={() => {

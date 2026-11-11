@@ -1,6 +1,7 @@
 export type OutsideAppCard = {
   surfaceId: string;
   revision: number;
+  title: string;
   conversationId: string;
   conversationTitle: string;
   appName: string;
@@ -29,6 +30,8 @@ export function decodeOutsideAppCards(value: unknown): OutsideAppCardsPage {
       !uuid.test(row.conversationId) ||
       !Number.isSafeInteger(row.revision) ||
       row.revision < 1 ||
+      typeof row.title !== "string" ||
+      row.title.length > 300 ||
       typeof row.conversationTitle !== "string" ||
       row.conversationTitle.length > 300 ||
       typeof row.appName !== "string" ||
