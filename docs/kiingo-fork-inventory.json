@@ -544,6 +544,28 @@
       "focusedTests": [
         "mobile/test/features/channels/agent_status_test.dart"
       ]
+    },
+    {
+      "hook": "desktop/src/features/home/ui/InboxListPane.tsx",
+      "implementations": [
+        "desktop/src/features/surfaces/lib/outsideAppCards.ts",
+        "desktop/src/features/surfaces/ui/OutsideAppCards.tsx"
+      ],
+      "focusedTests": [
+        "desktop/src/features/surfaces/lib/outsideAppCards.test.mjs"
+      ],
+      "contract": "A Home entry point lists only the signed-in human's private outside-app cards in the active community through the configured host. Keep bounded metadata paging, one selected card, clear stale labels on refresh refusal and open host-only actions. It never grants the Agent DM signer path to an outside author."
+    },
+    {
+      "hook": "mobile/lib/features/home/home_page.dart",
+      "implementations": [
+        "mobile/lib/shared/surfaces/outside_app_cards.dart",
+        "mobile/lib/shared/surfaces/outside_app_cards_page.dart"
+      ],
+      "focusedTests": [
+        "mobile/test/shared/surfaces/outside_app_cards_test.dart"
+      ],
+      "contract": "The native Home Cards entry point reads owner-private outside-app cards with the current human key and active community, pages the existing native renderer, clears retained labels on a refused refresh and opens the host for actions. Existing Agent DM owner-attestation checks remain unchanged."
     }
   ],
   "deltas": [
@@ -2187,9 +2209,9 @@
       "id": "agent-surface-cards",
       "classification": "retain-generic",
       "owner": "Buzz messaging maintainers",
-      "purpose": "Agent surface cards in agent DMs (docs/agent-dm-markers.md §7): a message carrying exactly one [buzz-surface, uuid, revision] marker from an agent shows a card drawn from the agent host's surface record, only in a 1:1 DM between the viewer and an agent whose verified owner attestation names the viewer. Desktop draws it with a generated renderer copy (desktop/src/features/surfaces/{core,view}, regenerated from the host's shared packages, with a lint override in desktop/biome.json) and a Tauri proxy for the host API (extensions/agent_ui), gated in desktop/src/features/agent-dm/lib/surfaceCardGate.ts. Mobile has a native Flutter renderer under mobile/lib/shared/surfaces, with the per-agent verified owner lookup in mobile/lib/shared/mentions/agent_identity_provider.dart, which follows the agent's profile live and names no owner while that subscription is down; a NIP-OA condition clause the app does not know never applies (mobile/lib/shared/crypto/nip_oa.dart, as desktop). Cards never carry agent HTML, CSS or colours, quote outside content, load images only through the host's signed proxy, never draw secret inputs, send only words they show in full, and tag those sends with [buzz-surface-tap, surfaceId, actionId, revision]; run actions stay disabled.",
+      "purpose": "Agent surface cards in agent DMs (docs/agent-dm-markers.md §7): a message carrying exactly one [buzz-surface, uuid, revision] marker from an agent shows a card drawn from the agent host's surface record, only in a 1:1 DM between the viewer and an agent whose verified owner attestation names the viewer. Desktop draws it with a generated renderer copy (desktop/src/features/surfaces/{core,view}, regenerated from the host's shared packages, with a lint override in desktop/biome.json) and a Tauri proxy for the host API (extensions/agent_ui), gated in desktop/src/features/agent-dm/lib/surfaceCardGate.ts. Mobile has a native Flutter renderer under mobile/lib/shared/surfaces, with the per-agent verified owner lookup in mobile/lib/shared/mentions/agent_identity_provider.dart, which follows the agent's profile live and names no owner while that subscription is down; a NIP-OA condition clause the app does not know never applies (mobile/lib/shared/crypto/nip_oa.dart, as desktop). Cards never carry agent HTML, CSS or colours, quote outside content, load images only through the host's signed proxy, never draw secret inputs, send only words they show in full, and tag those sends with [buzz-surface-tap, surfaceId, actionId, revision]; run actions stay disabled. Owner-private outside-app cards use separate Home entry points, verified human request signing and active-community scope; they do not relax the existing Agent DM signer gate. Desktop retains bounded metadata pages and draws one selected card, and mobile uses its native renderer. Refresh refusal clears retained labels; actions keep the existing read-only rendering and open the host app. Generated renderer support files stay within the same shared-renderer boundary.",
       "upstreamStatus": "Generic, provider-neutral extension; not yet submitted to block/buzz.",
-      "removalCondition": "Drop when upstream renders equivalent agent cards or agents stop publishing the marker.",
+      "removalCondition": "Drop when upstream renders equivalent Agent DM and owner-private outside-app cards, or the host stops offering these card records.",
       "paths": [
         "desktop/biome.json",
         "desktop/src-tauri/src/extensions/agent_ui/mod.rs",
@@ -2197,10 +2219,12 @@
         "desktop/src/features/agent-dm/lib/surfaceCardGate.ts",
         "desktop/src/features/agent-dm/lib/surfaceReads.ts",
         "desktop/src/features/agent-dm/ui/AgentSurfaceCard.tsx",
+        "desktop/src/features/home/ui/InboxListPane.tsx",
         "desktop/src/features/surfaces/core/api.ts",
         "desktop/src/features/surfaces/core/board.ts",
         "desktop/src/features/surfaces/core/calendar.ts",
         "desktop/src/features/surfaces/core/chart.ts",
+        "desktop/src/features/surfaces/core/controller-state.ts",
         "desktop/src/features/surfaces/core/controller.ts",
         "desktop/src/features/surfaces/core/copy.ts",
         "desktop/src/features/surfaces/core/diagram.ts",
@@ -2224,13 +2248,17 @@
         "desktop/src/features/surfaces/core/rules.ts",
         "desktop/src/features/surfaces/core/run-gate.ts",
         "desktop/src/features/surfaces/core/sends.ts",
+        "desktop/src/features/surfaces/core/store.ts",
         "desktop/src/features/surfaces/core/swipe.ts",
         "desktop/src/features/surfaces/core/text-file.ts",
         "desktop/src/features/surfaces/core/text.ts",
         "desktop/src/features/surfaces/core/typed.ts",
         "desktop/src/features/surfaces/core/workview.ts",
+        "desktop/src/features/surfaces/lib/outsideAppCards.test.mjs",
+        "desktop/src/features/surfaces/lib/outsideAppCards.ts",
         "desktop/src/features/surfaces/lib/surfaceStore.test.mjs",
         "desktop/src/features/surfaces/lib/surfaceStore.ts",
+        "desktop/src/features/surfaces/ui/OutsideAppCards.tsx",
         "desktop/src/features/surfaces/view/SurfaceView.tsx",
         "desktop/src/features/surfaces/view/actions.tsx",
         "desktop/src/features/surfaces/view/capture.tsx",
@@ -2243,11 +2271,14 @@
         "desktop/src/features/surfaces/view/display-files.tsx",
         "desktop/src/features/surfaces/view/display.tsx",
         "desktop/src/features/surfaces/view/document.tsx",
+        "desktop/src/features/surfaces/view/email-send-outcome.tsx",
         "desktop/src/features/surfaces/view/email-signature.tsx",
+        "desktop/src/features/surfaces/view/expanded-views.ts",
         "desktop/src/features/surfaces/view/feedback.tsx",
         "desktop/src/features/surfaces/view/field.ts",
         "desktop/src/features/surfaces/view/file-carousel.tsx",
         "desktop/src/features/surfaces/view/host.ts",
+        "desktop/src/features/surfaces/view/html-app.tsx",
         "desktop/src/features/surfaces/view/icons.tsx",
         "desktop/src/features/surfaces/view/index.ts",
         "desktop/src/features/surfaces/view/ink.tsx",
@@ -2275,6 +2306,7 @@
         "desktop/src/features/surfaces/view/workview.tsx",
         "mobile/lib/features/channels/agent_dm/agent_dm_expanded_surface.dart",
         "mobile/lib/features/channels/agent_dm/agent_dm_surface_card.dart",
+        "mobile/lib/features/home/home_page.dart",
         "mobile/lib/shared/crypto/nip_oa.dart",
         "mobile/lib/shared/mentions/agent_identity_provider.dart",
         "mobile/lib/shared/surfaces/agent_surface_view.dart",
@@ -2292,6 +2324,8 @@
         "mobile/lib/shared/surfaces/agent_surface_view/scope.dart",
         "mobile/lib/shared/surfaces/agent_surface_view/sent.dart",
         "mobile/lib/shared/surfaces/agent_surface_view/ui.dart",
+        "mobile/lib/shared/surfaces/outside_app_cards.dart",
+        "mobile/lib/shared/surfaces/outside_app_cards_page.dart",
         "mobile/lib/shared/surfaces/surface_chart.dart",
         "mobile/lib/shared/surfaces/surface_client.dart",
         "mobile/lib/shared/surfaces/surface_data.dart",
@@ -2308,6 +2342,7 @@
         "mobile/test/shared/crypto/nip_oa_test.dart",
         "mobile/test/shared/mentions/agent_profile_owner_provider_test.dart",
         "mobile/test/shared/surfaces/agent_surface_view_test.dart",
+        "mobile/test/shared/surfaces/outside_app_cards_test.dart",
         "mobile/test/shared/surfaces/surface_limits_test.dart",
         "mobile/test/shared/surfaces/surface_model_test.dart",
         "mobile/test/shared/surfaces/surface_sends_test.dart",
