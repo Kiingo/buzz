@@ -716,7 +716,7 @@ impl LocalPublicationWorker {
             authorization.claims.check_event(&event)?;
         }
         let event_id = event.id.to_hex();
-        let already_published = self
+        let mut already_published = self
             .find_existing_event(&event, &intent.channel_id, &fence_tag_value)
             .await?;
         if !already_published {
@@ -726,13 +726,19 @@ impl LocalPublicationWorker {
                     .map_err(|_| "publication relay submission timed out".to_string())?;
             if let Err(error) = submitted {
                 let error = error.to_string();
-                // The exact-ID read above found no copy of this event, and the
-                // relay refused it for its frozen timestamp: re-sending the
-                // same signature can never be accepted.
-                if is_relay_timestamp_rejection(&error) {
+                if !is_relay_timestamp_rejection(&error) {
+                    return Err(format!("publication relay submission failed: {error}"));
+                }
+                // A concurrent submission can land after the initial absence read.
+                // Only a second verified absence permits the API to re-stamp a chat answer.
+                if !matches!(intent.publication_kind.as_str(), "final" | "action")
+                    || !self
+                        .find_existing_event(&event, &intent.channel_id, &fence_tag_value)
+                        .await?
+                {
                     return Err(relay_timestamp_rejected_error(&event_id, &error));
                 }
-                return Err(format!("publication relay submission failed: {error}"));
+                already_published = true;
             }
         }
         if self.reconcile_reactions {

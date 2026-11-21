@@ -648,6 +648,27 @@ fn only_the_relays_exact_timestamp_rejection_is_classified_as_one() {
 
 #[tokio::test]
 async fn relay_timestamp_rejection_of_an_answer_reports_its_frozen_event_once() {
+    check_rejected_answer(RejectedAnswerLookup::Absent).await;
+}
+
+#[tokio::test]
+async fn concurrent_acceptance_completes_the_original_frozen_event() {
+    check_rejected_answer(RejectedAnswerLookup::Found).await;
+}
+
+#[tokio::test]
+async fn failed_post_rejection_lookup_keeps_the_original_frozen_identity() {
+    check_rejected_answer(RejectedAnswerLookup::Unavailable).await;
+}
+
+#[derive(Clone, Copy)]
+enum RejectedAnswerLookup {
+    Absent,
+    Found,
+    Unavailable,
+}
+
+async fn check_rejected_answer(lookup: RejectedAnswerLookup) {
     tokio::time::timeout(Duration::from_secs(5), async {
         let keys = Keys::generate();
         // A final frozen long ago: the relay refuses its signed timestamp.
@@ -696,6 +717,34 @@ async fn relay_timestamp_rejection_of_an_answer_reports_its_frozen_event_once() 
             .await;
 
             let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, filter) = receive_http(&mut stream).await;
+            assert!(headers.starts_with("POST /query "), "{headers}");
+            assert_eq!(filter[0]["ids"], serde_json::json!([event.id.to_hex()]));
+            match lookup {
+                RejectedAnswerLookup::Found => {
+                    respond_http(&mut stream, 200, serde_json::json!([event])).await;
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let (headers, body) = receive_http(&mut stream).await;
+                    assert!(headers.contains("/complete "), "{headers}");
+                    assert_eq!(body["buzz_event_id"], event.id.to_hex());
+                    respond_http(&mut stream, 200, serde_json::json!({"status": "published"}))
+                        .await;
+                    return Some(event.id.to_hex());
+                }
+                RejectedAnswerLookup::Unavailable => {
+                    respond_http(
+                        &mut stream,
+                        503,
+                        serde_json::json!({"error": "unavailable"}),
+                    )
+                    .await;
+                    return None;
+                }
+                RejectedAnswerLookup::Absent => {
+                    respond_http(&mut stream, 200, serde_json::json!([])).await;
+                }
+            }
+            let (mut stream, _) = listener.accept().await.unwrap();
             let (headers, body) = receive_http(&mut stream).await;
             assert!(
                 headers.starts_with(&format!(
@@ -730,9 +779,30 @@ async fn relay_timestamp_rejection_of_an_answer_reports_its_frozen_event_once() 
                     .await
                     .is_err()
             );
+            None
         });
-        assert!(worker.publish_with_retry(&saved).await.is_none());
-        server.await.unwrap();
+        match lookup {
+            RejectedAnswerLookup::Absent => {
+                assert!(worker.publish_with_retry(&saved).await.is_none());
+                assert!(server.await.unwrap().is_none());
+            }
+            RejectedAnswerLookup::Found => {
+                let result = worker
+                    .publish(&saved)
+                    .await
+                    .unwrap()
+                    .expect("existing event");
+                assert_eq!(Some(result), server.await.unwrap());
+            }
+            RejectedAnswerLookup::Unavailable => {
+                let error = worker.publish(&saved).await.unwrap_err();
+                assert!(
+                    error.starts_with("publication reconciliation query failed:"),
+                    "{error}"
+                );
+                assert!(server.await.unwrap().is_none());
+            }
+        }
     })
     .await
     .expect("stale answer rejection is reported once without a resubmission");
@@ -801,6 +871,11 @@ async fn restamped_answer_after_a_rejected_failure_report_is_signed_and_authoriz
                 }),
             )
             .await;
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let (headers, filter) = receive_http(&mut stream).await;
+            assert!(headers.starts_with("POST /query "), "{headers}");
+            assert_eq!(filter[0]["ids"], serde_json::json!([refused.id.to_hex()]));
+            respond_http(&mut stream, 200, serde_json::json!([])).await;
             let (mut stream, _) = listener.accept().await.unwrap();
             let (headers, _) = receive_http(&mut stream).await;
             assert!(headers.contains("/failure "), "{headers}");
